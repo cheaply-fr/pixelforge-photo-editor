@@ -533,7 +533,12 @@ type Gesture = {
   source?: HTMLCanvasElement;
   replaceTarget?: [number, number, number, number];
   pending?: Promise<void>;
-  queued?: { x: number; y: number }[];
+  queued?: Array<{
+    x: number;
+    y: number;
+    pressure?: number;
+    pointerType?: string;
+  }>;
   points?: { x: number; y: number }[];
   lastPressure?: number;
   pointerType?: string;
@@ -589,14 +594,14 @@ const stampCanvas = (target: HTMLCanvasElement, options: StampCanvasOptions) => 
         0,
         Math.min(
           options.source.width - width,
-          Math.floor((options.sourceX ?? options.x) - radius),
+          Math.floor((options.sourceX ?? options.x) + left - options.x),
         ),
       ),
       sourceTop = Math.max(
         0,
         Math.min(
           options.source.height - height,
-          Math.floor((options.sourceY ?? options.y) - radius),
+          Math.floor((options.sourceY ?? options.y) + top - options.y),
         ),
       );
     source = options.source
@@ -2565,7 +2570,7 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
-        queued: [local],
+        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
       } as Gesture;
       const sourceAnchor = cloneSource;
       gesture.current = g;
@@ -2578,13 +2583,13 @@ export default function Home() {
         g.buffer = surface(source.width, source.height);
         g.buffer.getContext('2d')!.drawImage(source, 0, 0);
         let from = g.start;
-        for (const point of g.queued || [g.start]) {
+        for (const point of g.queued || [{ ...g.start, pressure: g.lastPressure, pointerType: g.pointerType }]) {
           stampCanvasSegment(g.buffer, from, point, {
             size: localSize(layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
-            pointerType: g.pointerType,
-            pressure: g.lastPressure,
+            pointerType: point.pointerType,
+            pressure: point.pressure,
             pressureSize,
             pressureOpacity,
             mode: tool === 'heal' ? 'heal' : 'clone',
@@ -2819,7 +2824,7 @@ export default function Home() {
       lastPressure: pressure(e),
       pointerType: e.pointerType,
       moved: false,
-      queued: [local],
+      queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
@@ -2831,13 +2836,13 @@ export default function Home() {
           if (gesture.current !== g) return;
           g.buffer = buffer;
           let from = local;
-          for (const point of g.queued || [local]) {
+          for (const point of g.queued || [{ ...local, pressure: g.lastPressure, pointerType: g.pointerType }]) {
             stampCanvasSegment(buffer, from, point, {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: brushOpacity / 100,
-              pointerType: g.pointerType,
-              pressure: g.lastPressure,
+              pointerType: point.pointerType,
+              pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
@@ -2883,7 +2888,7 @@ export default function Home() {
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
       !g.buffer
     )
-      g.queued?.push(local);
+      g.queued?.push({ ...local, pressure: g.lastPressure, pointerType: g.pointerType });
     if (
       (g.tool === 'clone' || g.tool === 'heal') &&
       g.buffer &&
@@ -2908,7 +2913,7 @@ export default function Home() {
       return;
     }
     if ((g.tool === 'clone' || g.tool === 'heal') && !g.buffer) {
-      (g.queued || (g.queued = [])).push(local);
+      (g.queued || (g.queued = [])).push({ ...local, pressure: g.lastPressure, pointerType: g.pointerType });
     }
     if (
       g.tool === 'color-replace' &&

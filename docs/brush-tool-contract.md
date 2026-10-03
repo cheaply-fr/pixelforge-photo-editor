@@ -20,9 +20,13 @@ one PNG asset to the selected raster layer.
 Pencil uses an integer hard edge and hides the softness and pressure controls
 while sharing the same undoable raster path. Clone and Healing queue early
 pointer points until their source buffer is ready, then replay them through the
-same stamp contract. The pure model suite covers 11 brush cases and the
-desktop/mobile browser suite covers settings migration, pressure fallback and
-mapping, hardness, eraser undo, clone/healing commits, and touch cancellation.
+same stamp contract. Clipped destination bounds map one-to-one to the
+corresponding source range, and queued points retain their own pressure and
+pointer type so asynchronous decoding cannot flatten a stroke. The pure model
+suite covers 10 brush cases and the desktop/mobile browser suite covers 16
+tests across settings migration, pressure fallback and independent mapping,
+hardness, eraser undo/redo/reload, clone edge clipping, healing bounds, pointer
+release pressure, and touch cancellation.
 
 ## Persisted tool state
 
