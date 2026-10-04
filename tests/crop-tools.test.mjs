@@ -2,17 +2,60 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   extractSlices,
+  cropMeasurements,
   frameMask,
   mapPerspectivePoint,
   perspectiveMatrixFromQuad,
   planFramePlacement,
   planPerspectiveCrop,
+  planRectangularCrop,
   planSlices,
   validCropQuad,
   warpPerspectiveRgba,
 } from '../src/cropTools.ts';
 
 const pixel = (pixels, width, x, y) => Array.from(pixels.slice((y * width + x) * 4, (y * width + x + 1) * 4));
+
+test('rectangular crop aligns reverse drags to integer retained pixels and clips to canvas', () => {
+  assert.deepEqual(planRectangularCrop(20, 16, { x: 15.9, y: 12.2 }, { x: 3.2, y: 2.9 }), { left: 3, top: 2, width: 12, height: 10, changed: true });
+  assert.deepEqual(planRectangularCrop(20, 16, { x: -3, y: -2 }, { x: 50, y: 40 }), { left: 0, top: 0, width: 20, height: 16, changed: false });
+});
+
+test('rectangular crop rejects invalid, empty and out-of-image drags', () => {
+  assert.throws(() => planRectangularCrop(20, 16, { x: NaN, y: 0 }, { x: 3, y: 3 }), /finite/);
+  assert.throws(() => planRectangularCrop(20, 16, { x: 5, y: 5 }, { x: 5.1, y: 5.1 }), /one pixel/);
+  assert.throws(() => planRectangularCrop(20, 16, { x: 25, y: 20 }, { x: 30, y: 25 }), /one pixel/);
+  assert.throws(() => planRectangularCrop(16000, 16000, { x: 0, y: 0 }, { x: 1, y: 1 }), /16 megapixels/);
+});
+
+test('cropping annotations translates contained points and never mutates their source', () => {
+  const annotations = [
+    { id: 'in', kind: 'sample', x: 8, y: 6, color: '#123456', alpha: 128 },
+    { id: 'outside', kind: 'note', x: 1, y: 1, text: 'Outside the retained canvas' },
+    { id: 'edge', kind: 'count', x: 15, y: 12, index: 4 },
+  ];
+  const before = JSON.parse(JSON.stringify(annotations));
+  const plan = planRectangularCrop(20, 16, { x: 3, y: 2 }, { x: 15, y: 12 });
+  assert.deepEqual(cropMeasurements(annotations, plan), [
+    { id: 'in', kind: 'sample', x: 5, y: 4, color: '#123456', alpha: 128 },
+    { id: 'edge', kind: 'count', x: 12, y: 10, index: 4 },
+  ]);
+  assert.deepEqual(annotations, before);
+  assert.equal(cropMeasurements(undefined, plan), undefined);
+});
+
+test('cropping rulers clips crossings, recomputes metrics, and discards outside segments', () => {
+  const annotations = [
+    { id: 'crossing', kind: 'ruler', start: { x: 0, y: 6 }, end: { x: 20, y: 6 }, pixels: 20, angle: 0 },
+    { id: 'outside', kind: 'ruler', start: { x: 0, y: 0 }, end: { x: 20, y: 0 }, pixels: 20, angle: 0 },
+    { id: 'vertical', kind: 'ruler', start: { x: 6, y: 14 }, end: { x: 6, y: 0 }, pixels: 14, angle: -90 },
+  ];
+  const plan = planRectangularCrop(20, 16, { x: 3, y: 2 }, { x: 15, y: 12 });
+  assert.deepEqual(cropMeasurements(annotations, plan), [
+    { id: 'crossing', kind: 'ruler', start: { x: 0, y: 4 }, end: { x: 12, y: 4 }, pixels: 12, angle: 0 },
+    { id: 'vertical', kind: 'ruler', start: { x: 3, y: 10 }, end: { x: 3, y: 0 }, pixels: 10, angle: -90 },
+  ]);
+});
 
 test('perspective crop validates convex corners and rejects folded or out-of-bounds quads', () => {
   const quad = [{ x: 1, y: 1 }, { x: 9, y: 0 }, { x: 10, y: 7 }, { x: 0, y: 8 }];

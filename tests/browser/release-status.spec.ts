@@ -38,6 +38,8 @@ test('shows the release version and matching server health', async ({ page }) =>
   await waitForEditor(page);
   const status = page.getByTestId('release-status');
   await expect(status).toHaveAttribute('aria-label', 'v9.4.2. Server online');
+  await expect(page.locator('header.topbar').getByTestId('release-status')).toBeVisible();
+  await expect(status.locator('xpath=..')).toHaveClass(/top-actions/);
   await expect(status).toContainText('v9.4.2');
   await expectVisibleState(page, 'Server online');
 });

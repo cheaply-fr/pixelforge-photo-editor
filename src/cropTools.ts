@@ -7,7 +7,16 @@
  * dragging.
  */
 
+import type { MeasurementAnnotation } from './measurements.ts';
+
 export type CropPoint = { x: number; y: number };
+export type RectangularCropPlan = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  changed: boolean;
+};
 export type CropQuad = [CropPoint, CropPoint, CropPoint, CropPoint];
 export type PerspectiveMatrix = [
   number,
@@ -79,6 +88,76 @@ function validDimension(value: unknown): value is number {
 function assertCanvas(width: number, height: number): void {
   if (!validDimension(width) || !validDimension(height) || width * height > MAX_PIXELS)
     throw new Error('Canvas dimensions must be whole values up to 16,000 pixels and 16 megapixels total');
+}
+
+/** Pixel-aligned rectangular bounds, clipped to the source canvas. */
+export function planRectangularCrop(
+  canvasWidth: number,
+  canvasHeight: number,
+  start: CropPoint,
+  end: CropPoint,
+): RectangularCropPlan {
+  assertCanvas(canvasWidth, canvasHeight);
+  if (!finitePoint(start) || !finitePoint(end)) throw new Error('Crop points must be finite');
+  const left = Math.max(0, Math.floor(Math.min(start.x, end.x))),
+    top = Math.max(0, Math.floor(Math.min(start.y, end.y))),
+    right = Math.min(canvasWidth, Math.floor(Math.max(start.x, end.x))),
+    bottom = Math.min(canvasHeight, Math.floor(Math.max(start.y, end.y)));
+  if (right <= left || bottom <= top) throw new Error('Crop must contain at least one pixel inside the image');
+  return {
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
+    changed: left !== 0 || top !== 0 || right !== canvasWidth || bottom !== canvasHeight,
+  };
+}
+
+/**
+ * Keep workspace annotations inside a cropped document. Point annotations
+ * outside the retained area disappear from this frame, while undo retains
+ * them in the source frame. Rulers are clipped to the retained rectangle and
+ * their distance/angle is recalculated; source annotations are never mutated.
+ */
+export function cropMeasurements(
+  annotations: readonly MeasurementAnnotation[] | undefined,
+  plan: RectangularCropPlan,
+): MeasurementAnnotation[] | undefined {
+  if (!annotations) return undefined;
+  const inside = (point: CropPoint) => point.x >= plan.left && point.y >= plan.top && point.x <= plan.left + plan.width && point.y <= plan.top + plan.height;
+  const translate = (point: CropPoint) => ({ x: point.x - plan.left, y: point.y - plan.top });
+  const output: MeasurementAnnotation[] = [];
+  for (const annotation of annotations) {
+    if (annotation.kind !== 'ruler') {
+      if (inside(annotation)) output.push({ ...annotation, ...translate(annotation) });
+      continue;
+    }
+    const dx = annotation.end.x - annotation.start.x,
+      dy = annotation.end.y - annotation.start.y;
+    let minimum = 0, maximum = 1, visible = true;
+    for (const [p, q] of [
+      [-dx, annotation.start.x - plan.left],
+      [dx, plan.left + plan.width - annotation.start.x],
+      [-dy, annotation.start.y - plan.top],
+      [dy, plan.top + plan.height - annotation.start.y],
+    ]) {
+      if (p === 0) {
+        if (q < 0) { visible = false; break; }
+      } else {
+        const ratio = q / p;
+        if (p < 0) minimum = Math.max(minimum, ratio);
+        else maximum = Math.min(maximum, ratio);
+        if (minimum > maximum) { visible = false; break; }
+      }
+    }
+    if (!visible) continue;
+    const start = translate({ x: annotation.start.x + minimum * dx, y: annotation.start.y + minimum * dy }),
+      end = translate({ x: annotation.start.x + maximum * dx, y: annotation.start.y + maximum * dy }),
+      pixels = Math.hypot(end.x - start.x, end.y - start.y);
+    if (pixels < 1) continue;
+    output.push({ ...annotation, start, end, pixels, angle: Math.atan2(end.y - start.y, end.x - start.x) * 180 / Math.PI });
+  }
+  return output;
 }
 
 function finitePoint(point: unknown): point is CropPoint {

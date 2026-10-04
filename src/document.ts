@@ -46,6 +46,14 @@ import { validatePath, type PathModel } from './paths.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import { shapePoints, validateShapeVariant, type ParametricShapeVariant } from './vectorShapes.ts';
 import { validMeasurements, type MeasurementAnnotation } from './measurements.ts';
+import {
+  applyFilterEffects,
+  effectiveFilterEffects,
+  isNeutralFilterEffects,
+  neutralFilterEffects,
+  validFilterEffects,
+  type FilterEffects,
+} from './filterEffects.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -86,6 +94,8 @@ export type Adjustments = {
   curves: Curves;
   /** Nondestructive deterministic one-click tonal corrections. */
   auto: AutoAdjustments;
+  /** Nondestructive local Filter menu effect parameters. */
+  filterEffects: FilterEffects;
 };
 export const neutral: Adjustments = {
   brightness: 100,
@@ -106,6 +116,7 @@ export const neutral: Adjustments = {
     blue: neutralCurves.blue,
   },
   auto: { ...neutralAuto },
+  filterEffects: { ...neutralFilterEffects },
 };
 export const FILTER_VALUES = [
   'none',
@@ -547,6 +558,7 @@ export function effectiveAdjustments(value: Partial<Adjustments>): Adjustments {
     sharpenNoise: effectiveSharpenNoise(value.sharpenNoise),
     curves: effectiveCurves(value.curves),
     auto: effectiveAutoAdjustments(value.auto),
+    filterEffects: effectiveFilterEffects(value.filterEffects),
   };
 }
 
@@ -748,7 +760,8 @@ export function validAdjustments(v: unknown): v is Adjustments {
     validColorBalance(v.colorBalance ?? neutral.colorBalance) &&
     validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise) &&
     validCurves(v.curves ?? neutral.curves) &&
-    validAutoAdjustments(v.auto ?? neutral.auto)
+    validAutoAdjustments(v.auto ?? neutral.auto) &&
+    validFilterEffects(v.filterEffects ?? neutral.filterEffects)
   );
 }
 export function validAsset(value: unknown): value is Asset {
@@ -1291,7 +1304,17 @@ export async function renderFrame(
     // exact same matrix, opacity, blend, adjustment and mask pipeline as the
     // immutable source asset; resetting the transform here would bake a
     // translated/scaled layer into the wrong frame coordinates.
-    const rasterSource = override || image;
+    let rasterSource: CanvasImageSource | undefined = override || image;
+    const filterEffect = effectiveFilterEffects(layer.adjustments.filterEffects);
+    if (layer.kind === 'raster' && rasterSource && !isNeutralFilterEffects(filterEffect)) {
+      // Filter geometry is layer-local, so moving/resizing a layer never bakes
+      // the effect into frame coordinates. Masks are still applied afterward.
+      const asset = assets[layer.asset],
+        filtered = surface(override?.width ?? asset.w, override?.height ?? asset.h);
+      filtered.getContext('2d')!.drawImage(rasterSource, 0, 0);
+      applyFilterEffects(filtered, filterEffect);
+      rasterSource = filtered;
+    }
     if (
       layer.kind !== 'raster' &&
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||
@@ -1302,7 +1325,8 @@ export async function renderFrame(
           effectiveAdjustments(layer.adjustments).sharpenNoise,
         ) ||
         !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves) ||
-        !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto))
+        !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto) ||
+        !isNeutralFilterEffects(effectiveAdjustments(layer.adjustments).filterEffects))
     ) {
       // Keep text and shape layers editable: render their existing transform
       // and CSS corrections into an isolated surface, then rotate HSL colour.
@@ -1319,6 +1343,7 @@ export async function renderFrame(
                 ...effectiveAdjustments(layer.adjustments),
                 hue: 0,
                 auto: { ...neutralAuto },
+                filterEffects: { ...neutralFilterEffects },
               },
             },
           ],
@@ -1332,6 +1357,7 @@ export async function renderFrame(
       applySharpenNoise(coloured, layer.adjustments);
       applyCurves(coloured, layer.adjustments);
       applyAutoAdjustments(coloured, layer.adjustments);
+      applyFilterEffects(coloured, layer.adjustments.filterEffects);
       context.save();
       context.globalAlpha = layer.opacity * groupOpacity;
       context.globalCompositeOperation = layer.blend;
@@ -1451,11 +1477,11 @@ export async function renderFrame(
     context.globalCompositeOperation = layer.blend;
     context.filter = filterCSS(layer.adjustments);
     if (override) {
-      context.drawImage(override, 0, 0);
+      context.drawImage(rasterSource!, 0, 0);
       context.restore();
       continue;
     }
-    if (layer.kind === 'raster' && image) context.drawImage(image, 0, 0);
+    if (layer.kind === 'raster' && rasterSource) context.drawImage(rasterSource, 0, 0);
     if (layer.kind === 'text') {
       context.fillStyle = layer.color;
       context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;

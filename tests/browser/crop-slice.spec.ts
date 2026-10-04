@@ -45,3 +45,58 @@ test('slice extraction is deterministic in a browser and leaves source bytes int
   })();
   expect(result).toEqual({ name: 'Top-row', dimensions: [3, 1], bytes: [10, 20, 255, 255, 11, 20, 255, 255, 12, 20, 255, 255], unchanged: true });
 });
+
+const dimensions = (page: import('@playwright/test').Page) =>
+  page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => ({
+    width: canvas.width,
+    height: canvas.height,
+  }));
+
+test('crop drag stages an overlay, supports cancel and only commits on confirmation', async ({ page }) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await dimensions(page);
+  await page.getByRole('button', { name: 'Crop tool', exact: true }).click();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.75, { steps: 2 });
+  await page.mouse.up();
+  await expect(page.getByTestId('crop-preview-controls')).toBeVisible();
+  await expect(page.getByTestId('crop-preview-overlay')).toBeVisible();
+  await expect.poll(() => dimensions(page)).toEqual(before);
+  await page.getByTestId('crop-cancel').click();
+  await expect(page.getByTestId('crop-preview-controls')).toBeHidden();
+  await expect.poll(() => dimensions(page)).toEqual(before);
+  await page.getByRole('button', { name: 'Crop tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.75, { steps: 2 });
+  await page.mouse.up();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('crop-preview-controls')).toBeHidden();
+  const after = await dimensions(page);
+  expect(after.width).toBeLessThan(before.width);
+  expect(after.height).toBeLessThan(before.height);
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
+});
+
+test('confirmed crop persists through project export/reload and remains undoable', async ({ page }) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await dimensions(page);
+  const box = (await canvas.boundingBox())!;
+  await page.getByRole('button', { name: 'Crop tool', exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.1);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 2 });
+  await page.mouse.up();
+  await page.getByTestId('crop-apply').click();
+  const after = await dimensions(page);
+  expect(after.width).toBeLessThan(before.width);
+  expect(after.height).toBeLessThan(before.height);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect.poll(() => dimensions(page)).toEqual(after);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => dimensions(page)).toEqual(before);
+});

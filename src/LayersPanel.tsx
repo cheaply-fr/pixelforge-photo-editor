@@ -10,6 +10,7 @@ import {
   type SelectionOperation,
 } from './document';
 import type { ParametricShapeVariant } from './vectorShapes';
+import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 
 type Props = {
   frame: Frame;
@@ -22,6 +23,8 @@ type Props = {
   groupActive: () => void;
   ungroupActive: () => void;
   editGroup: (id: string, patch: Partial<Group>) => void;
+  align: (mode: AlignmentMode) => void;
+  distribute: (axis: DistributionAxis) => void;
   rasterize: () => void;
   importImage: () => void;
   createMask: () => void;
@@ -45,6 +48,8 @@ export default function LayersPanel({
   groupActive,
   ungroupActive,
   editGroup,
+  align,
+  distribute,
   rasterize,
   importImage,
   createMask,
@@ -62,6 +67,9 @@ export default function LayersPanel({
   const groupById = new Map(groups.map((group) => [group.id, group]));
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
+  const distributableCount = activeGroup
+    ? frame.layers.filter((item) => item.groupId === activeGroup.id && item.visible && !item.locked).length
+    : 0;
   const renderedGroups = new Set<string>();
   const rows: ReactNode[] = [];
   for (const item of [...frame.layers].reverse()) {
@@ -145,6 +153,44 @@ export default function LayersPanel({
         </button>
       </div>
       <div className="layer-list">{rows}</div>
+      <label className="layer-field">
+        Layer folder
+        <select
+          aria-label="Layer folder"
+          value={layer.groupId || ''}
+          disabled={layerLocked}
+          onChange={(event) => edit({ groupId: event.target.value || undefined })}
+        >
+          <option value="">No folder</option>
+          {groups.map((group) => (
+            <option key={group.id} value={group.id} disabled={group.locked}>
+              {group.name || 'Untitled group'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <fieldset className="layer-alignment" disabled={layerLocked}>
+        <legend>Align to canvas</legend>
+        <div className="layer-actions">
+          <button onClick={() => align('left')}>Align left</button>
+          <button onClick={() => align('center-horizontal')}>Align horizontal center</button>
+          <button onClick={() => align('right')}>Align right</button>
+          <button onClick={() => align('top')}>Align top</button>
+          <button onClick={() => align('center-vertical')}>Align vertical center</button>
+          <button onClick={() => align('bottom')}>Align bottom</button>
+        </div>
+      </fieldset>
+      <fieldset
+        className="layer-alignment"
+        disabled={!activeGroup || activeGroup.locked || !activeGroup.visible || distributableCount < 3}
+      >
+        <legend>Distribute folder layers</legend>
+        <div className="layer-actions">
+          <button onClick={() => distribute('horizontal')}>Distribute horizontally</button>
+          <button onClick={() => distribute('vertical')}>Distribute vertically</button>
+        </div>
+        <p>Evenly space the centers of visible unlocked layers; outer layers stay fixed.</p>
+      </fieldset>
       <div className="layer-toggles">
         <label>
           <input

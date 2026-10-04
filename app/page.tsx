@@ -110,6 +110,7 @@ import TrimDialog from '../src/TrimDialog';
 import {
   measuredTextLayerBounds,
   planCanvasSize,
+  layerBounds,
   layerLocalBounds,
   planRevealAll,
   trimBounds,
@@ -117,6 +118,13 @@ import {
   type TrimMode,
   type TrimSides,
 } from '../src/canvasSize';
+import {
+  alignmentDelta,
+  distributionDeltas,
+  translateMatrix,
+  type AlignmentMode,
+  type DistributionAxis,
+} from '../src/layerAlignment';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -174,6 +182,13 @@ import {
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
 import {
+  FILTER_EFFECT_TYPES,
+  effectiveFilterEffects,
+  neutralFilterEffects,
+  type FilterEffectType,
+} from '../src/filterEffects';
+import { cropMeasurements, planRectangularCrop, type RectangularCropPlan } from '../src/cropTools';
+import {
   formatMeasurement,
   measurementAngle,
   measurementDistance,
@@ -220,6 +235,14 @@ type Command =
   | 'delete-layer'
   | 'group-layer'
   | 'ungroup-layer'
+  | 'align-left'
+  | 'align-center-horizontal'
+  | 'align-right'
+  | 'align-top'
+  | 'align-center-vertical'
+  | 'align-bottom'
+  | 'distribute-horizontal'
+  | 'distribute-vertical'
   | 'hide-layer'
   | 'merge-visible'
   | 'flatten'
@@ -265,6 +288,13 @@ type Command =
   | 'filter-mono'
   | 'filter-warm'
   | 'filter-cool'
+  | 'filter-field-blur'
+  | 'filter-tilt-shift'
+  | 'filter-mosaic'
+  | 'filter-color-halftone'
+  | 'filter-ripple'
+  | 'filter-twirl'
+  | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
   | 'fit'
@@ -344,6 +374,7 @@ const MARQUEE_TOOLS: Tool[] = [
 ];
 /** Photoshop's repeated-key tool groups, limited to tools PixelForge actually implements. */
 const TOOL_GROUPS: Record<string, Tool[]> = {
+  c: ['crop'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace'],
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
@@ -509,8 +540,14 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Merge Visible', command: 'merge-visible' },
     { label: 'Flatten Image', command: 'flatten' },
     { label: 'Arrange', command: 'noop', disabled: true },
-    { label: 'Align', command: 'noop', disabled: true },
-    { label: 'Distribute', command: 'noop', disabled: true },
+    { label: 'Align Left', command: 'align-left' },
+    { label: 'Align Horizontal Centers', command: 'align-center-horizontal' },
+    { label: 'Align Right', command: 'align-right' },
+    { label: 'Align Top', command: 'align-top' },
+    { label: 'Align Vertical Centers', command: 'align-center-vertical' },
+    { label: 'Align Bottom', command: 'align-bottom' },
+    { label: 'Distribute Horizontal Centers', command: 'distribute-horizontal' },
+    { label: 'Distribute Vertical Centers', command: 'distribute-vertical' },
     { label: 'Lock Layers…', command: 'noop', disabled: true },
   ],
   Type: [
@@ -578,6 +615,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Vanishing Point…', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
     { label: 'Blur', command: 'noop', disabled: true },
+    { label: 'Field Blur…', command: 'filter-field-blur' },
+    { label: 'Tilt-Shift…', command: 'filter-tilt-shift' },
     { label: 'Average', command: 'noop', disabled: true },
     { label: 'Blur More', command: 'noop', disabled: true },
     { label: 'Box Blur…', command: 'noop', disabled: true },
@@ -586,22 +625,20 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Radial Blur…', command: 'noop', disabled: true },
     { label: 'Smart Blur…', command: 'noop', disabled: true },
     { label: 'Blur Gallery', command: 'noop', disabled: true },
-    { label: 'Field Blur…', command: 'noop', disabled: true },
     { label: 'Iris Blur…', command: 'noop', disabled: true },
-    { label: 'Tilt-Shift…', command: 'noop', disabled: true },
     { label: 'Distort', command: 'noop', disabled: true },
     { label: 'Displace…', command: 'noop', disabled: true },
     { label: 'Pinch…', command: 'noop', disabled: true },
-    { label: 'Ripple…', command: 'noop', disabled: true },
+    { label: 'Ripple…', command: 'filter-ripple' },
     { label: 'Shear…', command: 'noop', disabled: true },
     { label: 'Spherize…', command: 'noop', disabled: true },
-    { label: 'Twirl…', command: 'noop', disabled: true },
+    { label: 'Twirl…', command: 'filter-twirl' },
     { label: 'Wave…', command: 'noop', disabled: true },
     { label: 'Noise', command: 'noop', disabled: true },
     { label: 'Add Noise…', command: 'sharpen-noise' },
     { label: 'Pixelate', command: 'noop', disabled: true },
-    { label: 'Color Halftone…', command: 'noop', disabled: true },
-    { label: 'Mosaic…', command: 'noop', disabled: true },
+    { label: 'Color Halftone…', command: 'filter-color-halftone' },
+    { label: 'Mosaic…', command: 'filter-mosaic' },
     { label: 'Pointillize…', command: 'noop', disabled: true },
     { label: 'Render', command: 'noop', disabled: true },
     { label: 'Clouds', command: 'noop', disabled: true },
@@ -617,6 +654,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'noop', disabled: true },
     { label: 'NTSC Colors', command: 'noop', disabled: true },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Clear local filter effect', command: 'filter-clear-effect' },
   ],
   View: [
     { label: 'Zoom in', shortcut: '+', command: 'zoom-in' },
@@ -1035,6 +1074,15 @@ export default function Home() {
     height: number;
   } | null>(null);
   const [trimming, setTrimming] = useState(false);
+  /**
+   * A crop drag is deliberately staged before it changes the document.  The
+   * preview keeps the current history frame immutable while the user checks
+   * the bounds, and gives keyboard/touch users an explicit Apply/Cancel
+   * affordance.  Perspective crop remains a separate, future workflow.
+   */
+  const [cropPreview, setCropPreview] = useState<(RectangularCropPlan & { frame: Frame }) | null>(null);
+  const cropPreviewId = useRef(0);
+  const [cropApplying, setCropApplying] = useState(false);
   const [selectionTransforming, setSelectionTransforming] = useState(false);
   const [layerTransforming, setLayerTransforming] = useState(false);
   const [selectionRefining, setSelectionRefining] = useState<SelectionRefineMode | null>(null);
@@ -1130,6 +1178,7 @@ export default function Home() {
     curves,
     colorBalance,
     sharpenNoise,
+    filterEffects,
   } = adjustments;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = index.current > 0,
@@ -1198,6 +1247,54 @@ export default function Home() {
     setNotice('Foreground and background colors swapped');
   };
   const current = () => history.current[index.current];
+  const cancelCropPreview = () => {
+    if (!cropPreview) return;
+    cropPreviewId.current += 1;
+    setCropPreview(null);
+    void paint(current());
+    setNotice('Crop preview cancelled; document unchanged');
+  };
+  const applyCropPreview = async () => {
+    const preview = cropPreview;
+    if (!preview || cropApplying) return;
+    const f = current();
+    if (f !== preview.frame) {
+      setCropPreview(null);
+      void paint(f);
+      setNotice('Crop preview expired because the document changed');
+      return;
+    }
+    if (!preview.changed) {
+      setCropPreview(null);
+      setNotice('Crop already matches the canvas; document unchanged');
+      return;
+    }
+    const expectedPreviewId = cropPreviewId.current;
+    setCropApplying(true);
+    try {
+      const next = await transformFrameWithMasks(
+        f,
+        [1, 0, 0, 1, -preview.left, -preview.top],
+        assets.current,
+        preview.width,
+        preview.height,
+      );
+      if (current() !== f || cropPreviewId.current !== expectedPreviewId) {
+        void paint(current());
+        setNotice('Crop cancelled because the preview or document changed');
+        return;
+      }
+      const changed = commit({ ...next, measurements: cropMeasurements(f.measurements, preview) });
+      if (changed) {
+        setCropPreview(null);
+        setNotice(`Crop applied: ${preview.width} × ${preview.height} px`);
+      }
+    } catch {
+      setNotice('Could not apply crop preview');
+    } finally {
+      setCropApplying(false);
+    }
+  };
   const appendMeasurement = (annotation: MeasurementAnnotation) => {
     const f = current();
     if (commit({ ...f, measurements: [...(f.measurements || []), annotation] }))
@@ -1567,6 +1664,7 @@ export default function Home() {
     const group = groupForLayer(f, layer);
     if (
       group?.locked ||
+      (patch.groupId !== undefined && f.groups?.some((item) => item.id === patch.groupId && item.locked)) ||
       (layer.locked && !('locked' in patch) && !('visible' in patch))
     ) {
       setNotice('Unlock this layer before editing');
@@ -1581,8 +1679,7 @@ export default function Home() {
       commit({
         ...f,
         layers: f.layers.map((l) => (l.id === layer.id ? next : l)),
-      })
-    ) {
+      })) {
       setNotice('Layer updated');
       return true;
     }
@@ -2146,6 +2243,31 @@ export default function Home() {
     adjust({ curves: { ...curves, [channel]: points } });
   const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
+  const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) =>
+    adjust({ filterEffects: { ...filterEffects, ...patch } });
+  const chooseFilterEffect = (type: FilterEffectType, label: string) => {
+    if (
+      adjust({
+        filterEffects:
+          type === 'none'
+            ? { ...neutralFilterEffects }
+            : {
+                ...effectiveFilterEffects(filterEffects),
+                type,
+                amount:
+                  type === 'mosaic' || type === 'color-halftone' ? 85 : 70,
+                radius:
+                  type === 'mosaic' || type === 'color-halftone' ? 10 : 6,
+                angle: type === 'twirl' ? 75 : 0,
+              },
+      })
+    )
+      setNotice(
+        type === 'none'
+          ? 'Local filter effect cleared'
+          : `${label} applied; remains editable in Filter effects`,
+      );
+  };
   const chooseFilter = (filter: string, label: string) => {
     if (adjust({ filter }))
       setNotice(`${label} applied to selected layer; remains editable`);
@@ -2775,6 +2897,88 @@ export default function Home() {
       })
     )
       setNotice(stillUsed ? 'Layer removed from group' : 'Empty group removed');
+  };
+  const alignActiveLayer = (mode: AlignmentMode) => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) return;
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before aligning it');
+      return;
+    }
+    try {
+      const bounds = layerBounds(layer, assets.current),
+        delta = alignmentDelta(bounds, f.w, f.h, mode);
+      if (Math.abs(delta.x) < 0.000001 && Math.abs(delta.y) < 0.000001) {
+        setNotice('Layer is already aligned');
+        return;
+      }
+      const matrix = translateMatrix(layer.matrix, delta);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, matrix } : item,
+          ),
+        })
+      )
+        setNotice('Layer aligned to canvas');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not align layer');
+    }
+  };
+  const distributeGroupLayers = (axis: DistributionAxis) => {
+    const f = current(),
+      activeLayer = f.layers.find((item) => item.id === f.active),
+      groupId = activeLayer?.groupId,
+      group = groupId ? f.groups?.find((item) => item.id === groupId) : undefined;
+    if (!activeLayer || !group) {
+      setNotice('Select a grouped layer before distributing');
+      return;
+    }
+    if (group.locked) {
+      setNotice('Unlock this group before distributing');
+      return;
+    }
+    if (!group.visible) {
+      setNotice('Show this group before distributing');
+      return;
+    }
+    const eligible = f.layers.filter(
+      (item) =>
+        item.groupId === group.id && item.visible && !item.locked,
+    );
+    if (eligible.length < 3) {
+      setNotice('A group needs three visible unlocked layers to distribute');
+      return;
+    }
+    try {
+      const bounds = eligible.map((item) => ({ id: item.id, ...layerBounds(item, assets.current) })),
+        deltas = distributionDeltas(bounds, axis),
+        changed = eligible.some((item) => {
+          const delta = deltas[item.id];
+          return Math.abs(delta.x) > 0.000001 || Math.abs(delta.y) > 0.000001;
+        });
+      if (!changed) {
+        setNotice('Group layers are already evenly distributed');
+        return;
+      }
+      const layers = f.layers.map((item) => {
+        const delta = deltas[item.id];
+        if (!delta) return item;
+        return { ...item, matrix: translateMatrix(item.matrix, delta) };
+      });
+      if (commit({ ...f, layers }))
+        setNotice(
+          axis === 'horizontal'
+            ? 'Group layers distributed horizontally'
+            : 'Group layers distributed vertically',
+        );
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Could not distribute group layers',
+      );
+    }
   };
   const addPaint = () => {
     const f = current();
@@ -4729,24 +4933,19 @@ export default function Home() {
         });
       } else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
-      const left = Math.max(0, Math.floor(Math.min(p.x, g.start.x))),
-        top = Math.max(0, Math.floor(Math.min(p.y, g.start.y))),
-        w = Math.floor(Math.min(f.w - left, Math.abs(p.x - g.start.x))),
-        h = Math.floor(Math.min(f.h - top, Math.abs(p.y - g.start.y)));
-      if (w > 0 && h > 0) {
-        if (
-          commit(
-            await transformFrameWithMasks(
-              f,
-              [1, 0, 0, 1, -left, -top],
-              assets.current,
-              w,
-              h,
-            ),
-          )
-        )
-          setNotice('Canvas cropped; layer pixels retained');
-      } else void paint(f);
+      try {
+        const plan = planRectangularCrop(f.w, f.h, g.start, p);
+        // Keep the source frame and history untouched until the user confirms
+        // the crop.  This makes accidental touch drags recoverable and keeps
+        // export/undo semantics identical to every other committed edit.
+        cropPreviewId.current += 1;
+        setCropPreview({ frame: f, ...plan });
+        void paint(f);
+        setNotice(`Crop preview: ${plan.width} × ${plan.height} px · press Enter to apply`);
+      } catch {
+        void paint(f);
+        setNotice('Crop needs at least one pixel inside the image');
+      }
     } else if (g.tool === 'gradient' && g.moved && g.layer) {
       try {
         if (g.layer.kind !== 'raster') return;
@@ -5040,6 +5239,23 @@ export default function Home() {
         } else exitQuickMask();
         return;
       }
+      if (e.key === 'Escape' && cropPreview) {
+        e.preventDefault();
+        cancelCropPreview();
+        return;
+      }
+      if (e.key === 'Escape' && gesture.current?.tool === 'crop') {
+        e.preventDefault();
+        gesture.current = null;
+        void paint(current());
+        setNotice('Crop drag cancelled; document unchanged');
+        return;
+      }
+      if (e.key === 'Enter' && cropPreview && !typing) {
+        e.preventDefault();
+        void applyCropPreview();
+        return;
+      }
       if (gesture.current) return;
       if (e.key === 'Escape') {
         closeMenu(true);
@@ -5237,6 +5453,14 @@ export default function Home() {
     else if (command === 'delete-layer') remove();
     else if (command === 'group-layer') groupActiveLayer();
     else if (command === 'ungroup-layer') ungroupActiveLayer();
+    else if (command === 'align-left') alignActiveLayer('left');
+    else if (command === 'align-center-horizontal') alignActiveLayer('center-horizontal');
+    else if (command === 'align-right') alignActiveLayer('right');
+    else if (command === 'align-top') alignActiveLayer('top');
+    else if (command === 'align-center-vertical') alignActiveLayer('center-vertical');
+    else if (command === 'align-bottom') alignActiveLayer('bottom');
+    else if (command === 'distribute-horizontal') distributeGroupLayers('horizontal');
+    else if (command === 'distribute-vertical') distributeGroupLayers('vertical');
     else if (command === 'hide-layer') hideActiveLayer();
     else if (command === 'merge-visible') void mergeVisible();
     else if (command === 'flatten') void flattenImage();
@@ -5290,6 +5514,17 @@ export default function Home() {
     else if (command === 'auto-tone') void autoCorrect('tone');
     else if (command === 'auto-contrast') void autoCorrect('contrast');
     else if (command === 'auto-color') void autoCorrect('color');
+    else if (command === 'filter-clear-effect')
+      chooseFilterEffect('none', 'Filter effect');
+    else if (command === 'filter-field-blur')
+      chooseFilterEffect('field-blur', 'Field Blur');
+    else if (command === 'filter-tilt-shift')
+      chooseFilterEffect('tilt-shift', 'Tilt-Shift');
+    else if (command === 'filter-mosaic') chooseFilterEffect('mosaic', 'Mosaic');
+    else if (command === 'filter-color-halftone')
+      chooseFilterEffect('color-halftone', 'Color Halftone');
+    else if (command === 'filter-ripple') chooseFilterEffect('ripple', 'Ripple');
+    else if (command === 'filter-twirl') chooseFilterEffect('twirl', 'Twirl');
     else if (command === 'crop') {
       setTool('crop');
       setNotice('Drag on the image to crop');
@@ -5372,6 +5607,14 @@ export default function Home() {
       case 'auto-contrast':
       case 'auto-color':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'filter-field-blur':
+      case 'filter-tilt-shift':
+      case 'filter-mosaic':
+      case 'filter-color-halftone':
+      case 'filter-ripple':
+      case 'filter-twirl':
+      case 'filter-clear-effect':
+        return !layer || locked || !layer.visible;
       case 'quick-mask':
         return !frame;
       case 'save-selection':
@@ -5384,6 +5627,18 @@ export default function Home() {
         return !frame.selection;
       case 'free-transform':
         return !layer || locked;
+      case 'align-left':
+      case 'align-center-horizontal':
+      case 'align-right':
+      case 'align-top':
+      case 'align-center-vertical':
+      case 'align-bottom':
+        return !layer || locked;
+      case 'distribute-horizontal':
+      case 'distribute-vertical': {
+        const group = layer ? groupForLayer(frame, layer) : undefined;
+        return !group || group.locked || !group.visible || frame.layers.filter((item) => item.groupId === group.id && item.visible && !item.locked).length < 3;
+      }
       case 'grow-selection':
       case 'contract-selection':
         return !frame.selection;
@@ -5686,6 +5941,7 @@ export default function Home() {
               key={id}
               className={tool === id ? 'active' : ''}
               onClick={() => {
+                if (cropPreview) cancelCropPreview();
                 setTool(id);
                 setCloneSource(null);
                 setNotice(`${label} tool selected`);
@@ -5746,6 +6002,32 @@ export default function Home() {
               <b>Drop your photo here</b>
               <span>JPG, PNG, WEBP and more</span>
             </div>
+          )}
+          {cropPreview && (
+            <fieldset
+              className="crop-preview-controls"
+              aria-label="Crop preview controls"
+              data-testid="crop-preview-controls"
+            >
+              <span>
+                Crop preview · {cropPreview.width} × {cropPreview.height} px
+              </span>
+              <button
+                type="button"
+                data-testid="crop-apply"
+                disabled={cropApplying}
+                onClick={() => void applyCropPreview()}
+              >
+                {cropApplying ? 'Applying…' : 'Apply crop'}
+              </button>
+              <button
+                type="button"
+                data-testid="crop-cancel"
+                onClick={cancelCropPreview}
+              >
+                Cancel
+              </button>
+            </fieldset>
           )}
           <div className="canvas-wrap" style={{ width: `${zoom}%` }}>
             <canvas
@@ -5818,6 +6100,41 @@ export default function Home() {
                 )}
               </svg>
             ) : null}
+            {cropPreview && (
+              <svg
+                className="crop-preview-overlay"
+                data-testid="crop-preview-overlay"
+                viewBox={`0 0 ${cropPreview.frame.w} ${cropPreview.frame.h}`}
+                preserveAspectRatio="none"
+                aria-label={`Crop preview ${cropPreview.width} by ${cropPreview.height} pixels`}
+              >
+                <rect x="0" y="0" width={cropPreview.frame.w} height={cropPreview.top} />
+                <rect x="0" y={cropPreview.top} width={cropPreview.left} height={cropPreview.height} />
+                <rect
+                  x={cropPreview.left + cropPreview.width}
+                  y={cropPreview.top}
+                  width={Math.max(0, cropPreview.frame.w - cropPreview.left - cropPreview.width)}
+                  height={cropPreview.height}
+                />
+                <rect
+                  x="0"
+                  y={cropPreview.top + cropPreview.height}
+                  width={cropPreview.frame.w}
+                  height={Math.max(0, cropPreview.frame.h - cropPreview.top - cropPreview.height)}
+                />
+                <rect
+                  className="crop-preview-border"
+                  x={cropPreview.left}
+                  y={cropPreview.top}
+                  width={cropPreview.width}
+                  height={cropPreview.height}
+                />
+                <line className="crop-preview-guide" x1={cropPreview.left + cropPreview.width / 3} y1={cropPreview.top} x2={cropPreview.left + cropPreview.width / 3} y2={cropPreview.top + cropPreview.height} />
+                <line className="crop-preview-guide" x1={cropPreview.left + cropPreview.width * 2 / 3} y1={cropPreview.top} x2={cropPreview.left + cropPreview.width * 2 / 3} y2={cropPreview.top + cropPreview.height} />
+                <line className="crop-preview-guide" x1={cropPreview.left} y1={cropPreview.top + cropPreview.height / 3} x2={cropPreview.left + cropPreview.width} y2={cropPreview.top + cropPreview.height / 3} />
+                <line className="crop-preview-guide" x1={cropPreview.left} y1={cropPreview.top + cropPreview.height * 2 / 3} x2={cropPreview.left + cropPreview.width} y2={cropPreview.top + cropPreview.height * 2 / 3} />
+              </svg>
+            )}
           </div>
           <div className="zoom">
             <button
@@ -5856,6 +6173,8 @@ export default function Home() {
               groupActive={groupActiveLayer}
               ungroupActive={ungroupActiveLayer}
               editGroup={editGroup}
+              align={alignActiveLayer}
+              distribute={distributeGroupLayers}
               rasterize={() => void rasterize()}
               importImage={() => layerFile.current?.click()}
               createMask={createMaskFromSelection}
@@ -6421,6 +6740,85 @@ export default function Home() {
                 </button>
               ))}
             </div>
+          </section>
+          <section className="panel" aria-label="Filter effects">
+            <Title
+              icon={Sparkles}
+              text="Filter effects"
+              action="Clear"
+              onClick={() => chooseFilterEffect('none', 'Filter effect')}
+            />
+            <select
+              className="text-input"
+              aria-label="Filter effect"
+              value={filterEffects.type}
+              onChange={(event) =>
+                chooseFilterEffect(
+                  event.target.value as FilterEffectType,
+                  event.target.options[event.target.selectedIndex]?.text ||
+                    'Filter effect',
+                )
+              }
+            >
+              {FILTER_EFFECT_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type === 'none'
+                    ? 'None'
+                    : type
+                        .split('-')
+                        .map((part) => part[0].toUpperCase() + part.slice(1))
+                        .join(' ')}
+                </option>
+              ))}
+            </select>
+            {filterEffects.type !== 'none' && (
+              <>
+                <Slider
+                  label="Effect amount"
+                  value={filterEffects.amount}
+                  min={0}
+                  max={100}
+                  set={(value) => setFilterEffects({ amount: value })}
+                />
+                <Slider
+                  label={
+                    filterEffects.type === 'mosaic' ||
+                    filterEffects.type === 'color-halftone'
+                      ? 'Cell size'
+                      : 'Radius'
+                  }
+                  value={filterEffects.radius}
+                  min={1}
+                  max={64}
+                  set={(value) => setFilterEffects({ radius: value })}
+                  suffix=" px"
+                />
+                {filterEffects.type === 'twirl' && (
+                  <Slider
+                    label="Twirl angle"
+                    value={filterEffects.angle}
+                    min={-180}
+                    max={180}
+                    set={(value) => setFilterEffects({ angle: value })}
+                    suffix="°"
+                  />
+                )}
+                {filterEffects.type === 'tilt-shift' && (
+                  <Slider
+                    label="Focus height"
+                    value={Math.round(filterEffects.centerY * 100)}
+                    min={0}
+                    max={100}
+                    set={(value) => setFilterEffects({ centerY: value / 100 })}
+                    suffix="%"
+                  />
+                )}
+                <p className="adjust-note">
+                  This effect stays editable in the project and is applied to
+                  the rendered layer. The original asset remains unchanged.
+                </p>
+              </>
+            )}
           </section>
           <section className="panel cloud-panel">
             <h3>My projects</h3>
