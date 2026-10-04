@@ -288,6 +288,8 @@ type Command =
   | 'filter-mono'
   | 'filter-warm'
   | 'filter-cool'
+  | 'filter-box-blur'
+  | 'filter-gaussian-blur'
   | 'filter-field-blur'
   | 'filter-tilt-shift'
   | 'filter-mosaic'
@@ -619,8 +621,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Tilt-Shift…', command: 'filter-tilt-shift' },
     { label: 'Average', command: 'noop', disabled: true },
     { label: 'Blur More', command: 'noop', disabled: true },
-    { label: 'Box Blur…', command: 'noop', disabled: true },
-    { label: 'Gaussian Blur…', command: 'noop', disabled: true },
+    { label: 'Box Blur…', command: 'filter-box-blur' },
+    { label: 'Gaussian Blur…', command: 'filter-gaussian-blur' },
     { label: 'Motion Blur…', command: 'noop', disabled: true },
     { label: 'Radial Blur…', command: 'noop', disabled: true },
     { label: 'Smart Blur…', command: 'noop', disabled: true },
@@ -2255,7 +2257,11 @@ export default function Home() {
                 ...effectiveFilterEffects(filterEffects),
                 type,
                 amount:
-                  type === 'mosaic' || type === 'color-halftone' ? 85 : 70,
+                  type === 'mosaic' || type === 'color-halftone'
+                    ? 85
+                    : type === 'box-blur' || type === 'gaussian-blur'
+                      ? 85
+                      : 70,
                 radius:
                   type === 'mosaic' || type === 'color-halftone' ? 10 : 6,
                 angle: type === 'twirl' ? 75 : 0,
@@ -5516,6 +5522,10 @@ export default function Home() {
     else if (command === 'auto-color') void autoCorrect('color');
     else if (command === 'filter-clear-effect')
       chooseFilterEffect('none', 'Filter effect');
+    else if (command === 'filter-box-blur')
+      chooseFilterEffect('box-blur', 'Box Blur');
+    else if (command === 'filter-gaussian-blur')
+      chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
     else if (command === 'filter-field-blur')
       chooseFilterEffect('field-blur', 'Field Blur');
     else if (command === 'filter-tilt-shift')
@@ -5608,6 +5618,8 @@ export default function Home() {
       case 'auto-color':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'filter-field-blur':
+      case 'filter-box-blur':
+      case 'filter-gaussian-blur':
       case 'filter-tilt-shift':
       case 'filter-mosaic':
       case 'filter-color-halftone':
@@ -6785,6 +6797,9 @@ export default function Home() {
                     filterEffects.type === 'mosaic' ||
                     filterEffects.type === 'color-halftone'
                       ? 'Cell size'
+                      : filterEffects.type === 'box-blur' ||
+                          filterEffects.type === 'gaussian-blur'
+                        ? 'Blur radius'
                       : 'Radius'
                   }
                   value={filterEffects.radius}

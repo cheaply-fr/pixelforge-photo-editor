@@ -9,6 +9,8 @@
 
 export const FILTER_EFFECT_TYPES = [
   'none',
+  'box-blur',
+  'gaussian-blur',
   'field-blur',
   'tilt-shift',
   'mosaic',
@@ -252,6 +254,86 @@ function applyBoxBlur(
   }
 }
 
+/**
+ * Apply a separable Gaussian kernel while weighting colour by alpha.
+ *
+ * The source alpha channel is never sampled into the output. Fully
+ * transparent pixels therefore retain their hidden RGB padding and partially
+ * transparent edges cannot introduce dark halos. The kernel is normalized at
+ * the image edge so a tiny image remains stable for every valid radius.
+ */
+function applyGaussianBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius))),
+    sigma = Math.max(0.5, bounded / 3),
+    kernel = new Float32Array(bounded * 2 + 1),
+    count = width * height;
+  let kernelTotal = 0;
+  for (let offset = -bounded; offset <= bounded; offset += 1) {
+    const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
+    kernel[offset + bounded] = weight;
+    kernelTotal += weight;
+  }
+  for (let index = 0; index < kernel.length; index += 1)
+    kernel[index] /= kernelTotal;
+
+  const horizontal = new Float32Array(count),
+    horizontalWeight = new Float32Array(count);
+  for (let channel = 0; channel < 3; channel += 1) {
+    // Horizontal pass. At an edge the available kernel weights are
+    // renormalized through the accumulated alpha-weight, avoiding a dark
+    // border without inventing samples outside the source image.
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        let sum = 0;
+        let weight = 0;
+        for (let offset = -bounded; offset <= bounded; offset += 1) {
+          const sx = x + offset;
+          if (sx < 0 || sx >= width) continue;
+          const sourceOffset = (y * width + sx) * 4,
+            alpha = source[sourceOffset + 3] / 255,
+            kernelWeight = kernel[offset + bounded];
+          sum += source[sourceOffset + channel] * alpha * kernelWeight;
+          weight += alpha * kernelWeight;
+        }
+        const index = y * width + x;
+        horizontal[index] = sum;
+        horizontalWeight[index] = weight;
+      }
+    }
+
+    // Vertical pass. Keep the original alpha and only replace RGB on source
+    // pixels that contain coverage; transparent pixels remain byte-for-byte.
+    for (let x = 0; x < width; x += 1) {
+      for (let y = 0; y < height; y += 1) {
+        let sum = 0;
+        let weight = 0;
+        for (let offset = -bounded; offset <= bounded; offset += 1) {
+          const sy = y + offset;
+          if (sy < 0 || sy >= height) continue;
+          const index = sy * width + x,
+            kernelWeight = kernel[offset + bounded];
+          sum += horizontal[index] * kernelWeight;
+          weight += horizontalWeight[index] * kernelWeight;
+        }
+        const index = y * width + x,
+          outputOffset = index * 4,
+          mix = clamp(strength, 0, 1);
+        if (source[outputOffset + 3] && weight > 0)
+          output[outputOffset + channel] = clampByte(
+            source[outputOffset + channel] * (1 - mix) + (sum / weight) * mix,
+          );
+      }
+    }
+  }
+}
+
 function applyMosaic(
   source: Uint8ClampedArray,
   width: number,
@@ -374,12 +456,14 @@ export function applyFilterEffectsPixels(
   if (isNeutralFilterEffects(effect)) return new Uint8ClampedArray(data);
   const output = new Uint8ClampedArray(data);
   const strength = effect.amount / 100;
-  if (effect.type === 'mosaic') {
+  if (effect.type === 'box-blur' || effect.type === 'field-blur') {
+    applyBoxBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'gaussian-blur') {
+    applyGaussianBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'mosaic') {
     applyMosaic(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'color-halftone') {
     applyColorHalftone(data, width, height, effect.radius, output, strength);
-  } else if (effect.type === 'field-blur') {
-    applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'tilt-shift') {
     const center = effect.centerY * (height - 1),
       band = Math.max(1, height * 0.18),

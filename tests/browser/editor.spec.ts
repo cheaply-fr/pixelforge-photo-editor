@@ -776,7 +776,7 @@ test('Photoshop menu families expose working commands and label planned actions'
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await expect(
     page.getByRole('menuitem', { name: /^Gaussian Blur/ }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await page.getByRole('menuitem', { name: 'Vivid', exact: true }).click();
   await expect(
     page.getByRole('button', { name: 'Vivid filter', exact: true }),

@@ -44,6 +44,83 @@ test('field blur is deterministic, source-safe and alpha-safe', () => {
   assert.notDeepEqual(pixel(first, 9, 1, 0), pixel(source, 9, 1, 0));
 });
 
+test('box and Gaussian blur are deterministic editable effects with bounded metadata', () => {
+  const normalized = effectiveFilterEffects({
+    type: 'gaussian-blur',
+    amount: 140,
+    radius: 99,
+  });
+  assert.deepEqual(
+    {
+      type: normalized.type,
+      amount: normalized.amount,
+      radius: normalized.radius,
+    },
+    { type: 'gaussian-blur', amount: 100, radius: 64 },
+  );
+  assert.equal(validFilterEffects(normalized), true);
+  assert.equal(
+    validFilterEffects({ ...normalized, type: 'box-blur', radius: 1.5 }),
+    false,
+  );
+
+  const source = rgba(9, 1, (x) => {
+    if (x === 0) return [77, 66, 55, 0];
+    return [x === 4 ? 255 : 0, 0, 0, 255];
+  });
+  const original = source.slice();
+  const box = applyFilterEffectsPixels(source, 9, 1, {
+    type: 'box-blur',
+    amount: 100,
+    radius: 2,
+  });
+  const gaussian = applyFilterEffectsPixels(source, 9, 1, {
+    type: 'gaussian-blur',
+    amount: 100,
+    radius: 2,
+  });
+  assert.deepEqual(source, original);
+  assert.deepEqual(box, applyFilterEffectsPixels(source, 9, 1, {
+    type: 'box-blur',
+    amount: 100,
+    radius: 2,
+  }));
+  assert.deepEqual(gaussian, applyFilterEffectsPixels(source, 9, 1, {
+    type: 'gaussian-blur',
+    amount: 100,
+    radius: 2,
+  }));
+  assert.notDeepEqual(box, gaussian);
+  assert.ok(box[(4 * 4) + 0] < 255);
+  assert.ok(gaussian[(3 * 4) + 0] > 0);
+  assert.equal(pixel(gaussian, 9, 0, 0)[3], 0);
+  assert.deepEqual(pixel(gaussian, 9, 0, 0).slice(0, 3), [77, 66, 55]);
+  for (let x = 1; x < 9; x += 1)
+    assert.equal(pixel(gaussian, 9, x, 0)[3], 255);
+});
+
+test('blur identity and tiny-canvas boundaries preserve source and alpha', () => {
+  const source = new Uint8ClampedArray([12, 34, 56, 127]);
+  for (const type of ['box-blur', 'gaussian-blur']) {
+    assert.deepEqual(
+      applyFilterEffectsPixels(source, 1, 1, { type, amount: 100, radius: 64 }),
+      source,
+    );
+    assert.deepEqual(
+      applyFilterEffectsPixels(source, 1, 1, { type, amount: 100, radius: 0 }),
+      source,
+    );
+  }
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 1, 1, {
+      type: 'gaussian-blur',
+      amount: 0,
+      radius: 64,
+    }),
+    source,
+  );
+});
+
 test('tilt shift keeps the focus band sharper than distant pixels', () => {
   const source = rgba(15, 15, (x, y) => [(x * 17 + y * 3) % 256, (x * 5 + y * 21) % 256, (x * 11 + y * 13) % 256, 255]);
   const result = applyFilterEffectsPixels(source, 15, 15, { type: 'tilt-shift', amount: 100, radius: 2, centerY: 0.5 });

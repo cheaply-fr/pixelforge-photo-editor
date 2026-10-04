@@ -84,6 +84,47 @@ test('Field Blur is a nondestructive menu effect with source-safe persistence', 
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
 });
 
+test('Box Blur and Gaussian Blur are editable, source-safe and alpha-preserving on desktop and mobile', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const sourcePixel = await pixel(page, 1, 0);
+
+  for (const [menuLabel, type, notice] of [
+    ['Box Blur…', 'box-blur', 'Box Blur applied; remains editable in Filter effects'],
+    ['Gaussian Blur…', 'gaussian-blur', 'Gaussian Blur applied; remains editable in Filter effects'],
+  ] as const) {
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    const command = page.getByRole('menuitem', { name: menuLabel, exact: true });
+    await expect(command).toBeEnabled();
+    await command.click();
+    await expect(page.getByText(notice, { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue(type);
+    await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('6');
+    await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+    await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('7');
+    await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
+    expect((await pixel(page, 0, 0))[3]).toBe(0);
+
+    const adjusted = await downloadProject(page);
+    const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+    expect(adjustedLayer.asset).toBe(sourceAsset);
+    expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+    expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+      type,
+      amount: 85,
+      radius: 7,
+    });
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+    await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+    await expect.poll(() => pixel(page, 1, 0)).toEqual(sourcePixel);
+  }
+});
+
 test('Mosaic, Tilt-Shift, Ripple and Twirl commands expose editable effect metadata', async ({ page }) => {
   await importPixels(page);
   for (const [menuLabel, type] of [
