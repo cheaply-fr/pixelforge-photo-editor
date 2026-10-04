@@ -1,0 +1,408 @@
+/**
+ * Deterministic, nondestructive local Filter menu effects.
+ *
+ * Effects operate on an RGBA render buffer and never mutate the input. They
+ * intentionally keep alpha byte-for-byte stable, and leave transparent RGB
+ * padding untouched. The document stores this small parameter object so a
+ * filter remains editable and source assets remain immutable.
+ */
+
+export const FILTER_EFFECT_TYPES = [
+  'none',
+  'field-blur',
+  'tilt-shift',
+  'mosaic',
+  'color-halftone',
+  'ripple',
+  'twirl',
+] as const;
+export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
+
+export type FilterEffects = {
+  type: FilterEffectType;
+  /** Strength as a percentage. */
+  amount: number;
+  /** Blur radius or mosaic cell size, in source pixels. */
+  radius: number;
+  /** Rotation for the directional blur family, in degrees. */
+  angle: number;
+  /** Normalized effect centre, in the inclusive range 0..1. */
+  centerX: number;
+  centerY: number;
+  /** Stable seed reserved for deterministic procedural variants. */
+  seed: number;
+};
+
+export const neutralFilterEffects: FilterEffects = {
+  type: 'none',
+  amount: 0,
+  radius: 0,
+  angle: 0,
+  centerX: 0.5,
+  centerY: 0.5,
+  seed: 0,
+};
+
+const finite = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
+const clampByte = (value: number) => clamp(Math.round(value), 0, 255);
+
+/** Normalize a partial metadata record at every persistence/render boundary. */
+export function effectiveFilterEffects(
+  value: Partial<FilterEffects> | undefined,
+): FilterEffects {
+  const source = (value || {}) as Partial<FilterEffects>;
+  const type = FILTER_EFFECT_TYPES.includes(source.type as FilterEffectType)
+    ? (source.type as FilterEffectType)
+    : neutralFilterEffects.type;
+  const amount = finite(source.amount)
+    ? clamp(source.amount, 0, 100)
+    : neutralFilterEffects.amount;
+  const radius = finite(source.radius)
+    ? clamp(Math.round(source.radius), 0, 64)
+    : neutralFilterEffects.radius;
+  const angle = finite(source.angle)
+    ? clamp(source.angle, -180, 180)
+    : neutralFilterEffects.angle;
+  const centerX = finite(source.centerX)
+    ? clamp(source.centerX, 0, 1)
+    : neutralFilterEffects.centerX;
+  const centerY = finite(source.centerY)
+    ? clamp(source.centerY, 0, 1)
+    : neutralFilterEffects.centerY;
+  const seed = finite(source.seed)
+    ? Math.trunc(source.seed) >>> 0
+    : neutralFilterEffects.seed;
+  return { type, amount, radius, angle, centerX, centerY, seed };
+}
+
+export function validFilterEffects(value: unknown): value is FilterEffects {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const effect = value as Partial<FilterEffects>;
+  return (
+    FILTER_EFFECT_TYPES.includes(effect.type as FilterEffectType) &&
+    finite(effect.amount) &&
+    effect.amount >= 0 &&
+    effect.amount <= 100 &&
+    finite(effect.radius) &&
+    Number.isInteger(effect.radius) &&
+    effect.radius >= 0 &&
+    effect.radius <= 64 &&
+    finite(effect.angle) &&
+    effect.angle >= -180 &&
+    effect.angle <= 180 &&
+    finite(effect.centerX) &&
+    effect.centerX >= 0 &&
+    effect.centerX <= 1 &&
+    finite(effect.centerY) &&
+    effect.centerY >= 0 &&
+    effect.centerY <= 1 &&
+    finite(effect.seed) &&
+    Number.isInteger(effect.seed) &&
+    effect.seed >= 0 &&
+    effect.seed <= 0xffffffff
+  );
+}
+
+export function isNeutralFilterEffects(
+  value: Partial<FilterEffects> | undefined,
+): boolean {
+  const effect = effectiveFilterEffects(value);
+  return (
+    effect.type === 'none' ||
+    effect.amount === 0 ||
+    (effect.type === 'twirl' && effect.angle === 0) ||
+    (effect.type !== 'twirl' && effect.radius === 0)
+  );
+}
+
+function validateDimensions(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+): void {
+  if (!(data instanceof Uint8ClampedArray))
+    throw new TypeError('Filter data must be a Uint8ClampedArray');
+  if (
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > 16000 ||
+    height > 16000 ||
+    width * height > 16000000
+  )
+    throw new RangeError('Filter dimensions are outside supported limits');
+  if (data.length !== width * height * 4)
+    throw new RangeError('Filter data length does not match dimensions');
+}
+
+function sourcePixel(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): [number, number, number, number] {
+  const sx = clamp(Math.round(x), 0, width - 1),
+    sy = clamp(Math.round(y), 0, height - 1),
+    offset = (sy * width + sx) * 4;
+  return [
+    source[offset],
+    source[offset + 1],
+    source[offset + 2],
+    source[offset + 3],
+  ];
+}
+
+function blendPixel(
+  output: Uint8ClampedArray,
+  offset: number,
+  source: [number, number, number, number],
+  strength: number,
+): void {
+  if (source[3] === 0) return;
+  output[offset] = clampByte(output[offset] * (1 - strength) + source[0] * strength);
+  output[offset + 1] = clampByte(output[offset + 1] * (1 - strength) + source[1] * strength);
+  output[offset + 2] = clampByte(output[offset + 2] * (1 - strength) + source[2] * strength);
+}
+
+function applyBoxBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+  selector?: (x: number, y: number) => number,
+): void {
+  // Separable weighted running sums are linear in pixel count, independent
+  // of radius. Alpha weighting avoids invisible padding causing dark halos.
+  const bounded = Math.max(1, Math.min(64, Math.round(radius))),
+    count = width * height,
+    horizontalWeight = new Float32Array(count),
+    horizontal = new Float32Array(count);
+  for (let channel = 0; channel < 3; channel += 1) {
+    for (let y = 0; y < height; y += 1) {
+      let sum = 0,
+        weight = 0,
+        left = 0,
+        right = Math.min(width - 1, bounded);
+      for (let x = left; x <= right; x += 1) {
+        const offset = (y * width + x) * 4,
+          alpha = source[offset + 3] / 255;
+        sum += source[offset + channel] * alpha;
+        weight += alpha;
+      }
+      for (let x = 0; x < width; x += 1) {
+        const index = y * width + x;
+        horizontal[index] = sum;
+        horizontalWeight[index] = weight;
+        const nextLeft = Math.max(0, x + 1 - bounded),
+          nextRight = Math.min(width - 1, x + 1 + bounded);
+        while (left < nextLeft) {
+          const offset = (y * width + left) * 4,
+            alpha = source[offset + 3] / 255;
+          sum -= source[offset + channel] * alpha;
+          weight -= alpha;
+          left += 1;
+        }
+        while (right < nextRight) {
+          right += 1;
+          const offset = (y * width + right) * 4,
+            alpha = source[offset + 3] / 255;
+          sum += source[offset + channel] * alpha;
+          weight += alpha;
+        }
+      }
+    }
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0,
+        weight = 0,
+        top = 0,
+        bottom = Math.min(height - 1, bounded);
+      for (let y = top; y <= bottom; y += 1) {
+        sum += horizontal[y * width + x];
+        weight += horizontalWeight[y * width + x];
+      }
+      for (let y = 0; y < height; y += 1) {
+        const offset = (y * width + x) * 4,
+          mix = clamp(strength * (selector?.(x, y) ?? 1), 0, 1);
+        if (source[offset + 3] && weight > 0) {
+          output[offset + channel] = clampByte(
+            source[offset + channel] * (1 - mix) + (sum / weight) * mix,
+          );
+        }
+        const nextTop = Math.max(0, y + 1 - bounded),
+          nextBottom = Math.min(height - 1, y + 1 + bounded);
+        while (top < nextTop) {
+          sum -= horizontal[top * width + x];
+          weight -= horizontalWeight[top * width + x];
+          top += 1;
+        }
+        while (bottom < nextBottom) {
+          bottom += 1;
+          sum += horizontal[bottom * width + x];
+          weight += horizontalWeight[bottom * width + x];
+        }
+      }
+    }
+  }
+}
+
+function applyMosaic(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const cell = Math.max(2, Math.min(64, Math.round(radius)));
+  for (let originY = 0; originY < height; originY += cell) {
+    for (let originX = 0; originX < width; originX += cell) {
+      const right = Math.min(width, originX + cell),
+        bottom = Math.min(height, originY + cell);
+      let red = 0,
+        green = 0,
+        blue = 0,
+        weight = 0;
+      for (let y = originY; y < bottom; y += 1) {
+        for (let x = originX; x < right; x += 1) {
+          const offset = (y * width + x) * 4,
+            alpha = source[offset + 3] / 255;
+          red += source[offset] * alpha;
+          green += source[offset + 1] * alpha;
+          blue += source[offset + 2] * alpha;
+          weight += alpha;
+        }
+      }
+      if (!weight) continue;
+      const average: [number, number, number, number] = [
+        red / weight, green / weight, blue / weight, 255,
+      ];
+      for (let y = originY; y < bottom; y += 1) {
+        for (let x = originX; x < right; x += 1) {
+          const offset = (y * width + x) * 4;
+          if (source[offset + 3]) blendPixel(output, offset, average, strength);
+        }
+      }
+    }
+  }
+}
+
+function applyColorHalftone(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const cell = Math.max(2, Math.min(32, Math.round(radius)));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4,
+        alpha = source[offset + 3];
+      if (alpha === 0) continue;
+      const originX = Math.floor(x / cell) * cell,
+        originY = Math.floor(y / cell) * cell,
+        sample = sourcePixel(source, width, height, originX + cell / 2, originY + cell / 2),
+        distance = Math.hypot((x - (originX + cell / 2)) / cell, (y - (originY + cell / 2)) / cell),
+        luminance = (0.2126 * sample[0] + 0.7152 * sample[1] + 0.0722 * sample[2]) / 255,
+        ink = distance < (1 - luminance) * 0.82 ? 1 : 0,
+        target: [number, number, number, number] = ink ? [sample[0], sample[1], sample[2], alpha] : [255, 255, 255, alpha];
+      blendPixel(output, offset, target, strength);
+    }
+  }
+}
+
+function applyDistort(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const amount = effect.amount / 100,
+    centerX = effect.centerX * (width - 1),
+    centerY = effect.centerY * (height - 1),
+    radius = Math.max(1, Math.min(width, height) * 0.7),
+    angle = (effect.angle * Math.PI) / 180;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const dx = x - centerX,
+        dy = y - centerY,
+        distance = Math.hypot(dx, dy),
+        normalized = clamp(distance / radius, 0, 1),
+        offset = (y * width + x) * 4;
+      if (source[offset + 3] === 0) continue;
+      let sampleX = x,
+        sampleY = y;
+      if (effect.type === 'twirl' && distance < radius) {
+        const turn = angle * amount * (1 - normalized) * (1 - normalized),
+          cosine = Math.cos(turn),
+          sine = Math.sin(turn);
+        sampleX = centerX + dx * cosine - dy * sine;
+        sampleY = centerY + dx * sine + dy * cosine;
+      } else if (effect.type === 'ripple') {
+        const wave = Math.sin(distance / Math.max(1, effect.radius || 8) * Math.PI * 2) * amount * Math.max(1, effect.radius || 8);
+        sampleX = x + (dx / Math.max(1, distance)) * wave;
+        sampleY = y + (dy / Math.max(1, distance)) * wave;
+      }
+      const sample = sourcePixel(source, width, height, sampleX, sampleY);
+      if (sample[3] === 0) continue;
+      output[offset] = sample[0];
+      output[offset + 1] = sample[1];
+      output[offset + 2] = sample[2];
+      output[offset + 3] = source[offset + 3];
+    }
+  }
+}
+
+/** Apply a Filter menu effect to an RGBA buffer without mutating its input. */
+export function applyFilterEffectsPixels(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  value: Partial<FilterEffects> | undefined,
+): Uint8ClampedArray {
+  validateDimensions(data, width, height);
+  const effect = effectiveFilterEffects(value);
+  if (isNeutralFilterEffects(effect)) return new Uint8ClampedArray(data);
+  const output = new Uint8ClampedArray(data);
+  const strength = effect.amount / 100;
+  if (effect.type === 'mosaic') {
+    applyMosaic(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'color-halftone') {
+    applyColorHalftone(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'field-blur') {
+    applyBoxBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'tilt-shift') {
+    const center = effect.centerY * (height - 1),
+      band = Math.max(1, height * 0.18),
+      maxDistance = Math.max(1, height * 0.5);
+    applyBoxBlur(data, width, height, effect.radius, output, strength, (_x, y) =>
+      clamp((Math.abs(y - center) - band) / maxDistance, 0, 1),
+    );
+  } else {
+    applyDistort(data, width, height, effect, output);
+  }
+  return output;
+}
+
+/** Apply an effect to an existing canvas surface, preserving its dimensions. */
+export function applyFilterEffects(
+  canvas: HTMLCanvasElement,
+  value: Partial<FilterEffects> | undefined,
+): HTMLCanvasElement {
+  const context = canvas.getContext('2d');
+  if (!context) return canvas;
+  const image = context.getImageData(0, 0, canvas.width, canvas.height),
+    result = applyFilterEffectsPixels(image.data, canvas.width, canvas.height, value);
+  image.data.set(result);
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
