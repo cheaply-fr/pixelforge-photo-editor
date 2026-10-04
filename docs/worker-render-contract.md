@@ -94,6 +94,43 @@ partial pixels, or increase the 16 MP safety limit. Overlap remains explicit so
 blur, healing and other neighbourhood effects can adopt the same plan only
 after their edge and compositing rules are tested.
 
+## Tiled render planning protocol
+
+The first document-render planning slice is now implemented in
+[`tiledRender.ts`](../src/tiledRender.ts). It is deliberately self-contained:
+the visible document renderer still uses the full-frame result protocol above.
+The module provides a versioned, pixel-free request envelope:
+
+```ts
+{
+  kind: 'render-tiles',
+  version: 1,
+  id: 42,
+  width: 2400,
+  height: 1600,
+  tileSize: 512,
+  overlap: 16,
+  maxBatchBytes: 16777216,
+}
+```
+
+Only 256 px and 512 px tiles are accepted for document planning. Every request
+is rebuilt from its dimensions and options at the worker boundary; caller
+supplied rectangles are never trusted. The shared planner clips overlap at
+image edges, emits inner write rectangles in row-major order, and validates
+the existing 16 MP, 16,000 px edge, tile-count, 16 MiB batch and 64 MiB hard
+limits. `runTiledRender` is a cancellable callback runner for pure effects and
+future worker adapters. It checks the abort signal before every tile and emits
+monotonic completed-tile progress only after a callback resolves.
+
+This slice does not allocate pixel buffers, composite partial results, or
+change the editor's current render path. A future document adapter must use
+the expanded read rectangle for neighbourhood effects, write only the inner
+rectangle, and compare tiled output against the existing full-frame renderer
+before enabling a visible path. The existing byte-bounded `TileCache` remains
+the cache primitive; cache policy and eviction telemetry need device-level
+measurements before they become a rendering release gate.
+
 ## Fallback and interactive edits
 
 The renderer uses the existing main-thread `renderFrame` path when worker
@@ -113,8 +150,11 @@ rendering:
 * The worker allocates a full output surface and may allocate additional
   full-frame surfaces for masks, levels, curves and other effects. Peak memory
   therefore remains bounded by the existing document limits, not by tiles.
-* The worker is created per render. A persistent worker pool, prioritisation,
-  tile cache, overlap scheduling and memory-pressure eviction are future work.
+* The worker is created per render. A persistent worker pool and prioritisation
+  are future work. Tile overlap scheduling, the byte-bounded cache primitive,
+  and cancellable planning runner now have pure coverage, but document
+  compositing and device-level memory-pressure eviction measurements remain
+  pending.
 * Progress currently counts full-frame layer passes. It is not a pixel or tile
   percentage and does not imply that the worker is streaming a partial canvas.
 * Interactive override canvases stay on the main-thread fallback. A full
@@ -127,6 +167,7 @@ rendering:
   low-memory recovery are release gates still pending. Current CI timings are
   diagnostic and do not define a supported device profile.
 
-The tiled render cache and neighborhood-effect overlap rules remain a separate
-Phase 6 scale milestone. Until those gates pass, large-image work remains
-opt-in and the 16 MP, 16,000-pixel-edge and layer/history limits stay in force.
+The tiled document compositor and neighborhood-effect parity rules remain a
+separate Phase 6 scale milestone. Until those gates pass, large-image work
+remains opt-in and the 16 MP, 16,000-pixel-edge and layer/history limits stay
+in force.
