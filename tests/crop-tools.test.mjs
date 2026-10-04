@@ -134,6 +134,7 @@ test('slice plans sanitize names, preserve order and round-trip through JSON', (
   ]);
   assert.deepEqual(plan.slices.map((slice) => slice.name), ['Hero-image', 'slice-2']);
   assert.deepEqual(JSON.parse(JSON.stringify(plan)), plan);
+  assert.throws(() => planSlices(4, 3, [{ id: ' ', name: 'bad', x: 0, y: 0, width: 1, height: 1 }]), /non-empty/);
   assert.throws(() => planSlices(4, 3, [{ id: 'a', name: 'a', x: 3, y: 0, width: 2, height: 1 }]), /inside/);
   assert.throws(() => planSlices(4, 3, [{ id: 'a', name: 'a', x: 0, y: 0, width: 1, height: 1 }, { id: 'a', name: 'b', x: 1, y: 0, width: 1, height: 1 }]), /unique/);
 });

@@ -386,7 +386,7 @@ export function planSlices(canvasWidth: number, canvasHeight: number, slices: Sl
   if (!Array.isArray(slices) || slices.length === 0 || slices.length > 256) throw new Error('Provide between 1 and 256 slices');
   const ids = new Set<string>();
   const normalized = slices.map((slice, index) => {
-    if (!slice || typeof slice.id !== 'string' || ids.has(slice.id)) throw new Error('Slice ids must be non-empty and unique');
+    if (!slice || typeof slice.id !== 'string' || !slice.id.trim() || ids.has(slice.id)) throw new Error('Slice ids must be non-empty and unique');
     ids.add(slice.id);
     if (![slice.x, slice.y, slice.width, slice.height].every(Number.isInteger) || slice.x < 0 || slice.y < 0 || slice.width < 1 || slice.height < 1 || slice.x + slice.width > canvasWidth || slice.y + slice.height > canvasHeight)
       throw new Error('Slice rectangles must be whole, non-empty and inside the canvas');
