@@ -46,6 +46,7 @@ export type Tool =
   | 'clone'
   | 'heal'
   | 'spot-heal'
+  | 'patch'
   | 'red-eye'
   | 'pattern-stamp'
   | 'crop'
@@ -194,6 +195,7 @@ function validSettings(settings: unknown): settings is Settings {
       'clone',
       'heal',
       'spot-heal',
+      'patch',
       'red-eye',
       'pattern-stamp',
       'crop',

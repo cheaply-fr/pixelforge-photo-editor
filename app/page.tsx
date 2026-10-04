@@ -214,6 +214,11 @@ import {
   type SpotHealingStroke,
 } from '../src/spotHealing';
 import {
+  PATCH_MAX_POINTS,
+  PATCH_MAX_STROKES,
+  type PatchStroke,
+} from '../src/patchTool';
+import {
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
   neutralFilterEffects,
@@ -253,6 +258,7 @@ type MenuName =
 type Command =
   | 'noop'
   | 'actions'
+  | 'patch-tool'
   | 'resize'
   | 'canvas-size'
   | 'trim'
@@ -371,6 +377,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
   { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
   { id: 'spot-heal', label: 'Spot Healing', icon: WandSparkles, key: 'J' },
+  { id: 'patch', label: 'Patch', icon: WandSparkles, key: 'J' },
   { id: 'red-eye', label: 'Red Eye', icon: Eye, key: 'J' },
   { id: 'pattern-stamp', label: 'Pattern Stamp', icon: Grid3x3, key: 'S' },
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
@@ -446,7 +453,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
   s: ['clone', 'pattern-stamp'],
-  j: ['heal', 'spot-heal', 'red-eye'],
+  j: ['heal', 'spot-heal', 'patch', 'red-eye'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -507,6 +514,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
     { label: 'Action recipes…', command: 'actions' },
+    { label: 'Patch Tool', shortcut: 'J', command: 'patch-tool' },
     { label: 'Stroke…', command: 'noop', disabled: true },
     { label: 'Content-Aware Fill…', command: 'noop', disabled: true },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
@@ -753,6 +761,8 @@ type Gesture = {
   redEyeAmount?: number;
   /** Local-space nondestructive context-aware cleanup metadata. */
   spotHealingStroke?: SpotHealingStroke;
+  /** Local-space nondestructive source-offset patch metadata. */
+  patchStroke?: PatchStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -4198,6 +4208,7 @@ export default function Home() {
         'clone',
         'heal',
         'spot-heal',
+        'patch',
         'red-eye',
         'pattern-stamp',
         'smudge',
@@ -4644,6 +4655,53 @@ export default function Home() {
         ...f,
         layers: f.layers.map((item) => item.id === layer.id
           ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
+          : item),
+      });
+      return;
+    }
+    if (tool === 'patch') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before Patch');
+        return;
+      }
+      if (!cloneSource) {
+        setCloneSource(local);
+        setNotice('Patch source set; drag on the image to paint the patch');
+        return;
+      }
+      if ((layer.patchStrokes?.length ?? 0) >= PATCH_MAX_STROKES) {
+        setNotice(
+          `This layer has ${PATCH_MAX_STROKES} Patch strokes; export a copy before adding more`,
+        );
+        return;
+      }
+      const asset = assets.current[layer.asset],
+        x = Math.max(0, Math.min(asset.w - 1, local.x)),
+        y = Math.max(0, Math.min(asset.h - 1, local.y)),
+        g: Gesture = {
+          tool,
+          start: { x, y },
+          last: { x, y },
+          frame: f,
+          layer,
+          moved: false,
+          patchStroke: {
+            version: 1,
+            points: [{ x, y }],
+            size: localSize(layer.matrix, size),
+            hardness,
+            opacity: brushOpacity / 100,
+            sourceOffset: {
+              x: cloneSource.x - x,
+              y: cloneSource.y - y,
+            },
+          },
+        };
+      gesture.current = g;
+      void paint({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id
+          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), g.patchStroke!] }
           : item),
       });
       return;
@@ -5127,6 +5185,27 @@ export default function Home() {
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
           ? { ...item, spotHealing: [...(item.spotHealing ?? []), stroke] }
+          : item),
+      });
+      return;
+    }
+    if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke) {
+      const asset = assets.current[g.layer.asset],
+        x = Math.max(0, Math.min(asset.w - 1, local.x)),
+        y = Math.max(0, Math.min(asset.h - 1, local.y)),
+        stroke = g.patchStroke,
+        distance = Math.hypot(x - g.last.x, y - g.last.y),
+        spacing = Math.max(1, stroke.size * 0.25),
+        steps = Math.max(1, Math.ceil(distance / spacing));
+      for (let step = 1; step <= steps && stroke.points.length < PATCH_MAX_POINTS; step += 1) {
+        const t = step / steps;
+        stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
+      }
+      g.last = { x, y };
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id
+          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       });
       return;
@@ -5751,6 +5830,19 @@ export default function Home() {
           ? { ...item, spotHealing: [...(item.spotHealing ?? []), stroke] }
           : item),
       })) setNotice('Spot Healing applied nondestructively');
+    } else if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke) {
+      const stroke = g.patchStroke;
+      if (!g.moved) {
+        void paint(f);
+        setNotice('Patch needs a drag after setting a source');
+        return;
+      }
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === g.layer!.id
+          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
+          : item),
+      })) setNotice('Patch applied nondestructively');
     } else if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
       g.buffer &&
@@ -6296,7 +6388,8 @@ export default function Home() {
         e.key === 'Escape' &&
         (gesture.current?.tool === 'pen' ||
           gesture.current?.tool === 'direct-select' ||
-          gesture.current?.tool === 'selection-brush')
+          gesture.current?.tool === 'selection-brush' ||
+          gesture.current?.tool === 'patch')
       ) {
         const canceledTool = gesture.current.tool;
         gesture.current = null;
@@ -6306,7 +6399,9 @@ export default function Home() {
             ? 'Pen path cancelled'
             : canceledTool === 'selection-brush'
               ? 'Selection Brush cancelled'
-              : 'Path node selection cancelled',
+              : canceledTool === 'patch'
+                ? 'Patch stroke cancelled'
+                : 'Path node selection cancelled',
         );
         return;
       }
@@ -6595,7 +6690,11 @@ export default function Home() {
     else if (command === 'hide-layer') hideActiveLayer();
     else if (command === 'merge-visible') return mergeVisible();
     else if (command === 'flatten') return flattenImage();
-    else if (command === 'text-tool') {
+    else if (command === 'patch-tool') {
+      setTool('patch');
+      setCloneSource(null);
+      setNotice('Patch tool selected; click a source, then drag a destination');
+    } else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
     } else if (command === 'text-align-left') alignText('left');
@@ -6793,6 +6892,8 @@ export default function Home() {
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
       case 'remove-background':
+        return !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'patch-tool':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
@@ -8123,6 +8224,7 @@ export default function Home() {
             tool === 'clone' ||
             tool === 'heal' ||
             tool === 'spot-heal' ||
+            tool === 'patch' ||
             tool === 'red-eye' ||
             tool === 'pattern-stamp' ||
             tool === 'selection-brush' ||
@@ -8155,6 +8257,7 @@ export default function Home() {
                 tool === 'clone' ||
                 tool === 'heal' ||
                 tool === 'spot-heal' ||
+                tool === 'patch' ||
                 tool === 'red-eye' ||
                 tool === 'pattern-stamp' ||
                 tool === 'selection-brush') && (
@@ -8177,6 +8280,13 @@ export default function Home() {
                       Samples a bounded local context ring and keeps the
                       source and alpha channel unchanged. Use Remove Background
                       for edge-connected backdrop removal.
+                    </p>
+                  )}
+                  {tool === 'patch' && (
+                    <p className="adjust-note">
+                      Click a source area, then drag over a destination. Patch
+                      copies a bounded local neighbourhood while keeping the
+                      source asset and alpha channel unchanged.
                     </p>
                   )}
                   {tool !== 'magic-eraser' && tool !== 'red-eye' && (
@@ -8204,7 +8314,8 @@ export default function Home() {
                     tool !== 'sponge' &&
                     tool !== 'smudge' &&
                     tool !== 'red-eye' &&
-                    tool !== 'spot-heal' && (
+                    tool !== 'spot-heal' &&
+                    tool !== 'patch' && (
                       <>
                         <label className="check-row">
                           <input

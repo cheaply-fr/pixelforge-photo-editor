@@ -13,7 +13,7 @@ free editor. See the [PSR study](https://arxiv.org/html/2505.16181v1#S3.SS3).
 
 | Priority | Workflow | PixelForge status | Acceptance gate |
 | --- | --- | --- | --- |
-| 1 | Remove and retouch | Clone, Healing, Red Eye, Remove Background, Dodge, Burn, Sponge, Smudge and bounded local Spot Healing are local, source-safe operations. Patch, Content-Aware Move and semantic object removal remain staged. | Immutable source, alpha-safe pixels, pressure/radius bounds, selection clipping, undo and reload on desktop/mobile |
+| 1 | Remove and retouch | Clone, Healing, **Patch**, Red Eye, Remove Background, Dodge, Burn, Sponge, Smudge and bounded local Spot Healing are local, source-safe operations. Content-Aware Move and semantic object removal remain staged. Patch uses a captured local source offset and does not claim semantic or generative fill. | Immutable source, alpha-safe pixels, pressure/radius bounds, selection clipping, undo and reload on desktop/mobile |
 | 2 | Layers and masks | Raster/image/paint layers, folders, visibility, opacity, locking, ordering, blend modes, merge/flatten, raster masks and selection masks are persisted. | Composite fixtures, folder and mask guards, source retention, malformed-document rejection, reload and undo |
 | 3 | Light and color | Brightness, Contrast, Saturation, Hue, Levels, Curves, Color Balance, local signed-stop Exposure, Vibrance, Rec. 709 Black & White, Auto Tone/Contrast/Color, and deterministic Sharpen/Noise controls are active. The photo controls are practical local corrections rather than RAW/linear-light or Adobe algorithm parity. | Bounded metadata, deterministic pixels, alpha and hidden-RGB preservation, history and project round trip |
 | 4 | Precise selections | Marquee variants, Lasso/Polygonal Lasso, Magic Wand, Color Range, Selection Brush, refinement, feather, grow/contract, invert, Quick Mask and named selections are active. | Binary/soft mask fixtures, composition, transparency, gesture cancellation, keyboard and desktop/mobile persistence |
@@ -31,8 +31,10 @@ recovery, optional Cheaply authentication, undoability and source assets.
 
 ## Sequencing after the ten
 
-The next implementation slice is broader patch/content-aware object cleanup,
-followed by parameterized batch Actions. Smart Objects, Camera Raw, richer filters, ICC/HDR, tiled
+The next implementation slice is constrained content-aware object cleanup,
+followed by parameterized batch Actions. The local Patch Tool is now available
+for deterministic source-offset cleanup; it does not claim semantic removal.
+Smart Objects, Camera Raw, richer filters, ICC/HDR, tiled
 compositing and optional reviewable AI remain separate milestones. AI edits must
 stay optional, previewable and undoable: the PSR study found current AI editors
 fulfilled only about one third of real requests and often changed identity or

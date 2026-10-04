@@ -79,6 +79,11 @@ import {
   applySpotHealingStrokes,
   type SpotHealingStroke,
 } from './spotHealing.ts';
+import {
+  validPatchStrokes,
+  applyPatchStrokes,
+  type PatchStroke,
+} from './patchTool.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -171,6 +176,8 @@ type Common = {
   groupId?: string;
   /** Optional nondestructive local object-cleanup strokes. */
   spotHealing?: SpotHealingStroke[];
+  /** Optional nondestructive local source-offset patch strokes. */
+  patchStrokes?: PatchStroke[];
 };
 export type Layer = Common &
   (
@@ -949,7 +956,8 @@ export function validateFrame(
       (layer.mask !== undefined ||
         layer.maskEnabled !== undefined ||
         layer.maskInverted !== undefined ||
-        layer.spotHealing !== undefined)
+        layer.spotHealing !== undefined ||
+        layer.patchStrokes !== undefined)
     )
       return fail();
     if (layer.kind === 'raster') {
@@ -976,6 +984,11 @@ export function validateFrame(
       if (
         layer.spotHealing !== undefined &&
         !validSpotHealingStrokes(layer.spotHealing, assets[layer.asset].w, assets[layer.asset].h)
+      )
+        return fail();
+      if (
+        layer.patchStrokes !== undefined &&
+        !validPatchStrokes(layer.patchStrokes, assets[layer.asset].w, assets[layer.asset].h)
       )
         return fail();
       pixels += assets[layer.asset].w * assets[layer.asset].h;
@@ -1439,6 +1452,26 @@ export async function renderFrame(
       );
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
+    }
+    if (layer.kind === 'raster' && rasterSource && layer.patchStrokes?.length) {
+      // Patch strokes remain metadata over the immutable source asset. They
+      // run after Spot Healing so a recipe can refine an earlier local cleanup
+      // without baking either operation into the source PNG.
+      const asset = assets[layer.asset],
+        patched = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        patchedContext = patched.getContext('2d')!;
+      patchedContext.drawImage(rasterSource, 0, 0);
+      const imageData = patchedContext.getImageData(0, 0, patched.width, patched.height);
+      imageData.data.set(
+        applyPatchStrokes(
+          imageData.data,
+          patched.width,
+          patched.height,
+          layer.patchStrokes,
+        ),
+      );
+      patchedContext.putImageData(imageData, 0, 0);
+      rasterSource = patched;
     }
     const filterEffect = effectiveFilterEffects(
       layer.adjustments.filterEffects,
