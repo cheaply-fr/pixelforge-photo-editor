@@ -45,6 +45,7 @@ export type Tool =
   | 'gradient'
   | 'clone'
   | 'heal'
+  | 'spot-heal'
   | 'red-eye'
   | 'pattern-stamp'
   | 'crop'
@@ -192,6 +193,7 @@ function validSettings(settings: unknown): settings is Settings {
       'gradient',
       'clone',
       'heal',
+      'spot-heal',
       'red-eye',
       'pattern-stamp',
       'crop',

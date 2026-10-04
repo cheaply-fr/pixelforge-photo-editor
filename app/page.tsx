@@ -136,6 +136,17 @@ import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { createBackgroundMask } from '../src/backgroundRemoval';
 import { type ExportFormat } from '../src/export';
+import ActionsPanel from '../src/ActionsPanel';
+import {
+  MAX_ACTION_SETS,
+  appendActionStep,
+  createActionSet,
+  parseActionSets,
+  replayActionSet,
+  serializeActionSets,
+  type ActionSet,
+  type ActionStep,
+} from '../src/actions';
 import {
   describeImportFormat,
   importFailureMessage,
@@ -198,6 +209,11 @@ import {
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
 import {
+  SPOT_HEALING_MAX_POINTS,
+  SPOT_HEALING_MAX_STROKES,
+  type SpotHealingStroke,
+} from '../src/spotHealing';
+import {
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
   neutralFilterEffects,
@@ -236,6 +252,7 @@ type MenuName =
   | 'Plugins';
 type Command =
   | 'noop'
+  | 'actions'
   | 'resize'
   | 'canvas-size'
   | 'trim'
@@ -353,6 +370,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'gradient', label: 'Gradient', icon: Palette, key: 'G' },
   { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
   { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
+  { id: 'spot-heal', label: 'Spot Healing', icon: WandSparkles, key: 'J' },
   { id: 'red-eye', label: 'Red Eye', icon: Eye, key: 'J' },
   { id: 'pattern-stamp', label: 'Pattern Stamp', icon: Grid3x3, key: 'S' },
   { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
@@ -428,7 +446,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   o: ['dodge', 'burn', 'sponge'],
   r: ['smudge'],
   s: ['clone', 'pattern-stamp'],
-  j: ['heal', 'red-eye'],
+  j: ['heal', 'spot-heal', 'red-eye'],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -456,6 +474,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Export as WebP', command: 'webp' },
   ],
   Edit: [
+    { label: 'Action recipes…', command: 'actions' },
     { label: 'Undo', shortcut: 'Ctrl+Z', command: 'undo' },
     { label: 'Redo', shortcut: 'Ctrl+Y', command: 'redo' },
     {
@@ -732,6 +751,8 @@ type Gesture = {
   patternTileSize?: number;
   redEyeThreshold?: number;
   redEyeAmount?: number;
+  /** Local-space nondestructive context-aware cleanup metadata. */
+  spotHealingStroke?: SpotHealingStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -1255,6 +1276,19 @@ export default function Home() {
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
+    [actionsOpen, setActionsOpen] = useState(false),
+    [actions, setActions] = useState<ActionSet[]>(() => {
+      if (typeof window === 'undefined') return [];
+      try {
+        const raw = window.localStorage.getItem('pixelforge.actions.v1');
+        return raw ? parseActionSets(raw) : [];
+      } catch {
+        window.localStorage.removeItem('pixelforge.actions.v1');
+        return [];
+      }
+    }),
+    [recordingActionId, setRecordingActionId] = useState<string>(),
+    [runningActionId, setRunningActionId] = useState<string>(),
     [exporting, setExporting] = useState<{
       frame: Frame;
       assets: typeof assets.current;
@@ -1276,6 +1310,69 @@ export default function Home() {
     width: number;
     height: number;
   } | null>(null);
+  const recordingActionRef = useRef<string | undefined>(undefined),
+    replayingActionRef = useRef(false);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        'pixelforge.actions.v1',
+        serializeActionSets(actions),
+      );
+    } catch {
+      // Private browsing and storage quotas can reject localStorage writes;
+      // recipe execution remains in-memory and editing must continue.
+    }
+  }, [actions]);
+  const beginActionRecording = (actionName: string) => {
+    const action = createActionSet(actionName);
+    setActions((currentActions) => {
+      const next = [...currentActions, action];
+      return next.length > MAX_ACTION_SETS
+        ? next.slice(next.length - MAX_ACTION_SETS)
+        : next;
+    });
+    recordingActionRef.current = action.id;
+    setRecordingActionId(action.id);
+    setNotice(`Recording action “${action.name}”`);
+  };
+  const stopActionRecording = () => {
+    const action = actions.find(
+      (candidate) => candidate.id === recordingActionRef.current,
+    );
+    recordingActionRef.current = undefined;
+    setRecordingActionId(undefined);
+    setNotice(
+      action
+        ? `Action “${action.name}” saved with ${action.steps.length} step${action.steps.length === 1 ? '' : 's'}`
+        : 'Action recording stopped',
+    );
+  };
+  const removeActionRecipe = (id: string) => {
+    setActions((currentActions) => currentActions.filter((action) => action.id !== id));
+    if (recordingActionRef.current === id) stopActionRecording();
+    setNotice('Action recipe deleted from this device');
+  };
+  const recordActionCommand = (command: Command) => {
+    const id = recordingActionRef.current;
+    if (!id || replayingActionRef.current) return;
+    const menuItem = Object.values(MENU_DEFS)
+      .flat()
+      .find((item) => item.command === command && item.label);
+    setActions((currentActions) =>
+      currentActions.map((action) => {
+        if (action.id !== id) return action;
+        try {
+          return appendActionStep(
+            action,
+            command,
+            menuItem?.label || command,
+          );
+        } catch {
+          return action;
+        }
+      }),
+    );
+  };
   const [trimming, setTrimming] = useState(false);
   /**
    * A crop drag is deliberately staged before it changes the document.  The
@@ -4100,6 +4197,7 @@ export default function Home() {
         'magic-eraser',
         'clone',
         'heal',
+        'spot-heal',
         'red-eye',
         'pattern-stamp',
         'smudge',
@@ -4512,6 +4610,42 @@ export default function Home() {
         }
       })();
       await g.pending;
+      return;
+    }
+    if (tool === 'spot-heal') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+        setNotice('Select a visible, unlocked raster layer before Spot Healing');
+        return;
+      }
+      if ((layer.spotHealing?.length ?? 0) >= SPOT_HEALING_MAX_STROKES) {
+        setNotice('This layer has 128 Spot Healing strokes; export a copy before adding more');
+        return;
+      }
+      const asset = assets.current[layer.asset],
+        x = Math.max(0, Math.min(asset.w - 1, local.x)),
+        y = Math.max(0, Math.min(asset.h - 1, local.y)),
+        g: Gesture = {
+          tool,
+          start: { x, y },
+          last: { x, y },
+          frame: f,
+          layer,
+          moved: false,
+          spotHealingStroke: {
+            version: 1,
+            points: [{ x, y }],
+            size: localSize(layer.matrix, size),
+            hardness,
+            opacity: brushOpacity / 100,
+          },
+        };
+      gesture.current = g;
+      void paint({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id
+          ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
+          : item),
+      });
       return;
     }
     if (tool === 'clone' || tool === 'heal') {
@@ -4976,6 +5110,27 @@ export default function Home() {
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
     g.moved = true;
+    if (g.tool === 'spot-heal' && g.layer?.kind === 'raster' && g.spotHealingStroke) {
+      const asset = assets.current[g.layer.asset],
+        x = Math.max(0, Math.min(asset.w - 1, local.x)),
+        y = Math.max(0, Math.min(asset.h - 1, local.y)),
+        stroke = g.spotHealingStroke,
+        distance = Math.hypot(x - g.last.x, y - g.last.y),
+        spacing = Math.max(1, stroke.size * 0.25),
+        steps = Math.max(1, Math.ceil(distance / spacing));
+      for (let step = 1; step <= steps && stroke.points.length < SPOT_HEALING_MAX_POINTS; step += 1) {
+        const t = step / steps;
+        stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
+      }
+      g.last = { x, y };
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id
+          ? { ...item, spotHealing: [...(item.spotHealing ?? []), stroke] }
+          : item),
+      });
+      return;
+    }
     if (g.tool === 'hand') {
       if (stage.current) {
         stage.current.scrollLeft -= p.x - g.last.x;
@@ -5588,6 +5743,14 @@ export default function Home() {
         ),
       });
       if (changed) setNotice('Layer moved');
+    } else if (g.tool === 'spot-heal' && g.layer?.kind === 'raster' && g.spotHealingStroke) {
+      const stroke = g.spotHealingStroke;
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === g.layer!.id
+          ? { ...item, spotHealing: [...(item.spotHealing ?? []), stroke] }
+          : item),
+      })) setNotice('Spot Healing applied nondestructively');
     } else if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
       g.buffer &&
@@ -6359,8 +6522,12 @@ export default function Home() {
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   });
-  const runCommand = (command: Command) => {
+  const runCommand = async (command: Command) => {
     if (command === 'noop') return;
+    if (command === 'actions') {
+      setActionsOpen(true);
+      return;
+    }
     if (
       quickMasking &&
       ![
@@ -6375,6 +6542,7 @@ export default function Home() {
       setNotice('Exit Quick Mask mode before changing the document');
       return;
     }
+    recordActionCommand(command);
     if (command === 'resize')
       setResizing({
         width: current().w,
@@ -6384,7 +6552,7 @@ export default function Home() {
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
-    else if (command === 'reveal-all') void revealAll();
+    else if (command === 'reveal-all') return revealAll();
     else if (command === 'project-save') exportProject();
     else if (command === 'batch-export')
       setBatchExporting({
@@ -6405,8 +6573,8 @@ export default function Home() {
     else if (command === 'copy-layer') copyLayer();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
-    else if (command === 'clear-layer') void clearActiveLayer();
-    else if (command === 'fill-layer') void fillActiveLayer();
+    else if (command === 'clear-layer') return clearActiveLayer();
+    else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'new-layer') addPaint();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
@@ -6425,8 +6593,8 @@ export default function Home() {
     else if (command === 'distribute-vertical')
       distributeGroupLayers('vertical');
     else if (command === 'hide-layer') hideActiveLayer();
-    else if (command === 'merge-visible') void mergeVisible();
-    else if (command === 'flatten') void flattenImage();
+    else if (command === 'merge-visible') return mergeVisible();
+    else if (command === 'flatten') return flattenImage();
     else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
@@ -6459,8 +6627,8 @@ export default function Home() {
         );
       else setNotice('Create a selection before refining it');
     } else if (command === 'color-range') setColorRanging(true);
-    else if (command === 'mask-selection') void createMaskFromSelection();
-    else if (command === 'remove-background') void removeBackground();
+    else if (command === 'mask-selection') return createMaskFromSelection();
+    else if (command === 'remove-background') return removeBackground();
     else if (command === 'free-transform') beginLayerTransform();
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
@@ -6482,9 +6650,9 @@ export default function Home() {
       setNotice(
         'Sharpen and Noise controls are available in Adjust selected layer',
       );
-    else if (command === 'auto-tone') void autoCorrect('tone');
-    else if (command === 'auto-contrast') void autoCorrect('contrast');
-    else if (command === 'auto-color') void autoCorrect('color');
+    else if (command === 'auto-tone') return autoCorrect('tone');
+    else if (command === 'auto-contrast') return autoCorrect('contrast');
+    else if (command === 'auto-color') return autoCorrect('color');
     else if (command === 'filter-clear-effect')
       chooseFilterEffect('none', 'Filter effect');
     else if (command === 'filter-box-blur')
@@ -6519,10 +6687,10 @@ export default function Home() {
       setTool('slice');
       setCloneSource(null);
       setNotice('Drag on the image to select a slice');
-    } else if (command === 'rotate-left') void transform('left');
-    else if (command === 'rotate-right') void transform('right');
-    else if (command === 'flip-h') void transform('h');
-    else if (command === 'flip-v') void transform('v');
+    } else if (command === 'rotate-left') return transform('left');
+    else if (command === 'rotate-right') return transform('right');
+    else if (command === 'flip-h') return transform('h');
+    else if (command === 'flip-v') return transform('v');
     else if (command.startsWith('filter-')) {
       const match = FILTERS.find(
         (f) => f[0].toLowerCase() === command.slice(7),
@@ -6532,6 +6700,48 @@ export default function Home() {
     else if (command === 'zoom-out') setZoom((v) => Math.max(20, v - 10));
     else if (command === 'fit') fitToScreen();
     else if (command === 'actual') setZoom(100);
+  };
+  const runActionRecipe = async (id: string) => {
+    const action = actions.find((candidate) => candidate.id === id);
+    if (!action || !action.steps.length) {
+      setNotice('Record at least one command before running an action');
+      return;
+    }
+    setRunningActionId(id);
+    replayingActionRef.current = true;
+    const result = await replayActionSet(
+      action,
+      (step: ActionStep) => {
+        const f = current(),
+          layer = f.layers.find((candidate) => candidate.id === f.active);
+        const requiresLayer =
+          step.command === 'reset' ||
+          step.command.startsWith('auto-') ||
+          step.command.startsWith('filter-') ||
+          step.command.endsWith('layer-mask');
+        if (quickMasking)
+          throw new Error('Exit Quick Mask mode before replaying an action');
+        if (
+          requiresLayer &&
+          (!layer || layerIsLocked(f, layer) || !layer.visible)
+        )
+          throw new Error('Unlock and show the active layer before replaying this step');
+        if (step.command.startsWith('auto-') && layer?.kind !== 'raster')
+          throw new Error('This automatic correction requires a raster layer');
+        if (step.command.endsWith('layer-mask') && !layer?.mask)
+          throw new Error('This step requires a layer mask');
+        return runCommand(step.command as Command);
+      },
+    );
+    replayingActionRef.current = false;
+    setRunningActionId(undefined);
+    if (result.failure) {
+      setNotice(
+        `Action stopped after ${result.completed} step${result.completed === 1 ? '' : 's'}: ${result.failure.error}`,
+      );
+    } else {
+      setNotice(`Action “${action.name}” replayed (${result.completed} step${result.completed === 1 ? '' : 's'})`);
+    }
   };
   const menuItemDisabled = (item: MenuItem) => {
     if (item.disabled || !frame) return true;
@@ -6797,6 +7007,18 @@ export default function Home() {
           downloaded={setNotice}
         />
       )}
+      {actionsOpen && (
+        <ActionsPanel
+          actions={actions}
+          recordingId={recordingActionId}
+          busyId={runningActionId}
+          close={() => setActionsOpen(false)}
+          start={beginActionRecording}
+          stop={stopActionRecording}
+          run={(id) => void runActionRecipe(id)}
+          remove={removeActionRecipe}
+        />
+      )}
       <input
         ref={file}
         data-testid="file-input"
@@ -6861,7 +7083,7 @@ export default function Home() {
                         }
                         onClick={() => {
                           setActiveMenu(null);
-                          runCommand(item.command);
+                          void runCommand(item.command);
                         }}
                       >
                         <span>{item.label}</span>
@@ -7893,6 +8115,7 @@ export default function Home() {
             tool === 'smudge' ||
             tool === 'clone' ||
             tool === 'heal' ||
+            tool === 'spot-heal' ||
             tool === 'red-eye' ||
             tool === 'pattern-stamp' ||
             tool === 'selection-brush' ||
@@ -7924,6 +8147,7 @@ export default function Home() {
                 tool === 'smudge' ||
                 tool === 'clone' ||
                 tool === 'heal' ||
+                tool === 'spot-heal' ||
                 tool === 'red-eye' ||
                 tool === 'pattern-stamp' ||
                 tool === 'selection-brush') && (
@@ -7941,6 +8165,13 @@ export default function Home() {
                         suffix="%"
                       />
                     )}
+                  {tool === 'spot-heal' && (
+                    <p className="adjust-note">
+                      Samples a bounded local context ring and keeps the
+                      source and alpha channel unchanged. Use Remove Background
+                      for edge-connected backdrop removal.
+                    </p>
+                  )}
                   {tool !== 'magic-eraser' && tool !== 'red-eye' && (
                     <Slider
                       label={
@@ -7965,7 +8196,8 @@ export default function Home() {
                     tool !== 'burn' &&
                     tool !== 'sponge' &&
                     tool !== 'smudge' &&
-                    tool !== 'red-eye' && (
+                    tool !== 'red-eye' &&
+                    tool !== 'spot-heal' && (
                       <>
                         <label className="check-row">
                           <input

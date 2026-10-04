@@ -74,6 +74,11 @@ import {
   validPhotoAdjustments,
   type PhotoAdjustments,
 } from './photoAdjustments.ts';
+import {
+  validSpotHealingStrokes,
+  applySpotHealingStrokes,
+  type SpotHealingStroke,
+} from './spotHealing.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = [
@@ -164,6 +169,8 @@ type Common = {
   maskInverted?: boolean;
   /** Optional editable folder membership. Groups are metadata; source pixels stay local to the layer. */
   groupId?: string;
+  /** Optional nondestructive local object-cleanup strokes. */
+  spotHealing?: SpotHealingStroke[];
 };
 export type Layer = Common &
   (
@@ -941,7 +948,8 @@ export function validateFrame(
       layer.kind !== 'raster' &&
       (layer.mask !== undefined ||
         layer.maskEnabled !== undefined ||
-        layer.maskInverted !== undefined)
+        layer.maskInverted !== undefined ||
+        layer.spotHealing !== undefined)
     )
       return fail();
     if (layer.kind === 'raster') {
@@ -963,6 +971,11 @@ export function validateFrame(
           !Object.hasOwn(assets, layer.mask) ||
           assets[layer.mask].w !== value.w ||
           assets[layer.mask].h !== value.h)
+      )
+        return fail();
+      if (
+        layer.spotHealing !== undefined &&
+        !validSpotHealingStrokes(layer.spotHealing, assets[layer.asset].w, assets[layer.asset].h)
       )
         return fail();
       pixels += assets[layer.asset].w * assets[layer.asset].h;
@@ -1412,6 +1425,21 @@ export async function renderFrame(
     // immutable source asset; resetting the transform here would bake a
     // translated/scaled layer into the wrong frame coordinates.
     let rasterSource: CanvasImageSource | undefined = override || image;
+    if (layer.kind === 'raster' && rasterSource && layer.spotHealing?.length) {
+      // Spot Healing is metadata over the immutable source asset. Replay it in
+      // local layer space before transforms, masks and adjustments so undo,
+      // reload, export and worker rendering share the exact cleanup behavior.
+      const asset = assets[layer.asset],
+        cleaned = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        cleanedContext = cleaned.getContext('2d')!;
+      cleanedContext.drawImage(rasterSource, 0, 0);
+      const imageData = cleanedContext.getImageData(0, 0, cleaned.width, cleaned.height);
+      imageData.data.set(
+        applySpotHealingStrokes(imageData.data, cleaned.width, cleaned.height, layer.spotHealing),
+      );
+      cleanedContext.putImageData(imageData, 0, 0);
+      rasterSource = cleaned;
+    }
     const filterEffect = effectiveFilterEffects(
       layer.adjustments.filterEffects,
     );
@@ -1434,6 +1462,12 @@ export async function renderFrame(
     if (
       layer.kind !== 'raster' &&
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||
+        effectiveAdjustments(layer.adjustments).levelsBlack !==
+          neutral.levelsBlack ||
+        effectiveAdjustments(layer.adjustments).levelsWhite !==
+          neutral.levelsWhite ||
+        effectiveAdjustments(layer.adjustments).levelsGamma !==
+          neutral.levelsGamma ||
         !isNeutralColorBalance(
           effectiveAdjustments(layer.adjustments).colorBalance,
         ) ||
@@ -1463,6 +1497,9 @@ export async function renderFrame(
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),
                 hue: 0,
+                levelsBlack: neutral.levelsBlack,
+                levelsWhite: neutral.levelsWhite,
+                levelsGamma: neutral.levelsGamma,
                 colorBalance: { ...neutralColorBalance },
                 sharpenNoise: { ...neutralSharpenNoise },
                 curves: effectiveCurves(undefined),
@@ -1482,6 +1519,7 @@ export async function renderFrame(
         options?.onProgress ? { ...options, onProgress: undefined } : options,
       );
       applyHue(coloured, layer.adjustments);
+      applyLevels(coloured, layer.adjustments);
       applyColorBalance(coloured, layer.adjustments);
       applySharpenNoise(coloured, layer.adjustments);
       applyCurves(coloured, layer.adjustments);

@@ -13,7 +13,7 @@ free editor. See the [PSR study](https://arxiv.org/html/2505.16181v1#S3.SS3).
 
 | Priority | Workflow | PixelForge status | Acceptance gate |
 | --- | --- | --- | --- |
-| 1 | Remove and retouch | Clone, Healing, Red Eye, Remove Background, Dodge, Burn, Sponge and Smudge are local, source-safe operations. Patch, Content-Aware Move and a true context-aware Spot Healing model remain staged. | Immutable source, alpha-safe pixels, pressure/radius bounds, selection clipping, undo and reload on desktop/mobile |
+| 1 | Remove and retouch | Clone, Healing, Red Eye, Remove Background, Dodge, Burn, Sponge, Smudge and bounded local Spot Healing are local, source-safe operations. Patch, Content-Aware Move and semantic object removal remain staged. | Immutable source, alpha-safe pixels, pressure/radius bounds, selection clipping, undo and reload on desktop/mobile |
 | 2 | Layers and masks | Raster/image/paint layers, folders, visibility, opacity, locking, ordering, blend modes, merge/flatten, raster masks and selection masks are persisted. | Composite fixtures, folder and mask guards, source retention, malformed-document rejection, reload and undo |
 | 3 | Light and color | Brightness, Contrast, Saturation, Hue, Levels, Curves, Color Balance, local signed-stop Exposure, Vibrance, Rec. 709 Black & White, Auto Tone/Contrast/Color, and deterministic Sharpen/Noise controls are active. The photo controls are practical local corrections rather than RAW/linear-light or Adobe algorithm parity. | Bounded metadata, deterministic pixels, alpha and hidden-RGB preservation, history and project round trip |
 | 4 | Precise selections | Marquee variants, Lasso/Polygonal Lasso, Magic Wand, Color Range, Selection Brush, refinement, feather, grow/contract, invert, Quick Mask and named selections are active. | Binary/soft mask fixtures, composition, transparency, gesture cancellation, keyboard and desktop/mobile persistence |
@@ -22,7 +22,7 @@ free editor. See the [PSR study](https://arxiv.org/html/2505.16181v1#S3.SS3).
 | 7 | Type, shapes and paths | Editable horizontal/vertical text, paragraph metrics, Pen, Direct Selection, Rectangle, Ellipse, Line, Polygon, Triangle and Star are active. Warp/OpenType and boolean shape operations remain staged. | Font fallback, text metrics, path hit testing, vector serialization, exact fill/stroke and export pixels |
 | 8 | Nondestructive filters | Field, Box, Gaussian, Motion and spin-style Radial Blur, Tilt-Shift, Mosaic, Halftone, Ripple, Twirl, Sharpen and Noise are active with validated metadata. Most Photoshop gallery families remain staged. | Deterministic kernels, alpha-safe transparent edges, parameter bounds, cancellation, source retention, undo/reload and desktop/mobile tests |
 | 9 | Export, import and projects | PNG/JPEG/WebP export, target-size controls, project JSON, batch export, named-artboard viewport export, local drafts and optional private-cloud projects are active. PSD/PSB, RAW, TIFF/PDF/SVG round trips and full color management remain staged. | Signature/dimension checks, quality and target-size bounds, privacy manifest, cancellation, draft recovery and artboard pixel fixtures |
-| 10 | Repeatable workflows | Batch image export and reusable project state are active. Recorded Actions, folder recipes, error logs, plugin APIs and synchronized batch adjustments are planned next. | Deterministic replay, idempotence, per-file failure isolation, bounded queue/memory use and permission boundaries |
+| 10 | Repeatable workflows | Batch image export, reusable project state and local recorded Actions are active. Folder recipes, parameterized batch adjustments, error logs, plugin APIs and synchronized cloud recipes remain staged. | Deterministic replay, idempotence, per-file failure isolation, bounded queue/memory use and permission boundaries |
 
 Every applied workflow has pure validation/pixel coverage where its engine is
 deterministic and desktop/mobile browser acceptance for its user-facing path.
@@ -31,8 +31,8 @@ recovery, optional Cheaply authentication, undoability and source assets.
 
 ## Sequencing after the ten
 
-The next implementation slice is true context-aware Spot Healing/Remove,
-followed by a recorded Actions model. Smart Objects, Camera Raw, richer filters, ICC/HDR, tiled
+The next implementation slice is broader patch/content-aware object cleanup,
+followed by parameterized batch Actions. Smart Objects, Camera Raw, richer filters, ICC/HDR, tiled
 compositing and optional reviewable AI remain separate milestones. AI edits must
 stay optional, previewable and undoable: the PSR study found current AI editors
 fulfilled only about one third of real requests and often changed identity or

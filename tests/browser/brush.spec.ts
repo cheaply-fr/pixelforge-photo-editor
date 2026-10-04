@@ -421,6 +421,48 @@ test('clone source stays fixed and healing commits through the shared stamp path
   expect(healedDestination.slice(0, 3)).toEqual(sourcePixel.slice(0, 3));
 });
 
+test('Spot Healing removes a local blemish nondestructively and survives undo/reload', async ({ page }) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
+  await page.getByLabel('Drawing color', { exact: true }).fill('#e51c23');
+  await page.getByLabel('Size', { exact: true }).fill('72');
+  await page.getByLabel('Hardness', { exact: true }).fill('100');
+  await page.getByLabel('Opacity', { exact: true }).fill('100');
+  await pointerStroke(page, 1, 0.5, 'mouse');
+  const painted = await project(page);
+  const paintedFrame = painted.history[painted.index];
+  const paintedLayer = paintedFrame.layers.at(-1)! as { asset?: string; spotHealing?: unknown[] };
+  expect(paintedLayer.spotHealing).toBeUndefined();
+  const sourceAsset = paintedLayer.asset;
+
+  await page.getByRole('button', { name: 'Spot Healing tool', exact: true }).click();
+  await expect(page.getByText(/bounded local context ring/, { exact: false })).toBeVisible();
+  await toolStroke(page, 'Spot Healing', 'Spot Healing applied nondestructively', 0.5, false);
+  const cleaned = await project(page);
+  const cleanedFrame = cleaned.history[cleaned.index];
+  const cleanedLayer = cleanedFrame.layers.at(-1)! as { asset?: string; spotHealing?: Array<{ version: number; points: unknown[]; size: number }> };
+  expect(cleanedLayer.asset).toBe(sourceAsset);
+  expect(cleanedLayer.spotHealing).toHaveLength(1);
+  expect(cleanedLayer.spotHealing![0]).toMatchObject({ version: 1, size: 72 });
+  expect(cleaned.history.length).toBeGreaterThan(painted.history.length);
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await saved(page);
+  const undone = await project(page);
+  expect((undone.history[undone.index].layers.at(-1)! as { spotHealing?: unknown[] }).spotHealing).toBeUndefined();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await saved(page);
+  await page.reload();
+  await saved(page);
+  const reloaded = await project(page);
+  const reloadedLayer = reloaded.history[reloaded.index].layers.at(-1)! as { asset?: string; spotHealing?: unknown[] };
+  expect(reloadedLayer.asset).toBe(sourceAsset);
+  expect(reloadedLayer.spotHealing).toHaveLength(1);
+});
+
 test('pen pointer-up pressure zero does not create a full-pressure endpoint', async ({ page }) => {
   await newTransparentPaintLayer(page);
   await page.getByRole('button', { name: 'Brush tool', exact: true }).click();
