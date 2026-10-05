@@ -25,10 +25,21 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Validate analytics configuration
+        env:
+          PIXELFORGE_GA_MEASUREMENT_ID: ${{ vars.PIXELFORGE_GA_MEASUREMENT_ID }}
+        run: |
+          if [ -n "$PIXELFORGE_GA_MEASUREMENT_ID" ] && ! printf '%s' "$PIXELFORGE_GA_MEASUREMENT_ID" | grep -Eq '^G-[A-Za-z0-9]+$'; then
+            echo 'PIXELFORGE_GA_MEASUREMENT_ID must match the GA4 G-... format' >&2
+            exit 1
+          fi
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run build
       - run: npm test
+      - name: Build with analytics configuration
+        env:
+          VITE_CHEAPLY_GA_MEASUREMENT_ID: ${{ vars.PIXELFORGE_GA_MEASUREMENT_ID }}
+        run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
