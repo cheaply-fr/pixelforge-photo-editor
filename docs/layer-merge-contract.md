@@ -5,8 +5,7 @@ layer in the frame stack. The first increment is deliberately bounded to two
 visible, unlocked, ungrouped adjacent layers. A missing lower layer, a hidden
 layer, a locked layer, or any folder membership disables the command; the
 command handler reports the corresponding guard reason when invoked. Folder
-members remain disabled until isolated group compositing has its own renderer
-contract.
+members remain disabled pending a dedicated isolated-folder merge contract.
 
 The pair is rendered through the normal document pipeline before replacement,
 so transforms, opacity, blend mode, adjustments, styles, masks and local

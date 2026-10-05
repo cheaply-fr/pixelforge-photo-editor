@@ -96,17 +96,10 @@ import {
   neutralLayerStyles,
   type LayerStyles,
 } from './layerStyles.ts';
+import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
-export const BLENDS = [
-  'source-over',
-  'multiply',
-  'screen',
-  'overlay',
-  'darken',
-  'lighten',
-  'difference',
-] as const;
+export const BLENDS = GROUP_BLEND_MODES;
 export const FONTS = ['Arial', 'Georgia', 'Courier New', 'Verdana'] as const;
 export const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
 export type TextAlign = (typeof TEXT_ALIGNS)[number];
@@ -1530,7 +1523,8 @@ export async function renderFrame(
 ): Promise<HTMLCanvasElement> {
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
-    groups = new Map((frame.groups || []).map((group) => [group.id, group]));
+    groups = new Map((frame.groups || []).map((group) => [group.id, group])),
+    renderedGroups = new Set<string>();
   const reportProgress = (layerIndex: number) =>
     options?.onProgress?.(layerIndex + 1, frame.layers.length);
   for (const [layerIndex, layer] of frame.layers.entries()) {
@@ -1543,11 +1537,53 @@ export async function renderFrame(
     )
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const group = layer.groupId ? groups.get(layer.groupId) : undefined;
-    if (!layer.visible || (group && !group.visible)) {
+    if (group) {
+      // A folder is one compositing source.  Render every member into an
+      // isolated surface before applying folder opacity/blend; applying those
+      // values to each child separately would change the result where members
+      // overlap and would make non-source-over group modes ineffective.
+      if (renderedGroups.has(group.id)) {
+        reportProgress(layerIndex);
+        continue;
+      }
+      renderedGroups.add(group.id);
+      const members = frame.layers.filter((item) => item.groupId === group.id);
+      if (!group.visible || group.opacity === 0 || !members.some((item) => item.visible)) {
+        reportProgress(layerIndex);
+        continue;
+      }
+      const isolated = await renderFrame(
+        {
+          ...frame,
+          layers: members.map((item) => ({ ...item, groupId: undefined })),
+          groups: [],
+          active: members[0]?.id || frame.active,
+        },
+        assets,
+        overrides,
+        options?.onProgress
+          ? { ...options, onProgress: undefined }
+          : options,
+      );
+      if (options?.isCancelled?.())
+        throw new DOMException('Document rendering cancelled', 'AbortError');
+      context.save();
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.globalAlpha = group.opacity;
+      context.globalCompositeOperation = group.blend;
+      context.filter = 'none';
+      context.drawImage(isolated, 0, 0);
+      context.restore();
       reportProgress(layerIndex);
       continue;
     }
-    const groupOpacity = group?.opacity ?? 1;
+    if (!layer.visible) {
+      reportProgress(layerIndex);
+      continue;
+    }
+    // Group members are handled by the isolated branch above.  An ungrouped
+    // layer therefore keeps its own opacity without a folder multiplier.
+    const groupOpacity = 1;
     const override = overrides?.[layer.id];
     const image =
       layer.kind === 'raster' && !override

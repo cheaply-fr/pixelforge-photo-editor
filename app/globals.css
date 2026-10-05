@@ -87,6 +87,8 @@
 .group-field input { width:100%; border:1px solid #564b70; border-radius:4px; background:#211d2b; color:#eee8ff; padding:4px 6px; font-size:10px; }
 .group-opacity { grid-column:1 / -1; display:block; }
 .group-opacity input { width:100%; accent-color:#a88bdf; }
+.group-blend { grid-column:1 / -1; display:flex; align-items:center; gap:6px; color:#cfc5e8; font-size:10px; }
+.group-blend select { flex:1; min-width:0; border:1px solid #564b70; border-radius:4px; background:#211d2b; color:#eee8ff; padding:4px 6px; font-size:10px; }
 .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .layer-toggles { display:flex; justify-content:space-between; margin:12px 0; font-size:11px; }
 .layers-panel input[type=checkbox] { margin-right:5px; accent-color:#8b5cf6; }

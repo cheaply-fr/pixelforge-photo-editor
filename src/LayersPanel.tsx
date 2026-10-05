@@ -886,6 +886,25 @@ function GroupRow({
           }
         />
       </label>
+      <label className="group-blend">
+        Group blend
+        <select
+          aria-label={`Group blend mode ${group.name}`}
+          value={group.blend}
+          disabled={group.locked}
+          onChange={(event) =>
+            editGroup(group.id, { blend: event.target.value as Group['blend'] })
+          }
+        >
+          {BLENDS.map((blend) => (
+            <option key={blend} value={blend}>
+              {blend === 'source-over'
+                ? 'Normal'
+                : blend[0].toUpperCase() + blend.slice(1)}
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }

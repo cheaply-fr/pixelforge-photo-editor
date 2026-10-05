@@ -4045,9 +4045,9 @@ export default function Home() {
     const lower = f.layers[plan.lowerIndex];
     const active = f.layers[plan.activeIndex];
     try {
-      // Render only the adjacent pair in stack order.  Group members are
-      // guarded by planLayerMerge until isolated folder compositing exists, so
-      // opacity and blend metadata cannot be accidentally applied twice.
+      // Render only the adjacent pair in stack order. Grouped pairs stay
+      // guarded by planLayerMerge because merging them needs its own command
+      // semantics; ordinary folder rendering is isolated in renderFrame.
       const image = await renderFrame(
         {
           ...f,

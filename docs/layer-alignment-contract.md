@@ -24,6 +24,5 @@ spacing. Folders with fewer than three eligible children are rejected. The
 operation changes only translation and is one undoable commit.
 
 These commands do not yet claim Photoshop's multi-selection model, nested
-folders, edge-based distribution, or isolated group blend compositing. Those
-remain separate roadmap contracts.
-
+folders or edge-based distribution. Isolated group blending is covered by the
+separate [`group-compositing-contract.md`](./group-compositing-contract.md).

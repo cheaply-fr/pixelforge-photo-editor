@@ -3,9 +3,9 @@ import type { Frame } from './document.ts';
 /**
  * The first Merge Layers contract intentionally handles an adjacent pair of
  * ungrouped layers.  Rendering a non-adjacent pair or a folder member would
- * change blend order or apply folder opacity twice until isolated group
- * compositing exists, so those cases stay visibly guarded at the command
- * boundary.
+ * change blend order or apply folder opacity twice without a dedicated folder
+ * merge command contract, so those cases stay visibly guarded at the command
+ * boundary even though ordinary folder rendering is isolated.
  */
 export type LayerMergePlan =
   | {
@@ -25,7 +25,7 @@ export type LayerMergePlan =
         | 'grouped-layers';
     };
 
-/** Plan the only merge shape currently safe without isolated folder blending. */
+/** Plan the only merge shape currently safe without a folder merge contract. */
 export function planLayerMerge(frame: Frame): LayerMergePlan {
   const activeIndex = frame.layers.findIndex((layer) => layer.id === frame.active);
   if (activeIndex < 0) return { ok: false, reason: 'missing-active' };
@@ -56,6 +56,6 @@ export function layerMergeReason(reason: Exclude<LayerMergePlan, { ok: true }>['
     case 'active-layer-locked':
       return 'Unlock the active layer before merging';
     case 'grouped-layers':
-      return 'Ungroup layers before merging; isolated folder compositing is staged';
+      return 'Ungroup layers before merging; isolated folder compositing is active, but grouped merge is staged';
   }
 }
