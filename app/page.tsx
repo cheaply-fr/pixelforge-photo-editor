@@ -396,6 +396,7 @@ type Command =
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
   | 'filter-lens-blur'
+  | 'filter-iris-blur'
   | 'filter-motion-blur'
   | 'filter-radial-blur'
   | 'filter-field-blur'
@@ -800,7 +801,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Radial Blur…', command: 'filter-radial-blur' },
     { label: 'Smart Blur…', command: 'noop', disabled: true },
     { label: 'Blur Gallery', command: 'noop', disabled: true },
-    { label: 'Iris Blur…', command: 'noop', disabled: true },
+    { label: 'Iris Blur…', command: 'filter-iris-blur' },
     { label: 'Distort', command: 'noop', disabled: true },
     { label: 'Displace…', command: 'noop', disabled: true },
     { label: 'Pinch…', command: 'filter-pinch' },
@@ -3381,7 +3382,7 @@ export default function Home() {
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'color-halftone'
                     ? 85
-                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur'
+                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur'
                       ? 85
                       : 70,
                 radius:
@@ -8160,6 +8161,8 @@ export default function Home() {
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
     else if (command === 'filter-lens-blur')
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
+    else if (command === 'filter-iris-blur')
+      chooseFilterEffect('iris-blur', 'Iris Blur (elliptical focal approximation)');
     else if (command === 'filter-motion-blur')
       chooseFilterEffect('motion-blur', 'Motion Blur');
     else if (command === 'filter-radial-blur')
@@ -8343,6 +8346,7 @@ export default function Home() {
       case 'filter-box-blur':
       case 'filter-gaussian-blur':
       case 'filter-lens-blur':
+      case 'filter-iris-blur':
       case 'filter-tilt-shift':
       case 'filter-mosaic':
       case 'filter-color-halftone':
@@ -10288,6 +10292,9 @@ export default function Home() {
             {filterEffects.type === 'lens-blur' && (
               <p>Local circular aperture blur · 49 samples. No depth map or highlight reconstruction. Source alpha stays unchanged.</p>
             )}
+            {filterEffects.type === 'iris-blur' && (
+              <p>Local elliptical focal-plane blur. The centre stays sharp and blur ramps to the edge; no depth map is inferred.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10305,6 +10312,7 @@ export default function Home() {
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'lens-blur' ||
+                          filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'motion-blur'
                           ? 'Blur radius'
                       : filterEffects.type === 'radial-blur'
@@ -10412,6 +10420,26 @@ export default function Home() {
                     set={(value) => setFilterEffects({ angle: value })}
                     suffix="°"
                   />
+                )}
+                {filterEffects.type === 'iris-blur' && (
+                  <>
+                    <Slider
+                      label="Focal centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Focal centre Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
                 )}
                 {filterEffects.type === 'radial-blur' && (
                   <>

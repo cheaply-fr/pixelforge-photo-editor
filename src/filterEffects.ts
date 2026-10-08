@@ -14,6 +14,7 @@ export const FILTER_EFFECT_TYPES = [
   'box-blur',
   'gaussian-blur',
   'lens-blur',
+  'iris-blur',
   'motion-blur',
   'radial-blur',
   'field-blur',
@@ -276,6 +277,33 @@ function applyLensBlur(
       output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + blue / weight * strength);
     }
   }
+}
+
+/**
+ * Elliptical focal-plane blur. The centre ellipse stays sharp and the blur
+ * ramps smoothly toward the outside, while the source alpha and transparent
+ * RGB padding remain untouched. This is a deterministic local approximation
+ * of Photoshop's Iris Blur; it does not infer a depth map.
+ */
+function applyIrisBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  centerX: number,
+  centerY: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const focalX = Math.max(1, width * (0.16 + (1 - radius / 64) * 0.34));
+  const focalY = Math.max(1, height * (0.16 + (1 - radius / 64) * 0.34));
+  const blurRadius = Math.max(1, Math.round(radius));
+  applyBoxBlur(source, width, height, blurRadius, output, strength, (x, y) => {
+    const dx = (x - centerX * (width - 1)) / focalX;
+    const dy = (y - centerY * (height - 1)) / focalY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    return clamp((distance - 0.78) / 0.72, 0, 1);
+  });
 }
 
 function applyAverageBlur(
@@ -796,6 +824,17 @@ export function applyFilterEffectsPixels(
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'lens-blur') {
     applyLensBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'iris-blur') {
+    applyIrisBlur(
+      data,
+      width,
+      height,
+      effect.radius,
+      effect.centerX,
+      effect.centerY,
+      output,
+      strength,
+    );
   } else if (effect.type === 'motion-blur') {
     applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
   } else if (effect.type === 'radial-blur') {

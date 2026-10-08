@@ -468,3 +468,22 @@ test('lens blur keeps alpha, softens a point highlight and remains bounded on ti
   assert.ok(pixel(output, 3, 1, 1)[0] < 255);
   assert.ok(pixel(output, 3, 0, 1)[0] > 0);
 });
+
+test('iris blur keeps a central focal ellipse sharp while blurring the outside', () => {
+  const source = rgba(9, 5, (x, y) =>
+    x === 4 && y === 2 ? [255, 255, 255, 255] : [0, 0, 0, 255],
+  );
+  const effect = effectiveFilterEffects({
+    type: 'iris-blur',
+    amount: 100,
+    radius: 8,
+    centerX: 0.5,
+    centerY: 0.5,
+  });
+  assert.equal(effect.type, 'iris-blur');
+  assert.equal(validFilterEffects(effect), true);
+  const output = applyFilterEffectsPixels(source, 9, 5, effect);
+  assert.notDeepEqual(output, source);
+  assert.ok(pixel(output, 9, 4, 2)[0] > pixel(output, 9, 0, 2)[0]);
+  assert.equal(pixel(output, 9, 0, 0)[3], 255);
+});

@@ -514,3 +514,33 @@ test('Lens Blur is editable, local, source-safe and alpha-preserving', async ({ 
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('lens-blur');
 });
+
+test('Iris Blur exposes an editable elliptical focal plane and round-trips safely', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const sourcePixel = await pixel(page, 4, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Iris Blur…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Iris Blur (elliptical focal approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('iris-blur');
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('6');
+  await expect(page.getByLabel('Focal centre X', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Focal centre Y', { exact: true })).toHaveValue('50');
+  await page.getByLabel('Focal centre X', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+  await expect(page.getByLabel('Focal centre X', { exact: true })).toHaveValue('51');
+  await expect.poll(() => pixel(page, 4, 2)).not.toEqual(sourcePixel);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({ type: 'iris-blur', radius: 7, centerX: 0.51 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('iris-blur');
+});

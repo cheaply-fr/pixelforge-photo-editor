@@ -1,14 +1,14 @@
 # Local blur effects contract
 
-PixelForge's Filter → Blur family includes eight local, nondestructive effects:
-**Average**, **Blur More**, **Box Blur…**, **Gaussian Blur…**, **Motion Blur…**, **Radial Blur…**, **Field
+PixelForge's Filter → Blur family includes ten local, nondestructive effects:
+**Average**, **Blur More**, **Box Blur…**, **Gaussian Blur…**, **Lens Blur…**, **Iris Blur…**, **Motion Blur…**, **Radial Blur…**, **Field
 Blur…** and **Tilt-Shift…**. Each effect is stored on the selected
 layer as `adjustments.filterEffects`, so changing or clearing the effect never
 rewrites the immutable raster asset.
 
 The metadata record uses the existing validated effect shape:
 
-- `type` is `average-blur`, `blur-more`, `box-blur`, `gaussian-blur`, `motion-blur` or `radial-blur`.
+- `type` is `average-blur`, `blur-more`, `box-blur`, `gaussian-blur`, `lens-blur`, `iris-blur`, `motion-blur` or `radial-blur`.
 - `amount` is a 0–100 blend percentage. Zero is an identity operation.
 - `radius` is an integer source-pixel radius from 0–64. Zero is an identity
   operation and the inspector exposes the value as **Blur radius**. Radial
@@ -35,6 +35,15 @@ an editable -180–180 degree direction. Samples are weighted by alpha, so
 transparent padding cannot darken the result; destination alpha and hidden RGB
 remain unchanged. The directional kernel is local and deterministic, with no
 remote processing or source upload.
+
+Lens Blur integrates a fixed 49-sample circular aperture using a golden-angle
+point set. It is deliberately labeled a local approximation: no depth map,
+occlusion ordering, specular highlight reconstruction or camera simulation is
+inferred. Iris Blur applies the alpha-aware box kernel through a smooth
+elliptical focal mask centred at `centerX`/`centerY`; pixels near the focal
+ellipse stay sharp while the outside ramps toward the requested blur. Both
+effects preserve destination alpha and transparent RGB padding, remain
+editable in metadata, and are bounded for tiny images and large radius values.
 
 Radial Blur is the spin variant: seventeen samples follow each covered
 pixel's polar ring around the editable **Blur center X/Y**. The centre uses
