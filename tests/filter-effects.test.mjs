@@ -441,3 +441,16 @@ test('Blur More is a stronger deterministic box blur with safe metadata', () => 
   assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'blur-more', amount: 85, radius: 6 })), true);
   assert.deepEqual(result, applyFilterEffectsPixels(source, 9, 1, { type: 'blur-more', amount: 100, radius: 2 }));
 });
+
+test('lens blur uses a bounded local approximation with explicit source and alpha safety', () => {
+  const source = fixture();
+  const original = source.slice();
+  const effect = effectiveFilterEffects({ type: 'lens-blur', amount: 100, radius: 3 });
+  assert.equal(effect.type, 'lens-blur');
+  assert.equal(validFilterEffects(effect), true);
+  const output = applyFilterEffectsPixels(source, 9, 5, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.equal(pixel(output, 9, 0, 0)[3], 0);
+  assert.deepEqual(pixel(output, 9, 0, 0).slice(0, 3), [0, 0, 0]);
+});

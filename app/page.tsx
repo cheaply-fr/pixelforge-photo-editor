@@ -395,6 +395,7 @@ type Command =
   | 'filter-blur-more'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
+  | 'filter-lens-blur'
   | 'filter-motion-blur'
   | 'filter-radial-blur'
   | 'filter-field-blur'
@@ -794,6 +795,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Blur More', command: 'filter-blur-more' },
     { label: 'Box Blur…', command: 'filter-box-blur' },
     { label: 'Gaussian Blur…', command: 'filter-gaussian-blur' },
+    { label: 'Lens Blur…', command: 'filter-lens-blur' },
     { label: 'Motion Blur…', command: 'filter-motion-blur' },
     { label: 'Radial Blur…', command: 'filter-radial-blur' },
     { label: 'Smart Blur…', command: 'noop', disabled: true },
@@ -3379,7 +3381,7 @@ export default function Home() {
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'color-halftone'
                     ? 85
-                    : type === 'box-blur' || type === 'gaussian-blur'
+                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur'
                       ? 85
                       : 70,
                 radius:
@@ -8156,6 +8158,8 @@ export default function Home() {
       chooseFilterEffect('box-blur', 'Box Blur');
     else if (command === 'filter-gaussian-blur')
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
+    else if (command === 'filter-lens-blur')
+      chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-motion-blur')
       chooseFilterEffect('motion-blur', 'Motion Blur');
     else if (command === 'filter-radial-blur')
@@ -8338,6 +8342,7 @@ export default function Home() {
       case 'filter-field-blur':
       case 'filter-box-blur':
       case 'filter-gaussian-blur':
+      case 'filter-lens-blur':
       case 'filter-tilt-shift':
       case 'filter-mosaic':
       case 'filter-color-halftone':
@@ -10280,6 +10285,9 @@ export default function Home() {
                 </option>
               ))}
             </select>
+            {filterEffects.type === 'lens-blur' && (
+              <p>Local circular aperture blur · 49 samples. No depth map or highlight reconstruction. Source alpha stays unchanged.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 <Slider
@@ -10296,6 +10304,7 @@ export default function Home() {
                       ? 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
+                          filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'motion-blur'
                           ? 'Blur radius'
                       : filterEffects.type === 'radial-blur'

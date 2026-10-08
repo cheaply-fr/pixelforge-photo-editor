@@ -489,3 +489,28 @@ test('Spherize is enabled as a nondestructive Distort effect with centred contro
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() => pixel(page, 1, 2)).toEqual(sourcePixel);
 });
+
+test('Lens Blur is editable, local, source-safe and alpha-preserving', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const sourcePixel = await pixel(page, 1, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Lens Blur…', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Lens Blur…', exact: true }).click();
+  await expect(page.getByText('Lens Blur (local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('lens-blur');
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('6');
+  await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+  await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({ type: 'lens-blur', radius: 7 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('lens-blur');
+});

@@ -13,6 +13,7 @@ export const FILTER_EFFECT_TYPES = [
   'blur-more',
   'box-blur',
   'gaussian-blur',
+  'lens-blur',
   'motion-blur',
   'radial-blur',
   'field-blur',
@@ -231,6 +232,50 @@ function blendPixel(
   output[offset] = clampByte(output[offset] * (1 - strength) + source[0] * strength);
   output[offset + 1] = clampByte(output[offset + 1] * (1 - strength) + source[1] * strength);
   output[offset + 2] = clampByte(output[offset + 2] * (1 - strength) + source[2] * strength);
+}
+
+/** Circular aperture integration with a fixed 49-sample area budget.
+ * Samples exclude hidden RGB and destination alpha remains source-owned.
+ * This simulates uniform circular bokeh; depth-map occlusion is not inferred.
+ */
+function applyLensBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const offsets: Array<[number, number]> = [[0, 0]];
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  for (let sample = 0; sample < 48; sample += 1) {
+    const distance = radius * Math.sqrt((sample + 0.5) / 48);
+    offsets.push([
+      Math.round(Math.cos(sample * goldenAngle) * distance),
+      Math.round(Math.sin(sample * goldenAngle) * distance),
+    ]);
+  }
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      let red = 0, green = 0, blue = 0, weight = 0;
+      for (const [dx, dy] of offsets) {
+        const sx = clamp(x + dx, 0, width - 1);
+        const sy = clamp(y + dy, 0, height - 1);
+        const offset = (sy * width + sx) * 4;
+        const alpha = source[offset + 3];
+        red += source[offset] * alpha;
+        green += source[offset + 1] * alpha;
+        blue += source[offset + 2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - strength) + red / weight * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + green / weight * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + blue / weight * strength);
+    }
+  }
 }
 
 function applyAverageBlur(
@@ -749,6 +794,8 @@ export function applyFilterEffectsPixels(
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'lens-blur') {
+    applyLensBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'motion-blur') {
     applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
   } else if (effect.type === 'radial-blur') {
