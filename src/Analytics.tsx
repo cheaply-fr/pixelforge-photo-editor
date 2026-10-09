@@ -34,7 +34,10 @@ function load(id: string) {
   const page = window as AnalyticsWindow;
   if (!validId(id) || page.__cheaplyGaMeasurementId === id) return;
   page.__cheaplyGaMeasurementId = id;
-  const dataLayer = (page.dataLayer ||= []);
+  // Assign the queue explicitly so the production transform cannot reduce
+  // this to a private local fallback that Google’s loader cannot observe.
+  const dataLayer = page.dataLayer || [];
+  page.dataLayer = dataLayer;
   const gtag = (...args: unknown[]) => dataLayer.push(args);
   page.gtag = gtag;
   gtag('consent', 'default', {
