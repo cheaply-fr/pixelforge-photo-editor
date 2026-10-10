@@ -513,6 +513,7 @@ type Command =
   | 'filter-pointillize'
   | 'filter-difference-clouds'
   | 'filter-lens-correction'
+  | 'filter-lens-flare'
   | 'filter-displace'
   | 'filter-pinch'
   | 'filter-polar-coordinates'
@@ -972,7 +973,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Clouds', command: 'noop', disabled: true },
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'noop', disabled: true },
-    { label: 'Lens Flare…', command: 'noop', disabled: true },
+    { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Sharpen', command: 'sharpen-noise' },
     { label: 'Sharpen Edges', command: 'sharpen-noise' },
     { label: 'Sharpen More', command: 'sharpen-noise' },
@@ -3909,7 +3910,7 @@ export default function Home() {
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
                   || type === 'pointillize' || type === 'mezzotint' || type === 'difference-clouds' || type === 'field-blur'
                     ? 85
-                  : type === 'lens-correction'
+                  : type === 'lens-correction' || type === 'lens-flare'
                     ? 75
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
@@ -3923,6 +3924,8 @@ export default function Home() {
                     ? 10
                     : type === 'lens-correction'
                       ? 64
+                    : type === 'lens-flare'
+                      ? 36
                     : type === 'pinch'
                       ? 40
                     : type === 'spherize'
@@ -9543,6 +9546,8 @@ export default function Home() {
       chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
+    else if (command === 'filter-lens-flare')
+      chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
     else if (command === 'filter-ripple')
@@ -12031,6 +12036,9 @@ export default function Home() {
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
+            {filterEffects.type === 'lens-flare' && (
+              <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
@@ -12091,6 +12099,8 @@ export default function Home() {
                           ? 'Fallback blur radius'
                       : filterEffects.type === 'lens-correction'
                           ? 'Correction radius'
+                      : filterEffects.type === 'lens-flare'
+                          ? 'Flare size'
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -12212,6 +12222,54 @@ export default function Home() {
                       set={(value) => setFilterEffects({ centerY: value / 100 })}
                       suffix="%"
                     />
+                  </>
+                )}
+                {filterEffects.type === 'lens-flare' && (
+                  <>
+                    <Slider
+                      label="Flare centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Flare centre Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Streak angle"
+                      value={filterEffects.angle}
+                      min={-180}
+                      max={180}
+                      set={(value) => setFilterEffects({ angle: value })}
+                      suffix="°"
+                    />
+                    <label className="slider">
+                      <span>
+                        <b>Flare seed (0–4294967295)</b>
+                        <output>{filterEffects.seed}</output>
+                      </span>
+                      <input
+                        className="text-input lens-flare-seed-input"
+                        aria-label="Flare seed"
+                        type="number"
+                        min={0}
+                        max={0xffffffff}
+                        step={1}
+                        value={filterEffects.seed}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                            setFilterEffects({ seed: value });
+                        }}
+                      />
+                    </label>
                   </>
                 )}
                 {filterEffects.type === 'motion-blur' && (

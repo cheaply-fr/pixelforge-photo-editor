@@ -42,6 +42,7 @@ export const FILTER_EFFECT_TYPES = [
   'wave',
   'shear',
   'zigzag',
+  'lens-flare',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -1990,6 +1991,95 @@ function applyPointillize(
   }
 }
 
+/**
+ * Apply a bounded, seeded approximation of Photoshop Lens Flare.
+ *
+ * The renderer adds a soft source-aligned glow, a narrow star streak and a
+ * handful of seeded ghost rings.  It intentionally stays local and
+ * source-safe: pixels are never moved, alpha is copied byte-for-byte and
+ * fully transparent RGB padding remains owned by the immutable source.
+ * `radius` scales the flare relative to the shorter canvas edge while
+ * `centerX`, `centerY`, `angle`, `amount` and `seed` remain editable metadata.
+ */
+function applyLensFlare(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const seed = effect.seed >>> 0;
+  const hash = (value: number): number => {
+    let next = Math.imul((value | 0) ^ seed, 374761393);
+    next = Math.imul(next ^ (next >>> 13), 1274126177);
+    return ((next ^ (next >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const hue = hash(17) * Math.PI * 2;
+  const palette = (phase: number): [number, number, number] => {
+    // A deterministic three-phase sine palette produces subtle colour ghosts
+    // without requiring colour-profile or random APIs in the render path.
+    const red = 0.5 + 0.5 * Math.sin(hue + phase);
+    const green = 0.5 + 0.5 * Math.sin(hue + phase + (Math.PI * 2) / 3);
+    const blue = 0.5 + 0.5 * Math.sin(hue + phase + (Math.PI * 4) / 3);
+    return [red, green, blue];
+  };
+  const centreX = clamp(effect.centerX, 0, 1) * Math.max(0, width - 1);
+  const centreY = clamp(effect.centerY, 0, 1) * Math.max(0, height - 1);
+  const radians = (effect.angle * Math.PI) / 180;
+  const axisX = Math.cos(radians);
+  const axisY = Math.sin(radians);
+  const normalX = -axisY;
+  const normalY = axisX;
+  const spread = Math.max(
+    6,
+    (Math.max(1, Math.min(64, effect.radius)) / 64) * Math.min(width, height) * 0.92,
+  );
+  const ringWidth = Math.max(1.5, spread * 0.035);
+  const coreWidth = Math.max(1.5, spread * 0.075);
+  const ghosts = [-0.84, -0.48, 0.28, 0.63].map((position, index) => ({
+    position: position * spread,
+    radius: spread * (0.06 + hash(index + 31) * 0.08),
+    intensity: 0.22 + hash(index + 61) * 0.18,
+    colour: palette(index * 0.9 + 0.4),
+  }));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (!alpha) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const along = dx * axisX + dy * axisY;
+      const across = dx * normalX + dy * normalY;
+      const distance = Math.hypot(dx, dy);
+      const core = Math.exp(-((distance / coreWidth) ** 2)) * 1.35;
+      const ringDistance = Math.abs(distance - spread * 0.34);
+      const ring = Math.exp(-((ringDistance / ringWidth) ** 2)) * 0.5;
+      const star = Math.exp(-((across / Math.max(1, spread * 0.012)) ** 2)) *
+        Math.exp(-((along / Math.max(1, spread * 0.9)) ** 2)) * 0.22;
+      const mainColour = palette(0);
+      let red = core * 1.05 + ring * mainColour[0] + star;
+      let green = core * 0.92 + ring * mainColour[1] + star * 0.88;
+      let blue = core * 0.7 + ring * mainColour[2] + star * 0.72;
+      for (const ghost of ghosts) {
+        const ghostAlong = along - ghost.position;
+        const ghostDistance = Math.hypot(ghostAlong, across);
+        const glow = Math.exp(-((ghostDistance / Math.max(1.5, ghost.radius)) ** 2)) * ghost.intensity;
+        red += glow * ghost.colour[0];
+        green += glow * ghost.colour[1];
+        blue += glow * ghost.colour[2];
+      }
+      const flare = Math.min(1.8, Math.max(0, red + green + blue) / 2.2) * strength;
+      if (flare <= 0) continue;
+      output[offset] = clampByte(source[offset] + red * 180 * flare);
+      output[offset + 1] = clampByte(source[offset + 1] + green * 180 * flare);
+      output[offset + 2] = clampByte(source[offset + 2] + blue * 180 * flare);
+      output[offset + 3] = alpha;
+    }
+  }
+}
+
 /** Apply a bounded radial lens-correction approximation without mutating the source. */
 function applyLensCorrection(
   source: Uint8ClampedArray,
@@ -2182,6 +2272,8 @@ export function applyFilterEffectsPixels(
     applyDifferenceClouds(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
+  } else if (effect.type === 'lens-flare') {
+    applyLensFlare(data, width, height, effect, output, strength);
   } else {
     applyDistort(data, width, height, effect, output);
   }

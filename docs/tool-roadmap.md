@@ -187,3 +187,11 @@ The first reference groups tools into Move and Selection, Crop and Slice, Measur
 Editable local solid-color layers are active. The source color is stored as validated metadata, so rendering remains nondestructive and project files preserve the fill across reloads.
 
 Ripple is active as a bounded radial displacement with editable centre/radius metadata, premultiplied-alpha bilinear sampling, source retention and desktop/mobile acceptance; see [`ripple-effect-contract.md`](./ripple-effect-contract.md).
+
+The Render increment now adds **Filter → Render → Lens Flare…** as a bounded
+seeded local glow, star streak and ghost-ring approximation. Brightness, size,
+centre, streak angle and seed remain editable metadata and the renderer keeps
+alpha and transparent RGB source-safe through undo, reload, project export and
+Action replay. See [`lens-flare-effect-contract.md`](./lens-flare-effect-contract.md);
+camera-specific optical profiles, highlight reconstruction and depth-aware
+occlusion remain staged.
