@@ -26,6 +26,7 @@ export const FILTER_EFFECT_TYPES = [
   'tilt-shift',
   'mosaic',
   'crystallize',
+  'fragment',
   'color-halftone',
   'pointillize',
   'lens-correction',
@@ -87,7 +88,7 @@ export type FilterEffects = {
   lensDirection?: 'inward' | 'outward';
   /** Strength as a percentage. */
   amount: number;
-  /** Blur radius, distortion wavelength, or mosaic cell size, in source pixels. */
+  /** Blur radius, distortion wavelength, mosaic cell size or Fragment offset, in source pixels. */
   radius: number;
   /** Direction for directional blur/distortion families, in degrees. */
   angle: number;
@@ -1243,6 +1244,49 @@ function applyMosaic(
   }
 }
 
+/**
+ * Average four diagonally offset copies of the immutable source. Each copy
+ * contributes by its sampled alpha so invisible RGB cannot tint the result;
+ * destination alpha remains source-owned. Clamped coordinates keep small
+ * images and edge pixels deterministic without wrapping or canvas expansion.
+ * This local Fragment contract uses exactly four samples per visible pixel.
+ */
+function applyFragment(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const distance = Math.max(1, Math.min(64, Math.round(radius)));
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - distance),
+      bottom = Math.min(height - 1, y + distance);
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const left = Math.max(0, x - distance),
+        right = Math.min(width - 1, x + distance);
+      let red = 0, green = 0, blue = 0, weight = 0;
+      for (let copy = 0; copy < 4; copy += 1) {
+        const sampleX = copy % 2 === 0 ? left : right,
+          sampleY = copy < 2 ? top : bottom,
+          offset = (sampleY * width + sampleX) * 4,
+          alpha = source[offset + 3];
+        red += source[offset] * alpha;
+        green += source[offset + 1] * alpha;
+        blue += source[offset + 2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - strength) + red / weight * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + green / weight * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + blue / weight * strength);
+    }
+  }
+}
+
 function applyColorHalftone(
   source: Uint8ClampedArray,
   width: number,
@@ -1772,6 +1816,8 @@ export function applyFilterEffectsPixels(
     applyMosaic(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'crystallize') {
     applyCrystallize(data, width, height, effect.radius, effect.seed, output, strength);
+  } else if (effect.type === 'fragment') {
+    applyFragment(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'color-halftone') {
     applyColorHalftone(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'tilt-shift') {

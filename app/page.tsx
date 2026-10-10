@@ -504,6 +504,7 @@ type Command =
   | 'filter-tilt-shift'
   | 'filter-mosaic'
   | 'filter-crystallize'
+  | 'filter-fragment'
   | 'filter-color-halftone'
   | 'filter-pointillize'
   | 'filter-lens-correction'
@@ -957,6 +958,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
     { label: 'Crystallize…', command: 'filter-crystallize' },
+    { label: 'Fragment', command: 'filter-fragment' },
     { label: 'Mosaic…', command: 'filter-mosaic' },
     { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
@@ -3887,7 +3889,9 @@ export default function Home() {
                   tiltShift: { ...DEFAULT_TILT_SHIFT_SETTINGS },
                 } : {}),
                 amount:
-                  type === 'average-blur' ||
+                  type === 'fragment'
+                    ? 100
+                    : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'color-halftone'
                   || type === 'pointillize' || type === 'field-blur'
@@ -3898,7 +3902,9 @@ export default function Home() {
                       ? 85
                       : 70,
                 radius:
-                  type === 'mosaic' || type === 'crystallize' || type === 'color-halftone' || type === 'pointillize'
+                  type === 'fragment'
+                    ? 1
+                    : type === 'mosaic' || type === 'crystallize' || type === 'color-halftone' || type === 'pointillize'
                     ? 10
                     : type === 'lens-correction'
                       ? 64
@@ -9508,6 +9514,8 @@ export default function Home() {
       chooseFilterEffect('mosaic', 'Mosaic');
     else if (command === 'filter-crystallize')
       chooseFilterEffect('crystallize', 'Crystallize');
+    else if (command === 'filter-fragment')
+      chooseFilterEffect('fragment', 'Fragment');
     else if (command === 'filter-color-halftone')
       chooseFilterEffect('color-halftone', 'Color Halftone');
     else if (command === 'filter-pointillize')
@@ -9738,6 +9746,7 @@ export default function Home() {
       case 'filter-path-blur':
       case 'filter-mosaic':
       case 'filter-crystallize':
+      case 'filter-fragment':
       case 'filter-color-halftone':
       case 'filter-pointillize':
       case 'filter-lens-correction':
@@ -11983,6 +11992,9 @@ export default function Home() {
             {filterEffects.type === 'crystallize' && (
               <p>Bounded seeded Voronoi-cell approximation with unchanged alpha. Cell geometry is deterministic and editable; true polygon edge reconstruction remains planned.</p>
             )}
+            {filterEffects.type === 'fragment' && (
+              <p>Four diagonally offset source copies are averaged. Offset and strength stay editable; image edges are clamped and alpha stays unchanged.</p>
+            )}
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
@@ -12016,6 +12028,8 @@ export default function Home() {
                           filterEffects.type === 'path-blur' ||
                           filterEffects.type === 'tilt-shift'
                           ? 'Blur radius'
+                      : filterEffects.type === 'fragment'
+                          ? 'Fragment offset'
                       : filterEffects.type === 'radial-blur'
                           || filterEffects.type === 'spin-blur'
                           ? 'Angular sweep'

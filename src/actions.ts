@@ -144,6 +144,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-field-blur',
   'filter-tilt-shift',
   'filter-mosaic',
+  'filter-fragment',
   'filter-color-halftone',
   'filter-ripple',
   'filter-twirl',
