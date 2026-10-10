@@ -4,6 +4,7 @@ import { applyFilterEffectsPixels } from '../src/filterEffects.ts';
 import {
   isTiledNeighborhoodBlur,
   renderTiledNeighborhoodEffect,
+  TiledMemoryBudgetError,
 } from '../src/tiledDocument.ts';
 import { TileCache, readTile } from '../src/tilePlan.ts';
 
@@ -32,13 +33,23 @@ function writeInner(destination, width, pixels, tile) {
   }
 }
 
-for (const type of ['box-blur', 'gaussian-blur']) {
+for (const type of [
+  'blur-more',
+  'box-blur',
+  'gaussian-blur',
+  'lens-blur',
+  'motion-blur',
+  'shape-blur',
+  'smart-blur',
+  'surface-blur',
+  'fragment',
+]) {
   test(`tiled ${type} matches the full-frame pixel oracle at seams`, async () => {
     const width = 520;
     const height = 300;
     const sourcePixels = pixels(width, height);
     const destination = new Uint8ClampedArray(sourcePixels.length);
-    const effect = { type, amount: 100, radius: 8 };
+    const effect = { type, amount: 100, radius: 8, angle: 27, seed: 17 };
     const expected = applyFilterEffectsPixels(sourcePixels, width, height, effect);
     const result = await renderTiledNeighborhoodEffect(
       width,
@@ -55,11 +66,14 @@ for (const type of ['box-blur', 'gaussian-blur']) {
 }
 
 test('only bounded local blur families enter the visible tiled path', () => {
+  assert.equal(isTiledNeighborhoodBlur({ type: 'blur-more', amount: 100, radius: 32 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'box-blur', amount: 100, radius: 64 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 64 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 65 }), false);
   assert.equal(isTiledNeighborhoodBlur({ type: 'average-blur', amount: 100, radius: 4 }), false);
   assert.equal(isTiledNeighborhoodBlur({ type: 'mosaic', amount: 100, radius: 4 }), false);
+  for (const type of ['lens-blur', 'motion-blur', 'shape-blur', 'smart-blur', 'surface-blur', 'fragment'])
+    assert.equal(isTiledNeighborhoodBlur({ type, amount: 100, radius: 4 }), true);
 });
 
 test('tiled cache keys include revision/effect and cached output is cloned', async () => {
@@ -126,6 +140,22 @@ test('16MP synthetic run stays within the bounded destination plus tile ledger',
   );
   assert.ok(result.ledger.peakWorkingBytes <= 4 * 1024 * 1024);
   assert.ok(result.ledger.peakBytes <= width * height * 4 + 4 * 1024 * 1024);
+});
+
+test('working-byte exhaustion is explicit and never commits a destination tile', async () => {
+  let sinks = 0;
+  await assert.rejects(
+    renderTiledNeighborhoodEffect(
+      520,
+      300,
+      { type: 'motion-blur', amount: 100, radius: 8, angle: 20 },
+      (tile) => readTile(pixels(520, 300), 520, 300, tile),
+      () => { sinks += 1; },
+      { revision: 'low-memory', tileSize: 256, maxWorkingBytes: 1024 },
+    ),
+    (error) => error instanceof TiledMemoryBudgetError && error.code === 'PIXELFORGE_MEMORY_BUDGET',
+  );
+  assert.equal(sinks, 0);
 });
 
 test('tiled blur emits privacy-safe telemetry with bounded cache accounting', async () => {

@@ -16,13 +16,35 @@ import {
 import {
   applyFilterEffectsPixels,
   effectiveFilterEffects,
+  type FilterEffectType,
   type FilterEffects,
 } from './filterEffects.ts';
 
-/** Effects whose samples are bounded by a radius in source pixels. */
-export function isTiledNeighborhoodBlur(
+/**
+ * Effects whose samples are bounded by a radius in source pixels and whose
+ * output is translation invariant.  A tile is rendered with an expanded
+ * source rectangle, then only its inner rectangle is committed.  Keeping the
+ * allow-list explicit prevents global/cell-aligned effects from silently
+ * entering the tiled path before their coordinate phase has an oracle test.
+ */
+export const TILED_NEIGHBORHOOD_EFFECT_TYPES = [
+  'blur-more',
+  'box-blur',
+  'gaussian-blur',
+  'lens-blur',
+  'motion-blur',
+  'shape-blur',
+  'smart-blur',
+  'surface-blur',
+  'fragment',
+] as const satisfies readonly FilterEffectType[];
+export type TiledNeighborhoodEffectType =
+  (typeof TILED_NEIGHBORHOOD_EFFECT_TYPES)[number];
+
+/** Return the source-pixel overlap needed by an eligible local effect. */
+export function tiledNeighborhoodRadius(
   value: Partial<FilterEffects> | undefined,
-): boolean {
+): number | undefined {
   if (
     value &&
     value.radius !== undefined &&
@@ -31,14 +53,35 @@ export function isTiledNeighborhoodBlur(
       value.radius < 1 ||
       value.radius > 64)
   )
-    return false;
+    return undefined;
   const effect = effectiveFilterEffects(value);
-  return (
-    (effect.type === 'box-blur' || effect.type === 'gaussian-blur') &&
-    effect.amount > 0 &&
-    effect.radius > 0 &&
-    effect.radius <= 64
-  );
+  if (!TILED_NEIGHBORHOOD_EFFECT_TYPES.includes(effect.type as TiledNeighborhoodEffectType))
+    return undefined;
+  const radius = effect.type === 'blur-more'
+    ? Math.min(64, effect.radius * 2)
+    : effect.radius;
+  return effect.amount > 0 && radius > 0 && radius <= 64 ? radius : undefined;
+}
+
+/** Effects whose samples are bounded by a radius in source pixels. */
+export function isTiledNeighborhoodBlur(
+  value: Partial<FilterEffects> | undefined,
+): boolean {
+  return tiledNeighborhoodRadius(value) !== undefined;
+}
+
+/**
+ * A tile working-set limit is a recoverable render condition.  Callers can
+ * preserve the previous draft and offer export/retry instead of falling back
+ * to another full-canvas allocation that would repeat the pressure.
+ */
+export class TiledMemoryBudgetError extends Error {
+  readonly code = 'PIXELFORGE_MEMORY_BUDGET';
+
+  constructor(message = 'Tiled render exceeded the working-memory budget') {
+    super(message);
+    this.name = 'TiledMemoryBudgetError';
+  }
 }
 
 export type TiledMemoryLedger = {
@@ -57,7 +100,7 @@ export type TiledMemoryLedger = {
 /** Privacy-safe diagnostics emitted after one eligible tiled effect completes. */
 export type TiledRenderTelemetry = {
   kind: 'tiled-neighborhood';
-  effect: 'box-blur' | 'gaussian-blur';
+  effect: TiledNeighborhoodEffectType;
   layerId?: string;
   width: number;
   height: number;
@@ -75,7 +118,7 @@ export type TiledRenderTelemetry = {
 /** Progress for one bounded neighbourhood effect, without pixel data. */
 export type TiledNeighborhoodProgress = {
   kind: 'tiled-neighborhood-progress';
-  effect: 'box-blur' | 'gaussian-blur';
+  effect: TiledNeighborhoodEffectType;
   layerId?: string;
   width: number;
   height: number;
@@ -138,7 +181,7 @@ export function validTiledRenderTelemetry(value: unknown): value is TiledRenderT
   ]);
   return candidate.kind === 'tiled-neighborhood' &&
     Object.keys(candidate).every((key) => allowedKeys.has(key)) &&
-    (candidate.effect === 'box-blur' || candidate.effect === 'gaussian-blur') &&
+    TILED_NEIGHBORHOOD_EFFECT_TYPES.includes(candidate.effect as TiledNeighborhoodEffectType) &&
     (candidate.tileSize === 256 || candidate.tileSize === 512) &&
     integers.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
     (candidate.width as number) > 0 && (candidate.height as number) > 0 &&
@@ -187,7 +230,7 @@ export function validTiledNeighborhoodProgress(
   ]);
   return candidate.kind === 'tiled-neighborhood-progress' &&
     Object.keys(candidate).every((key) => allowedKeys.has(key)) &&
-    (candidate.effect === 'box-blur' || candidate.effect === 'gaussian-blur') &&
+    TILED_NEIGHBORHOOD_EFFECT_TYPES.includes(candidate.effect as TiledNeighborhoodEffectType) &&
     (candidate.tileSize === 256 || candidate.tileSize === 512) &&
     integers.every((item) => Number.isSafeInteger(item) && (item as number) >= 0) &&
     (candidate.width as number) > 0 && (candidate.height as number) > 0 &&
@@ -318,13 +361,14 @@ export async function renderTiledNeighborhoodEffect(
   options: TiledDocumentOptions,
 ): Promise<TiledDocumentResult> {
   const effect = effectiveFilterEffects(effectValue);
-  if (!isTiledNeighborhoodBlur(effect))
-    throw new RangeError('Effect is not a supported tiled neighbourhood blur');
+  const overlap = tiledNeighborhoodRadius(effect);
+  if (overlap === undefined)
+    throw new RangeError('Effect is not a supported tiled neighbourhood effect');
   const maxWorkingBytes = validateBudget(options.maxWorkingBytes, DEFAULT_TILE_BATCH_BYTES);
   const maxBatchBytes = validateBudget(options.maxBatchBytes, DEFAULT_TILE_BATCH_BYTES);
   const plan = createTiledRenderPlan(1, width, height, {
     tileSize: options.tileSize,
-    overlap: effect.radius,
+    overlap,
     maxBatchBytes,
   });
   const destinationBytes = width * height * 4;
@@ -359,7 +403,7 @@ export async function renderTiledNeighborhoodEffect(
         assertPixels(input, tile.readWidth, tile.readHeight, 'Tiled source');
         const actualInputBytes = input.byteLength;
         if (actualInputBytes > maxWorkingBytes)
-          throw new RangeError('Tiled source exceeds the working-byte budget');
+          throw new TiledMemoryBudgetError('Tiled source exceeds the working-byte budget');
         rendered = applyFilterEffectsPixels(
           input,
           tile.readWidth,
@@ -370,13 +414,13 @@ export async function renderTiledNeighborhoodEffect(
         assertPixels(rendered, tile.readWidth, tile.readHeight, 'Tiled effect output');
         const workingBytes = actualInputBytes + rendered.byteLength + sinkBytes;
         if (workingBytes > maxWorkingBytes)
-          throw new RangeError('Tiled effect input/output exceeds the working-byte budget');
+          throw new TiledMemoryBudgetError('Tiled effect input/output exceeds the working-byte budget');
         ledger.peakWorkingBytes = Math.max(ledger.peakWorkingBytes, workingBytes);
         if (cacheKey && cache) cache.set(cacheKey, Uint8ClampedArray.from(rendered), rendered.byteLength);
       }
       const workingBytes = inputBytes + rendered.byteLength + sinkBytes;
       if (workingBytes > maxWorkingBytes)
-        throw new RangeError('Tiled effect input/output exceeds the working-byte budget');
+        throw new TiledMemoryBudgetError('Tiled effect input/output exceeds the working-byte budget');
       ledger.peakWorkingBytes = Math.max(ledger.peakWorkingBytes, workingBytes);
       assertAbort(options.signal, options.isCancelled);
       await sink(rendered, tile, context);
@@ -396,7 +440,7 @@ export async function renderTiledNeighborhoodEffect(
   assertAbort(options.signal, options.isCancelled);
   options.onTelemetry?.({
     kind: 'tiled-neighborhood',
-    effect: effect.type as 'box-blur' | 'gaussian-blur',
+    effect: effect.type as TiledNeighborhoodEffectType,
     width,
     height,
     tileSize: plan.request.tileSize,
@@ -416,7 +460,7 @@ export async function applyTiledNeighborhoodBlur(
   options: TiledDocumentOptions,
 ): Promise<{ canvas: HTMLCanvasElement; result: TiledDocumentResult }> {
   if (!isTiledNeighborhoodBlur(effectValue))
-    throw new RangeError('Effect is not a supported tiled neighbourhood blur');
+    throw new RangeError('Effect is not a supported tiled neighbourhood effect');
   const destination =
     typeof document !== 'undefined'
       ? document.createElement('canvas')
@@ -479,3 +523,6 @@ export async function applyTiledNeighborhoodBlur(
   );
   return { canvas: destination as unknown as HTMLCanvasElement, result };
 }
+
+/** Generic name for callers adding local, pixel-parity-proven effects. */
+export const applyTiledNeighborhoodEffect = applyTiledNeighborhoodBlur;
