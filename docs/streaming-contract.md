@@ -12,8 +12,9 @@ upload anonymous work in the background.
 
 Progressive large-image rendering is a separate performance milestone. When
 worker capability is available, the committed visible adapter uses a worker,
-OffscreenCanvas and bounded tiles internally for Box and Gaussian Blur, but the
-worker still publishes a full-frame result; it does not stream partial pixels
+OffscreenCanvas and bounded tiles internally for the explicit local effect
+allow-list (Blur More, Box/Gaussian, Lens, Motion, Shape, Smart, Surface and
+Fragment), but the worker still publishes a full-frame result; it does not stream partial pixels
 or remove every full-frame allocation.
 For eligible blur renders the worker/document path also sends one validated
 `tiled-telemetry` envelope before the owned result. It contains only effect,
