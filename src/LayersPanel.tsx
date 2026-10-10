@@ -14,6 +14,7 @@ import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
+import { clippingBase, isClippingSourceLayer } from './layerClipping';
 
 type Props = {
   frame: Frame;
@@ -43,6 +44,8 @@ type Props = {
   invertMask: () => void;
   toggleMask: () => void;
   clearMask: () => void;
+  createClipping: () => void;
+  releaseClipping: () => void;
   clearSelection: () => void;
   invertSelection: () => void;
   selectionOperation: SelectionOperation;
@@ -74,6 +77,8 @@ export default function LayersPanel({
   invertMask,
   toggleMask,
   clearMask,
+  createClipping,
+  releaseClipping,
   clearSelection,
   invertSelection,
   selectionOperation,
@@ -95,6 +100,7 @@ export default function LayersPanel({
   for (const group of groups)
     if (groupMatchesSearch(group, searchQuery)) matchingGroupIds.add(group.id);
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
+  const clippingMaskBase = clippingBase(frame, layer);
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
   const selectedIds = new Set(
     (frame.selectedLayerIds === undefined
@@ -398,6 +404,28 @@ export default function LayersPanel({
         >
           {layer.maskEnabled === false ? 'Enable mask' : 'Disable mask'}
         </button>
+        <button
+          onClick={createClipping}
+          disabled={
+            !isClippingSourceLayer(layer) ||
+            Boolean(layer.clippingTo) ||
+            !clippingMaskBase ||
+            layerLocked ||
+            Boolean(
+              clippingMaskBase &&
+                (clippingMaskBase.locked || !clippingMaskBase.visible),
+            ) ||
+            !layer.visible
+          }
+        >
+          Create clipping mask
+        </button>
+        <button
+          onClick={releaseClipping}
+          disabled={!layer.clippingTo || layerLocked}
+        >
+          Release clipping mask
+        </button>
         <button onClick={invertSelection} disabled={!frame.selection}>
           Invert selection
         </button>
@@ -407,6 +435,11 @@ export default function LayersPanel({
       </div>
       {isMaskableLayer(layer) && layer.mask && (
         <p className="mask-status">Nondestructive mask active</p>
+      )}
+      {layer.clippingTo && (
+        <p className="mask-status">
+          Clipped to {clippingMaskBase?.name || 'lower layer'}
+        </p>
       )}
       {layer.kind === 'smart-object' && (
         <p className="mask-status">

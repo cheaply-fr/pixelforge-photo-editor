@@ -6,6 +6,7 @@ import {
   type Assets,
   type Frame,
 } from './document';
+import { sanitizeClippingRelations } from './layerClipping';
 import { renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
@@ -115,10 +116,14 @@ export function useDocument(onError: (message: string) => void) {
   const commit = useCallback(
     (value: Frame, replace = false) => {
       try {
-        validateFrame(value, assets.current);
+        // Stack edits can invalidate a clipping relationship. Repair those
+        // links at the history boundary so reorder/delete/group operations
+        // remain undoable instead of producing an unusable document.
+        const sanitized = sanitizeClippingRelations(value);
+        validateFrame(sanitized, assets.current);
         let next = replace
-          ? [value]
-          : [...history.current.slice(0, index.current + 1), value];
+          ? [sanitized]
+          : [...history.current.slice(0, index.current + 1), sanitized];
         let used = referencedAssets(next, assets.current);
         while (
           next.length > 1 &&
@@ -139,7 +144,7 @@ export function useDocument(onError: (message: string) => void) {
         history.current = next;
         index.current = next.length - 1;
         assets.current = used;
-        publish(value);
+        publish(sanitized);
         return true;
       } catch (error) {
         assets.current = referencedAssets(history.current, assets.current);

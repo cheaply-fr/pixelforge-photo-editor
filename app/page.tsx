@@ -139,6 +139,11 @@ import {
 } from '../src/layerAlignment';
 import { layerMergeReason, planLayerMerge } from '../src/layerMerge';
 import { combineSelectionBounds } from '../src/layerSelection';
+import {
+  clippingBase,
+  isClippingSourceLayer,
+  validClippingRelationship,
+} from '../src/layerClipping';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -414,6 +419,8 @@ type Command =
   | 'invert-layer-mask'
   | 'toggle-layer-mask'
   | 'remove-layer-mask'
+  | 'create-clipping-mask'
+  | 'release-clipping-mask'
   | 'free-transform'
   | 'quick-mask'
   | 'save-selection'
@@ -772,7 +779,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Disable Layer Mask', command: 'toggle-layer-mask' },
     { label: 'Remove Layer Mask', command: 'remove-layer-mask' },
     { label: 'Vector Mask', command: 'noop', disabled: true },
-    { label: 'Create Clipping Mask', command: 'noop', disabled: true },
+    { label: 'Create Clipping Mask', command: 'create-clipping-mask' },
+    { label: 'Release Clipping Mask', command: 'release-clipping-mask' },
     { label: 'New Smart Object…', command: 'new-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
     { label: 'Rasterize', command: 'rasterize-layer' },
@@ -4417,6 +4425,56 @@ export default function Home() {
           ? 'Layer added to a new group'
           : `${layers.length} layers added to a new group`,
       );
+  };
+  const createClippingMask = () => {
+    const f = current(),
+      source = f.layers.find((item) => item.id === f.active),
+      base = source ? clippingBase(f, source) : undefined;
+    if (!source || !isClippingSourceLayer(source) || !base) {
+      setNotice('Select a raster or smart-object layer directly above its clipping base');
+      return false;
+    }
+    if (layerIsLocked(f, source) || layerIsLocked(f, base) || !source.visible || !base.visible) {
+      setNotice('Show and unlock the source and clipping base first');
+      return false;
+    }
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((layer) =>
+          layer.id === source.id ? { ...layer, clippingTo: base.id } : layer,
+        ),
+      })
+    ) {
+      setNotice(`Clipping mask created from ${base.name || 'base layer'}`);
+      return true;
+    }
+    return false;
+  };
+  const releaseClippingMask = () => {
+    const f = current(),
+      source = f.layers.find((item) => item.id === f.active);
+    if (!source?.clippingTo) {
+      setNotice('The active layer has no clipping mask');
+      return false;
+    }
+    if (layerIsLocked(f, source)) {
+      setNotice('Unlock the clipped layer before releasing its mask');
+      return false;
+    }
+    const { clippingTo: _clippingTo, ...withoutClipping } = source;
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((layer) =>
+          layer.id === source.id ? (withoutClipping as Layer) : layer,
+        ),
+      })
+    ) {
+      setNotice('Clipping mask released');
+      return true;
+    }
+    return false;
   };
   const ungroupActiveLayer = () => {
     const f = current(),
@@ -9156,6 +9214,8 @@ export default function Home() {
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
+    else if (command === 'create-clipping-mask') createClippingMask();
+    else if (command === 'release-clipping-mask') releaseClippingMask();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'levels')
       setNotice('Levels controls are available in Adjust selected layer');
@@ -9398,6 +9458,26 @@ export default function Home() {
           locked ||
           !layer.visible ||
           !layer.mask
+        );
+      case 'create-clipping-mask': {
+        const base = layer ? clippingBase(frame, layer) : undefined;
+        return (
+          !layer ||
+          !isClippingSourceLayer(layer) ||
+          !base ||
+          Boolean(layer.clippingTo) ||
+          layerIsLocked(frame, layer) ||
+          layerIsLocked(frame, base) ||
+          !layer.visible ||
+          !base.visible
+        );
+      }
+      case 'release-clipping-mask':
+        return (
+          !layer ||
+          !layer.clippingTo ||
+          !validClippingRelationship(frame, layer.id, layer.clippingTo) ||
+          layerIsLocked(frame, layer)
         );
       case 'auto-tone':
       case 'auto-contrast':
@@ -10704,6 +10784,8 @@ export default function Home() {
               invertMask={invertLayerMask}
               toggleMask={toggleLayerMask}
               clearMask={clearMask}
+              createClipping={createClippingMask}
+              releaseClipping={releaseClippingMask}
               clearSelection={() => setSelection(undefined)}
               invertSelection={invertSelection}
               selectionOperation={selectionOperation}

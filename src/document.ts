@@ -109,6 +109,12 @@ import {
 } from './layerStyles.ts';
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
+import {
+  applyClippingAlpha,
+  clippingBase,
+  isClippingSourceLayer,
+  validClippingRelationship,
+} from './layerClipping.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = GROUP_BLEND_MODES;
@@ -205,6 +211,8 @@ type Common = {
   patchStrokes?: PatchStroke[];
   /** Optional constrained local cleanup operations over layer-local masks. */
   contentAwareFills?: ContentAwareFill[];
+  /** Optional source-to-base relationship for a nondestructive clipping mask. */
+  clippingTo?: string;
 };
 export type Layer = Common &
   (
@@ -1234,6 +1242,8 @@ export function validateFrame(
       !layer.matrix.every((v) => number(v, -1000000, 1000000)) ||
       !validAdjustments(layer.adjustments) ||
       (layer.styles !== undefined && !validLayerStyles(layer.styles)) ||
+      (layer.clippingTo !== undefined &&
+        typeof layer.clippingTo !== 'string') ||
       (layer.groupId !== undefined &&
         (!validId(layer.groupId) || !groupIds.has(layer.groupId)))
     )
@@ -1377,6 +1387,17 @@ export function validateFrame(
       }
     } else return fail();
   }
+  // Relationships are stack-sensitive and therefore need a cross-layer pass
+  // after every layer has been structurally validated.
+  if (
+    value.layers.some(
+      (layer) =>
+        layer.clippingTo !== undefined &&
+        (!isClippingSourceLayer(layer) ||
+          !validClippingRelationship(value as Frame, layer.id, layer.clippingTo)),
+    )
+  )
+    return fail();
   const frameWidth = Number(value.w),
     frameHeight = Number(value.h);
   if (
@@ -1841,6 +1862,72 @@ export async function renderFrame(
       continue;
     }
     if (!layer.visible) {
+      reportProgress(layerIndex);
+      continue;
+    }
+    const clippedBase = clippingBase(frame, layer);
+    if (clippedBase) {
+      // Render the source and base independently. Applying destination-in to
+      // `out` would clip every lower layer, including unrelated artwork.
+      // Stripping the relationship from these one-layer renders also keeps
+      // the bounded slice deterministic if a legacy draft contains a chain.
+      const { clippingTo: _sourceClipping, ...sourceWithoutClipping } = layer,
+        { clippingTo: _baseClipping, ...baseWithoutClipping } = clippedBase,
+        nestedOptions = options?.onProgress
+          ? { ...options, onProgress: undefined }
+          : options,
+        sourceImage = await renderFrame(
+          {
+            ...frame,
+            layers: [
+              {
+                ...sourceWithoutClipping,
+                groupId: undefined,
+                opacity: 1,
+                blend: 'source-over',
+              },
+            ],
+            groups: [],
+            active: layer.id,
+          },
+          assets,
+          overrides,
+          nestedOptions,
+        ),
+        baseImage = await renderFrame(
+          {
+            ...frame,
+            layers: [
+              {
+                ...baseWithoutClipping,
+                groupId: undefined,
+              },
+            ],
+            groups: [],
+            active: clippedBase.id,
+          },
+          assets,
+          overrides,
+          nestedOptions,
+        ),
+        sourceSurface = surface(frame.w, frame.h),
+        baseSurface = surface(frame.w, frame.h),
+        sourceContext = sourceSurface.getContext('2d')!,
+        baseContext = baseSurface.getContext('2d')!;
+      sourceContext.drawImage(sourceImage, 0, 0);
+      baseContext.drawImage(baseImage, 0, 0);
+      const sourcePixels = sourceContext.getImageData(0, 0, frame.w, frame.h),
+        basePixels = baseContext.getImageData(0, 0, frame.w, frame.h),
+        clippedPixels = applyClippingAlpha(sourcePixels.data, basePixels.data);
+      sourcePixels.data.set(clippedPixels);
+      sourceContext.putImageData(sourcePixels, 0, 0);
+      context.save();
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.globalAlpha = layer.opacity;
+      context.globalCompositeOperation = layer.blend;
+      context.filter = 'none';
+      context.drawImage(sourceSurface, 0, 0);
+      context.restore();
       reportProgress(layerIndex);
       continue;
     }
