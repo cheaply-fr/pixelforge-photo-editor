@@ -33,6 +33,7 @@ export const FILTER_EFFECT_TYPES = [
   'pointillize',
   'picture-frame',
   'clouds',
+  'fibers',
   'difference-clouds',
   'lens-correction',
   'displace',
@@ -105,6 +106,12 @@ export type MezzotintSettings = {
   grain: 'fine' | 'medium' | 'coarse';
 };
 
+/** Geometry controls for the bounded seeded Fibers approximation. */
+export type FibersSettings = {
+  /** Amount of seeded lateral warp applied to the filament field. */
+  variance: number;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -121,13 +128,17 @@ export const DEFAULT_MEZZOTINT_SETTINGS: MezzotintSettings = {
   grain: 'medium',
 };
 
+export const DEFAULT_FIBERS_SETTINGS: FibersSettings = {
+  variance: 50,
+};
+
 export type FilterEffects = {
   type: FilterEffectType;
   /** Legacy lens corrections default to inward source sampling. */
   lensDirection?: 'inward' | 'outward';
   /** Strength as a percentage. */
   amount: number;
-  /** Blur radius, distortion wavelength, mosaic cell size or Fragment offset, in source pixels. */
+  /** Blur radius, distortion wavelength, mosaic/fiber scale or Fragment offset, in source pixels. */
   radius: number;
   /** Direction for directional blur/distortion families, in degrees. */
   angle: number;
@@ -152,6 +163,8 @@ export type FilterEffects = {
   colorHalftone?: ColorHalftoneSettings;
   /** Editable seeded grain geometry for the Mezzotint Pixelate effect. */
   mezzotint?: MezzotintSettings;
+  /** Editable warp geometry for the seeded Fibers Render effect. */
+  fibers?: FibersSettings;
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -257,6 +270,12 @@ export function effectiveFilterEffects(
       grain: grain === 'fine' || grain === 'coarse' ? grain : DEFAULT_MEZZOTINT_SETTINGS.grain,
     };
   }
+  if (type === 'fibers') {
+    const variance = source.fibers?.variance;
+    normalized.fibers = {
+      variance: finite(variance) ? clamp(Math.round(variance), 1, 64) : DEFAULT_FIBERS_SETTINGS.variance,
+    };
+  }
   return normalized;
 }
 
@@ -305,6 +324,11 @@ function validMezzotintSettings(value: unknown): value is MezzotintSettings {
   const settings = value as Partial<MezzotintSettings>;
   return settings.grain === 'fine' || settings.grain === 'medium' || settings.grain === 'coarse';
 }
+function validFibersSettings(value: unknown): value is FibersSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<FibersSettings>;
+  return finite(settings.variance) && Number.isInteger(settings.variance) && settings.variance >= 1 && settings.variance <= 64;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -320,6 +344,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.tiltShift === undefined || validTiltShiftSettings(effect.tiltShift)) &&
     (effect.colorHalftone === undefined || validColorHalftoneSettings(effect.colorHalftone)) &&
     (effect.mezzotint === undefined || validMezzotintSettings(effect.mezzotint)) &&
+    (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -1715,6 +1740,82 @@ function applyFlame(
 }
 
 /**
+ * Apply a bounded seeded Fibers approximation.
+ *
+ * Photoshop Fibers creates a foreground/background filament field. PixelForge
+ * keeps the local renderer deterministic and nondestructive: a seeded,
+ * anisotropic multi-octave field forms narrow vertical filaments, then blends
+ * a neutral generated tone into visible source pixels. Alpha and transparent
+ * RGB padding remain byte-for-byte unchanged. This does not claim Photoshop's
+ * colour controls, exact noise distribution or wrap-around behaviour.
+ */
+function applyFibers(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const scale = Math.max(2, Math.min(64, Math.round(effect.radius)));
+  const variance = (effect.fibers?.variance ?? DEFAULT_FIBERS_SETTINGS.variance) / 64;
+  const seed = effect.seed >>> 0;
+  const hash = (x: number, y: number): number => {
+    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const smooth = (value: number): number => value * value * (3 - 2 * value);
+  const lattice = (x: number, y: number): number => {
+    const left = Math.floor(x);
+    const top = Math.floor(y);
+    const tx = smooth(x - left);
+    const ty = smooth(y - top);
+    const topLeft = hash(left, top);
+    const topRight = hash(left + 1, top);
+    const bottomLeft = hash(left, top + 1);
+    const bottomRight = hash(left + 1, top + 1);
+    const upper = topLeft + (topRight - topLeft) * tx;
+    const lower = bottomLeft + (bottomRight - bottomLeft) * tx;
+    return upper + (lower - upper) * ty;
+  };
+  const field = (x: number, y: number): number => {
+    // A low-frequency warp bends the vertical fibres, while two narrower
+    // octaves preserve filament detail without unbounded per-pixel work.
+    const warp = (lattice(x / (scale * 1.7), y / (scale * 2.2)) - 0.5) * variance * scale * 1.8;
+    let sampleX = (x + warp) / Math.max(1, scale * 0.42);
+    let sampleY = y / scale;
+    let amplitude = 0.58;
+    let total = 0;
+    let value = 0;
+    for (let octave = 0; octave < 3; octave += 1) {
+      value += lattice(sampleX, sampleY) * amplitude;
+      total += amplitude;
+      sampleX *= 2;
+      sampleY *= 0.72;
+      amplitude *= 0.5;
+    }
+    const normalized = total ? value / total : 0.5;
+    // Increase contrast as variance rises so the result reads as filaments.
+    const contrast = 0.75 + variance * 0.85;
+    return clamp(0.5 + (normalized - 0.5) * contrast, 0, 1);
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      const filament = field(x, y);
+      const generated = 18 + filament * 232;
+      output[destination] = clampByte(source[destination] * (1 - strength) + generated * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + generated * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + generated * strength);
+      output[destination + 3] = alpha;
+    }
+  }
+}
+
+/**
  * Apply a bounded Voronoi-cell approximation of Photoshop Crystallize.
  * Jittered cell centres are derived from the persisted seed, so the effect is
  * reproducible without storing generated pixels. Alpha and transparent RGB
@@ -2442,6 +2543,8 @@ export function applyFilterEffectsPixels(
     applyColorHalftone(data, width, height, effect, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
+  } else if (effect.type === 'fibers') {
+    applyFibers(data, width, height, effect, output, strength);
   } else if (effect.type === 'tilt-shift') {
     applyTiltShift(data, width, height, effect, output, strength);
   } else if (effect.type === 'wave') {

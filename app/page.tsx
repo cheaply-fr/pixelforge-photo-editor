@@ -331,6 +331,7 @@ import {
 } from '../src/contentAwareCleanup';
 import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
+  DEFAULT_FIBERS_SETTINGS,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
@@ -529,6 +530,7 @@ type Command =
   | 'filter-pointillize'
   | 'filter-picture-frame'
   | 'filter-clouds'
+  | 'filter-fibers'
   | 'filter-difference-clouds'
   | 'filter-lens-correction'
   | 'filter-lens-flare'
@@ -996,7 +998,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Picture Frame…', command: 'filter-picture-frame' },
     { label: 'Clouds', command: 'filter-clouds' },
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
-    { label: 'Fibers…', command: 'noop', disabled: true },
+    { label: 'Fibers…', command: 'filter-fibers' },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'sharpen-noise' },
@@ -3952,13 +3954,16 @@ export default function Home() {
                 ...(type === 'mezzotint' ? {
                   mezzotint: { ...DEFAULT_MEZZOTINT_SETTINGS },
                 } : {}),
+                ...(type === 'fibers' ? {
+                  fibers: { ...DEFAULT_FIBERS_SETTINGS },
+                } : {}),
                 amount:
                   type === 'fragment'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
-                  || type === 'pointillize' || type === 'mezzotint' || type === 'clouds' || type === 'difference-clouds' || type === 'picture-frame' || type === 'field-blur' || type === 'flame'
+                  || type === 'pointillize' || type === 'mezzotint' || type === 'fibers' || type === 'clouds' || type === 'difference-clouds' || type === 'picture-frame' || type === 'field-blur' || type === 'flame'
                     ? 85
                   : type === 'lens-correction' || type === 'lens-flare'
                     ? 75
@@ -3974,7 +3979,7 @@ export default function Home() {
                     ? 18
                     : type === 'flame'
                       ? 16
-                    : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize'
+                    : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize' || type === 'fibers'
                     ? 10
                     : type === 'clouds'
                       ? 16
@@ -9918,6 +9923,7 @@ export default function Home() {
       case 'filter-mezzotint':
       case 'filter-pointillize':
       case 'filter-picture-frame':
+      case 'filter-fibers':
       case 'filter-difference-clouds':
       case 'filter-flame':
       case 'filter-lens-correction':
@@ -12183,6 +12189,9 @@ export default function Home() {
             {filterEffects.type === 'pointillize' && (
               <p>Bounded stipple-cell approximation with unchanged alpha. Density, foreground/background color and full procedural controls remain planned.</p>
             )}
+            {filterEffects.type === 'fibers' && (
+              <p>Bounded seeded filament field blended into visible pixels. Fiber scale, variance and seed remain editable; Photoshop&apos;s foreground/background colors, exact stochastic field and wrap-around remain planned.</p>
+            )}
             {filterEffects.type === 'crystallize' && (
               <p>Bounded seeded Voronoi-cell approximation with unchanged alpha. Cell geometry is deterministic and editable; true polygon edge reconstruction remains planned.</p>
             )}
@@ -12230,7 +12239,9 @@ export default function Home() {
                 />
                 <Slider
                   label={
-                    filterEffects.type === 'mosaic' ||
+                    filterEffects.type === 'fibers'
+                      ? 'Fiber scale'
+                      : filterEffects.type === 'mosaic' ||
                     filterEffects.type === 'crystallize' ||
                     filterEffects.type === 'facet' ||
                     filterEffects.type === 'color-halftone' ||
@@ -12732,6 +12743,37 @@ export default function Home() {
                       </span>
                       <input
                         className="text-input flame-seed-input"
+                        aria-label="Random seed"
+                        type="number"
+                        min={0}
+                        max={0xffffffff}
+                        step={1}
+                        value={filterEffects.seed}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                            setFilterEffects({ seed: value });
+                        }}
+                      />
+                    </label>
+                  </>
+                )}
+                {filterEffects.type === 'fibers' && (
+                  <>
+                    <Slider
+                      label="Fiber variance"
+                      value={filterEffects.fibers?.variance ?? DEFAULT_FIBERS_SETTINGS.variance}
+                      min={1}
+                      max={64}
+                      set={(value) => setFilterEffects({ fibers: { variance: value } })}
+                    />
+                    <label className="slider">
+                      <span>
+                        <b>Random seed (0–4294967295)</b>
+                        <output>{filterEffects.seed}</output>
+                      </span>
+                      <input
+                        className="text-input fibers-seed-input"
                         aria-label="Random seed"
                         type="number"
                         min={0}

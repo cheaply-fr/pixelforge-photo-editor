@@ -152,6 +152,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-pointillize',
   'filter-picture-frame',
   'filter-clouds',
+  'filter-fibers',
   'filter-difference-clouds',
   'filter-ripple',
   'filter-twirl',
