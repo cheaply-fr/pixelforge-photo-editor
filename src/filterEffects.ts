@@ -31,6 +31,7 @@ export const FILTER_EFFECT_TYPES = [
   'color-halftone',
   'mezzotint',
   'pointillize',
+  'clouds',
   'lens-correction',
   'displace',
   'pinch',
@@ -1510,6 +1511,66 @@ function applyMezzotint(
 }
 
 /**
+ * Apply a bounded deterministic approximation of Photoshop Render → Clouds.
+ *
+ * Photoshop's Clouds command creates a procedural foreground/background
+ * texture. PixelForge keeps the operation nondestructive and local by
+ * generating a seeded, multi-octave value-noise field and blending it into
+ * the visible source pixels. `radius` controls the largest noise scale,
+ * `amount` controls the blend strength and `seed` makes the result replayable
+ * after a draft/project round trip. Source alpha and transparent RGB padding
+ * remain byte-for-byte stable; no canvas expansion or upload is involved.
+ */
+function applyClouds(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const scale = Math.max(2, Math.min(128, Math.round(effect.radius * 2)));
+  const seed = effect.seed >>> 0;
+  const hash = (x: number, y: number, salt: number): number => {
+    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(salt | 0, 1442695041) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const smooth = (value: number) => value * value * (3 - 2 * value);
+  const valueNoise = (x: number, y: number, salt: number): number => {
+    const left = Math.floor(x);
+    const top = Math.floor(y);
+    const tx = smooth(x - left);
+    const ty = smooth(y - top);
+    const topLeft = hash(left, top, salt);
+    const topRight = hash(left + 1, top, salt);
+    const bottomLeft = hash(left, top + 1, salt);
+    const bottomRight = hash(left + 1, top + 1, salt);
+    const topMix = topLeft + (topRight - topLeft) * tx;
+    const bottomMix = bottomLeft + (bottomRight - bottomLeft) * tx;
+    return topMix + (bottomMix - topMix) * ty;
+  };
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (!source[offset + 3]) continue;
+      let value = 0;
+      let amplitude = 1;
+      let amplitudeTotal = 0;
+      for (let octave = 0; octave < 4; octave += 1) {
+        const frequency = 2 ** octave;
+        value += valueNoise((x / scale) * frequency, (y / scale) * frequency, octave + 1) * amplitude;
+        amplitudeTotal += amplitude;
+        amplitude *= 0.5;
+      }
+      const cloud = (value / amplitudeTotal) * 255;
+      blendPixel(output, offset, [cloud, cloud, cloud, source[offset + 3]], strength);
+    }
+  }
+}
+
+/**
  * Apply a bounded Voronoi-cell approximation of Photoshop Crystallize.
  * Jittered cell centres are derived from the persisted seed, so the effect is
  * reproducible without storing generated pixels. Alpha and transparent RGB
@@ -2106,6 +2167,8 @@ export function applyFilterEffectsPixels(
     applyDisplace(data, width, height, effect, output);
   } else if (effect.type === 'pointillize') {
     applyPointillize(data, width, height, effect, output);
+  } else if (effect.type === 'clouds') {
+    applyClouds(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else {
