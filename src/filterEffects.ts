@@ -66,6 +66,21 @@ export type FieldBlurPoint = {
   radius: number;
 };
 
+/**
+ * Bounded geometry for the local Tilt-Shift approximation. `focusWidth` is
+ * the full sharp band as a fraction of the cross-axis extent and `feather`
+ * is the distance over which the blur ramps from zero to full strength.
+ */
+export type TiltShiftSettings = {
+  focusWidth: number;
+  feather: number;
+};
+
+export const DEFAULT_TILT_SHIFT_SETTINGS: TiltShiftSettings = {
+  focusWidth: 0.36,
+  feather: 0.5,
+};
+
 export type FilterEffects = {
   type: FilterEffectType;
   /** Legacy lens corrections default to inward source sampling. */
@@ -91,6 +106,8 @@ export type FilterEffects = {
   pathTaper?: number;
   /** Authored Field Blur pins, limited to 1–8 deterministic points. */
   fieldPoints?: FieldBlurPoint[];
+  /** Editable sharp-band geometry for the Tilt-Shift Gallery effect. */
+  tiltShift?: TiltShiftSettings;
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -172,6 +189,13 @@ export function effectiveFilterEffects(
     }));
     if (fieldPoints.length > 0) normalized.fieldPoints = fieldPoints;
   }
+  if (type === 'tilt-shift') {
+    const settings = source.tiltShift;
+    normalized.tiltShift = {
+      focusWidth: finite(settings?.focusWidth) ? clamp(settings.focusWidth, 0.05, 0.8) : DEFAULT_TILT_SHIFT_SETTINGS.focusWidth,
+      feather: finite(settings?.feather) ? clamp(settings.feather, 0.05, 0.8) : DEFAULT_TILT_SHIFT_SETTINGS.feather,
+    };
+  }
   return normalized;
 }
 
@@ -201,6 +225,12 @@ function validFieldPoints(value: unknown): value is FieldBlurPoint[] {
     finite(point.radius) && Number.isInteger(point.radius) && point.radius >= 0 && point.radius <= 64,
   );
 }
+function validTiltShiftSettings(value: unknown): value is TiltShiftSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<TiltShiftSettings>;
+  return finite(settings.focusWidth) && settings.focusWidth >= 0.05 && settings.focusWidth <= 0.8 &&
+    finite(settings.feather) && settings.feather >= 0.05 && settings.feather <= 0.8;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -213,6 +243,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.pathCentered === undefined || typeof effect.pathCentered === 'boolean') &&
     (effect.pathTaper === undefined || (finite(effect.pathTaper) && effect.pathTaper >= 0 && effect.pathTaper <= 1)) &&
     (effect.fieldPoints === undefined || validFieldPoints(effect.fieldPoints)) &&
+    (effect.tiltShift === undefined || validTiltShiftSettings(effect.tiltShift)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -1611,6 +1642,50 @@ function applyLensCorrection(
   }
 }
 
+/**
+ * Apply a bounded Tilt-Shift focal-band blur.
+ *
+ * `centerX`/`centerY` locate the middle of the focus line and `angle` rotates
+ * that line clockwise from horizontal. The sharp band and its transition are
+ * normalized against the maximum cross-axis extent, so the same metadata
+ * behaves consistently on portrait, landscape and rotated images. This is a
+ * local focal-plane approximation: it does not infer depth, synthesize bokeh,
+ * or expand the canvas. Box-blur's alpha-weighted source sampling keeps
+ * transparent RGB padding and source alpha byte-for-byte stable.
+ */
+function applyTiltShift(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const settings = effect.tiltShift ?? DEFAULT_TILT_SHIFT_SETTINGS;
+  const radians = (effect.angle * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  const centerPixelX = clamp(effect.centerX, 0, 1) * (width - 1);
+  const centerPixelY = clamp(effect.centerY, 0, 1) * (height - 1);
+  // The normal points across the focus line. The maximum distance from the
+  // centre to a canvas corner makes focusWidth/feather aspect-ratio safe.
+  const normalX = -sine;
+  const normalY = cosine;
+  const crossExtent = Math.max(
+    1,
+    Math.abs(normalX) * Math.max(1, width - 1) * 0.5 +
+      Math.abs(normalY) * Math.max(1, height - 1) * 0.5,
+  );
+  const halfBand = clamp(settings.focusWidth, 0.05, 0.8) * 0.5;
+  const feather = Math.max(0.05, clamp(settings.feather, 0.05, 0.8));
+  applyBoxBlur(source, width, height, effect.radius, output, strength, (x, y) => {
+    const distance = Math.abs(
+      ((x - centerPixelX) * normalX + (y - centerPixelY) * normalY) / crossExtent,
+    );
+    return clamp((distance - halfBand) / feather, 0, 1);
+  });
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -1700,12 +1775,7 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'color-halftone') {
     applyColorHalftone(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'tilt-shift') {
-    const center = effect.centerY * (height - 1),
-      band = Math.max(1, height * 0.18),
-      maxDistance = Math.max(1, height * 0.5);
-    applyBoxBlur(data, width, height, effect.radius, output, strength, (_x, y) =>
-      clamp((Math.abs(y - center) - band) / maxDistance, 0, 1),
-    );
+    applyTiltShift(data, width, height, effect, output, strength);
   } else if (effect.type === 'wave') {
     applyWave(data, width, height, effect, output);
   } else if (effect.type === 'polar-coordinates') {
