@@ -165,6 +165,15 @@ and desktop/mobile acceptance are documented in
 exact stochastic screen, print calibration and selection-specific controls
 remain staged.
 
+The Render increment adds **Filter → Render → Difference Clouds** as a bounded
+seeded multi-octave monochrome difference-field approximation. Cloud scale,
+amount and random seed remain editable in the inspector; source pixels and
+alpha stay safe across undo, reload, project import/export and Action replay.
+The local contract, pixel fixtures and desktop/mobile acceptance are documented
+in [`difference-clouds-effect-contract.md`](./difference-clouds-effect-contract.md);
+Photoshop's exact noise, foreground/background colour controls and wrap-around
+remain staged.
+
 The scale increment now includes a bounded [`tiledRender.ts`](../src/tiledRender.ts) protocol boundary. It rebuilds canonical plans from worker envelopes, enforces the existing 16 MP/64 MiB safety limits, schedules deterministic overlapped tiles under a bounded byte budget, and supports cancellable row-major callbacks with monotonic tile progress. The callback runner can opt into the shared byte-bounded LRU cache with canonical tile keys, explicit retained-byte estimates and cumulative hit/miss/peak/eviction telemetry; cached and freshly rendered tiles report identical progress. [`tiledCompositor.ts`](../src/tiledCompositor.ts) adds a serial overlap-aware pixel assembly slice, and the visible adapter now routes the explicit local effect allow-list through source-provider/destination-sink tiles with revision/effect cache keys, a memory ledger and full-frame parity fixtures. Committed renders reuse one worker with latest-wins cancellation and idle teardown; validated tiled telemetry is forwarded before the owned result, dropped for superseded/cancelled requests, and surfaced only as local render-status diagnostics (no pixels or asset URLs). Working-byte exhaustion raises a typed error before sink commit so the draft remains recoverable; the editor does not retain a cross-render `TileCache`, so live cache counters remain zero; cache reuse is an opt-in bounded-session contract. Unsupported/global/cell-phase-sensitive effects remain on the existing full-frame fallback. Device-specific cache policy, eviction thresholds, worker-aware interactive edits and physical desktop/mobile memory gates remain staged.
 
 The Patch Tool increment adds bounded, nondestructive source-offset retouching over an immutable raster asset. A user selects a local source point, drags a destination stroke and retains only validated source-offset metadata; alpha remains owned by the layer/mask pipeline. Pure and desktop/mobile acceptance cover source identity, offset mapping, undo, cancellation, locked-layer guards and reload/project round trips. Its local limits and content-aware boundary are documented in [`patch-tool-contract.md`](./patch-tool-contract.md); semantic object removal, Patch selection snapshots and content-aware move remain staged.

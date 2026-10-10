@@ -1317,3 +1317,45 @@ test('Mezzotint exposes seeded grain controls and round-trips nondestructively',
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() => pixels(page)).toEqual(original);
 });
+
+test('Difference Clouds exposes seeded render controls and round-trips nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Difference Clouds', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
+  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue('18');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('0');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Random seed', { exact: true }).fill('17');
+  await page.getByLabel('Cloud scale', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'difference-clouds', amount: 85, radius: 19, seed: 17,
+  });
+  expect((await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data[3]))).toBe(0);
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
+  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue('19');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('17');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  for (let index = 0; index < 3; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixels(page)).toEqual(original);
+});
