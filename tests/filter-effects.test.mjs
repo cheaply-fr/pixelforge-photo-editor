@@ -226,16 +226,48 @@ test('Filter effect metadata is bounded and legacy/empty values normalize safely
   assert.equal(validFilterEffects({ ...value, radius: 1.5 }), false);
 });
 
-test('field blur is deterministic, source-safe and alpha-safe', () => {
+test('field blur pin metadata is bounded, detached and fail-closed', () => {
+  const value = effectiveFilterEffects({
+    type: 'field-blur', amount: 80, radius: 18,
+    fieldPoints: [
+      { x: -1, y: 2, radius: 99 },
+      { x: 0.2, y: 0.8, radius: 12 },
+      { x: 0.3, y: 0.7, radius: 13 },
+      { x: 0.4, y: 0.6, radius: 14 },
+      { x: 0.5, y: 0.5, radius: 15 },
+      { x: 0.6, y: 0.4, radius: 16 },
+      { x: 0.7, y: 0.3, radius: 17 },
+      { x: 0.8, y: 0.2, radius: 18 },
+      { x: 1, y: 0, radius: 19 },
+    ],
+  });
+  assert.equal(value.fieldPoints?.length, 8);
+  assert.deepEqual(value.fieldPoints?.[0], { x: 0, y: 1, radius: 64 });
+  assert.equal(validFilterEffects(value), true);
+  assert.equal(validFilterEffects({ ...value, fieldPoints: [] }), false);
+  assert.equal(validFilterEffects({ ...value, fieldPoints: [{ x: 0.5, y: 0.5, radius: 1.5 }] }), false);
+});
+
+test('field blur interpolates authored pins, stays deterministic and is alpha-safe', () => {
   const source = fixture();
   const original = source.slice();
-  const first = applyFilterEffectsPixels(source, 9, 5, { type: 'field-blur', amount: 100, radius: 2 });
-  const second = applyFilterEffectsPixels(source, 9, 5, { type: 'field-blur', amount: 100, radius: 2 });
+  const effect = {
+    type: 'field-blur', amount: 100, radius: 18,
+    fieldPoints: [{ x: 0, y: 0, radius: 0 }, { x: 1, y: 1, radius: 24 }],
+  };
+  const first = applyFilterEffectsPixels(source, 9, 5, effect);
+  const second = applyFilterEffectsPixels(source, 9, 5, effect);
   assert.deepEqual(first, second);
   assert.deepEqual(source, original);
   assert.equal(pixel(first, 9, 0, 0)[3], 0);
   assert.deepEqual(pixel(first, 9, 0, 0).slice(0, 3), pixel(source, 9, 0, 0).slice(0, 3));
-  assert.notDeepEqual(pixel(first, 9, 1, 0), pixel(source, 9, 1, 0));
+  const zeroPins = applyFilterEffectsPixels(source, 9, 5, {
+    ...effect,
+    fieldPoints: effect.fieldPoints.map((point) => ({ ...point, radius: 0 })),
+  });
+  assert.deepEqual(zeroPins, source);
+  assert.notDeepEqual(first, zeroPins);
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
 });
 
 test('box and Gaussian blur are deterministic editable effects with bounded metadata', () => {
