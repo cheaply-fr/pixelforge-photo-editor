@@ -473,6 +473,8 @@ test('Field Blur is a nondestructive menu effect with source-safe persistence', 
   await expect(fieldBlur).toBeEnabled();
   await fieldBlur.click();
   await expect(page.getByText('Field Blur applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByText('Field pins', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Field pin 1 radius', { exact: true })).toHaveValue('18');
   await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
   expect((await pixel(page, 0, 0))[3]).toBe(0);
 
@@ -480,11 +482,32 @@ test('Field Blur is a nondestructive menu effect with source-safe persistence', 
   const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(adjustedLayer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
-  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({ type: 'field-blur' });
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'field-blur',
+    fieldPoints: [{ x: 0.5, y: 0.5, radius: 18 }],
+  });
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('field-blur');
 
-  await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await page.getByLabel('Field pin 1 radius', { exact: true }).press('ArrowRight');
+  const pinAdjusted = await downloadProject(page);
+  const pinLayer = pinAdjusted.history[pinAdjusted.index].layers.at(-1)!;
+  expect(pinLayer.adjustments.filterEffects).toMatchObject({
+    type: 'field-blur',
+    fieldPoints: [{ radius: 19 }],
+  });
+  const changed = await pixel(page, 1, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Field pin 1 radius', { exact: true })).toHaveValue('19');
+  await expect.poll(() => pixel(page, 1, 0)).toEqual(changed);
+  await openProject(page, pinAdjusted);
+  await expect(page.getByLabel('Field pin 1 radius', { exact: true })).toHaveValue('19');
+  await expect.poll(() => pixel(page, 1, 0)).toEqual(changed);
+
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
   await expect.poll(() => pixel(page, 1, 0)).toEqual(sourcePixel);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');

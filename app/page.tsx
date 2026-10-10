@@ -330,6 +330,7 @@ import {
 } from '../src/filterEffects';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
+  DEFAULT_FIELD_POINTS,
   DEFAULT_SPIN_ELLIPSE,
 } from '../src/BlurGalleryControls';
 import {
@@ -3877,11 +3878,12 @@ export default function Home() {
                 type,
                 ...(type === 'path-blur' ? { path: DEFAULT_BLUR_PATH.map((point) => ({ ...point })) } : {}),
                 ...(type === 'spin-blur' ? { spinEllipse: { ...DEFAULT_SPIN_ELLIPSE } } : {}),
+                ...(type === 'field-blur' ? { fieldPoints: DEFAULT_FIELD_POINTS.map((point) => ({ ...point })) } : {}),
                 amount:
                   type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'color-halftone'
-                  || type === 'pointillize'
+                  || type === 'pointillize' || type === 'field-blur'
                     ? 85
                   : type === 'lens-correction'
                     ? 75
@@ -3899,6 +3901,8 @@ export default function Home() {
                         ? 40
                       : type === 'polar-coordinates'
                         ? 64
+                      : type === 'field-blur'
+                        ? 18
                       : type === 'radial-blur' || type === 'spin-blur'
                         ? 18
                         : type === 'wave'
@@ -11939,6 +11943,9 @@ export default function Home() {
             {filterEffects.type === 'path-blur' && (
               <p>Local Path Blur approximation. The editable motion path and per-point speed stay in project metadata; path strobe and flash controls remain planned.</p>
             )}
+            {filterEffects.type === 'field-blur' && (
+              <p>Local Field Blur approximation. Editable pins interpolate bounded disc blur radii across the layer; depth maps, bokeh controls and GPU acceleration remain planned.</p>
+            )}
             {filterEffects.type === 'smart-blur' && (
               <p>Local edge-preserving bilateral approximation. Luminance boundaries are protected; semantic edges and depth are not inferred.</p>
             )}
@@ -11971,7 +11978,7 @@ export default function Home() {
             )}
             {filterEffects.type !== 'none' && (
               <>
-                {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur') && (
+                {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
                 <Slider
@@ -12015,6 +12022,8 @@ export default function Home() {
                           ? 'ZigZag wavelength'
                       : filterEffects.type === 'displace'
                           ? 'Displace wavelength'
+                      : filterEffects.type === 'field-blur'
+                          ? 'Fallback blur radius'
                       : filterEffects.type === 'lens-correction'
                           ? 'Correction radius'
                       : 'Radius'

@@ -58,6 +58,14 @@ export type SpinBlurEllipse = {
   feather: number;
 };
 
+/** One layer-local Field Blur pin. Coordinates are normalized to the layer. */
+export type FieldBlurPoint = {
+  x: number;
+  y: number;
+  /** Local blur radius in source pixels, bounded to the same 0..64 range. */
+  radius: number;
+};
+
 export type FilterEffects = {
   type: FilterEffectType;
   /** Legacy lens corrections default to inward source sampling. */
@@ -81,6 +89,8 @@ export type FilterEffects = {
   pathCentered?: boolean;
   /** Blend falloff along the path trail, in the range 0..1. */
   pathTaper?: number;
+  /** Authored Field Blur pins, limited to 1–8 deterministic points. */
+  fieldPoints?: FieldBlurPoint[];
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -152,6 +162,16 @@ export function effectiveFilterEffects(
       feather: finite(ellipse.feather) ? clamp(ellipse.feather, 0, 1) : 0.2,
     };
   }
+  if (type === 'field-blur' && Array.isArray(source.fieldPoints)) {
+    const fieldPoints = source.fieldPoints.slice(0, 8).filter(
+      (point) => point && typeof point === 'object' && !Array.isArray(point),
+    ).map((point) => ({
+      x: finite(point.x) ? clamp(point.x, 0, 1) : 0.5,
+      y: finite(point.y) ? clamp(point.y, 0, 1) : 0.5,
+      radius: finite(point.radius) ? clamp(Math.round(point.radius), 0, 64) : 0,
+    }));
+    if (fieldPoints.length > 0) normalized.fieldPoints = fieldPoints;
+  }
   return normalized;
 }
 
@@ -173,6 +193,15 @@ function validSpinEllipse(value: unknown): value is SpinBlurEllipse {
     finite(ellipse.feather) && ellipse.feather >= 0 && ellipse.feather <= 1;
 }
 
+function validFieldPoints(value: unknown): value is FieldBlurPoint[] {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 8 && value.every((point) =>
+    point && typeof point === 'object' && !Array.isArray(point) &&
+    finite(point.x) && point.x >= 0 && point.x <= 1 &&
+    finite(point.y) && point.y >= 0 && point.y <= 1 &&
+    finite(point.radius) && Number.isInteger(point.radius) && point.radius >= 0 && point.radius <= 64,
+  );
+}
+
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const effect = value as Partial<FilterEffects>;
@@ -183,6 +212,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.spinEllipse === undefined || validSpinEllipse(effect.spinEllipse)) &&
     (effect.pathCentered === undefined || typeof effect.pathCentered === 'boolean') &&
     (effect.pathTaper === undefined || (finite(effect.pathTaper) && effect.pathTaper >= 0 && effect.pathTaper <= 1)) &&
+    (effect.fieldPoints === undefined || validFieldPoints(effect.fieldPoints)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -216,7 +246,9 @@ export function isNeutralFilterEffects(
     (effect.type === 'path-blur' && Boolean(effect.path) && effect.path!.every((point) => point.speed === 0)) ||
     (effect.type === 'twirl' && effect.angle === 0) ||
     (effect.type === 'shear' && effect.angle === 0) ||
-    (effect.type !== 'twirl' && effect.radius === 0)
+    (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.radius === 0) ||
+    (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
 
@@ -658,6 +690,70 @@ function applyBoxBlur(
           weight += horizontalWeight[bottom * width + x];
         }
       }
+    }
+  }
+}
+
+/**
+ * Apply a bounded Field Blur approximation with editable per-pixel radius.
+ * Each destination interpolates authored pin radii in normalized layer space,
+ * then uses a fixed 25-sample disc kernel at that local radius. Alpha is
+ * weighted for every sample, source alpha remains byte-for-byte unchanged,
+ * and transparent RGB padding is never read into visible pixels.
+ */
+function applyFieldBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const pins = effect.fieldPoints?.length
+    ? effect.fieldPoints
+    : [{ x: effect.centerX, y: effect.centerY, radius: effect.radius }];
+  const strength = clamp(effect.amount / 100, 0, 1);
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      let radiusTotal = 0;
+      let weightTotal = 0;
+      for (const pin of pins) {
+        const dx = x / Math.max(1, width - 1) - pin.x;
+        const dy = y / Math.max(1, height - 1) - pin.y;
+        const weight = 1 / (1 + (dx * dx + dy * dy) * 9);
+        radiusTotal += pin.radius * weight;
+        weightTotal += weight;
+      }
+      const localRadius = clamp(Math.round(weightTotal ? radiusTotal / weightTotal : effect.radius), 0, 64);
+      if (!localRadius || !strength) continue;
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      let alphaWeight = 0;
+      for (let sampleIndex = 0; sampleIndex < 25; sampleIndex += 1) {
+        const distance = localRadius * Math.sqrt((sampleIndex + 0.5) / 25);
+        const angle = sampleIndex * goldenAngle;
+        const sample = sourcePixelBilinear(
+          source,
+          width,
+          height,
+          x + Math.cos(angle) * distance,
+          y + Math.sin(angle) * distance,
+        );
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        red += sample[0] * alpha;
+        green += sample[1] * alpha;
+        blue += sample[2] * alpha;
+        alphaWeight += alpha;
+      }
+      if (!alphaWeight) continue;
+      output[destination] = clampByte(source[destination] * (1 - strength) + (red / alphaWeight) * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / alphaWeight) * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / alphaWeight) * strength);
+      output[destination + 3] = source[destination + 3];
     }
   }
 }
@@ -1532,7 +1628,9 @@ export function applyFilterEffectsPixels(
     // Photoshop's one-click Blur More is a stronger, bounded box blur. Keep
     // the source-safe renderer and metadata contract while doubling radius.
     applyBoxBlur(data, width, height, Math.min(64, effect.radius * 2), output, strength);
-  } else if (effect.type === 'box-blur' || effect.type === 'field-blur') {
+  } else if (effect.type === 'field-blur') {
+    applyFieldBlur(data, width, height, effect, output);
+  } else if (effect.type === 'box-blur') {
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
