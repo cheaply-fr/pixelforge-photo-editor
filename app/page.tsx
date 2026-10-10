@@ -155,6 +155,11 @@ import {
   selectedLayerMergeReason,
 } from '../src/layerMerge';
 import {
+  applyMergeVisible,
+  mergeVisibleReason,
+  planMergeVisible,
+} from '../src/layerMergeVisible';
+import {
   applyLayerArrange,
   layerArrangeReason,
   planLayerArrange,
@@ -1557,6 +1562,13 @@ export default function Home() {
       travel,
       paint,
     } = doc;
+  // A render can outlive the React event that started it. Keep a mutable
+  // revision mirror so async layer commands can reject stale ownership even
+  // before a new render paints its replacement frame.
+  const revisionRef = useRef(revision);
+  useEffect(() => {
+    revisionRef.current = revision;
+  }, [revision]);
   const [tool, setActiveTool] = useState<Tool>('move'),
     [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>({}),
     [toolFlyout, setToolFlyout] = useState<string | null>(null),
@@ -5047,63 +5059,37 @@ export default function Home() {
     }
   };
   const mergeVisible = async () => {
+    const beforeFrame = current();
+    const beforeIndex = index.current;
+    const beforeRevision = revisionRef.current;
+    const plan = planMergeVisible(beforeFrame);
+    if (!plan.ok) {
+      setNotice(mergeVisibleReason(plan.reason));
+      return;
+    }
     try {
-      const f = current(),
-        groups = new Map((f.groups || []).map((group) => [group.id, group]));
-      const visibleIds = new Set(
-        f.layers
-          .filter(
-            (layer) =>
-              layer.visible &&
-              (!layer.groupId || groups.get(layer.groupId)?.visible !== false),
-          )
-          .map((layer) => layer.id),
-      );
-      if (!visibleIds.size) {
-        setNotice('There are no visible layers to merge');
-        return;
-      }
       const image = await renderFrame(
-          {
-            ...f,
-            layers: f.layers.map((layer) => ({
-              ...layer,
-              visible: visibleIds.has(layer.id),
-            })),
-          },
-          assets.current,
-        ),
-        merged = rasterFrame(image, assets.current, 'Merged visible'),
-        topVisibleIndex = Math.max(
-          ...f.layers.map((layer, index) =>
-            visibleIds.has(layer.id) ? index : -1,
-          ),
-        ),
-        layers: Layer[] = [];
-      f.layers.forEach((layer, index) => {
-        if (index === topVisibleIndex) layers.push(merged.layers[0]);
-        if (!visibleIds.has(layer.id)) layers.push(layer);
-      });
-      const usedGroups = new Set(
-        layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
+        {
+          ...beforeFrame,
+          layers: beforeFrame.layers.map((layer) => ({
+            ...layer,
+            visible: plan.visibleLayerIds.includes(layer.id),
+          })),
+        },
+        assets.current,
       );
+      // Both checks matter: the pointer catches same-tick history edits, while
+      // revision catches selection/import/travel publishes that own a new
+      // document revision before the render resolves.
       if (
-        commit({
-          ...f,
-          layers,
-          groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
-          ...(f.artboards
-            ? {
-                artboards: sanitizeArtboardLayerMembership(
-                  f.artboards,
-                  layers.map((layer) => layer.id),
-                ),
-              }
-            : {}),
-          active: merged.layers[0].id,
-          selectedLayerIds: [merged.layers[0].id],
-        })
+        index.current !== beforeIndex ||
+        current() !== beforeFrame ||
+        revisionRef.current !== beforeRevision
       )
+        return;
+      const merged = rasterFrame(image, assets.current, 'Merged visible');
+      const next = applyMergeVisible(beforeFrame, plan, merged.layers[0]);
+      if (commit(next))
         setNotice('Visible layers merged; undo restores the individual layers');
     } catch {
       setNotice('Could not merge visible layers');
@@ -9839,13 +9825,7 @@ export default function Home() {
         );
       }
       case 'merge-visible':
-        return !frame.layers.some(
-          (item) =>
-            item.visible &&
-            (!item.groupId ||
-              frame.groups?.find((group) => group.id === item.groupId)
-                ?.visible !== false),
-        );
+        return !planMergeVisible(frame).ok;
       case 'combine-shapes-union':
       case 'combine-shapes-subtract':
       case 'combine-shapes-intersect':
