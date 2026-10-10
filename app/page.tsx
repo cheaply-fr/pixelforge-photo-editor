@@ -186,6 +186,15 @@ import {
   rotationDelta,
   screenPanDelta,
 } from '../src/viewRotation';
+import {
+  booleanPathFromPoints,
+  booleanPathIsClosed,
+  combinePathBooleans,
+  type BooleanPoint,
+  type PathBooleanOperation,
+} from '../src/pathBooleans';
+import { pathContours, transformPath } from '../src/paths';
+import { shapePoints } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -373,6 +382,10 @@ type Command =
   | 'hide-layer'
   | 'merge-layers'
   | 'merge-visible'
+  | 'combine-shapes-union'
+  | 'combine-shapes-subtract'
+  | 'combine-shapes-intersect'
+  | 'combine-shapes-exclude'
   | 'flatten'
   | 'text-tool'
   | 'text-align-left'
@@ -775,6 +788,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Merge Visible', command: 'merge-visible' },
     { label: 'Flatten Image', command: 'flatten' },
     { label: 'Arrange', command: 'noop', disabled: true },
+    { label: 'Combine Shapes → Union', command: 'combine-shapes-union' },
+    { label: 'Combine Shapes → Subtract Front Shape', command: 'combine-shapes-subtract' },
+    { label: 'Combine Shapes → Intersect', command: 'combine-shapes-intersect' },
+    { label: 'Combine Shapes → Exclude Overlapping Shapes', command: 'combine-shapes-exclude' },
     { label: 'Align Left', command: 'align-left' },
     { label: 'Align Horizontal Centers', command: 'align-center-horizontal' },
     { label: 'Align Right', command: 'align-right' },
@@ -1942,6 +1959,79 @@ export default function Home() {
   const selectedLayersForFrame = (f: Frame): Layer[] => {
     const ids = new Set(selectedIdsForFrame(f));
     return f.layers.filter((layer) => ids.has(layer.id));
+  };
+
+  /** Convert editable paths and parametric shapes into one common world-space model. */
+  const booleanOperand = (layer: Layer): ReturnType<typeof booleanPathFromPoints> => {
+    if (layer.kind === 'path') return transformPath(layer.path, layer.matrix);
+    if (layer.kind === 'line' || layer.kind === 'text' || layer.kind === 'raster' ||
+        layer.kind === 'smart-object' || layer.kind === 'adjustment')
+      throw new Error('Only closed vector shape layers can be combined');
+    const map = (point: BooleanPoint): BooleanPoint => ({
+      x: layer.matrix[0] * point.x + layer.matrix[2] * point.y + layer.matrix[4],
+      y: layer.matrix[1] * point.x + layer.matrix[3] * point.y + layer.matrix[5],
+    });
+    let points: BooleanPoint[];
+    if (layer.kind === 'rectangle') {
+      points = [
+        { x: 0, y: 0 },
+        { x: layer.width, y: 0 },
+        { x: layer.width, y: layer.height },
+        { x: 0, y: layer.height },
+      ];
+    } else if (layer.kind === 'ellipse') {
+      points = Array.from({ length: 64 }, (_, index) => {
+        const angle = (index * Math.PI * 2) / 64;
+        return { x: layer.width / 2 + Math.cos(angle) * layer.width / 2, y: layer.height / 2 + Math.sin(angle) * layer.height / 2 };
+      });
+    } else {
+      points = shapePoints(layer.width, layer.height, layer.variant, layer.sides);
+    }
+    return booleanPathFromPoints(points.map(map), {
+      fill: layer.fill,
+      stroke: true,
+      strokeWidth: layer.stroke,
+      fillColor: layer.color,
+      strokeColor: layer.color,
+    });
+  };
+  const combineSelectedShapes = (operation: PathBooleanOperation) => {
+    const f = current(), selected = selectedLayersForFrame(f);
+    if (selected.length < 2) {
+      setNotice('Select at least two closed vector layers before combining shapes');
+      return;
+    }
+    if (selected.some((layer) => layerIsLocked(f, layer) || !layer.visible)) {
+      setNotice('Unlock and show all selected vector layers before combining shapes');
+      return;
+    }
+    const groups = new Set(selected.map((layer) => layer.groupId || ''));
+    if (groups.size > 1) {
+      setNotice('Combine Shapes requires layers in one group or at the document root');
+      return;
+    }
+    try {
+      const operands = selected.map(booleanOperand);
+      if (operands.some((operand) => !booleanPathIsClosed(operand)))
+        throw new Error('Only closed vector shape layers can be combined');
+      const path = combinePathBooleans(operands, operation);
+      const ids = new Set(selected.map((layer) => layer.id));
+      const firstIndex = f.layers.findIndex((layer) => ids.has(layer.id));
+      const remainingBefore = f.layers.slice(0, firstIndex).filter((layer) => !ids.has(layer.id)).length;
+      const groupId = selected[0].groupId;
+      const result: Layer = {
+        ...commonLayer(`Combined ${operation}`),
+        kind: 'path',
+        path,
+        ...(groupId ? { groupId } : {}),
+      };
+      const layers = f.layers.filter((layer) => !ids.has(layer.id));
+      layers.splice(remainingBefore, 0, result);
+      if (commit({ ...f, layers, active: result.id, selectedLayerIds: [result.id] }))
+        setNotice(`Shapes combined (${operation})`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not combine shapes');
+    }
   };
   const selectAllLayers = () => {
     const f = current();
@@ -5140,83 +5230,71 @@ export default function Home() {
     dashed = false,
   ) => {
     const context = canvas.current?.getContext('2d');
-    if (!context || !path.nodes.length) return;
-    const transformed = path.nodes.map(({ x, y }) => ({
-      x: matrix[0] * x + matrix[2] * y + matrix[4],
-      y: matrix[1] * x + matrix[3] * y + matrix[5],
-    }));
+    if (!context) return;
+    const contours = pathContours(path);
+    if (!contours.length) return;
+    const map = (point: { x: number; y: number }) => ({
+      x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
+      y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
+    });
     context.save();
     context.strokeStyle = '#38bdf8';
     context.fillStyle = 'rgba(56,189,248,.14)';
     context.lineWidth = 1.5;
     context.setLineDash(dashed ? [7, 5] : []);
-    context.beginPath();
-    context.moveTo(transformed[0].x, transformed[0].y);
-    for (const [index, node] of transformed.slice(1).entries()) {
-      const sourcePrevious = path.nodes[index], sourceNode = path.nodes[index + 1];
-      if (sourcePrevious.outHandle || sourceNode.inHandle) {
-        const out = sourcePrevious.outHandle ?? sourcePrevious;
-        const incoming = sourceNode.inHandle ?? sourceNode;
-        const map = (point: { x: number; y: number }) => ({
-          x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
-          y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
-        });
-        const mappedOut = map(out), mappedIncoming = map(incoming);
-        context.bezierCurveTo(mappedOut.x, mappedOut.y, mappedIncoming.x, mappedIncoming.y, node.x, node.y);
-      } else context.lineTo(node.x, node.y);
-    }
-    if (path.closed && path.nodes.length > 1) {
-      const sourcePrevious = path.nodes[path.nodes.length - 1], sourceNode = path.nodes[0];
-      if (sourcePrevious.outHandle || sourceNode.inHandle) {
-        const map = (point: { x: number; y: number }) => ({
-          x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
-          y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
-        });
-        const mappedOut = map(sourcePrevious.outHandle ?? sourcePrevious), mappedIncoming = map(sourceNode.inHandle ?? sourceNode);
-        context.bezierCurveTo(mappedOut.x, mappedOut.y, mappedIncoming.x, mappedIncoming.y, transformed[0].x, transformed[0].y);
-      }
-    }
-    if (path.closed) context.closePath();
-    context.stroke();
-    if (path.closed && path.fill) context.fill();
-    context.setLineDash([]);
-    // Expose editable Bezier controls while a path is selected so Direct
-    // Selection can discover and drag them without hiding the curve shape.
-    const map = (point: { x: number; y: number }) => ({
-      x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
-      y: matrix[1] * point.x + matrix[3] * point.y + matrix[5],
-    });
-    context.lineWidth = 1;
-    for (const node of path.nodes) {
-      const anchor = map(node);
-      for (const handle of [node.inHandle, node.outHandle]) {
-        if (!handle) continue;
-        const control = map(handle);
-        context.strokeStyle = 'rgba(148,163,184,.8)';
-        context.beginPath();
-        context.moveTo(anchor.x, anchor.y);
-        context.lineTo(control.x, control.y);
-        context.stroke();
-        context.fillStyle = '#38bdf8';
-        context.beginPath();
-        context.arc(control.x, control.y, 4, 0, Math.PI * 2);
-        context.fill();
-      }
-    }
-    for (const [index, node] of transformed.entries()) {
+    for (const [contourIndex, contour] of contours.entries()) {
+      if (!contour.nodes.length) continue;
+      const transformed = contour.nodes.map(map);
       context.beginPath();
-      context.fillStyle = index === selectedIndex ? '#fbbf24' : '#ffffff';
-      context.strokeStyle = '#0f172a';
-      context.arc(
-        node.x,
-        node.y,
-        index === selectedIndex ? 6 : 4,
-        0,
-        Math.PI * 2,
-      );
-      context.fill();
+      context.moveTo(transformed[0].x, transformed[0].y);
+      for (const [index, node] of transformed.slice(1).entries()) {
+        const sourcePrevious = contour.nodes[index], sourceNode = contour.nodes[index + 1];
+        if (sourcePrevious.outHandle || sourceNode.inHandle) {
+          const out = map(sourcePrevious.outHandle ?? sourcePrevious);
+          const incoming = map(sourceNode.inHandle ?? sourceNode);
+          context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, node.x, node.y);
+        } else context.lineTo(node.x, node.y);
+      }
+      if (contour.closed && contour.nodes.length > 1) {
+        const sourcePrevious = contour.nodes[contour.nodes.length - 1], sourceNode = contour.nodes[0];
+        if (sourcePrevious.outHandle || sourceNode.inHandle) {
+          const out = map(sourcePrevious.outHandle ?? sourcePrevious);
+          const incoming = map(sourceNode.inHandle ?? sourceNode);
+          context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, transformed[0].x, transformed[0].y);
+        }
+        context.closePath();
+      }
       context.stroke();
+      if (contour.closed && path.fill) context.fill(path.fillRule === 'evenodd' ? 'evenodd' : 'nonzero');
+      // Expose editable Bezier controls while a path is selected so Direct
+      // Selection can discover and drag them without hiding the curve shape.
+      context.lineWidth = 1;
+      for (const node of contour.nodes) {
+        const anchor = map(node);
+        for (const handle of [node.inHandle, node.outHandle]) {
+          if (!handle) continue;
+          const control = map(handle);
+          context.strokeStyle = 'rgba(148,163,184,.8)';
+          context.beginPath();
+          context.moveTo(anchor.x, anchor.y);
+          context.lineTo(control.x, control.y);
+          context.stroke();
+          context.fillStyle = '#38bdf8';
+          context.beginPath();
+          context.arc(control.x, control.y, 4, 0, Math.PI * 2);
+          context.fill();
+        }
+      }
+      for (const [index, node] of transformed.entries()) {
+        context.beginPath();
+        context.fillStyle = contourIndex === 0 && index === selectedIndex ? '#fbbf24' : '#ffffff';
+        context.strokeStyle = '#0f172a';
+        context.arc(node.x, node.y, contourIndex === 0 && index === selectedIndex ? 6 : 4, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+      }
     }
+    context.setLineDash([]);
     context.restore();
   };
   const previewPenPath = (g: Gesture) => {
@@ -8984,6 +9062,10 @@ export default function Home() {
     else if (command === 'merge-layers') return mergeLayers();
     else if (command === 'merge-visible') return mergeVisible();
     else if (command === 'flatten') return flattenImage();
+    else if (command === 'combine-shapes-union') return combineSelectedShapes('union');
+    else if (command === 'combine-shapes-subtract') return combineSelectedShapes('subtract');
+    else if (command === 'combine-shapes-intersect') return combineSelectedShapes('intersect');
+    else if (command === 'combine-shapes-exclude') return combineSelectedShapes('exclude');
     else if (command === 'patch-tool') {
       setTool('patch');
       setCloneSource(null);
@@ -9400,6 +9482,18 @@ export default function Home() {
               frame.groups?.find((group) => group.id === item.groupId)
                 ?.visible !== false),
         );
+      case 'combine-shapes-union':
+      case 'combine-shapes-subtract':
+      case 'combine-shapes-intersect':
+      case 'combine-shapes-exclude': {
+        const selected = selectedLayersForFrame(frame);
+        const groupIds = new Set(selected.map((candidate) => candidate.groupId || ''));
+        return selected.length < 2 || groupIds.size > 1 || selected.some((candidate) =>
+          layerIsLocked(frame, candidate) || !candidate.visible ||
+          (candidate.kind === 'line' || candidate.kind === 'text' || candidate.kind === 'raster' ||
+            candidate.kind === 'smart-object' || candidate.kind === 'adjustment' ||
+            (candidate.kind === 'path' && !booleanPathIsClosed(candidate.path))));
+      }
       default:
         return false;
     }

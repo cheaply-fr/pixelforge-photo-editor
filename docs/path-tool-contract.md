@@ -37,10 +37,29 @@ step. Shift-clicking an anchor toggles a mirrored smooth point and Alt/Option-
 clicking removes it; removing an anchor never leaves an invalid empty path and
 automatically opens a path that no longer has enough nodes for a closed loop.
 These edits are immutable, undoable, and round-trip through local drafts and
-project files. Path booleans and semantic shape union/subtract remain outside
-this local geometry contract.
+project files. The bounded Layer → Combine Shapes commands described below
+consume this same path model; semantic object inference and open/mixed operands
+remain outside this local geometry contract.
 
 Path metadata is validated on draft import and project export. Node coordinates
 and style values are bounded to keep malformed or oversized project files from
-allocating unbounded work. Raster export uses the same affine, opacity, blend,
-and adjustment pipeline as other editable layers.
+allocating unbounded work. Compound paths preserve the legacy `nodes` and
+`closed` fields as a mirror of their first contour and add at most 64 validated
+contours with a shared `fillRule`. Older single-contour drafts therefore remain
+readable and render with the `nonzero` default, while boolean results use `evenodd` so subtraction holes and
+disjoint components render without baking pixels.
+
+Layer → Combine Shapes now accepts two to eight visible, unlocked, closed path
+or parametric rectangle/ellipse/polygon layers in one group (or at the document
+root). Union, Subtract Front Shape, Intersect and Exclude split bounded line
+arrangements, preserve every resulting contour, and replace the selected layers
+with one editable path at the original stack position. Open paths, raster/text
+layers, mixed groups, oversized edge sets and empty intersections are rejected
+without a history entry. The operation is local and nondestructive to source
+assets; undo, draft reload and project export retain the resulting contours.
+Pure geometry tests cover overlap, disjoint components, holes, malformed
+operands and deterministic flattening. Desktop and mobile acceptance tests
+cover all four commands, disabled open-path guards and a reload round trip.
+
+Raster export uses the same affine, opacity, blend, and adjustment pipeline as
+other editable layers.

@@ -14,6 +14,14 @@ export type PathNode = {
   outHandle?: { x: number; y: number };
 };
 
+/** One closed/open contour in a compound path.  Legacy paths keep their
+ * anchors on PathModel.nodes; compound paths mirror the first contour there
+ * for backwards-compatible consumers and carry the remaining contours here. */
+export type PathContour = {
+  nodes: PathNode[];
+  closed: boolean;
+};
+
 export type PathModel = {
   nodes: PathNode[];
   closed: boolean;
@@ -22,6 +30,10 @@ export type PathModel = {
   strokeWidth: number;
   fillColor: string;
   strokeColor: string;
+  /** Optional compound contours.  The first contour mirrors nodes/closed. */
+  contours?: PathContour[];
+  /** Even-odd is used by boolean results so holes remain non-destructive. */
+  fillRule?: 'nonzero' | 'evenodd';
 };
 
 export type PathMatrix = readonly [number, number, number, number, number, number];
@@ -35,6 +47,7 @@ export type PathSegmentHit = {
 };
 
 export const PATH_MAX_NODES = 10_000;
+export const PATH_MAX_CONTOURS = 64;
 export const PATH_MAX_COORDINATE = 1_000_000;
 
 const finite = (value: unknown): value is number =>
@@ -69,6 +82,32 @@ const validateNode = (node: unknown): node is PathNode => {
   );
 };
 
+const cloneContour = (contour: PathContour): PathContour => ({
+  nodes: contour.nodes.map(cloneNode),
+  closed: contour.closed,
+});
+
+const sameContour = (left: PathContour, right: PathContour) =>
+  left.closed === right.closed &&
+  left.nodes.length === right.nodes.length &&
+  left.nodes.every((node, index) => {
+    const other = right.nodes[index];
+    return (
+      node.x === other.x &&
+      node.y === other.y &&
+      node.inHandle?.x === other.inHandle?.x &&
+      node.inHandle?.y === other.inHandle?.y &&
+      node.outHandle?.x === other.outHandle?.x &&
+      node.outHandle?.y === other.outHandle?.y
+    );
+  });
+
+/** Return validated contours while preserving the single-contour legacy shape. */
+export function pathContours(path: PathModel): PathContour[] {
+  const valid = validatePath(path);
+  return valid.contours?.map(cloneContour) || [{ nodes: valid.nodes.map(cloneNode), closed: valid.closed }];
+}
+
 /** Return a cloned, validated model or throw a user-visible contract error. */
 export function validatePath(value: unknown): PathModel {
   if (!value || typeof value !== 'object') throw new Error('Path must be an object');
@@ -84,6 +123,27 @@ export function validatePath(value: unknown): PathModel {
   if (!validColor(path.fillColor) || !validColor(path.strokeColor))
     throw new Error('Path colors are invalid');
   if (!path.fill && !path.stroke) throw new Error('Path needs a fill or stroke');
+  const rawContours = path.contours;
+  let contours: PathContour[] | undefined;
+  if (rawContours !== undefined) {
+    if (!Array.isArray(rawContours) || rawContours.length < 1 || rawContours.length > PATH_MAX_CONTOURS)
+      throw new Error(`Path must contain 1 to ${PATH_MAX_CONTOURS} contours`);
+    const totalNodes = rawContours.reduce((total, contour) => {
+      if (!contour || typeof contour !== 'object' || !Array.isArray(contour.nodes) ||
+          contour.nodes.length < 1 || contour.nodes.length > PATH_MAX_NODES ||
+          !contour.nodes.every(validateNode) || typeof contour.closed !== 'boolean')
+        throw new Error('Path contours are invalid');
+      return total + contour.nodes.length;
+    }, 0);
+    if (totalNodes > PATH_MAX_NODES) throw new Error('Path contains too many nodes');
+    const first = rawContours[0] as PathContour;
+    const legacy = { nodes: path.nodes.map(cloneNode), closed: path.closed };
+    if (!sameContour(first, legacy))
+      throw new Error('Path first contour must mirror nodes and closed state');
+    if (rawContours.length > 1) contours = rawContours.map(cloneContour);
+  }
+  const fillRule = path.fillRule ?? 'nonzero';
+  if (fillRule !== 'nonzero' && fillRule !== 'evenodd') throw new Error('Path fill rule is invalid');
   return {
     nodes: path.nodes.map(cloneNode),
     closed: path.closed,
@@ -92,6 +152,8 @@ export function validatePath(value: unknown): PathModel {
     strokeWidth: path.strokeWidth,
     fillColor: path.fillColor.toLowerCase(),
     strokeColor: path.strokeColor.toLowerCase(),
+    ...(contours ? { contours } : {}),
+    fillRule,
   };
 }
 
@@ -99,16 +161,30 @@ export function clonePath(path: PathModel): PathModel {
   return validatePath(path);
 }
 
+/** Replace the legacy primary contour without dropping compound contours. */
+const replacePrimaryContour = (
+  path: PathModel,
+  nodes: PathNode[],
+  closed = path.closed,
+): PathModel => {
+  if (!path.contours) return { ...path, nodes, closed };
+  const contours = path.contours.map(cloneContour);
+  contours[0] = { nodes: nodes.map(cloneNode), closed };
+  return { ...path, nodes: nodes.map(cloneNode), closed, contours };
+};
+
 type Segment = { start: PathNode; end: PathNode; close: boolean };
 
-const segments = (path: PathModel): Segment[] => {
+const contourSegments = (contour: PathContour): Segment[] => {
   const result: Segment[] = [];
-  for (let i = 1; i < path.nodes.length; i += 1)
-    result.push({ start: path.nodes[i - 1], end: path.nodes[i], close: false });
-  if (path.closed && path.nodes.length > 1)
-    result.push({ start: path.nodes[path.nodes.length - 1], end: path.nodes[0], close: true });
+  for (let i = 1; i < contour.nodes.length; i += 1)
+    result.push({ start: contour.nodes[i - 1], end: contour.nodes[i], close: false });
+  if (contour.closed && contour.nodes.length > 1)
+    result.push({ start: contour.nodes[contour.nodes.length - 1], end: contour.nodes[0], close: true });
   return result;
 };
+
+const segments = (path: PathModel): Segment[] => pathContours(path).flatMap(contourSegments);
 
 const controlPoints = (segment: Segment): [PathNode, PathNode, PathNode, PathNode] => [
   segment.start,
@@ -159,14 +235,15 @@ const extrema = (p0: number, p1: number, p2: number, p3: number): number[] => {
 /** Bounds include cubic extrema, rather than only anchors or control points. */
 export function pathBounds(path: PathModel): { left: number; top: number; right: number; bottom: number; width: number; height: number } {
   const valid = validatePath(path);
-  if (!valid.nodes.length) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
+  const contours = pathContours(valid);
+  if (!contours.some((contour) => contour.nodes.length)) return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
   const points: PathNode[] = [];
   for (const segment of segments(valid)) {
     const [p0, p1, p2, p3] = controlPoints(segment);
     const ts = [...new Set([...extrema(p0.x, p1.x, p2.x, p3.x), ...extrema(p0.y, p1.y, p2.y, p3.y)])];
     points.push(...ts.map((t) => cubic(p0, p1, p2, p3, t)));
   }
-  if (!points.length) points.push(...valid.nodes);
+  if (!points.length) points.push(...contours.flatMap((contour) => contour.nodes));
   const xs = points.map((point) => point.x), ys = points.map((point) => point.y);
   const left = Math.min(...xs), right = Math.max(...xs), top = Math.min(...ys), bottom = Math.max(...ys);
   return { left, top, right, bottom, width: right - left, height: bottom - top };
@@ -182,14 +259,11 @@ export function movePathNode(path: PathModel, index: number, x: number, y: numbe
   const dx = x - node.x, dy = y - node.y;
   const moved = (point?: { x: number; y: number }) =>
     point ? { x: point.x + dx, y: point.y + dy } : undefined;
-  const next = {
-    ...valid,
-    nodes: valid.nodes.map((item, itemIndex) =>
+  const next = replacePrimaryContour(valid, valid.nodes.map((item, itemIndex) =>
       itemIndex === index
         ? { x, y, inHandle: moved(item.inHandle), outHandle: moved(item.outHandle) }
         : cloneNode(item),
-    ),
-  };
+    ));
   return validatePath(next);
 }
 
@@ -201,11 +275,21 @@ export function transformPath(path: PathModel, matrix: PathMatrix): PathModel {
     x: a * point.x + c * point.y + e,
     y: b * point.x + d * point.y + f,
   });
-  return validatePath({ ...valid, nodes: valid.nodes.map((node) => ({
-    ...transform(node),
-    ...(node.inHandle ? { inHandle: transform(node.inHandle) } : {}),
-    ...(node.outHandle ? { outHandle: transform(node.outHandle) } : {}),
-  })) });
+  const transformContour = (contour: PathContour): PathContour => ({
+    closed: contour.closed,
+    nodes: contour.nodes.map((node) => ({
+      ...transform(node),
+      ...(node.inHandle ? { inHandle: transform(node.inHandle) } : {}),
+      ...(node.outHandle ? { outHandle: transform(node.outHandle) } : {}),
+    })),
+  });
+  const contours = pathContours(valid).map(transformContour);
+  return validatePath({
+    ...valid,
+    nodes: contours[0].nodes,
+    closed: contours[0].closed,
+    ...(contours.length > 1 ? { contours } : {}),
+  });
 }
 
 const segmentDistance = (point: PathNode, start: PathNode, end: PathNode): number => {
@@ -266,12 +350,9 @@ export function movePathHandle(
   if (kind !== 'in' && kind !== 'out') throw new Error('Path handle kind is invalid');
   if (!finite(x) || !finite(y)) throw new Error('Path handles are invalid');
   if (!valid.nodes[index][`${kind}Handle`]) throw new Error('Path handle is not defined');
-  return validatePath({
-    ...valid,
-    nodes: valid.nodes.map((node, nodeIndex) =>
+  return validatePath(replacePrimaryContour(valid, valid.nodes.map((node, nodeIndex) =>
       nodeIndex === index ? { ...cloneNode(node), [`${kind}Handle`]: { x, y } } : cloneNode(node),
-    ),
-  });
+    )));
 }
 
 /** Return whether a point lies on a straight or cubic path stroke. */
@@ -366,7 +447,7 @@ export function insertPathNode(path: PathModel, segmentIndex: number, t: number)
     nodes[0] = end;
     nodes.push(node);
   }
-  return validatePath({ ...valid, nodes });
+  return validatePath(replacePrimaryContour(valid, nodes));
 }
 
 /** Remove one anchor while preserving a valid, drawable path. */
@@ -376,7 +457,7 @@ export function removePathNode(path: PathModel, index: number): PathModel {
     throw new Error('Path node index is invalid');
   if (valid.nodes.length <= 1) throw new Error('Path needs at least one anchor');
   const nodes = valid.nodes.filter((_, itemIndex) => itemIndex !== index).map(cloneNode);
-  return validatePath({ ...valid, nodes, closed: valid.closed && nodes.length >= 3 });
+  return validatePath(replacePrimaryContour(valid, nodes, valid.closed && nodes.length >= 3));
 }
 
 /** Toggle a node between a corner and a mirrored smooth anchor. */
@@ -386,9 +467,9 @@ export function setPathNodeSmooth(path: PathModel, index: number, smooth: boolea
     throw new Error('Path node index is invalid');
   const node = valid.nodes[index];
   if (!smooth)
-    return validatePath({ ...valid, nodes: valid.nodes.map((item, itemIndex) => itemIndex === index
+    return validatePath(replacePrimaryContour(valid, valid.nodes.map((item, itemIndex) => itemIndex === index
       ? { x: item.x, y: item.y }
-      : cloneNode(item)) });
+      : cloneNode(item))));
   const previous = index > 0 ? valid.nodes[index - 1] : (valid.closed ? valid.nodes.at(-1)! : undefined);
   const next = index < valid.nodes.length - 1 ? valid.nodes[index + 1] : (valid.closed ? valid.nodes[0] : undefined);
   const before = previous ? { x: node.x - previous.x, y: node.y - previous.y } : { x: 1, y: 0 };
@@ -398,33 +479,36 @@ export function setPathNodeSmooth(path: PathModel, index: number, smooth: boolea
   const leftLength = previous ? Math.min(64, Math.max(8, Math.hypot(node.x - previous.x, node.y - previous.y) / 3)) : 24;
   const rightLength = next ? Math.min(64, Math.max(8, Math.hypot(next.x - node.x, next.y - node.y) / 3)) : leftLength;
   const ux = tangent.x / length, uy = tangent.y / length;
-  return validatePath({ ...valid, nodes: valid.nodes.map((item, itemIndex) => itemIndex === index
+  return validatePath(replacePrimaryContour(valid, valid.nodes.map((item, itemIndex) => itemIndex === index
     ? {
         x: item.x,
         y: item.y,
         inHandle: { x: item.x - ux * leftLength, y: item.y - uy * leftLength },
         outHandle: { x: item.x + ux * rightLength, y: item.y + uy * rightLength },
       }
-    : cloneNode(item)) });
+    : cloneNode(item))));
 }
 
 /** Stable SVG path data used for export/tests, with no locale-sensitive formatting. */
 export function serializePathData(path: PathModel): string {
   const valid = validatePath(path);
-  if (!valid.nodes.length) return '';
   const number = (value: number) => Number(value.toFixed(4)).toString();
   const point = (value: PathNode) => `${number(value.x)} ${number(value.y)}`;
-  const commands = [`M ${point(valid.nodes[0])}`];
-  for (const segment of segments(valid)) {
-    const [p0, p1, p2, p3] = controlPoints(segment);
-    if (segment.close && !segment.start.outHandle && !segment.end.inHandle) {
-      commands.push('Z');
-      continue;
+  const commands: string[] = [];
+  for (const contour of pathContours(valid)) {
+    if (!contour.nodes.length) continue;
+    commands.push(`M ${point(contour.nodes[0])}`);
+    for (const segment of contourSegments(contour)) {
+      const [p0, p1, p2, p3] = controlPoints(segment);
+      if (segment.close && !segment.start.outHandle && !segment.end.inHandle) {
+        commands.push('Z');
+        continue;
+      }
+      if (p1 !== p0 || p2 !== p3 || segment.start.outHandle || segment.end.inHandle)
+        commands.push(`C ${point(p1)} ${point(p2)} ${point(p3)}`);
+      else commands.push(`L ${point(p3)}`);
+      if (segment.close) commands.push('Z');
     }
-    if (p1 !== p0 || p2 !== p3 || segment.start.outHandle || segment.end.inHandle)
-      commands.push(`C ${point(p1)} ${point(p2)} ${point(p3)}`);
-    else commands.push(`L ${point(p3)}`);
-    if (segment.close) commands.push('Z');
   }
   return commands.join(' ');
 }

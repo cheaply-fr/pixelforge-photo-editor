@@ -42,7 +42,7 @@ import {
   type ImageSizeMetadata,
   type ResampleMethod,
 } from './imageSize.ts';
-import { validatePath, type PathModel } from './paths.ts';
+import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
   shapePoints,
@@ -2330,36 +2330,37 @@ export async function renderFrame(
     }
     if (layer.kind === 'path') {
       context.beginPath();
-      const [first, ...rest] = layer.path.nodes;
-      if (first) {
+      for (const contour of pathContours(layer.path)) {
+        const [first, ...rest] = contour.nodes;
+        if (!first) continue;
         context.moveTo(first.x, first.y);
         for (const [index, node] of rest.entries()) {
-          const previous = layer.path.nodes[index];
+          const previous = contour.nodes[index];
           if (previous.outHandle || node.inHandle) {
             const out = previous.outHandle ?? previous;
             const incoming = node.inHandle ?? node;
             context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, node.x, node.y);
           } else context.lineTo(node.x, node.y);
         }
-        if (layer.path.closed && layer.path.nodes.length > 1) {
-          const previous = layer.path.nodes[layer.path.nodes.length - 1];
+        if (contour.closed && contour.nodes.length > 1) {
+          const previous = contour.nodes[contour.nodes.length - 1];
           const out = previous.outHandle ?? previous;
           const incoming = first.inHandle ?? first;
           if (previous.outHandle || first.inHandle)
             context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, first.x, first.y);
+          context.closePath();
         }
-        if (layer.path.closed) context.closePath();
-        if (layer.path.fill && layer.path.closed) {
-          context.fillStyle = layer.path.fillColor;
-          context.fill();
-        }
-        if (layer.path.stroke) {
-          context.strokeStyle = layer.path.strokeColor;
-          context.lineWidth = layer.path.strokeWidth;
-          context.lineJoin = 'round';
-          context.lineCap = 'round';
-          context.stroke();
-        }
+      }
+      if (layer.path.fill && pathContours(layer.path).some((contour) => contour.closed)) {
+        context.fillStyle = layer.path.fillColor;
+        context.fill(layer.path.fillRule === 'evenodd' ? 'evenodd' : 'nonzero');
+      }
+      if (layer.path.stroke) {
+        context.strokeStyle = layer.path.strokeColor;
+        context.lineWidth = layer.path.strokeWidth;
+        context.lineJoin = 'round';
+        context.lineCap = 'round';
+        context.stroke();
       }
     }
     context.restore();
