@@ -12377,7 +12377,7 @@ export default function Home() {
                         <output>{filterEffects.seed}</output>
                       </span>
                       <input
-                        className="text-input"
+                        className="text-input mezzotint-seed-input"
                         aria-label="Random seed"
                         type="number"
                         min={0}
