@@ -1237,7 +1237,7 @@ test('Mezzotint exposes seeded grain controls and round-trips nondestructively',
   await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('0');
   await expect.poll(() => pixels(page)).not.toEqual(original);
   await page.getByLabel('Grain mode', { exact: true }).selectOption('coarse');
-  await page.getByLabel('Random seed', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Random seed', { exact: true }).fill('1');
   await page.getByLabel('Cell size', { exact: true }).press('ArrowRight');
   const adjusted = await downloadProject(page);
   const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
@@ -1259,6 +1259,11 @@ test('Mezzotint exposes seeded grain controls and round-trips nondestructively',
   await openProject(page, adjusted);
   await expect(page.getByLabel('Grain mode', { exact: true })).toHaveValue('coarse');
   await expect.poll(() => pixels(page)).toEqual(changed);
+  const highSeedProject = JSON.parse(JSON.stringify(adjusted));
+  highSeedProject.history[highSeedProject.index].layers.at(-1)!.adjustments.filterEffects.seed = 4294967295;
+  await openProject(page, highSeedProject);
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('4294967295');
+  await openProject(page, adjusted);
   for (let index = 0; index < 4; index += 1) {
     await page.getByRole('button', { name: 'Edit', exact: true }).click();
     await page.getByRole('menuitem', { name: /^Undo/ }).click();

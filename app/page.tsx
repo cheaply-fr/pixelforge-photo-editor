@@ -12371,13 +12371,26 @@ export default function Home() {
                         <option value="coarse">Coarse</option>
                       </select>
                     </label>
-                    <Slider
-                      label="Random seed"
-                      value={filterEffects.seed % 1000}
-                      min={0}
-                      max={999}
-                      set={(value) => setFilterEffects({ seed: value })}
-                    />
+                    <label className="slider">
+                      <span>
+                        <b>Random seed (0–4294967295)</b>
+                        <output>{filterEffects.seed}</output>
+                      </span>
+                      <input
+                        className="text-input"
+                        aria-label="Random seed"
+                        type="number"
+                        min={0}
+                        max={0xffffffff}
+                        step={1}
+                        value={filterEffects.seed}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                            setFilterEffects({ seed: value });
+                        }}
+                      />
+                    </label>
                   </>
                 )}
                 <p className="adjust-note">
