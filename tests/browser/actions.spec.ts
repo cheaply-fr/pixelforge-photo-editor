@@ -58,6 +58,25 @@ test('records and replays the Facet Pixelate command', async ({ page }) => {
   await expect(page.locator('footer > span').first()).toContainText('replayed');
 });
 
+test('records and replays the Color Halftone Pixelate command', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('CMYK print finish');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Color Halftone…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('color-halftone');
+
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('CMYK print finish', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 step', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('footer > span').first()).toContainText('replayed');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('color-halftone');
+});
+
 test('closes the recipe surface without changing the document', async ({ page }) => {
   const before = await page.getByTestId('editor-canvas').getAttribute('width');
   await openActions(page);

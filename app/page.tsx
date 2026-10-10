@@ -323,6 +323,7 @@ import {
   type ContentAwareFill,
 } from '../src/contentAwareCleanup';
 import {
+  DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
@@ -3889,6 +3890,9 @@ export default function Home() {
                   centerY: 0.5,
                   angle: 0,
                   tiltShift: { ...DEFAULT_TILT_SHIFT_SETTINGS },
+                } : {}),
+                ...(type === 'color-halftone' ? {
+                  colorHalftone: { ...DEFAULT_COLOR_HALFTONE_SETTINGS },
                 } : {}),
                 amount:
                   type === 'fragment'
@@ -12003,6 +12007,9 @@ export default function Home() {
             {filterEffects.type === 'fragment' && (
               <p>Four diagonally offset source copies are averaged. Offset and strength stay editable; image edges are clamped and alpha stays unchanged.</p>
             )}
+            {filterEffects.type === 'color-halftone' && (
+              <p>Bounded four-plate CMYK screen approximation. Cell size and cyan, magenta, yellow and black screen angles remain editable; paper simulation, channel trapping and print calibration remain planned.</p>
+            )}
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
@@ -12294,6 +12301,42 @@ export default function Home() {
                       max={80}
                       set={(value) => setFilterEffects({ tiltShift: { ...(filterEffects.tiltShift ?? DEFAULT_TILT_SHIFT_SETTINGS), feather: value / 100 } })}
                       suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'color-halftone' && (
+                  <>
+                    <Slider
+                      label="Cyan screen angle"
+                      value={filterEffects.colorHalftone?.cyanAngle ?? DEFAULT_COLOR_HALFTONE_SETTINGS.cyanAngle}
+                      min={-180}
+                      max={180}
+                      set={(value) => setFilterEffects({ colorHalftone: { ...(filterEffects.colorHalftone ?? DEFAULT_COLOR_HALFTONE_SETTINGS), cyanAngle: value } })}
+                      suffix="°"
+                    />
+                    <Slider
+                      label="Magenta screen angle"
+                      value={filterEffects.colorHalftone?.magentaAngle ?? DEFAULT_COLOR_HALFTONE_SETTINGS.magentaAngle}
+                      min={-180}
+                      max={180}
+                      set={(value) => setFilterEffects({ colorHalftone: { ...(filterEffects.colorHalftone ?? DEFAULT_COLOR_HALFTONE_SETTINGS), magentaAngle: value } })}
+                      suffix="°"
+                    />
+                    <Slider
+                      label="Yellow screen angle"
+                      value={filterEffects.colorHalftone?.yellowAngle ?? DEFAULT_COLOR_HALFTONE_SETTINGS.yellowAngle}
+                      min={-180}
+                      max={180}
+                      set={(value) => setFilterEffects({ colorHalftone: { ...(filterEffects.colorHalftone ?? DEFAULT_COLOR_HALFTONE_SETTINGS), yellowAngle: value } })}
+                      suffix="°"
+                    />
+                    <Slider
+                      label="Black screen angle"
+                      value={filterEffects.colorHalftone?.blackAngle ?? DEFAULT_COLOR_HALFTONE_SETTINGS.blackAngle}
+                      min={-180}
+                      max={180}
+                      set={(value) => setFilterEffects({ colorHalftone: { ...(filterEffects.colorHalftone ?? DEFAULT_COLOR_HALFTONE_SETTINGS), blackAngle: value } })}
+                      suffix="°"
                     />
                   </>
                 )}

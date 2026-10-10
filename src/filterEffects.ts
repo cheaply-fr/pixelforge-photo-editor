@@ -78,6 +78,25 @@ export type TiltShiftSettings = {
   feather: number;
 };
 
+/**
+ * Screen angles for the four deterministic CMYK halftone plates. Angles are
+ * expressed in degrees and are kept in the same bounded layer-local metadata
+ * as the cell size, so a project never has to persist generated pixels.
+ */
+export type ColorHalftoneSettings = {
+  cyanAngle: number;
+  magentaAngle: number;
+  yellowAngle: number;
+  blackAngle: number;
+};
+
+export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
+  cyanAngle: 108,
+  magentaAngle: 162,
+  yellowAngle: 90,
+  blackAngle: 45,
+};
+
 export const DEFAULT_TILT_SHIFT_SETTINGS: TiltShiftSettings = {
   focusWidth: 0.36,
   feather: 0.5,
@@ -110,6 +129,8 @@ export type FilterEffects = {
   fieldPoints?: FieldBlurPoint[];
   /** Editable sharp-band geometry for the Tilt-Shift Gallery effect. */
   tiltShift?: TiltShiftSettings;
+  /** Editable CMYK screen angles for the Color Halftone Pixelate effect. */
+  colorHalftone?: ColorHalftoneSettings;
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -198,6 +219,17 @@ export function effectiveFilterEffects(
       feather: finite(settings?.feather) ? clamp(settings.feather, 0.05, 0.8) : DEFAULT_TILT_SHIFT_SETTINGS.feather,
     };
   }
+  if (type === 'color-halftone') {
+    const settings = source.colorHalftone;
+    const angle = (value: unknown, fallback: number) =>
+      finite(value) ? clamp(Math.round(value), -180, 180) : fallback;
+    normalized.colorHalftone = {
+      cyanAngle: angle(settings?.cyanAngle, DEFAULT_COLOR_HALFTONE_SETTINGS.cyanAngle),
+      magentaAngle: angle(settings?.magentaAngle, DEFAULT_COLOR_HALFTONE_SETTINGS.magentaAngle),
+      yellowAngle: angle(settings?.yellowAngle, DEFAULT_COLOR_HALFTONE_SETTINGS.yellowAngle),
+      blackAngle: angle(settings?.blackAngle, DEFAULT_COLOR_HALFTONE_SETTINGS.blackAngle),
+    };
+  }
   return normalized;
 }
 
@@ -233,6 +265,14 @@ function validTiltShiftSettings(value: unknown): value is TiltShiftSettings {
   return finite(settings.focusWidth) && settings.focusWidth >= 0.05 && settings.focusWidth <= 0.8 &&
     finite(settings.feather) && settings.feather >= 0.05 && settings.feather <= 0.8;
 }
+function validColorHalftoneSettings(value: unknown): value is ColorHalftoneSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<ColorHalftoneSettings>;
+  return finite(settings.cyanAngle) && settings.cyanAngle >= -180 && settings.cyanAngle <= 180 &&
+    finite(settings.magentaAngle) && settings.magentaAngle >= -180 && settings.magentaAngle <= 180 &&
+    finite(settings.yellowAngle) && settings.yellowAngle >= -180 && settings.yellowAngle <= 180 &&
+    finite(settings.blackAngle) && settings.blackAngle >= -180 && settings.blackAngle <= 180;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -246,6 +286,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.pathTaper === undefined || (finite(effect.pathTaper) && effect.pathTaper >= 0 && effect.pathTaper <= 1)) &&
     (effect.fieldPoints === undefined || validFieldPoints(effect.fieldPoints)) &&
     (effect.tiltShift === undefined || validTiltShiftSettings(effect.tiltShift)) &&
+    (effect.colorHalftone === undefined || validColorHalftoneSettings(effect.colorHalftone)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -1292,24 +1333,92 @@ function applyColorHalftone(
   source: Uint8ClampedArray,
   width: number,
   height: number,
-  radius: number,
+  effect: FilterEffects,
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const cell = Math.max(2, Math.min(32, Math.round(radius)));
+  const cell = Math.max(2, Math.min(64, Math.round(effect.radius)));
+  const settings = effect.colorHalftone ?? DEFAULT_COLOR_HALFTONE_SETTINGS;
+  const centreX = (width - 1) * 0.5;
+  const centreY = (height - 1) * 0.5;
+  const plates = [
+    { angle: settings.cyanAngle, channel: 'cyan' as const },
+    { angle: settings.magentaAngle, channel: 'magenta' as const },
+    { angle: settings.yellowAngle, channel: 'yellow' as const },
+    { angle: settings.blackAngle, channel: 'black' as const },
+  ];
+
+  // Find the nearest cell centre in a rotated screen. The same source sample
+  // is used for every pixel in a plate cell, producing stable dots even when
+  // the destination is rendered in tiles or after a project reload.
+  const dotCoverage = (x: number, y: number, angle: number, ink: number) => {
+    if (ink <= 0) return { coverage: 0, sampleX: x, sampleY: y };
+    const radians = (angle * Math.PI) / 180;
+    const cosine = Math.cos(radians);
+    const sine = Math.sin(radians);
+    const dx = x - centreX;
+    const dy = y - centreY;
+    const rotatedX = dx * cosine + dy * sine;
+    const rotatedY = -dx * sine + dy * cosine;
+    const cellX = Math.round(rotatedX / cell) * cell;
+    const cellY = Math.round(rotatedY / cell) * cell;
+    const localX = rotatedX - cellX;
+    const localY = rotatedY - cellY;
+    const distance = Math.hypot(localX, localY);
+    // Dot area is proportional to ink density. A one-pixel antialias ramp
+    // keeps small cells from producing harsh stair-steps without expanding
+    // the canvas or reading hidden RGB from transparent neighbours.
+    const radius = cell * 0.5 * Math.sqrt(clamp(ink, 0, 1)) * 0.96;
+    const coverage = clamp(radius + 0.75 - distance, 0, 1);
+    return {
+      coverage,
+      sampleX: centreX + cellX * cosine - cellY * sine,
+      sampleY: centreY + cellX * sine + cellY * cosine,
+    };
+  };
+
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4,
         alpha = source[offset + 3];
       if (alpha === 0) continue;
-      const originX = Math.floor(x / cell) * cell,
-        originY = Math.floor(y / cell) * cell,
-        sample = sourcePixel(source, width, height, originX + cell / 2, originY + cell / 2),
-        distance = Math.hypot((x - (originX + cell / 2)) / cell, (y - (originY + cell / 2)) / cell),
-        luminance = (0.2126 * sample[0] + 0.7152 * sample[1] + 0.0722 * sample[2]) / 255,
-        ink = distance < (1 - luminance) * 0.82 ? 1 : 0,
-        target: [number, number, number, number] = ink ? [sample[0], sample[1], sample[2], alpha] : [255, 255, 255, alpha];
-      blendPixel(output, offset, target, strength);
+      let red = 255;
+      let green = 255;
+      let blue = 255;
+      for (const plate of plates) {
+        const probe = dotCoverage(x, y, plate.angle, 1);
+        const sample = sourcePixelBilinear(source, width, height, probe.sampleX, probe.sampleY);
+        // If the rotated cell centre lands outside the visible asset, use the
+        // destination's source colour. This keeps partial-alpha edges stable.
+        const sampleRed = sample[3] ? sample[0] : source[offset];
+        const sampleGreen = sample[3] ? sample[1] : source[offset + 1];
+        const sampleBlue = sample[3] ? sample[2] : source[offset + 2];
+        const redUnit = sampleRed / 255;
+        const greenUnit = sampleGreen / 255;
+        const blueUnit = sampleBlue / 255;
+        const key = 1 - Math.max(redUnit, greenUnit, blueUnit);
+        const denominator = Math.max(1e-6, 1 - key);
+        const cyan = (1 - redUnit - key) / denominator;
+        const magenta = (1 - greenUnit - key) / denominator;
+        const yellow = (1 - blueUnit - key) / denominator;
+        const ink = plate.channel === 'cyan'
+          ? cyan
+          : plate.channel === 'magenta'
+            ? magenta
+            : plate.channel === 'yellow'
+              ? yellow
+              : key;
+        const dot = dotCoverage(x, y, plate.angle, ink).coverage;
+        if (plate.channel === 'cyan') red *= 1 - dot;
+        else if (plate.channel === 'magenta') green *= 1 - dot;
+        else if (plate.channel === 'yellow') blue *= 1 - dot;
+        else {
+          red *= 1 - dot;
+          green *= 1 - dot;
+          blue *= 1 - dot;
+        }
+      }
+      blendPixel(output, offset, [red, green, blue, alpha], strength);
     }
   }
 }
@@ -1894,7 +2003,7 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'facet') {
     applyFacet(data, width, height, effect.radius, effect.seed, output, strength);
   } else if (effect.type === 'color-halftone') {
-    applyColorHalftone(data, width, height, effect.radius, output, strength);
+    applyColorHalftone(data, width, height, effect, output, strength);
   } else if (effect.type === 'tilt-shift') {
     applyTiltShift(data, width, height, effect, output, strength);
   } else if (effect.type === 'wave') {
