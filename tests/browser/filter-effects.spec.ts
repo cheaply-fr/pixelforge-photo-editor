@@ -717,6 +717,58 @@ test('Mosaic, Tilt-Shift, Ripple and Twirl commands expose editable effect metad
   }
 });
 
+test('Tilt-Shift exposes a bounded focal band and round-trips source-safe geometry', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Tilt-Shift…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Tilt-Shift applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('tilt-shift');
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('6');
+  await expect(page.getByLabel('Focus centre X', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Focus height', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Tilt angle', { exact: true })).toHaveValue('0');
+  await expect(page.getByLabel('Focus width', { exact: true })).toHaveValue('36');
+  await expect(page.getByLabel('Transition feather', { exact: true })).toHaveValue('50');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  expect(await pixel(page, 0, 0)).toEqual([0, 0, 0, 0]);
+
+  await page.getByLabel('Focus centre X', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Tilt angle', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Focus width', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Transition feather', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'tilt-shift', amount: 70, radius: 6, centerX: 0.51, angle: 1,
+    tiltShift: { focusWidth: 0.37, feather: 0.51 },
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('tilt-shift');
+  await expect(page.getByLabel('Tilt angle', { exact: true })).toHaveValue('1');
+  await expect(page.getByLabel('Focus width', { exact: true })).toHaveValue('37');
+  await expect(page.getByLabel('Transition feather', { exact: true })).toHaveValue('51');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Focus centre X', { exact: true })).toHaveValue('51');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  for (let index = 0; index < 5; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixels(page)).toEqual(original);
+});
+
 test('Ripple is enabled as an alpha-safe nondestructive Distort effect with centred controls', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

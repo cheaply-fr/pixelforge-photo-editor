@@ -574,6 +574,50 @@ test('tilt shift keeps the focus band sharper than distant pixels', () => {
   assert.ok(edgeDifference > centreDifference);
 });
 
+test('tilt shift normalizes geometry, rotates the focal band and preserves source alpha', () => {
+  const source = rgba(17, 11, (x, y) => {
+    if (x === 0 && y === 0) return [241, 17, 233, 0];
+    return [(x * 23 + y * 7) % 256, (x * 5 + y * 31) % 256, (x * 13 + y * 11) % 256, 96 + ((x + y) % 4) * 40];
+  });
+  const original = source.slice();
+  const horizontal = {
+    type: 'tilt-shift', amount: 100, radius: 4, centerX: 0.5, centerY: 0.5, angle: 0,
+    tiltShift: { focusWidth: 0.24, feather: 0.2 },
+  };
+  const rotated = { ...horizontal, angle: 65, centerX: 0.35, centerY: 0.62 };
+  const first = applyFilterEffectsPixels(source, 17, 11, horizontal);
+  const second = applyFilterEffectsPixels(source, 17, 11, horizontal);
+  assert.deepEqual(first, second);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(first, applyFilterEffectsPixels(source, 17, 11, rotated));
+  assert.deepEqual(pixel(first, 17, 0, 0), pixel(source, 17, 0, 0));
+  for (let index = 0; index < source.length; index += 4)
+    assert.equal(first[index + 3], source[index + 3]);
+});
+
+test('tilt shift bounds and identity controls normalize safely', () => {
+  const normalized = effectiveFilterEffects({
+    type: 'tilt-shift', amount: 140, radius: 99, angle: 220, centerX: -2, centerY: 8,
+    tiltShift: { focusWidth: 2, feather: -1 },
+  });
+  assert.deepEqual(normalized.tiltShift, { focusWidth: 0.8, feather: 0.05 });
+  assert.equal(normalized.amount, 100);
+  assert.equal(normalized.radius, 64);
+  assert.equal(normalized.angle, 180);
+  assert.equal(normalized.centerX, 0);
+  assert.equal(normalized.centerY, 1);
+  assert.equal(validFilterEffects(normalized), true);
+  assert.equal(validFilterEffects({ ...normalized, tiltShift: { focusWidth: 0.01, feather: 0.2 } }), false);
+  const source = fixture();
+  for (const controls of [{ amount: 0 }, { radius: 0 }]) {
+    const output = applyFilterEffectsPixels(source, 9, 5, {
+      type: 'tilt-shift', amount: 100, radius: 8, tiltShift: { focusWidth: 0.3, feather: 0.3 }, ...controls,
+    });
+    assert.deepEqual(output, source);
+    assert.notEqual(output, source);
+  }
+});
+
 test('ripple uses bounded bilinear sampling with editable centre and alpha-safe edges', () => {
   const source = rgba(11, 7, (x, y) => {
     if (x === 0 && y === 0) return [19, 29, 39, 0];

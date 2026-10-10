@@ -323,6 +323,7 @@ import {
   type ContentAwareFill,
 } from '../src/contentAwareCleanup';
 import {
+  DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
   neutralFilterEffects,
@@ -3879,6 +3880,12 @@ export default function Home() {
                 ...(type === 'path-blur' ? { path: DEFAULT_BLUR_PATH.map((point) => ({ ...point })) } : {}),
                 ...(type === 'spin-blur' ? { spinEllipse: { ...DEFAULT_SPIN_ELLIPSE } } : {}),
                 ...(type === 'field-blur' ? { fieldPoints: DEFAULT_FIELD_POINTS.map((point) => ({ ...point })) } : {}),
+                ...(type === 'tilt-shift' ? {
+                  centerX: 0.5,
+                  centerY: 0.5,
+                  angle: 0,
+                  tiltShift: { ...DEFAULT_TILT_SHIFT_SETTINGS },
+                } : {}),
                 amount:
                   type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -11946,6 +11953,9 @@ export default function Home() {
             {filterEffects.type === 'field-blur' && (
               <p>Local Field Blur approximation. Editable pins interpolate bounded disc blur radii across the layer; depth maps, bokeh controls and GPU acceleration remain planned.</p>
             )}
+            {filterEffects.type === 'tilt-shift' && (
+              <p>Local focal-band approximation. Focus width, transition feather, centre and angle remain editable; depth maps, camera bokeh and highlight reconstruction remain planned.</p>
+            )}
             {filterEffects.type === 'smart-blur' && (
               <p>Local edge-preserving bilateral approximation. Luminance boundaries are protected; semantic edges and depth are not inferred.</p>
             )}
@@ -12003,7 +12013,8 @@ export default function Home() {
                           filterEffects.type === 'surface-blur' ||
                           filterEffects.type === 'shape-blur' ||
                           filterEffects.type === 'motion-blur' ||
-                          filterEffects.type === 'path-blur'
+                          filterEffects.type === 'path-blur' ||
+                          filterEffects.type === 'tilt-shift'
                           ? 'Blur radius'
                       : filterEffects.type === 'radial-blur'
                           || filterEffects.type === 'spin-blur'
@@ -12220,14 +12231,48 @@ export default function Home() {
                   </>
                 )}
                 {filterEffects.type === 'tilt-shift' && (
-                  <Slider
-                    label="Focus height"
-                    value={Math.round(filterEffects.centerY * 100)}
-                    min={0}
-                    max={100}
-                    set={(value) => setFilterEffects({ centerY: value / 100 })}
-                    suffix="%"
-                  />
+                  <>
+                    <Slider
+                      label="Focus centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Focus height"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Tilt angle"
+                      value={filterEffects.angle}
+                      min={-90}
+                      max={90}
+                      set={(value) => setFilterEffects({ angle: value })}
+                      suffix="°"
+                    />
+                    <Slider
+                      label="Focus width"
+                      value={Math.round((filterEffects.tiltShift?.focusWidth ?? DEFAULT_TILT_SHIFT_SETTINGS.focusWidth) * 100)}
+                      min={5}
+                      max={80}
+                      set={(value) => setFilterEffects({ tiltShift: { ...(filterEffects.tiltShift ?? DEFAULT_TILT_SHIFT_SETTINGS), focusWidth: value / 100 } })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Transition feather"
+                      value={Math.round((filterEffects.tiltShift?.feather ?? DEFAULT_TILT_SHIFT_SETTINGS.feather) * 100)}
+                      min={5}
+                      max={80}
+                      set={(value) => setFilterEffects({ tiltShift: { ...(filterEffects.tiltShift ?? DEFAULT_TILT_SHIFT_SETTINGS), feather: value / 100 } })}
+                      suffix="%"
+                    />
+                  </>
                 )}
                 <p className="adjust-note">
                   This effect stays editable in the project and is applied to
