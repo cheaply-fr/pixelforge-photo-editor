@@ -511,6 +511,7 @@ type Command =
   | 'filter-color-halftone'
   | 'filter-mezzotint'
   | 'filter-pointillize'
+  | 'filter-picture-frame'
   | 'filter-lens-correction'
   | 'filter-displace'
   | 'filter-pinch'
@@ -968,6 +969,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Mosaic…', command: 'filter-mosaic' },
     { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
+    { label: 'Picture Frame…', command: 'filter-picture-frame' },
     { label: 'Clouds', command: 'noop', disabled: true },
     { label: 'Difference Clouds', command: 'noop', disabled: true },
     { label: 'Fibers…', command: 'noop', disabled: true },
@@ -3908,6 +3910,8 @@ export default function Home() {
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
                   || type === 'pointillize' || type === 'mezzotint' || type === 'field-blur'
                     ? 85
+                  : type === 'picture-frame'
+                    ? 85
                   : type === 'lens-correction'
                     ? 75
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
@@ -3916,6 +3920,8 @@ export default function Home() {
                 radius:
                   type === 'fragment'
                     ? 1
+                    : type === 'picture-frame'
+                    ? 12
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize'
                     ? 10
                     : type === 'lens-correction'
@@ -9536,6 +9542,8 @@ export default function Home() {
       chooseFilterEffect('mezzotint', 'Mezzotint');
     else if (command === 'filter-pointillize')
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
+    else if (command === 'filter-picture-frame')
+      chooseFilterEffect('picture-frame', 'Picture Frame (local approximation)');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-displace')
@@ -9767,6 +9775,7 @@ export default function Home() {
       case 'filter-color-halftone':
       case 'filter-mezzotint':
       case 'filter-pointillize':
+      case 'filter-picture-frame':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
@@ -12007,6 +12016,9 @@ export default function Home() {
             {filterEffects.type === 'pointillize' && (
               <p>Bounded stipple-cell approximation with unchanged alpha. Density, foreground/background color and full procedural controls remain planned.</p>
             )}
+            {filterEffects.type === 'picture-frame' && (
+              <p>Bounded seeded inner frame with editable width, opacity and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
+            )}
             {filterEffects.type === 'crystallize' && (
               <p>Bounded seeded Voronoi-cell approximation with unchanged alpha. Cell geometry is deterministic and editable; true polygon edge reconstruction remains planned.</p>
             )}
@@ -12059,6 +12071,8 @@ export default function Home() {
                           ? 'Blur radius'
                       : filterEffects.type === 'fragment'
                           ? 'Fragment offset'
+                      : filterEffects.type === 'picture-frame'
+                          ? 'Frame width'
                       : filterEffects.type === 'radial-blur'
                           || filterEffects.type === 'spin-blur'
                           ? 'Angular sweep'
@@ -12392,6 +12406,28 @@ export default function Home() {
                       />
                     </label>
                   </>
+                )}
+                {filterEffects.type === 'picture-frame' && (
+                  <label className="slider">
+                    <span>
+                      <b>Random seed (0–4294967295)</b>
+                      <output>{filterEffects.seed}</output>
+                    </span>
+                    <input
+                      className="text-input picture-frame-seed-input"
+                      aria-label="Random seed"
+                      type="number"
+                      min={0}
+                      max={0xffffffff}
+                      step={1}
+                      value={filterEffects.seed}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                          setFilterEffects({ seed: value });
+                      }}
+                    />
+                  </label>
                 )}
                 <p className="adjust-note">
                   This effect stays editable in the project and is applied to

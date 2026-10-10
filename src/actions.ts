@@ -150,6 +150,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-color-halftone',
   'filter-mezzotint',
   'filter-pointillize',
+  'filter-picture-frame',
   'filter-ripple',
   'filter-twirl',
   'filter-wave',
