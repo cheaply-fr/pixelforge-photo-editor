@@ -523,6 +523,7 @@ type Command =
   | 'filter-wave'
   | 'filter-shear'
   | 'filter-zigzag'
+  | 'filter-flame'
   | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
@@ -974,6 +975,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'noop', disabled: true },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
+    { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'sharpen-noise' },
     { label: 'Sharpen Edges', command: 'sharpen-noise' },
     { label: 'Sharpen More', command: 'sharpen-noise' },
@@ -3908,7 +3910,7 @@ export default function Home() {
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
-                  || type === 'pointillize' || type === 'mezzotint' || type === 'difference-clouds' || type === 'field-blur'
+                  || type === 'pointillize' || type === 'mezzotint' || type === 'difference-clouds' || type === 'field-blur' || type === 'flame'
                     ? 85
                   : type === 'lens-correction' || type === 'lens-flare'
                     ? 75
@@ -3920,6 +3922,8 @@ export default function Home() {
                     ? 1
                     : type === 'difference-clouds'
                     ? 18
+                    : type === 'flame'
+                      ? 16
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize'
                     ? 10
                     : type === 'lens-correction'
@@ -9556,6 +9560,8 @@ export default function Home() {
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
     else if (command === 'filter-difference-clouds')
       chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
+    else if (command === 'filter-flame')
+      chooseFilterEffect('flame', 'Flame (local approximation)');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-lens-flare')
@@ -9790,6 +9796,7 @@ export default function Home() {
       case 'filter-mezzotint':
       case 'filter-pointillize':
       case 'filter-difference-clouds':
+      case 'filter-flame':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
@@ -12051,6 +12058,9 @@ export default function Home() {
             {filterEffects.type === 'lens-flare' && (
               <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
             )}
+            {filterEffects.type === 'flame' && (
+              <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
@@ -12090,6 +12100,8 @@ export default function Home() {
                           ? 'Fragment offset'
                       : filterEffects.type === 'difference-clouds'
                           ? 'Cloud scale'
+                      : filterEffects.type === 'flame'
+                          ? 'Flame detail'
                       : filterEffects.type === 'radial-blur'
                           || filterEffects.type === 'spin-blur'
                           ? 'Angular sweep'
@@ -12495,6 +12507,46 @@ export default function Home() {
                       }}
                     />
                   </label>
+                )}
+                {filterEffects.type === 'flame' && (
+                  <>
+                    <Slider
+                      label="Flame origin X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Flame origin Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={20}
+                      max={95}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                    <label className="slider">
+                      <span>
+                        <b>Random seed (0–4294967295)</b>
+                        <output>{filterEffects.seed}</output>
+                      </span>
+                      <input
+                        className="text-input flame-seed-input"
+                        aria-label="Random seed"
+                        type="number"
+                        min={0}
+                        max={0xffffffff}
+                        step={1}
+                        value={filterEffects.seed}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                            setFilterEffects({ seed: value });
+                        }}
+                      />
+                    </label>
+                  </>
                 )}
                 <p className="adjust-note">
                   This effect stays editable in the project and is applied to
