@@ -1080,6 +1080,45 @@ test('Lens Blur is editable, local, source-safe and alpha-preserving', async ({ 
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('lens-blur');
 });
 
+test('Lens Flare exposes editable seeded geometry and preserves the source asset', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const sourcePixel = await pixel(page, 4, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Lens Flare…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Lens Flare (local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('lens-flare');
+  await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('75');
+  await expect(page.getByLabel('Flare size', { exact: true })).toHaveValue('36');
+  await expect(page.getByLabel('Flare centre X', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Flare centre Y', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Streak angle', { exact: true })).toHaveValue('0');
+  await page.getByLabel('Flare centre X', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Streak angle', { exact: true }).press('ArrowRight');
+  await expect.poll(() => pixel(page, 4, 2)).not.toEqual(sourcePixel);
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'lens-flare', amount: 75, radius: 36, centerX: 0.51, angle: 1,
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('lens-flare');
+  await expect(page.getByLabel('Streak angle', { exact: true })).toHaveValue('1');
+  for (let index = 0; index < 3; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(sourcePixel);
+});
+
 test('Iris Blur exposes an editable elliptical focal plane and round-trips safely', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
