@@ -1219,3 +1219,50 @@ test('Fragment applies four offset copies and round-trips nondestructively', asy
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() => pixel(page, 4, 0)).toEqual(sourcePixel);
 });
+
+test('Mezzotint exposes seeded grain controls and round-trips nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Mezzotint…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Mezzotint applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('mezzotint');
+  await expect(page.getByLabel('Cell size', { exact: true })).toHaveValue('10');
+  await expect(page.getByLabel('Grain mode', { exact: true })).toHaveValue('medium');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('0');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Grain mode', { exact: true }).selectOption('coarse');
+  await page.getByLabel('Random seed', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Cell size', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'mezzotint', amount: 85, radius: 11, seed: 1,
+    mezzotint: { grain: 'coarse' },
+  });
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('mezzotint');
+  await expect(page.getByLabel('Cell size', { exact: true })).toHaveValue('11');
+  await expect(page.getByLabel('Grain mode', { exact: true })).toHaveValue('coarse');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('1');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Grain mode', { exact: true })).toHaveValue('coarse');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  for (let index = 0; index < 4; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixels(page)).toEqual(original);
+});
