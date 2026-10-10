@@ -655,6 +655,13 @@ test('Motion Blur is directional, editable and source-safe on desktop and mobile
   await expect(page.getByLabel('Motion angle', { exact: true })).toHaveValue('1');
   await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
   await expect.poll(() => pixel(page, 4, 0)).not.toEqual(sourcePixel);
+  // Motion Blur is one of the translation-invariant local effects routed
+  // through the bounded tile adapter; the status exposes its measured
+  // working-set counters without leaking pixels or source URLs.
+  const renderStatus = page.getByTestId('render-status');
+  await expect(renderStatus).toHaveAttribute('data-tiled-effect', 'motion-blur');
+  await expect(renderStatus).toHaveAttribute('data-tiled-peak-bytes', /[1-9]/);
+  await expect(renderStatus).toHaveAttribute('data-tiled-working-bytes', /[1-9]/);
 
   const adjusted = await downloadProject(page);
   const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
