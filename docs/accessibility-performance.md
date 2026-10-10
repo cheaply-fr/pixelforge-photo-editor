@@ -41,12 +41,12 @@ megapixel decoded-cache limits are safety budgets. Worker image encoding now
 uses the shared bounded row-major tile schedule (16 MiB expanded-RGBA batch
 budget, 64 MiB hard ceiling), while document rendering still publishes a
 full-frame result for unsupported effects. The visible adapter routes bounded
-box/Gaussian blur through one expanded tile at a time under a retained-byte
+the bounded local effect allow-list through one expanded tile at a time under a retained-byte
 ledger and proves neighbourhood pixel parity against a full-frame oracle.
 Committed renders reuse one worker with latest-wins cancellation and idle
 teardown; partial-pixel streaming, device cache policy and physical telemetry
 remain planned follow-up work and are not implied by this contract.
-Eligible Box/Gaussian Blur renders additionally expose a monotonic bounded tile
+Eligible local-effect renders additionally expose a monotonic bounded tile
 progress sample to the render-status diagnostics. This is work progress only;
 the editor still publishes one complete frame after the worker result passes
 dimension and ownership checks.

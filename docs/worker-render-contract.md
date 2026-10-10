@@ -4,8 +4,10 @@ PixelForge can render an immutable document frame in a dedicated module worker
 when the browser exposes `Worker`, `OffscreenCanvas`, `createImageBitmap` and a
 usable 2D context. The worker still publishes a bounded full-frame result and
 does not make the current 16 MP safety limit larger. A visible source-provider /
-destination-sink adapter uses bounded tiles internally for Box and Gaussian
-Blur (radius 1–64); unsupported effects continue through the full-frame path.
+destination-sink adapter uses bounded tiles internally for the explicit local
+effect allow-list (Blur More, Box, Gaussian, Lens, Motion, Shape, Smart,
+Surface and Fragment, with effective radius 1–64); unsupported, global and
+cell-phase-sensitive effects continue through the full-frame path.
 
 ## Request protocol
 
@@ -46,7 +48,7 @@ the last sample available after completion for diagnostics and assistive
 technology. Progress is advisory: cancellation, timeout and error paths remain
 the authoritative result.
 
-Eligible Box and Gaussian Blur layers also emit an independent bounded tile
+Eligible local-neighbourhood layers also emit an independent bounded tile
 progress envelope before their final telemetry envelope:
 
 ```ts
@@ -55,7 +57,8 @@ progress envelope before their final telemetry envelope:
   id: number,
   progress: {
     kind: 'tiled-neighborhood-progress',
-    effect: 'box-blur' | 'gaussian-blur',
+    effect: 'blur-more' | 'box-blur' | 'gaussian-blur' | 'lens-blur' |
+      'motion-blur' | 'shape-blur' | 'smart-blur' | 'surface-blur' | 'fragment',
     layerId?: string,
     width: number,
     height: number,
@@ -121,11 +124,12 @@ buffer before advancing. This protects worker operations from accidentally
 turning a neighbourhood read into an unbounded queue.
 
 The schedule is a reusable planning boundary for document rendering. The
-visible adapter consumes it for bounded Box and Gaussian Blur; other
-neighbourhood effects still require their own edge and compositing tests. The
-schedule does not change the full-frame document result protocol, stream
-partial pixels, or increase the 16 MP safety limit. Overlap remains explicit so
-additional effects can adopt the same plan only after their rules are tested.
+visible adapter consumes it for the allow-listed local effects above; cell
+aligned and coordinate-dependent effects still require origin-aware edge and
+compositing tests. The schedule does not change the full-frame document result
+protocol, stream partial pixels, or increase the 16 MP safety limit. Overlap
+remains explicit so additional effects can adopt the same plan only after their
+rules are tested.
 
 ## Tiled render planning protocol
 
@@ -157,13 +161,16 @@ limits. `runTiledRender` is a cancellable callback runner for pure effects and
 future worker adapters. It checks the abort signal before every tile and emits
 monotonic completed-tile progress only after a callback resolves.
 
-The planning module now feeds a bounded visible adapter for box and Gaussian
-blur (radius 1–64) when a render revision is supplied. The adapter reads each
-expanded region through a source provider and writes only the inner rectangle
-through a destination sink, so it does not create a full-frame RGBA source
-readback. Unsupported or global effects continue to use the existing
-full-frame renderer. Allocation failures fall back without replacing the prior
-canvas. An isolated [`tiledCompositor.ts`](../src/tiledCompositor.ts) slice now assembles
+The planning module now feeds a bounded visible adapter for the allow-listed
+local effects (effective radius 1–64) when a render revision is supplied. The
+adapter reads each expanded region through a source provider and writes only
+the inner rectangle through a destination sink, so it does not create a
+full-frame RGBA source readback. Unsupported, global or cell-phase-sensitive
+effects continue to use the existing full-frame renderer. A working-byte
+exhaustion raises `TiledMemoryBudgetError`; callers preserve the current draft
+and can offer export/retry rather than immediately attempting another
+full-canvas allocation. Other canvas allocation failures retain the existing
+safe fallback. An isolated [`tiledCompositor.ts`](../src/tiledCompositor.ts) slice now assembles
 RGBA pixels serially from expanded tiles: a callback receives the overlap read
 rectangle, and only its inner write rectangle is copied into the destination.
 Its `maxWorkingBytes` guard accounts for the retained input/output pair, and
@@ -191,7 +198,7 @@ the full-frame fallback. Its memory ledger reports the destination surface and
 bounded tile working set; it does not raise the 16 MP safety limit.
 
 The document path now carries one validated `tiled-telemetry` message for each
-eligible blur layer. It reports only effect kind, layer-local dimensions,
+eligible local-effect layer. It reports only effect kind, layer-local dimensions,
 tile count/size, destination bytes, peak tile working bytes, cache bytes and
 bounded cache counters; it never includes pixels, asset URLs or user content.
 The committed editor currently uses the adapter without a retained `TileCache`,
@@ -236,12 +243,13 @@ rendering:
   management can differ between the worker and the visible document canvas.
   PixelForge must keep representative pixel/alpha fixtures and disclose any
   browser-specific variance before widening the worker path.
-* Physical desktop/mobile p50/p95 measurements, 16 MP memory traces and
-  low-memory recovery are release gates still pending. Current CI timings are
-  diagnostic and do not define a supported device profile.
+* Physical desktop/mobile p50/p95 measurements and 16 MP memory traces remain
+  release gates. Pure 16 MP tile-ledger tests, explicit working-byte failures,
+  and desktop/mobile local-effect acceptance now verify the deterministic
+  budget boundary; they do not substitute for physical low-memory traces.
 
 The visible tiled document adapter, persistent worker reuse and
-neighborhood-effect parity gates now cover only bounded box/Gaussian blur.
+neighborhood-effect parity gates cover the explicit local-effect allow-list.
 Other effects, full-frame adjustments, device-specific cache policy and
 low-memory physical traces remain separate Phase 6 gates. Until those gates
 pass, large-image work remains opt-in and the 16 MP,

@@ -62,8 +62,10 @@ import {
   type FilterEffects,
 } from './filterEffects.ts';
 import {
-  applyTiledNeighborhoodBlur,
+  applyTiledNeighborhoodEffect,
   isTiledNeighborhoodBlur,
+  TiledMemoryBudgetError,
+  type TiledNeighborhoodEffectType,
   type TiledNeighborhoodProgress,
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
@@ -2106,7 +2108,7 @@ export async function renderFrame(
         filteredHeight = override?.height ?? asset.h;
       if (options?.tiledRevision !== undefined && isTiledNeighborhoodBlur(filterEffect)) {
         try {
-          const tiled = await applyTiledNeighborhoodBlur(
+          const tiled = await applyTiledNeighborhoodEffect(
             rasterSource,
             filteredWidth,
             filteredHeight,
@@ -2122,7 +2124,7 @@ export async function renderFrame(
               onProgress: (completed, total, meta) =>
                 options.onTiledProgress?.({
                   kind: 'tiled-neighborhood-progress',
-                  effect: filterEffect.type as 'box-blur' | 'gaussian-blur',
+                  effect: filterEffect.type as TiledNeighborhoodEffectType,
                   layerId: layer.id,
                   width: filteredWidth,
                   height: filteredHeight,
@@ -2135,7 +2137,11 @@ export async function renderFrame(
           );
           rasterSource = tiled.canvas;
         } catch (error) {
-          if (error instanceof Error && error.name === 'AbortError') throw error;
+          if (
+            error instanceof Error &&
+            (error.name === 'AbortError' || error instanceof TiledMemoryBudgetError)
+          )
+            throw error;
           // A tile allocation or browser Canvas2D failure must not discard the
           // draft. Fall back to the existing full-frame path for this render.
           const fallback = surface(filteredWidth, filteredHeight);

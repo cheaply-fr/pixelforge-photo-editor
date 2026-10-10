@@ -111,8 +111,10 @@ isolated `src/tiledCompositor.ts` module now
 assembles one expanded tile at a time, writes only inner rectangles, enforces a
 retained input/output byte budget, and compares its result with a full-frame
 oracle. The visible document path now consumes a source-provider/destination-
-sink adapter for box and Gaussian blur with radius 1–64; unsupported/global
-effects remain on the full-frame fallback. Its pure tests cover exact
+sink adapter for the bounded local effect allow-list (Blur More, Box/Gaussian,
+Lens, Motion, Shape, Smart, Surface and Fragment; effective radius 1–64);
+unsupported, global and cell-phase-sensitive effects remain on the full-frame
+fallback. Its pure tests cover exact
 neighbourhood-effect parity, cache ownership and deliberate seam detection
 when overlap is insufficient. The committed render path also reuses one
 worker sequentially with latest-wins cancellation and idle teardown. The
@@ -144,17 +146,20 @@ industrial-scale, the implementation needs:
    not allocate several full-size surfaces. The serial compositor now validates
    expanded input/output bytes, writes each inner rectangle once and proves
    representative neighbourhood parity against a full-frame oracle. The
-   visible adapter currently covers only box/Gaussian blur; tile cache policy,
-   eviction thresholds and measured desktop/mobile memory gates remain
-   required before widening the effect family.
+   visible adapter now covers the explicit local effect allow-list with exact
+   full-frame parity fixtures; tile cache policy, eviction thresholds and
+   measured desktop/mobile memory gates remain required before widening the
+   effect family.
 3. Repeat the operation-level marks for pointer-to-paint, render completion,
    export and IndexedDB save as p50/p95 reports on physical devices. The first
    local instrumentation slice is active and covered by the focused desktop
    and mobile acceptance test; a browser `toDataURL` benchmark alone remains
    insufficient.
 4. Memory-pressure tests for 16 MP imports, multi-layer compositions and undo
-   trimming. A failed allocation must preserve the prior draft and offer an
-   export path.
+   trimming. The tiled path now fails with a typed `TiledMemoryBudgetError`
+   before committing a destination tile when its working-byte budget is
+   exceeded; callers preserve the prior draft and can offer an export/retry
+   path. Physical low-memory recovery remains a release gate.
 5. Regression gates for offline/local drafts, cloud conflict recovery and
    representative pixel output after worker/tile scheduling changes.
 
