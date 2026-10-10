@@ -387,6 +387,53 @@ test('Facet is enabled, deterministic and round-trips nondestructively', async (
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
 });
 
+test('Color Halftone exposes CMYK screen controls and round-trips nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Color Halftone…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Color Halftone applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('color-halftone');
+  await expect(page.getByLabel('Cell size', { exact: true })).toHaveValue('10');
+  await expect(page.getByLabel('Cyan screen angle', { exact: true })).toHaveValue('108');
+  await expect(page.getByLabel('Magenta screen angle', { exact: true })).toHaveValue('162');
+  await expect(page.getByLabel('Yellow screen angle', { exact: true })).toHaveValue('90');
+  await expect(page.getByLabel('Black screen angle', { exact: true })).toHaveValue('45');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  expect(await pixel(page, 0, 0)).toEqual([0, 0, 0, 0]);
+  await page.getByLabel('Cyan screen angle', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Cell size', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'color-halftone', amount: 85, radius: 11,
+    colorHalftone: { cyanAngle: 109, magentaAngle: 162, yellowAngle: 90, blackAngle: 45 },
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('color-halftone');
+  await expect(page.getByLabel('Cell size', { exact: true })).toHaveValue('11');
+  await expect(page.getByLabel('Cyan screen angle', { exact: true })).toHaveValue('109');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Magenta screen angle', { exact: true })).toHaveValue('162');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  for (let index = 0; index < 3; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixels(page)).toEqual(original);
+});
+
 test('Lens Correction is enabled, editable and round-trips nondestructively', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

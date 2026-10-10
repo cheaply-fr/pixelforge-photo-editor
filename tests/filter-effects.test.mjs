@@ -688,6 +688,63 @@ test('mosaic and halftone operate by bounded cells without touching alpha', () =
   assert.notDeepEqual(half, source);
 });
 
+test('color halftone uses deterministic CMYK screens with bounded metadata', () => {
+  const source = rgba(17, 13, (x, y) => {
+    if (x === 0 && y === 0) return [241, 17, 233, 0];
+    return [
+      (x * 31 + y * 7) % 256,
+      (x * 11 + y * 23) % 256,
+      (x * 5 + y * 17) % 256,
+      96 + ((x + y) % 4) * 40,
+    ];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'color-halftone', amount: 100, radius: 5,
+    colorHalftone: { cyanAngle: 108, magentaAngle: 162, yellowAngle: 90, blackAngle: 45 },
+  };
+  const first = applyFilterEffectsPixels(source, 17, 13, effect);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 17, 13, effect));
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(first, source);
+  assert.deepEqual(pixel(first, 17, 0, 0), pixel(source, 17, 0, 0));
+  for (let y = 0; y < 13; y += 1)
+    for (let x = 0; x < 17; x += 1)
+      assert.equal(pixel(first, 17, x, y)[3], pixel(source, 17, x, y)[3]);
+  const rotated = applyFilterEffectsPixels(source, 17, 13, {
+    ...effect,
+    colorHalftone: { ...effect.colorHalftone, cyanAngle: 20 },
+  });
+  assert.notDeepEqual(first, rotated);
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 17, 13, { ...effect, amount: 0 }),
+    source,
+  );
+  assert.deepEqual(
+    applyFilterEffectsPixels(source, 17, 13, { ...effect, radius: 0 }),
+    source,
+  );
+  const tiny = rgba(1, 1, () => [70, 140, 210, 128]);
+  const tinyOutput = applyFilterEffectsPixels(tiny, 1, 1, { ...effect, radius: 64 });
+  assert.equal(pixel(tinyOutput, 1, 0, 0)[3], 128);
+  assert.notEqual(tinyOutput, tiny);
+});
+
+test('color halftone screen angles normalize and validate safely', () => {
+  const normalized = effectiveFilterEffects({
+    type: 'color-halftone', amount: 120, radius: 99,
+    colorHalftone: { cyanAngle: 999, magentaAngle: -999, yellowAngle: -181, blackAngle: 45.7 },
+  });
+  assert.deepEqual(normalized.colorHalftone, {
+    cyanAngle: 180, magentaAngle: -180, yellowAngle: -180, blackAngle: 46,
+  });
+  assert.equal(validFilterEffects(normalized), true);
+  assert.equal(validFilterEffects({
+    ...normalized,
+    colorHalftone: { ...normalized.colorHalftone, cyanAngle: 181 },
+  }), false);
+});
+
 test('crystallize uses seeded bounded cells without mutating source or transparent RGB', () => {
   const source = rgba(13, 9, (x, y) => {
     if (x === 0 && y === 0) return [241, 17, 233, 0];
