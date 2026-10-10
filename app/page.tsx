@@ -324,6 +324,7 @@ import {
 } from '../src/contentAwareCleanup';
 import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
+  DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
@@ -508,6 +509,7 @@ type Command =
   | 'filter-fragment'
   | 'filter-facet'
   | 'filter-color-halftone'
+  | 'filter-mezzotint'
   | 'filter-pointillize'
   | 'filter-lens-correction'
   | 'filter-displace'
@@ -962,6 +964,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Crystallize…', command: 'filter-crystallize' },
     { label: 'Fragment', command: 'filter-fragment' },
     { label: 'Facet…', command: 'filter-facet' },
+    { label: 'Mezzotint…', command: 'filter-mezzotint' },
     { label: 'Mosaic…', command: 'filter-mosaic' },
     { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
@@ -3894,13 +3897,16 @@ export default function Home() {
                 ...(type === 'color-halftone' ? {
                   colorHalftone: { ...DEFAULT_COLOR_HALFTONE_SETTINGS },
                 } : {}),
+                ...(type === 'mezzotint' ? {
+                  mezzotint: { ...DEFAULT_MEZZOTINT_SETTINGS },
+                } : {}),
                 amount:
                   type === 'fragment'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
-                  || type === 'pointillize' || type === 'field-blur'
+                  || type === 'pointillize' || type === 'mezzotint' || type === 'field-blur'
                     ? 85
                   : type === 'lens-correction'
                     ? 75
@@ -3910,7 +3916,7 @@ export default function Home() {
                 radius:
                   type === 'fragment'
                     ? 1
-                    : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'pointillize'
+                    : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize'
                     ? 10
                     : type === 'lens-correction'
                       ? 64
@@ -9526,6 +9532,8 @@ export default function Home() {
       chooseFilterEffect('fragment', 'Fragment');
     else if (command === 'filter-color-halftone')
       chooseFilterEffect('color-halftone', 'Color Halftone');
+    else if (command === 'filter-mezzotint')
+      chooseFilterEffect('mezzotint', 'Mezzotint');
     else if (command === 'filter-pointillize')
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
     else if (command === 'filter-lens-correction')
@@ -9757,6 +9765,7 @@ export default function Home() {
       case 'filter-facet':
       case 'filter-fragment':
       case 'filter-color-halftone':
+      case 'filter-mezzotint':
       case 'filter-pointillize':
       case 'filter-lens-correction':
       case 'filter-displace':
@@ -12010,6 +12019,9 @@ export default function Home() {
             {filterEffects.type === 'color-halftone' && (
               <p>Bounded four-plate CMYK screen approximation. Cell size and cyan, magenta, yellow and black screen angles remain editable; paper simulation, channel trapping and print calibration remain planned.</p>
             )}
+            {filterEffects.type === 'mezzotint' && (
+              <p>Bounded seeded monochrome grain approximation. Grain mode, cell size, amount and seed remain editable; Photoshop&apos;s exact stochastic screen and print controls remain planned.</p>
+            )}
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
@@ -12031,6 +12043,7 @@ export default function Home() {
                     filterEffects.type === 'crystallize' ||
                     filterEffects.type === 'facet' ||
                     filterEffects.type === 'color-halftone' ||
+                    filterEffects.type === 'mezzotint' ||
                     filterEffects.type === 'pointillize'
                       ? 'Cell size'
                       : filterEffects.type === 'box-blur' ||
@@ -12338,6 +12351,46 @@ export default function Home() {
                       set={(value) => setFilterEffects({ colorHalftone: { ...(filterEffects.colorHalftone ?? DEFAULT_COLOR_HALFTONE_SETTINGS), blackAngle: value } })}
                       suffix="°"
                     />
+                  </>
+                )}
+                {filterEffects.type === 'mezzotint' && (
+                  <>
+                    <label>
+                      Grain mode
+                      <select
+                        aria-label="Grain mode"
+                        value={filterEffects.mezzotint?.grain ?? DEFAULT_MEZZOTINT_SETTINGS.grain}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          const grain = value === 'fine' || value === 'coarse' ? value : 'medium';
+                          setFilterEffects({ mezzotint: { grain } });
+                        }}
+                      >
+                        <option value="fine">Fine</option>
+                        <option value="medium">Medium</option>
+                        <option value="coarse">Coarse</option>
+                      </select>
+                    </label>
+                    <label className="slider">
+                      <span>
+                        <b>Random seed (0–4294967295)</b>
+                        <output>{filterEffects.seed}</output>
+                      </span>
+                      <input
+                        className="text-input mezzotint-seed-input"
+                        aria-label="Random seed"
+                        type="number"
+                        min={0}
+                        max={0xffffffff}
+                        step={1}
+                        value={filterEffects.seed}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                            setFilterEffects({ seed: value });
+                        }}
+                      />
+                    </label>
                   </>
                 )}
                 <p className="adjust-note">

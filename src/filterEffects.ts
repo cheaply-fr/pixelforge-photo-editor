@@ -29,6 +29,7 @@ export const FILTER_EFFECT_TYPES = [
   'fragment',
   'facet',
   'color-halftone',
+  'mezzotint',
   'pointillize',
   'lens-correction',
   'displace',
@@ -90,6 +91,15 @@ export type ColorHalftoneSettings = {
   blackAngle: number;
 };
 
+/**
+ * Grain geometry for the local Mezzotint approximation. The mode controls
+ * the size of the seeded noise field while `radius` remains the persisted
+ * cell-size control shared by the Pixelate family.
+ */
+export type MezzotintSettings = {
+  grain: 'fine' | 'medium' | 'coarse';
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -100,6 +110,10 @@ export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
 export const DEFAULT_TILT_SHIFT_SETTINGS: TiltShiftSettings = {
   focusWidth: 0.36,
   feather: 0.5,
+};
+
+export const DEFAULT_MEZZOTINT_SETTINGS: MezzotintSettings = {
+  grain: 'medium',
 };
 
 export type FilterEffects = {
@@ -131,6 +145,8 @@ export type FilterEffects = {
   tiltShift?: TiltShiftSettings;
   /** Editable CMYK screen angles for the Color Halftone Pixelate effect. */
   colorHalftone?: ColorHalftoneSettings;
+  /** Editable seeded grain geometry for the Mezzotint Pixelate effect. */
+  mezzotint?: MezzotintSettings;
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -230,6 +246,12 @@ export function effectiveFilterEffects(
       blackAngle: angle(settings?.blackAngle, DEFAULT_COLOR_HALFTONE_SETTINGS.blackAngle),
     };
   }
+  if (type === 'mezzotint') {
+    const grain = source.mezzotint?.grain;
+    normalized.mezzotint = {
+      grain: grain === 'fine' || grain === 'coarse' ? grain : DEFAULT_MEZZOTINT_SETTINGS.grain,
+    };
+  }
   return normalized;
 }
 
@@ -273,6 +295,11 @@ function validColorHalftoneSettings(value: unknown): value is ColorHalftoneSetti
     finite(settings.yellowAngle) && settings.yellowAngle >= -180 && settings.yellowAngle <= 180 &&
     finite(settings.blackAngle) && settings.blackAngle >= -180 && settings.blackAngle <= 180;
 }
+function validMezzotintSettings(value: unknown): value is MezzotintSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<MezzotintSettings>;
+  return settings.grain === 'fine' || settings.grain === 'medium' || settings.grain === 'coarse';
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -287,6 +314,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fieldPoints === undefined || validFieldPoints(effect.fieldPoints)) &&
     (effect.tiltShift === undefined || validTiltShiftSettings(effect.tiltShift)) &&
     (effect.colorHalftone === undefined || validColorHalftoneSettings(effect.colorHalftone)) &&
+    (effect.mezzotint === undefined || validMezzotintSettings(effect.mezzotint)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -1424,6 +1452,64 @@ function applyColorHalftone(
 }
 
 /**
+ * Apply a bounded seeded monochrome-grain approximation of Photoshop
+ * Mezzotint. The source is converted to luminance and compared with a
+ * deterministic, cell-aware threshold field. Amount blends the binary grain
+ * back into the immutable source; at 100% every visible pixel is grayscale.
+ * Alpha and fully transparent RGB padding stay source-owned and the canvas
+ * bounds never change.
+ */
+function applyMezzotint(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const cell = Math.max(1, Math.min(64, Math.round(effect.radius)));
+  const grain = effect.mezzotint?.grain ?? DEFAULT_MEZZOTINT_SETTINGS.grain;
+  const scale = grain === 'fine' ? 0.5 : grain === 'coarse' ? 1.75 : 1;
+  const grainCell = Math.max(1, Math.round(cell * scale));
+  const seed = effect.seed >>> 0;
+  const hash = (x: number, y: number): number => {
+    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const randomAt = (x: number, y: number): number => {
+    // Blend a per-pixel component with a cell component. This preserves a
+    // coherent larger grain when coarse mode is selected while avoiding a
+    // visible block grid in fine mode.
+    const local = hash(x, y);
+    const coarse = hash(Math.floor(x / grainCell), Math.floor(y / grainCell));
+    const blend = grain === 'fine' ? 0.85 : grain === 'coarse' ? 0.35 : 0.6;
+    return local * blend + coarse * (1 - blend);
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      const luminance =
+        (source[destination] * 54 +
+          source[destination + 1] * 183 +
+          source[destination + 2] * 19) /
+        256;
+      // A seeded threshold makes dark regions collect black grain and light
+      // regions collect white grain, which is the key monochrome Mezzotint
+      // behavior while staying bounded and reproducible offline.
+      const threshold = randomAt(x, y) * 255;
+      const monochrome = luminance >= threshold ? 255 : 0;
+      output[destination] = clampByte(source[destination] * (1 - strength) + monochrome * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + monochrome * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + monochrome * strength);
+      output[destination + 3] = alpha;
+    }
+  }
+}
+
+/**
  * Apply a bounded Voronoi-cell approximation of Photoshop Crystallize.
  * Jittered cell centres are derived from the persisted seed, so the effect is
  * reproducible without storing generated pixels. Alpha and transparent RGB
@@ -2004,6 +2090,8 @@ export function applyFilterEffectsPixels(
     applyFacet(data, width, height, effect.radius, effect.seed, output, strength);
   } else if (effect.type === 'color-halftone') {
     applyColorHalftone(data, width, height, effect, output, strength);
+  } else if (effect.type === 'mezzotint') {
+    applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'tilt-shift') {
     applyTiltShift(data, width, height, effect, output, strength);
   } else if (effect.type === 'wave') {
