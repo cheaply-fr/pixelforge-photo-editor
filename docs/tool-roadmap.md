@@ -136,6 +136,14 @@ approximation and its pure/desktop/mobile persistence, undo and source-safety
 evidence are documented in [`crystallize-effect-contract.md`](./crystallize-effect-contract.md);
 true polygon-region reconstruction remains staged.
 
+The Pixelate increment now also adds **Filter → Pixelate → Facet…**. It splits
+each bounded cell into four deterministic triangular facets, computes
+alpha-weighted colours from the immutable source, and blends them by editable
+amount. Cell size and seed are persisted in `filterEffects`, transparent RGB
+padding and layer alpha remain source-owned, and the menu command is replayable
+through local Action recipes. This is a local geometric approximation; true
+Photoshop edge reconstruction and Mezzotint/Fragment variants remain staged.
+
 The scale increment now includes a bounded [`tiledRender.ts`](../src/tiledRender.ts) protocol boundary. It rebuilds canonical plans from worker envelopes, enforces the existing 16 MP/64 MiB safety limits, schedules deterministic overlapped tiles under a bounded byte budget, and supports cancellable row-major callbacks with monotonic tile progress. The callback runner can opt into the shared byte-bounded LRU cache with canonical tile keys, explicit retained-byte estimates and cumulative hit/miss/peak/eviction telemetry; cached and freshly rendered tiles report identical progress. [`tiledCompositor.ts`](../src/tiledCompositor.ts) adds a serial overlap-aware pixel assembly slice, and the visible adapter now routes bounded box/Gaussian blur through source-provider/destination-sink tiles with revision/effect cache keys, a memory ledger and full-frame parity fixtures. Committed renders reuse one worker with latest-wins cancellation and idle teardown; validated tiled telemetry is forwarded before the owned result, dropped for superseded/cancelled requests, and surfaced only as local render-status diagnostics (no pixels or asset URLs). The committed editor does not retain a cross-render `TileCache`, so live cache counters remain zero; cache reuse is an opt-in bounded-session contract. Unsupported/global effects remain on the existing full-frame fallback. Device-specific cache policy, eviction thresholds, worker-aware interactive edits and physical desktop/mobile memory gates remain staged.
 
 The Patch Tool increment adds bounded, nondestructive source-offset retouching over an immutable raster asset. A user selects a local source point, drags a destination stroke and retains only validated source-offset metadata; alpha remains owned by the layer/mask pipeline. Pure and desktop/mobile acceptance cover source identity, offset mapping, undo, cancellation, locked-layer guards and reload/project round trips. Its local limits and content-aware boundary are documented in [`patch-tool-contract.md`](./patch-tool-contract.md); semantic object removal, Patch selection snapshots and content-aware move remain staged.

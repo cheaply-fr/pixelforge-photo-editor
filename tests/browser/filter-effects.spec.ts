@@ -351,6 +351,42 @@ test('Crystallize is enabled, seeded and round-trips nondestructively', async ({
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
 });
 
+test('Facet is enabled, deterministic and round-trips nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const beforePixel = await pixel(page, 4, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Facet…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('facet');
+  await expect(page.getByLabel('Cell size', { exact: true })).toHaveValue('10');
+  await expect.poll(() => pixel(page, 4, 2)).not.toEqual(beforePixel);
+  await page.getByLabel('Cell size', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'facet', amount: 85, radius: 11, seed: 0 });
+  const changed = await pixel(page, 4, 2);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('facet');
+  await expect(page.getByLabel('Cell size', { exact: true })).toHaveValue('11');
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('facet');
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+});
+
 test('Lens Correction is enabled, editable and round-trips nondestructively', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
