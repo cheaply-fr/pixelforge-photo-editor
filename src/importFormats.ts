@@ -7,7 +7,7 @@
  * the browser decoder lets the UI give an honest message before it touches a
  * draft, even when a file has an unusual MIME type.
  */
-export type ImportFormat = 'raster' | 'heic' | 'psd' | 'raw' | 'unknown';
+export type ImportFormat = 'raster' | 'heic' | 'tiff' | 'psd' | 'raw' | 'unknown';
 
 export type ImportCapability = 'supported' | 'conditional' | 'unsupported';
 
@@ -22,6 +22,7 @@ export type ImportFormatInfo = {
 };
 
 const HEIC_EXTENSIONS = new Set(['heic', 'heif', 'heics', 'heifs']);
+const TIFF_EXTENSIONS = new Set(['tif', 'tiff']);
 const PSD_EXTENSIONS = new Set(['psd', 'psb']);
 const RASTER_EXTENSIONS = new Set([
   'apng',
@@ -71,6 +72,15 @@ function hasMime(mime: string, ...values: string[]): boolean {
   return values.includes(normalized);
 }
 
+const HEIC_MIME_TYPES = [
+  'image/heic',
+  'image/heif',
+  'image/heic-sequence',
+  'image/heif-sequence',
+];
+
+const TIFF_MIME_TYPES = ['image/tiff', 'image/x-tiff'];
+
 export function describeImportFormat(
   fileName: string,
   mimeType = '',
@@ -89,6 +99,16 @@ export function describeImportFormat(
         'PSD/PSB import is not supported yet. Export a flattened PNG or JPEG, or use a PixelForge project file to keep editable layers.',
     };
   }
+  if (TIFF_EXTENSIONS.has(extension) || hasMime(mimeType, ...TIFF_MIME_TYPES)) {
+    return {
+      format: 'tiff',
+      label: 'TIFF',
+      capability: 'conditional',
+      tryDecode: true,
+      disclosure:
+        'TIFF import depends on this browser decoder. When decoded, it is a flattened editable raster; source metadata, layers and the original container are not retained.',
+    };
+  }
   if (
     RAW_EXTENSIONS.has(extension) ||
     hasMime(mimeType, 'image/x-raw', 'image/raw', 'application/x-raw')
@@ -104,7 +124,7 @@ export function describeImportFormat(
   }
   if (
     HEIC_EXTENSIONS.has(extension) ||
-    hasMime(mimeType, 'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence')
+    hasMime(mimeType, ...HEIC_MIME_TYPES)
   ) {
     return {
       format: 'heic',
@@ -137,6 +157,9 @@ export function describeImportFormat(
 export function importFailureMessage(info: ImportFormatInfo): string {
   if (info.format === 'heic') {
     return 'HEIC/HEIF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
+  }
+  if (info.format === 'tiff') {
+    return 'TIFF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
   }
   return `${info.label} could not be decoded. Convert it to PNG or JPEG; the current draft is unchanged.`;
 }

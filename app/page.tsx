@@ -5399,13 +5399,15 @@ export default function Home() {
       setNotice(
         importInfo.format === 'heic'
           ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
+          : importInfo.format === 'tiff'
+            ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
           : asLayer
             ? 'Image layer added'
             : 'Photo opened as a flattened raster; source metadata omitted',
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic'
+        importInfo.format === 'heic' || importInfo.format === 'tiff'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -5478,11 +5480,21 @@ export default function Home() {
           sourceName,
         })
       ) {
-        setNotice('Embedded smart object added');
+        setNotice(
+          importInfo.format === 'heic'
+            ? 'HEIC/HEIF embedded as a flattened raster smart object; source metadata omitted'
+            : importInfo.format === 'tiff'
+              ? 'TIFF embedded as a flattened raster smart object; source metadata omitted'
+              : 'Embedded smart object added',
+        );
       }
     } catch (error) {
       setNotice(
-        error instanceof Error ? error.message : 'This image could not be embedded',
+        importInfo.format === 'heic' || importInfo.format === 'tiff'
+          ? importFailureMessage(importInfo)
+          : error instanceof Error
+            ? error.message
+            : 'This image could not be embedded',
       );
     } finally {
       if (smartObjectFile.current) smartObjectFile.current.value = '';
@@ -9953,7 +9965,7 @@ export default function Home() {
         data-testid="layer-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => void load(e.target.files?.[0], true)}
       />
       <input
@@ -9961,7 +9973,7 @@ export default function Home() {
         data-testid="smart-object-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(event) =>
           void importSmartObject(
             event.target.files?.[0],
@@ -9990,7 +10002,7 @@ export default function Home() {
         data-testid="batch-image-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
@@ -10117,7 +10129,7 @@ export default function Home() {
         data-testid="file-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => load(e.target.files?.[0])}
       />
       <header className="topbar">
