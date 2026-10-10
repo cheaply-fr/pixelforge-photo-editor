@@ -178,6 +178,43 @@ test('pointillize identities and transparent cells preserve hidden RGB', () => {
   assert.equal(isNeutralFilterEffects({ type: 'pointillize', amount: 100, radius: 0 }), true);
 });
 
+test('facet creates deterministic triangular cells without mutating source', () => {
+  const source = rgba(12, 8, (x, y) => [x * 17, y * 28, (x * 11 + y * 7) % 255, 255]);
+  const original = source.slice();
+  const effect = { type: 'facet', amount: 100, radius: 5, seed: 7 };
+  const first = applyFilterEffectsPixels(source, 12, 8, effect);
+  const second = applyFilterEffectsPixels(source, 12, 8, effect);
+  assert.deepEqual(first, second);
+  assert.notDeepEqual(first, source);
+  assert.deepEqual(source, original);
+  assert.notEqual(first, source);
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
+test('facet preserves transparent RGB and alpha boundaries', () => {
+  const source = rgba(7, 7, (x, y) =>
+    x === 0 && y === 0 ? [255, 0, 255, 0] : x === 1 && y === 1 ? [40, 80, 120, 128] : [x * 30, y * 30, 12, 255],
+  );
+  const output = applyFilterEffectsPixels(source, 7, 7, {
+    type: 'facet', amount: 100, radius: 4, seed: 13,
+  });
+  assert.equal(pixel(output, 7, 0, 0)[3], 0);
+  assert.deepEqual(pixel(output, 7, 0, 0).slice(0, 3), [255, 0, 255]);
+  assert.equal(pixel(output, 7, 1, 1)[3], 128);
+  assert.deepEqual(applyFilterEffectsPixels(source, 7, 7, {
+    type: 'facet', amount: 0, radius: 4, seed: 13,
+  }), source);
+  assert.equal(isNeutralFilterEffects({ type: 'facet', amount: 100, radius: 0 }), true);
+});
+
+test('facet seed changes only the deterministic triangular layout', () => {
+  const source = rgba(16, 10, (x, y) => [x * 13, y * 21, (x * 23 + y * 5) % 255, 255]);
+  const first = applyFilterEffectsPixels(source, 16, 10, { type: 'facet', amount: 100, radius: 6, seed: 1 });
+  const second = applyFilterEffectsPixels(source, 16, 10, { type: 'facet', amount: 100, radius: 6, seed: 2 });
+  assert.notDeepEqual(first, second);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 16, 10, { type: 'facet', amount: 100, radius: 6, seed: 1 }));
+});
+
 test('lens correction is deterministic, centre-preserving and source-safe', () => {
   const source = rgba(9, 9, (x, y) => [x * 20, y * 20, 70, 255]);
   const original = source.slice();

@@ -42,6 +42,22 @@ test('records an allow-listed filter command, persists it, and replays it', asyn
   await expect(page.getByText('Web finish', { exact: true })).toHaveCount(0);
 });
 
+test('records and replays the Facet Pixelate command', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Facet finish');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Facet…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('facet');
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Facet finish', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 step', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('footer > span').first()).toContainText('replayed');
+});
+
 test('closes the recipe surface without changing the document', async ({ page }) => {
   const before = await page.getByTestId('editor-canvas').getAttribute('width');
   await openActions(page);

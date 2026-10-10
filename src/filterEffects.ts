@@ -27,6 +27,7 @@ export const FILTER_EFFECT_TYPES = [
   'mosaic',
   'crystallize',
   'fragment',
+  'facet',
   'color-halftone',
   'pointillize',
   'lens-correction',
@@ -1360,6 +1361,78 @@ function applyCrystallize(
   }
 }
 
+/**
+ * Apply a bounded triangular-facet approximation of Photoshop Facet.
+ *
+ * Each cell is split into four deterministic triangles around its centre and
+ * every triangle receives its own alpha-weighted source average. This keeps
+ * the effect visibly faceted without baking pixels into the source asset or
+ * sampling transparent RGB padding. The seeded diagonal/orientation makes
+ * the result stable across renders and project round trips.
+ */
+function applyFacet(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  seed: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const cell = Math.max(2, Math.min(64, Math.round(radius)));
+  const hash = (x: number, y: number) => {
+    let value = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const triangleFor = (x: number, y: number, originX: number, originY: number, orientation: number): number => {
+    let u = (x - originX + 0.5) / cell;
+    let v = (y - originY + 0.5) / cell;
+    u = clamp(u, 0, 1);
+    v = clamp(v, 0, 1);
+    // Rotate the four-triangle partition so neighbouring cells do not form a
+    // repetitive grid. The centre remains shared by every facet.
+    if (orientation === 1) [u, v] = [v, 1 - u];
+    else if (orientation === 2) [u, v] = [1 - u, 1 - v];
+    else if (orientation === 3) [u, v] = [1 - v, u];
+    if (v <= u && v <= 1 - u) return 0; // top
+    if (u >= v && u >= 1 - v) return 1; // right
+    if (v >= u && v >= 1 - u) return 2; // bottom
+    return 3; // left
+  };
+  for (let originY = 0; originY < height; originY += cell) {
+    for (let originX = 0; originX < width; originX += cell) {
+      const right = Math.min(width, originX + cell);
+      const bottom = Math.min(height, originY + cell);
+      const orientation = Math.floor(hash(Math.floor(originX / cell), Math.floor(originY / cell)) * 4);
+      const sums = Array.from({ length: 4 }, () => [0, 0, 0, 0]);
+      for (let y = originY; y < bottom; y += 1) {
+        for (let x = originX; x < right; x += 1) {
+          const offset = (y * width + x) * 4;
+          const alpha = source[offset + 3] / 255;
+          if (!alpha) continue;
+          const triangle = triangleFor(x, y, originX, originY, orientation);
+          const sum = sums[triangle];
+          sum[0] += source[offset] * alpha;
+          sum[1] += source[offset + 1] * alpha;
+          sum[2] += source[offset + 2] * alpha;
+          sum[3] += alpha;
+        }
+      }
+      for (let y = originY; y < bottom; y += 1) {
+        for (let x = originX; x < right; x += 1) {
+          const offset = (y * width + x) * 4;
+          if (!source[offset + 3]) continue;
+          const sum = sums[triangleFor(x, y, originX, originY, orientation)];
+          if (!sum[3]) continue;
+          blendPixel(output, offset, [sum[0] / sum[3], sum[1] / sum[3], sum[2] / sum[3], 255], strength);
+          output[offset + 3] = source[offset + 3];
+        }
+      }
+    }
+  }
+}
+
 function applyDistort(
   source: Uint8ClampedArray,
   width: number,
@@ -1818,6 +1891,8 @@ export function applyFilterEffectsPixels(
     applyCrystallize(data, width, height, effect.radius, effect.seed, output, strength);
   } else if (effect.type === 'fragment') {
     applyFragment(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'facet') {
+    applyFacet(data, width, height, effect.radius, effect.seed, output, strength);
   } else if (effect.type === 'color-halftone') {
     applyColorHalftone(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'tilt-shift') {
