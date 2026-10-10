@@ -12,8 +12,21 @@ async function project(page: Page) {
     await (await import('node:fs/promises')).readFile(path!, 'utf8'),
   ) as {
     history: Array<{
+      w: number;
+      h: number;
       layers: Array<Record<string, unknown>>;
       groups?: unknown[];
+      artboards?: Array<{
+        id: string;
+        name: string;
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+        visible: boolean;
+        locked: boolean;
+        layerIds?: string[];
+      }>;
     }>;
     index: number;
   };
@@ -74,6 +87,36 @@ test('merges grouped RGBA output, retains undo/redo and reload project state', a
     )
     .toEqual([255, 92, 52, 128]);
 
+  // Give the frame an explicit full-source artboard before merging. The
+  // resulting composite must replace those membership IDs after the merge,
+  // then survive project export/import below.
+  const beforeMerge = await project(page);
+  const mergeFrame = beforeMerge.history[beforeMerge.index];
+  const visibleSourceIds = mergeFrame.layers
+    .filter((item) => item.visible !== false)
+    .map((item) => String(item.id));
+  mergeFrame.artboards = [
+    {
+      id: 'full-frame',
+      name: 'Full frame',
+      x: 0,
+      y: 0,
+      w: mergeFrame.w,
+      h: mergeFrame.h,
+      visible: true,
+      locked: false,
+      layerIds: visibleSourceIds,
+    },
+  ];
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'merge-visible-artboard.pixelforge',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(beforeMerge)),
+  });
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await expect(
     page.getByRole('menuitem', { name: 'Merge Visible', exact: true }),
@@ -101,6 +144,9 @@ test('merges grouped RGBA output, retains undo/redo and reload project state', a
     kind: 'raster',
     visible: true,
   });
+  expect(saved.history[saved.index].artboards?.[0].layerIds).toEqual([
+    saved.history[saved.index].layers[0].id,
+  ]);
 
   // Import the exact exported project into the live editor before exercising
   // history travel, proving the merged asset and hidden source survive the
@@ -157,5 +203,8 @@ test('merges grouped RGBA output, retains undo/redo and reload project state', a
     )
     .toEqual([255, 92, 52, 128]);
   saved = await project(page);
+  expect(saved.history[saved.index].artboards?.[0].layerIds).toEqual([
+    saved.history[saved.index].layers[0].id,
+  ]);
   expect(saved.history[saved.index].layers).toHaveLength(2);
 });

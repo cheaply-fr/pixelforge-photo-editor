@@ -121,7 +121,6 @@ export function applyMergeVisible(
     }
     return { ...artboard, layerIds: remaining };
   });
-
   return {
     ...frame,
     layers,
