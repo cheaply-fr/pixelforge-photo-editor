@@ -149,6 +149,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-facet',
   'filter-color-halftone',
   'filter-mezzotint',
+  'filter-pointillize',
   'filter-ripple',
   'filter-twirl',
   'filter-wave',

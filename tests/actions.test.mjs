@@ -54,6 +54,27 @@ test('local Path and Spin Blur commands record and round-trip through the action
   assert.deepEqual(parseActionSets(serializeActionSets([spin])), [spin]);
 });
 
+test('Pointillize records as a replayable local pixelate command', async () => {
+  const original = createActionSet('Stipple finish', 'pointillize-action', now);
+  const action = appendActionStep(
+    original,
+    'filter-pointillize',
+    'Pointillize',
+    { amount: 85, radius: 10 },
+    'pointillize-step',
+    now,
+  );
+  assert.deepEqual(original.steps, []);
+  assert.equal(action.steps[0].command, 'filter-pointillize');
+  assert.deepEqual(parseActionSets(serializeActionSets([action])), [action]);
+  const seen = [];
+  const result = await replayActionSet(action, async (step) => {
+    seen.push(step.command);
+  });
+  assert.equal(result.completed, 1);
+  assert.deepEqual(seen, ['filter-pointillize']);
+});
+
 test('recipes support deterministic rename and step removal without mutating history', () => {
   const source = appendActionStep(
     appendActionStep(createActionSet('Recipe', 'action-3', now), 'flip-h', 'Flip horizontal', undefined, 'step-a', now),
