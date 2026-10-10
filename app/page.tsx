@@ -512,6 +512,7 @@ type Command =
   | 'filter-mezzotint'
   | 'filter-pointillize'
   | 'filter-picture-frame'
+  | 'filter-clouds'
   | 'filter-difference-clouds'
   | 'filter-lens-correction'
   | 'filter-lens-flare'
@@ -973,7 +974,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
     { label: 'Picture Frame…', command: 'filter-picture-frame' },
-    { label: 'Clouds', command: 'noop', disabled: true },
+    { label: 'Clouds', command: 'filter-clouds' },
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'noop', disabled: true },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
@@ -3912,7 +3913,7 @@ export default function Home() {
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
-                  || type === 'pointillize' || type === 'mezzotint' || type === 'difference-clouds' || type === 'picture-frame' || type === 'field-blur' || type === 'flame'
+                  || type === 'pointillize' || type === 'mezzotint' || type === 'clouds' || type === 'difference-clouds' || type === 'picture-frame' || type === 'field-blur' || type === 'flame'
                     ? 85
                   : type === 'lens-correction' || type === 'lens-flare'
                     ? 75
@@ -3930,6 +3931,8 @@ export default function Home() {
                       ? 16
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize'
                     ? 10
+                    : type === 'clouds'
+                      ? 16
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
@@ -9564,6 +9567,8 @@ export default function Home() {
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
     else if (command === 'filter-picture-frame')
       chooseFilterEffect('picture-frame', 'Picture Frame (local approximation)');
+    else if (command === 'filter-clouds')
+      chooseFilterEffect('clouds', 'Clouds (seeded local approximation)');
     else if (command === 'filter-difference-clouds')
       chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
     else if (command === 'filter-flame')
@@ -12059,6 +12064,9 @@ export default function Home() {
             {filterEffects.type === 'mezzotint' && (
               <p>Bounded seeded monochrome grain approximation. Grain mode, cell size, amount and seed remain editable; Photoshop&apos;s exact stochastic screen and print controls remain planned.</p>
             )}
+            {filterEffects.type === 'clouds' && (
+              <p>Seeded multi-octave value-noise overlay. Scale, amount and seed remain editable; Photoshop foreground/background cloud synthesis and turbulence controls remain planned.</p>
+            )}
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
@@ -12093,8 +12101,9 @@ export default function Home() {
                     filterEffects.type === 'facet' ||
                     filterEffects.type === 'color-halftone' ||
                     filterEffects.type === 'mezzotint' ||
+                    filterEffects.type === 'clouds' ||
                     filterEffects.type === 'pointillize'
-                      ? 'Cell size'
+                      ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'lens-blur' ||
@@ -12507,6 +12516,28 @@ export default function Home() {
                     <input
                       className="text-input picture-frame-seed-input"
                       aria-label="Random seed"
+                      type="number"
+                      min={0}
+                      max={0xffffffff}
+                      step={1}
+                      value={filterEffects.seed}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                          setFilterEffects({ seed: value });
+                      }}
+                    />
+                  </label>
+                )}
+                {filterEffects.type === 'clouds' && (
+                  <label className="slider">
+                    <span>
+                      <b>Cloud seed (0–4294967295)</b>
+                      <output>{filterEffects.seed}</output>
+                    </span>
+                    <input
+                      className="text-input clouds-seed-input"
+                      aria-label="Cloud seed"
                       type="number"
                       min={0}
                       max={0xffffffff}
