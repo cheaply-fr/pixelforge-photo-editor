@@ -31,6 +31,7 @@ export const FILTER_EFFECT_TYPES = [
   'color-halftone',
   'mezzotint',
   'pointillize',
+  'difference-clouds',
   'lens-correction',
   'displace',
   'pinch',
@@ -1510,6 +1511,77 @@ function applyMezzotint(
 }
 
 /**
+ * Apply a bounded seeded Difference Clouds approximation.
+ *
+ * Photoshop's Difference Clouds starts from the current foreground/background
+ * colours and repeatedly difference-blends a procedural cloud field. PixelForge
+ * keeps this first local slice deterministic and source-safe: a monochrome,
+ * multi-octave value-noise field is difference-blended against the immutable
+ * source, while amount, cloud scale and seed remain editable metadata. It does
+ * not claim Photoshop's colour-pair controls, wrap-around or exact noise
+ * implementation.
+ */
+function applyDifferenceClouds(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const scale = Math.max(2, Math.min(64, Math.round(effect.radius)));
+  const seed = effect.seed >>> 0;
+  const hash = (x: number, y: number): number => {
+    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const smooth = (value: number) => value * value * (3 - 2 * value);
+  const lattice = (x: number, y: number): number => {
+    const left = Math.floor(x);
+    const top = Math.floor(y);
+    const tx = smooth(x - left);
+    const ty = smooth(y - top);
+    const topLeft = hash(left, top);
+    const topRight = hash(left + 1, top);
+    const bottomLeft = hash(left, top + 1);
+    const bottomRight = hash(left + 1, top + 1);
+    const upper = topLeft + (topRight - topLeft) * tx;
+    const lower = bottomLeft + (bottomRight - bottomLeft) * tx;
+    return upper + (lower - upper) * ty;
+  };
+  const cloud = (x: number, y: number): number => {
+    // Four fixed octaves provide soft cloud structure while keeping per-pixel
+    // work bounded and identical in the main-thread and worker renderers.
+    let sampleX = x / scale;
+    let sampleY = y / scale;
+    let amplitude = 0.5;
+    let total = 0;
+    let value = 0;
+    for (let octave = 0; octave < 4; octave += 1) {
+      value += lattice(sampleX, sampleY) * amplitude;
+      total += amplitude;
+      sampleX *= 2;
+      sampleY *= 2;
+      amplitude *= 0.5;
+    }
+    return total ? value / total : 0.5;
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      const generated = cloud(x, y) * 255;
+      output[destination] = clampByte(source[destination] * (1 - strength) + Math.abs(source[destination] - generated) * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + Math.abs(source[destination + 1] - generated) * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + Math.abs(source[destination + 2] - generated) * strength);
+      output[destination + 3] = alpha;
+    }
+  }
+}
+
+/**
  * Apply a bounded Voronoi-cell approximation of Photoshop Crystallize.
  * Jittered cell centres are derived from the persisted seed, so the effect is
  * reproducible without storing generated pixels. Alpha and transparent RGB
@@ -2106,6 +2178,8 @@ export function applyFilterEffectsPixels(
     applyDisplace(data, width, height, effect, output);
   } else if (effect.type === 'pointillize') {
     applyPointillize(data, width, height, effect, output);
+  } else if (effect.type === 'difference-clouds') {
+    applyDifferenceClouds(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else {

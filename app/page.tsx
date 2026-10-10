@@ -511,6 +511,7 @@ type Command =
   | 'filter-color-halftone'
   | 'filter-mezzotint'
   | 'filter-pointillize'
+  | 'filter-difference-clouds'
   | 'filter-lens-correction'
   | 'filter-displace'
   | 'filter-pinch'
@@ -969,7 +970,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
     { label: 'Clouds', command: 'noop', disabled: true },
-    { label: 'Difference Clouds', command: 'noop', disabled: true },
+    { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'noop', disabled: true },
     { label: 'Lens Flare…', command: 'noop', disabled: true },
     { label: 'Sharpen', command: 'sharpen-noise' },
@@ -3906,7 +3907,7 @@ export default function Home() {
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
-                  || type === 'pointillize' || type === 'mezzotint' || type === 'field-blur'
+                  || type === 'pointillize' || type === 'mezzotint' || type === 'difference-clouds' || type === 'field-blur'
                     ? 85
                   : type === 'lens-correction'
                     ? 75
@@ -3916,6 +3917,8 @@ export default function Home() {
                 radius:
                   type === 'fragment'
                     ? 1
+                    : type === 'difference-clouds'
+                    ? 18
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize'
                     ? 10
                     : type === 'lens-correction'
@@ -9548,6 +9551,8 @@ export default function Home() {
       chooseFilterEffect('mezzotint', 'Mezzotint');
     else if (command === 'filter-pointillize')
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
+    else if (command === 'filter-difference-clouds')
+      chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-displace')
@@ -9779,6 +9784,7 @@ export default function Home() {
       case 'filter-color-halftone':
       case 'filter-mezzotint':
       case 'filter-pointillize':
+      case 'filter-difference-clouds':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
@@ -12042,6 +12048,9 @@ export default function Home() {
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
+            {filterEffects.type === 'difference-clouds' && (
+              <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
+            )}
                 <Slider
                   label="Effect amount"
                   value={filterEffects.amount}
@@ -12071,6 +12080,8 @@ export default function Home() {
                           ? 'Blur radius'
                       : filterEffects.type === 'fragment'
                           ? 'Fragment offset'
+                      : filterEffects.type === 'difference-clouds'
+                          ? 'Cloud scale'
                       : filterEffects.type === 'radial-blur'
                           || filterEffects.type === 'spin-blur'
                           ? 'Angular sweep'
@@ -12404,6 +12415,28 @@ export default function Home() {
                       />
                     </label>
                   </>
+                )}
+                {filterEffects.type === 'difference-clouds' && (
+                  <label className="slider">
+                    <span>
+                      <b>Random seed (0–4294967295)</b>
+                      <output>{filterEffects.seed}</output>
+                    </span>
+                    <input
+                      className="text-input difference-clouds-seed-input"
+                      aria-label="Random seed"
+                      type="number"
+                      min={0}
+                      max={0xffffffff}
+                      step={1}
+                      value={filterEffects.seed}
+                      onChange={(event) => {
+                        const value = Number(event.target.value);
+                        if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff)
+                          setFilterEffects({ seed: value });
+                      }}
+                    />
+                  </label>
                 )}
                 <p className="adjust-note">
                   This effect stays editable in the project and is applied to
