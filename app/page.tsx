@@ -9676,6 +9676,8 @@ export default function Home() {
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
     else if (command === 'filter-picture-frame')
       chooseFilterEffect('picture-frame', 'Picture Frame (local approximation)');
+    else if (command === 'filter-fibers')
+      chooseFilterEffect('fibers', 'Fibers (local approximation)');
     else if (command === 'filter-clouds')
       chooseFilterEffect('clouds', 'Clouds (seeded local approximation)');
     else if (command === 'filter-difference-clouds')
