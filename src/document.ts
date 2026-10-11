@@ -45,6 +45,12 @@ import {
 import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
+  applyVectorMaskPixels,
+  traceVectorMaskPath,
+  validVectorMask,
+  type VectorMaskModel,
+} from './vectorMask.ts';
+import {
   shapePoints,
   validateShapeVariant,
   type ParametricShapeVariant,
@@ -206,6 +212,8 @@ type Common = {
   /** Persisted non-destructive mask controls; omitted in legacy drafts. */
   maskEnabled?: boolean;
   maskInverted?: boolean;
+  /** Optional editable local PathModel used as a nondestructive vector mask. */
+  vectorMask?: VectorMaskModel;
   /** Optional editable folder membership. Groups are metadata; source pixels stay local to the layer. */
   groupId?: string;
   /** Optional nondestructive local object-cleanup strokes. */
@@ -315,6 +323,14 @@ export function isMaskableLayer(layer: unknown): layer is MaskableLayer {
       'kind' in layer &&
       (layer as { kind?: unknown }).kind === 'adjustment')
   );
+}
+/** Layers with visible pixels can carry a local editable vector mask. */
+export function isVectorMaskableLayer(layer: unknown): layer is Layer {
+  if (!layer || typeof layer !== 'object') return false;
+  const kind = (layer as { kind?: unknown }).kind;
+  return kind === 'raster' || kind === 'smart-object' ||
+    kind === 'text' || kind === 'rectangle' || kind === 'ellipse' ||
+    kind === 'line' || kind === 'polygon' || kind === 'path';
 }
 /** A persisted, editable layer folder. Layers keep their own order in Frame.layers. */
 export type Group = {
@@ -1265,6 +1281,11 @@ export function validateFrame(
         layer.contentAwareFills !== undefined)
     )
       return fail();
+    if (
+      layer.vectorMask !== undefined &&
+      (!isVectorMaskableLayer(layer) || !validVectorMask(layer.vectorMask))
+    )
+      return fail();
     if (isRasterContentLayer(layer)) {
       if (!validId(layer.asset) || !Object.hasOwn(assets, layer.asset))
         return fail();
@@ -1369,7 +1390,8 @@ export function validateFrame(
         !number(layer.height, 1, 16000) ||
         !number(layer.stroke, 1, 100) ||
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
-        (layer.kind !== 'line' && typeof layer.fill !== 'boolean') ||
+        (layer.kind !== 'line' &&
+          (!('fill' in layer) || typeof layer.fill !== 'boolean')) ||
         (layer.kind === 'polygon' &&
           (!integer(layer.sides, 3, 32) ||
             (() => {
@@ -1936,6 +1958,40 @@ export async function renderFrame(
       reportProgress(layerIndex);
       continue;
     }
+    if (layer.vectorMask?.enabled) {
+      // Render the layer once without its vector metadata, then apply the
+      // local path in frame space. Opacity/blend are applied exactly once by
+      // this outer compositor branch.
+      const { vectorMask: _vectorMask, ...withoutVectorMask } = layer,
+        nested = await renderFrame(
+          {
+            ...frame,
+            layers: [
+              {
+                ...withoutVectorMask,
+                groupId: undefined,
+                opacity: 1,
+                blend: 'source-over',
+              } as Layer,
+            ],
+            groups: [],
+            active: layer.id,
+          },
+          assets,
+          overrides,
+          options?.onProgress ? { ...options, onProgress: undefined } : options,
+        ),
+        masked = applyVectorMaskSurface(nested, frame.w, frame.h, layer);
+      context.save();
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      context.globalAlpha = layer.opacity;
+      context.globalCompositeOperation = layer.blend;
+      context.filter = 'none';
+      context.drawImage(masked, 0, 0);
+      context.restore();
+      reportProgress(layerIndex);
+      continue;
+    }
     if (layer.kind === 'adjustment') {
       // Adjustment layers are source-free correction nodes. The stack is
       // ordered bottom-to-top, so the current output contains exactly the
@@ -2475,4 +2531,34 @@ export async function renderFrame(
     reportProgress(layerIndex);
   }
   return out;
+}
+
+/** Apply one local editable vector path to a frame-space layer surface. */
+function applyVectorMaskSurface(
+  source: HTMLCanvasElement,
+  frameWidth: number,
+  frameHeight: number,
+  layer: Layer,
+): HTMLCanvasElement {
+  const mask = layer.vectorMask;
+  if (!mask || !mask.enabled) return source;
+  const result = surface(frameWidth, frameHeight),
+    resultContext = result.getContext('2d')!;
+  resultContext.drawImage(source, 0, 0);
+  const alpha = surface(frameWidth, frameHeight),
+    alphaContext = alpha.getContext('2d')!;
+  alphaContext.save();
+  alphaContext.setTransform(...layer.matrix);
+  alphaContext.fillStyle = '#fff';
+  traceVectorMaskPath(alphaContext, mask.path);
+  alphaContext.fill(mask.path.fillRule === 'evenodd' ? 'evenodd' : 'nonzero');
+  alphaContext.restore();
+  const maskData = alphaContext.getImageData(0, 0, frameWidth, frameHeight).data,
+    maskAlpha = new Uint8ClampedArray(frameWidth * frameHeight);
+  for (let pixel = 0; pixel < maskAlpha.length; pixel += 1)
+    maskAlpha[pixel] = maskData[pixel * 4 + 3];
+  const resultData = resultContext.getImageData(0, 0, frameWidth, frameHeight);
+  resultData.data.set(applyVectorMaskPixels(resultData.data, maskAlpha, mask));
+  resultContext.putImageData(resultData, 0, 0);
+  return result;
 }
