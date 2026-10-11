@@ -41,6 +41,8 @@ members, child blend/opacity/transform persistence, visibility, lock guards,
 undo/redo, reload, export and import in
 [`tests/browser/group-blend.spec.ts`](../tests/browser/group-blend.spec.ts).
 
-Nested folders, vector masks, clipping masks, smart objects, tiled rendering
-and multi-selection are separate contracts and are not implied by this
-milestone.
+Nested folders, clipping masks, smart objects, tiled rendering and
+multi-selection are separate contracts and are not implied by this milestone.
+Vector masks are active on supported child layers; their local path alpha is
+evaluated inside the child render pass and remains covered by the separate
+[`vector-mask-contract.md`](./vector-mask-contract.md).
