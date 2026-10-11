@@ -183,6 +183,14 @@ in [`difference-clouds-effect-contract.md`](./difference-clouds-effect-contract.
 Photoshop's exact noise, foreground/background colour controls and wrap-around
 remain staged.
 
+The Render increment also adds **Filter → Render → Fibers…** as a bounded
+seeded filament-field approximation. Fiber scale, variance, amount and random
+seed remain editable in the inspector; source pixels, alpha and transparent RGB
+stay safe across undo, reload, project import/export and Action replay. The
+local contract, pixel fixtures and desktop/mobile acceptance are documented in
+[`fibers-effect-contract.md`](./fibers-effect-contract.md); Photoshop's exact
+foreground/background colors, stochastic field and wrap-around remain staged.
+
 The Render increment also adds **Filter → Render → Flame…** as a bounded
 seeded rising warm-plume approximation. Flame detail, origin, amount and
 random seed remain editable in the inspector; source pixels, alpha and

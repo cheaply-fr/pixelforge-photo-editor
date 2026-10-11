@@ -206,3 +206,20 @@ test('applies a recorded Action to a bounded image batch and downloads a privacy
   expect(download.suggestedFilename()).toMatch(/pixelforge-images-batch\.zip$/);
   expect(await download.failure()).toBeNull();
 });
+
+test('records and replays the Fibers Render command', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Fibers filament finish');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Fibers…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('fibers');
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Fibers filament finish', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 step', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('footer > span').first()).toContainText('replayed');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('fibers');
+});

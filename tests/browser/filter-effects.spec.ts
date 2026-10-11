@@ -1442,3 +1442,55 @@ test('Flame exposes a seeded local render control and round-trips nondestructive
   await expect(page.getByLabel('Flame detail', { exact: true })).toHaveValue('17');
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
+
+test('Fibers exposes seeded filament controls and round-trips nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Fibers…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Fibers (local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('fibers');
+  await expect(page.getByLabel('Fiber scale', { exact: true })).toHaveValue('10');
+  await expect(page.getByLabel('Fiber variance', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('0');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Fiber variance', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Random seed', { exact: true }).fill('1');
+  await page.getByLabel('Fiber scale', { exact: true }).press('ArrowRight');
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'fibers', amount: 85, radius: 11, seed: 1, fibers: { variance: 51 },
+  });
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('fibers');
+  await expect(page.getByLabel('Fiber scale', { exact: true })).toHaveValue('11');
+  await expect(page.getByLabel('Fiber variance', { exact: true })).toHaveValue('51');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('1');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Fiber variance', { exact: true })).toHaveValue('51');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  for (let index = 0; index < 6; index += 1) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    const undo = page.getByRole('menuitem', { name: /^Undo/ });
+    if (await undo.isDisabled()) {
+      await page.keyboard.press('Escape');
+      break;
+    }
+    await undo.click();
+    if (await page.getByLabel('Filter effect', { exact: true }).inputValue() === 'none') break;
+  }
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixels(page)).toEqual(original);
+});
