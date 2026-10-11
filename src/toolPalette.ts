@@ -9,7 +9,7 @@
 
 export type PaletteToolId =
   | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
-  | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush'
+  | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush' | 'art-history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'pen'
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
@@ -30,7 +30,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
   { id: 'selection', label: 'Selection', tools: ['selection-brush', 'quick-selection', 'magic-wand'] },
   { id: 'crop', label: 'Crop & Slice', tools: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'] },
-  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge', 'history-brush'] },
+  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
   { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
@@ -50,6 +50,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   o: ['dodge', 'burn', 'sponge'],
   s: ['clone', 'pattern-stamp'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
+  y: ['history-brush', 'art-history-brush'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 
@@ -69,7 +70,7 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],
   healing: ['heal', 'spot-heal', 'patch', 'red-eye'],
-  history: ['history-brush'],
+  history: ['history-brush', 'art-history-brush'],
   mask: ['mask-brush', 'mask-eraser', 'adjustment-brush'],
   // The classic Pen button remains a direct tool in the toolbar. Freeform
   // and Curvature Pen stay independently reachable (and still cycle from P)

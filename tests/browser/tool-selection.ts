@@ -15,7 +15,7 @@ const TOOL_FAMILIES = [
   ['Dodge', 'Burn', 'Sponge'],
   ['Clone', 'Pattern Stamp'],
   ['Healing', 'Spot Healing', 'Patch', 'Red Eye'],
-  ['History Brush'],
+  ['History Brush', 'Art History Brush'],
   ['Mask Brush', 'Mask Eraser', 'Adjustment Brush'],
   ['Pen', 'Freeform Pen', 'Curvature Pen'],
 ] as const;
