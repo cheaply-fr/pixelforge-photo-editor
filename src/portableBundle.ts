@@ -212,7 +212,7 @@ function parseZip(input: Uint8Array): ZipEntry[] {
     const localNameLength = view.getUint16(localOffset + 26, true), localExtraLength = view.getUint16(localOffset + 28, true);
     const localNameStart = localOffset + 30;
     const dataStart = localNameStart + localNameLength + localExtraLength;
-    if (localNameLength !== nameLength || !input.subarray(localNameStart, localNameStart + localNameLength).every((byte, nameIndex) => byte === input[nameStart + nameIndex]) || dataStart + uncompressed > input.byteLength || view.getUint16(localOffset + 6, true) !== flags || view.getUint16(localOffset + 8, true) !== method)
+    if (localNameLength !== nameLength || !input.subarray(localNameStart, localNameStart + localNameLength).every((byte, nameIndex) => byte === input[nameStart + nameIndex]) || view.getUint32(localOffset + 14, true) !== view.getUint32(cursor + 16, true) || view.getUint32(localOffset + 18, true) !== compressed || view.getUint32(localOffset + 22, true) !== uncompressed || dataStart + uncompressed > input.byteLength || view.getUint16(localOffset + 6, true) !== flags || view.getUint16(localOffset + 8, true) !== method)
       throw new Error('Portable ZIP local entry is invalid');
     const data = copyBytes(input.subarray(dataStart, dataStart + uncompressed));
     if (crc32(data) !== view.getUint32(cursor + 16, true)) throw new Error('Portable ZIP checksum mismatch');
