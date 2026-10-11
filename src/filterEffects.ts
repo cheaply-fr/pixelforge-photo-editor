@@ -43,6 +43,7 @@ export const FILTER_EFFECT_TYPES = [
   'shear',
   'zigzag',
   'lens-flare',
+  'flame',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -1583,6 +1584,78 @@ function applyDifferenceClouds(
 }
 
 /**
+ * Apply a bounded seeded flame-field approximation of Photoshop Flame.
+ *
+ * The local renderer synthesizes a warm, rising field from a few hashed
+ * noise octaves and a sinusoidal lick pattern. It deliberately keeps the
+ * canvas bounds, source alpha, and transparent RGB padding unchanged. The
+ * Photoshop path/shape, foreground/background color, frame rendering and
+ * physically based turbulence controls remain staged.
+ */
+function applyFlame(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const detail = Math.max(2, Math.min(64, Math.round(effect.radius)));
+  const seed = effect.seed >>> 0;
+  const hash = (x: number, y: number): number => {
+    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const noise = (x: number, y: number): number => {
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    const tx = x - x0, ty = y - y0;
+    const smooth = (value: number) => value * value * (3 - 2 * value);
+    const sx = smooth(tx), sy = smooth(ty);
+    const top = hash(x0, y0) * (1 - sx) + hash(x0 + 1, y0) * sx;
+    const bottom = hash(x0, y0 + 1) * (1 - sx) + hash(x0 + 1, y0 + 1) * sx;
+    return top * (1 - sy) + bottom * sy;
+  };
+  const originX = effect.centerX;
+  const originY = clamp(effect.centerY, 0.2, 0.95);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (!alpha) continue;
+      const nx = (x + 0.5) / width;
+      const ny = (y + 0.5) / height;
+      // A flame is rooted near the authored origin and loses energy as it
+      // rises. A soft horizontal falloff gives the deterministic field a
+      // bounded plume rather than tinting the whole image uniformly.
+      const rise = clamp((ny - originY + 0.16) / 0.82, 0, 1);
+      const horizontal = clamp(1 - Math.abs(nx - originX) / 0.72, 0, 1);
+      if (rise <= 0 || horizontal <= 0) continue;
+      const detailScale = Math.max(1, detail / 8);
+      const fine = noise(nx * width / detailScale + seed * 0.001, ny * height / detailScale);
+      const broad = noise(nx * width / (detailScale * 2.7) + 11.7, ny * height / (detailScale * 2.7) - 7.2);
+      const lick = 0.5 + 0.5 * Math.sin(
+        nx * Math.PI * (5.5 + detailScale) + fine * 5.2 - (1 - rise) * 4.7,
+      );
+      const intensity = clamp(
+        horizontal * rise * (0.3 + broad * 0.45 + fine * 0.35) * (0.45 + lick * 0.7),
+        0,
+        1,
+      );
+      if (intensity <= 0.01) continue;
+      const hot = clamp(intensity * 1.45, 0, 1);
+      const flame: [number, number, number, number] = [
+        255,
+        clampByte(30 + hot * 215),
+        clampByte(3 + (1 - hot) * 38),
+        alpha,
+      ];
+      blendPixel(output, offset, flame, strength * intensity);
+    }
+  }
+}
+
+/**
  * Apply a bounded Voronoi-cell approximation of Photoshop Crystallize.
  * Jittered cell centres are derived from the persisted seed, so the effect is
  * reproducible without storing generated pixels. Alpha and transparent RGB
@@ -2270,6 +2343,8 @@ export function applyFilterEffectsPixels(
     applyPointillize(data, width, height, effect, output);
   } else if (effect.type === 'difference-clouds') {
     applyDifferenceClouds(data, width, height, effect, output, strength);
+  } else if (effect.type === 'flame') {
+    applyFlame(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
