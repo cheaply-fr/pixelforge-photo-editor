@@ -21,6 +21,13 @@ to identity curves.
 
 Frames may also contain an optional `groups` array of editable folders. A group stores an ID, name, visibility, lock state, opacity, a validated blend value and its persisted `collapsed` panel state. Layers reference a group with `groupId`; their own source pixels, transforms and order remain unchanged. Group members render into an isolated frame-sized surface, retaining each child blend, mask, transform, style, adjustment, visibility and opacity; the group opacity and blend are then applied once at the first member stacking slot. Group locks prevent edits to member layers. Folder creation, rename, collapse/expand, visibility, opacity, blend, lock and ungroup actions are undoable and survive local/portable/cloud round trips. See [`group-compositing-contract.md`](./group-compositing-contract.md) for bounds, non-contiguous members and progress behavior.
 
+Visible raster, Smart Object, text and vector shape/path layers may also carry
+one optional `vectorMask` object. It stores a bounded editable `PathModel` and
+strict `enabled`/`inverted` flags. The compositor applies the transformed path
+as alpha after rendering that layer, preserving source assets and applying
+opacity/blend once. Compound contours, Direct Selection edits, disabled-mask
+state and JSON round trips are covered by [`vector-mask-contract.md`](./vector-mask-contract.md).
+
 Frames may also contain an optional bounded `artboards` array (at most eight
 named viewports) and an `activeArtboardId`. Each artboard stores only an ID,
 name, integer frame-space rectangle, visibility/lock flags and an optional

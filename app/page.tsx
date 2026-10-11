@@ -73,6 +73,7 @@ import {
   commonLayer,
   isRasterContentLayer,
   isMaskableLayer,
+  isVectorMaskableLayer,
   decodeAsset,
   effectiveAdjustments,
   inversePoint,
@@ -101,6 +102,7 @@ import {
   type TextAlign,
   type Assets,
 } from '../src/document';
+import { defaultVectorMaskPath } from '../src/vectorMask';
 import {
   alphaFromRgba,
   normalizeTextMaskRequest,
@@ -482,6 +484,10 @@ type Command =
   | 'invert-layer-mask'
   | 'toggle-layer-mask'
   | 'remove-layer-mask'
+  | 'create-vector-mask'
+  | 'invert-vector-mask'
+  | 'toggle-vector-mask'
+  | 'remove-vector-mask'
   | 'create-clipping-mask'
   | 'release-clipping-mask'
   | 'free-transform'
@@ -858,7 +864,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
     { label: 'Disable Layer Mask', command: 'toggle-layer-mask' },
     { label: 'Remove Layer Mask', command: 'remove-layer-mask' },
-    { label: 'Vector Mask', command: 'noop', disabled: true },
+    { label: 'Create Vector Mask', command: 'create-vector-mask' },
+    { label: 'Invert Vector Mask', command: 'invert-vector-mask' },
+    { label: 'Disable Vector Mask', command: 'toggle-vector-mask' },
+    { label: 'Remove Vector Mask', command: 'remove-vector-mask' },
     { label: 'Create Clipping Mask', command: 'create-clipping-mask' },
     { label: 'Release Clipping Mask', command: 'release-clipping-mask' },
     { label: 'New Smart Object…', command: 'new-smart-object' },
@@ -1103,6 +1112,8 @@ type Gesture = {
   pathHandle?: PathHandleKind;
   /** Local path model at pointer-down, used to keep a drag deterministic. */
   pathOrigin?: PathModel;
+  /** Whether Direct Selection targets a vector mask path. */
+  pathVectorMask?: boolean;
   /** Composite RGBA sample used by the bounded Magnetic Lasso snapper. */
   magneticData?: Uint8ClampedArray;
   magneticRadius?: number;
@@ -3731,6 +3742,80 @@ export default function Home() {
     )
       setNotice('Layer mask removed; source pixels kept');
   };
+  const vectorMaskBounds = (layer: Layer): { width: number; height: number } => {
+    if (isRasterContentLayer(layer)) {
+      const asset = assets.current[layer.asset];
+      if (asset) return { width: asset.w, height: asset.h };
+    }
+    if (
+      layer.kind === 'rectangle' ||
+      layer.kind === 'ellipse' ||
+      layer.kind === 'line' ||
+      layer.kind === 'polygon'
+    )
+      return { width: layer.width, height: layer.height };
+    if (layer.kind === 'text')
+      return {
+        width: layer.boxWidth,
+        height: Math.max(layer.fontSize, layer.fontSize * layer.lineHeight * Math.max(1, layer.text.split(/\r?\n/).length)),
+      };
+    const frame = current();
+    return { width: frame.w, height: frame.h };
+  };
+  const createVectorMask = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !isVectorMaskableLayer(layer) || !layer.visible) {
+      setNotice('Select a visible pixel-producing layer before creating a vector mask');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before editing its vector mask');
+      return;
+    }
+    if (layer.vectorMask) {
+      setNotice('This layer already has a vector mask');
+      return;
+    }
+    const bounds = vectorMaskBounds(layer);
+    if (editLayer({ vectorMask: { path: defaultVectorMaskPath(bounds.width, bounds.height), enabled: true, inverted: false } }))
+      setNotice('Vector mask created; edit the path with Direct Selection');
+  };
+  const invertVectorMask = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer?.vectorMask || !layer.visible || !isVectorMaskableLayer(layer)) {
+      setNotice('Create a vector mask before inverting it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before editing its vector mask');
+      return;
+    }
+    if (editLayer({ vectorMask: { ...layer.vectorMask, inverted: !layer.vectorMask.inverted } }))
+      setNotice(layer.vectorMask.inverted ? 'Vector mask restored' : 'Vector mask inverted');
+  };
+  const toggleVectorMask = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer?.vectorMask || !layer.visible || !isVectorMaskableLayer(layer)) {
+      setNotice('Create a vector mask before disabling it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before editing its vector mask');
+      return;
+    }
+    if (editLayer({ vectorMask: { ...layer.vectorMask, enabled: !layer.vectorMask.enabled } }))
+      setNotice(layer.vectorMask.enabled ? 'Vector mask disabled' : 'Vector mask enabled');
+  };
+  const clearVectorMask = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer?.vectorMask || !layer.visible || !isVectorMaskableLayer(layer)) return;
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before removing its vector mask');
+      return;
+    }
+    if (editLayer({ vectorMask: undefined }))
+      setNotice('Vector mask removed; source pixels kept');
+  };
   const removeBackground = async () => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
@@ -6190,7 +6275,9 @@ export default function Home() {
       layer = f.layers.find((l) => l.id === f.active)!,
       p = point(e);
     const local =
-      layer.kind === 'raster' ? inversePoint(layer.matrix, p) || p : p;
+      (layer.kind === 'raster' || layer.kind === 'path' || (isVectorMaskableLayer(layer) && Boolean(layer.vectorMask)))
+        ? inversePoint(layer.matrix, p) || p
+        : p;
     canvas.current!.setPointerCapture(e.pointerId);
     if (tool === 'slice-select') {
       const selected = sliceAtPoint(f.slices, p.x, p.y);
@@ -6320,9 +6407,11 @@ export default function Home() {
       return;
     }
     if (tool === 'direct-select') {
-      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'path') {
+      const vectorMaskTarget = isVectorMaskableLayer(layer) ? layer.vectorMask : undefined;
+      const editablePath = vectorMaskTarget?.path || (layer.kind === 'path' ? layer.path : undefined);
+      if (layerIsLocked(f, layer) || !layer.visible || !editablePath) {
         setNotice(
-          'Select a visible, unlocked path layer before selecting nodes',
+          'Select a visible, unlocked path layer or vector-mask layer before selecting nodes',
         );
         return;
       }
@@ -6336,8 +6425,8 @@ export default function Home() {
         Math.hypot(layer.matrix[2], layer.matrix[3]),
         0.0001,
       );
-      const pathHandle = hitTestPathHandle(layer.path, localPoint, 10 / scale);
-      const pathIndex = pathHandle?.index ?? hitTestPathNode(layer.path, localPoint, 10 / scale);
+      const pathHandle = hitTestPathHandle(editablePath, localPoint, 10 / scale);
+      const pathIndex = pathHandle?.index ?? hitTestPathNode(editablePath, localPoint, 10 / scale);
       if (pathIndex === null) {
         setNotice('Click a path node or Bezier handle to select it');
         return;
@@ -6350,11 +6439,12 @@ export default function Home() {
         layer,
         pathIndex,
         pathHandle: pathHandle?.kind,
-        pathOrigin: validatePath(layer.path),
+        pathOrigin: validatePath(editablePath),
+        pathVectorMask: Boolean(vectorMaskTarget),
         moved: false,
       };
       gesture.current = g;
-      drawPathOverlay(layer.path, layer.matrix, pathIndex);
+      drawPathOverlay(editablePath, layer.matrix, pathIndex);
       return;
     }
     if (tool === 'zoom') {
@@ -7458,7 +7548,7 @@ export default function Home() {
     if (!g) return;
     const p = point(e);
     const local =
-      g.layer?.kind === 'raster' || g.layer?.kind === 'path'
+      (g.layer?.kind === 'raster' || g.layer?.kind === 'path' || (g.layer && isVectorMaskableLayer(g.layer) && Boolean(g.layer.vectorMask)))
         ? inversePoint(g.layer.matrix, p) || p
         : p;
     g.lastPressure = pressure(e);
@@ -7612,7 +7702,7 @@ export default function Home() {
     }
     if (
       g.tool === 'direct-select' &&
-      g.layer?.kind === 'path' &&
+      (g.pathVectorMask || g.layer?.kind === 'path') &&
       g.pathIndex !== undefined &&
       g.pathOrigin
     ) {
@@ -7620,10 +7710,13 @@ export default function Home() {
         ? movePathHandle(g.pathOrigin, g.pathIndex, g.pathHandle, local.x, local.y)
         : movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
       g.moved = true;
+      const nextLayer: Layer = g.pathVectorMask
+        ? { ...g.layer!, vectorMask: g.layer!.vectorMask ? { ...g.layer!.vectorMask, path: moved } : undefined }
+        : { ...g.layer!, path: moved } as Layer;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) =>
-          item.id === g.layer!.id ? { ...item, path: moved } : item,
+          item.id === g.layer!.id ? nextLayer : item,
         ),
       }).then(() => {
         if (gesture.current === g)
@@ -8309,7 +8402,7 @@ export default function Home() {
     const p = point(e),
       f = g.frame;
     const local =
-      g.layer?.kind === 'raster' || g.layer?.kind === 'path'
+      (g.layer?.kind === 'raster' || g.layer?.kind === 'path' || (g.layer && isVectorMaskableLayer(g.layer) && Boolean(g.layer.vectorMask)))
         ? inversePoint(g.layer.matrix, p) || p
         : p;
     await g.pending;
@@ -8471,7 +8564,7 @@ export default function Home() {
     }
     if (
       g.tool === 'direct-select' &&
-      g.layer?.kind === 'path' &&
+      (g.pathVectorMask || g.layer?.kind === 'path') &&
       g.pathIndex !== undefined &&
       g.pathOrigin
     ) {
@@ -8482,15 +8575,20 @@ export default function Home() {
       const moved = g.pathHandle
         ? movePathHandle(g.pathOrigin, g.pathIndex, g.pathHandle, local.x, local.y)
         : movePathNode(g.pathOrigin, g.pathIndex, local.x, local.y);
+      const nextLayer: Layer = g.pathVectorMask
+        ? { ...g.layer!, vectorMask: g.layer!.vectorMask ? { ...g.layer!.vectorMask, path: moved } : undefined }
+        : { ...g.layer!, path: moved } as Layer;
       if (
         commit({
           ...f,
           layers: f.layers.map((item) =>
-            item.id === g.layer!.id ? { ...item, path: moved } : item,
+            item.id === g.layer!.id ? nextLayer : item,
           ),
         })
       )
-        setNotice(g.pathHandle ? 'Path handle moved' : 'Path node moved');
+        setNotice(g.pathVectorMask
+          ? g.pathHandle ? 'Vector mask handle moved' : 'Vector mask node moved'
+          : g.pathHandle ? 'Path handle moved' : 'Path node moved');
     } else if (g.tool === 'move' && g.layer && g.moved) {
       const matrix = [...g.layer.matrix] as Matrix;
       matrix[4] += p.x - g.start.x;
@@ -9666,6 +9764,10 @@ export default function Home() {
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
+    else if (command === 'create-vector-mask') createVectorMask();
+    else if (command === 'invert-vector-mask') invertVectorMask();
+    else if (command === 'toggle-vector-mask') toggleVectorMask();
+    else if (command === 'remove-vector-mask') clearVectorMask();
     else if (command === 'create-clipping-mask') createClippingMask();
     else if (command === 'release-clipping-mask') releaseClippingMask();
     else if (command === 'reset') resetAdjustments();
@@ -9939,6 +10041,24 @@ export default function Home() {
           locked ||
           !layer.visible ||
           !layer.mask
+        );
+      case 'create-vector-mask':
+        return (
+          !layer ||
+          !isVectorMaskableLayer(layer) ||
+          locked ||
+          !layer.visible ||
+          Boolean(layer.vectorMask)
+        );
+      case 'invert-vector-mask':
+      case 'toggle-vector-mask':
+      case 'remove-vector-mask':
+        return (
+          !layer ||
+          !isVectorMaskableLayer(layer) ||
+          locked ||
+          !layer.visible ||
+          !layer.vectorMask
         );
       case 'create-clipping-mask': {
         const base = layer ? clippingCandidateBase(frame, layer) : undefined;
@@ -11315,6 +11435,10 @@ export default function Home() {
               invertMask={invertLayerMask}
               toggleMask={toggleLayerMask}
               clearMask={clearMask}
+              createVectorMask={createVectorMask}
+              invertVectorMask={invertVectorMask}
+              toggleVectorMask={toggleVectorMask}
+              clearVectorMask={clearVectorMask}
               createClipping={createClippingMask}
               releaseClipping={releaseClippingMask}
               clearSelection={() => setSelection(undefined)}

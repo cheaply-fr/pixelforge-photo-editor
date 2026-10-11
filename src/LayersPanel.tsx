@@ -5,6 +5,7 @@ import {
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
   isMaskableLayer,
+  isVectorMaskableLayer,
   type Frame,
   type Group,
   type Layer,
@@ -53,6 +54,10 @@ type Props = {
   invertMask: () => void;
   toggleMask: () => void;
   clearMask: () => void;
+  createVectorMask: () => void;
+  invertVectorMask: () => void;
+  toggleVectorMask: () => void;
+  clearVectorMask: () => void;
   createClipping: () => void;
   releaseClipping: () => void;
   clearSelection: () => void;
@@ -87,6 +92,10 @@ export default function LayersPanel({
   invertMask,
   toggleMask,
   clearMask,
+  createVectorMask,
+  invertVectorMask,
+  toggleVectorMask,
+  clearVectorMask,
   createClipping,
   releaseClipping,
   clearSelection,
@@ -418,6 +427,52 @@ export default function LayersPanel({
           {layer.maskEnabled === false ? 'Enable mask' : 'Disable mask'}
         </button>
         <button
+          onClick={createVectorMask}
+          disabled={
+            !isVectorMaskableLayer(layer) ||
+            Boolean(layer.vectorMask) ||
+            layerLocked ||
+            !layer.visible
+          }
+        >
+          Create vector mask
+        </button>
+        <button
+          onClick={invertVectorMask}
+          disabled={
+            !isVectorMaskableLayer(layer) ||
+            !layer.vectorMask ||
+            layerLocked ||
+            !layer.visible
+          }
+        >
+          {layer.vectorMask?.inverted ? 'Uninvert vector mask' : 'Invert vector mask'}
+        </button>
+        <button
+          onClick={toggleVectorMask}
+          disabled={
+            !isVectorMaskableLayer(layer) ||
+            !layer.vectorMask ||
+            layerLocked ||
+            !layer.visible
+          }
+        >
+          {layer.vectorMask?.enabled === false
+            ? 'Enable vector mask'
+            : 'Disable vector mask'}
+        </button>
+        <button
+          onClick={clearVectorMask}
+          disabled={
+            !isVectorMaskableLayer(layer) ||
+            !layer.vectorMask ||
+            layerLocked ||
+            !layer.visible
+          }
+        >
+          Remove vector mask
+        </button>
+        <button
           onClick={createClipping}
           disabled={
             !isClippingSourceLayer(layer) ||
@@ -448,6 +503,13 @@ export default function LayersPanel({
       </div>
       {isMaskableLayer(layer) && layer.mask && (
         <p className="mask-status">Nondestructive mask active</p>
+      )}
+      {isVectorMaskableLayer(layer) && layer.vectorMask && (
+        <p className="mask-status">
+          Vector mask {layer.vectorMask.enabled === false ? 'disabled' : 'active'}
+          {layer.vectorMask.inverted ? ' · inverted' : ''}
+          {' · path preserved in project data'}
+        </p>
       )}
       {layer.clippingTo && (
         <p className="mask-status">
