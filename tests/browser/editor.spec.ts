@@ -1,3 +1,4 @@
+import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
@@ -12,9 +13,7 @@ async function project(page: import('@playwright/test').Page) {
     .click();
   const download = await pending;
   const path = await download.path();
-  return JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  ) as { history: unknown[]; index: number };
+  return await downloadedProject(path!);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -216,9 +215,7 @@ test('lossy exports honor a persisted target-size budget without metadata', asyn
   const projectDownload = page.waitForEvent('download');
   await page.keyboard.press('Control+Shift+s');
   const projectPath = await (await projectDownload).path();
-  const project = JSON.parse(
-    await (await import('node:fs/promises')).readFile(projectPath!, 'utf8'),
-  ) as { settings: { exportTargetBytes?: number } };
+  const project = await downloadedProject(projectPath!) as { settings: { exportTargetBytes?: number } };
   expect(project.settings.exportTargetBytes).toBe(targetKb * 1024);
   await expect(
     page.getByRole('status', { name: 'Draft save status' }),
@@ -572,6 +569,61 @@ test('exact resizing and project file round-trip retain pixels, dimensions and u
   );
 });
 
+test('cancelling the project chooser leaves local edits untouched', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Document name').fill('Keep these edits');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Open project…', exact: true }).click();
+  await page.getByTestId('project-input').setInputFiles([]);
+  await expect(page.getByLabel('Document name')).toHaveValue('Keep these edits');
+});
+
+test('legacy v1 JSON projects remain importable beside v3 bundles', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Document name').fill('Legacy source');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const path = await (await pending).path();
+  const source = await downloadedProject(path!) as {
+    history: Array<{ w: number; h: number; layers: Array<{ kind: string; asset: string }> }>;
+    index: number;
+    assets: Record<string, { url: string }>;
+    settings: Record<string, unknown>;
+  };
+  const frame = source.history[source.index];
+  const raster = frame.layers.find((layer) => layer.kind === 'raster');
+  expect(raster?.kind).toBe('raster');
+  if (!raster || raster.kind !== 'raster') throw new Error('Legacy fixture has no raster layer');
+  const legacy = { version: 1, name: 'Imported legacy', index: 0, history: [{ url: source.assets[raster.asset].url, w: frame.w, h: frame.h }], settings: source.settings };
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Open project…', exact: true }).click();
+  await page.getByTestId('project-input').setInputFiles({ name: 'legacy.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(legacy)) });
+  await expect(page.getByLabel('Document name')).toHaveValue('Imported legacy');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', String(frame.w));
+});
+
+test('tampered v3 project imports fail closed and preserve the current draft', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Document name').fill('Current edits');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const path = await (await pending).path();
+  const bytes = Buffer.from(await (await import('node:fs/promises')).readFile(path!));
+  expect(bytes.subarray(0, 4).toString('hex')).toBe('504b0304');
+  const tampered = Buffer.from(bytes);
+  tampered[tampered.length - 23] ^= 1;
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Open project…', exact: true }).click();
+  await page.getByTestId('project-input').setInputFiles({ name: 'tampered.pixelforge', mimeType: 'application/zip', buffer: tampered });
+  await expect(page.getByLabel('Document name')).toHaveValue('Current edits');
+  await expect(page.getByText(/checksum|invalid|could not be opened/i).last()).toBeVisible();
+});
+
 test('flipping transparent artwork does not leave duplicate opaque pixels', async ({
   page,
 }) => {
@@ -692,9 +744,7 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   const selectionProject = page.waitForEvent('download');
   await page.keyboard.press('Control+Shift+s');
   const selectionPath = await (await selectionProject).path();
-  const selectionDraft = JSON.parse(
-    await (await import('node:fs/promises')).readFile(selectionPath!, 'utf8'),
-  ) as {
+  const selectionDraft = await downloadedProject(selectionPath!) as {
     history: Array<{ selection?: { inverted?: boolean } }>;
     index: number;
   };
@@ -705,11 +755,7 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   const shiftedSelectionProject = page.waitForEvent('download');
   await page.keyboard.press('Control+Shift+s');
   const shiftedSelectionPath = await (await shiftedSelectionProject).path();
-  const shiftedSelectionDraft = JSON.parse(
-    await (
-      await import('node:fs/promises')
-    ).readFile(shiftedSelectionPath!, 'utf8'),
-  ) as {
+  const shiftedSelectionDraft = await downloadedProject(shiftedSelectionPath!) as {
     history: Array<{ selection?: { inverted?: boolean } }>;
     index: number;
   };
@@ -837,9 +883,7 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
       .getByRole('menuitem', { name: 'Download project file', exact: true })
       .click();
     const path = await (await download).path();
-    return JSON.parse(
-      await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-    ) as {
+    return await downloadedProject(path!) as unknown as {
       assets: Record<string, unknown>;
       history: Array<{
         layers: Array<{ asset: string; adjustments: Record<string, number> }>;
@@ -942,9 +986,7 @@ test('Edit Fill is undoable and menu selection commands persist', async ({
     .getByRole('menuitem', { name: 'Download project file', exact: true })
     .click();
   const path = await (await downloaded).path();
-  const project = JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  );
+  const project = await downloadedProject(path!);
   expect(project.history[project.index].selection).toMatchObject({
     shape: 'rectangle',
     w: 1200,
@@ -1020,9 +1062,7 @@ test('Edit Clear, Shift-F5 fill and Merge Visible preserve pixels and hidden lay
     .getByRole('menuitem', { name: 'Download project file', exact: true })
     .click();
   const path = await (await downloaded).path();
-  const project = JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  );
+  const project = await downloadedProject(path!);
   expect(project.history[project.index].layers).toHaveLength(2);
   expect(
     project.history[project.index].layers.filter(
@@ -1096,9 +1136,7 @@ test('Merge Layers rasterizes the adjacent pair, preserves pixels, and round-tri
       .getByRole('menuitem', { name: 'Download project file', exact: true })
       .click();
     const path = await (await pending).path();
-    return JSON.parse(
-      await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-    ) as {
+    return await downloadedProject(path!) as unknown as {
       history: Array<{
         layers: Array<{ kind: string; name: string; asset?: string }>;
       }>;
@@ -1242,9 +1280,7 @@ test('layer menu copy, paste, hide and flatten preserve an undoable project', as
     .getByRole('menuitem', { name: 'Download project file', exact: true })
     .click();
   let path = await (await downloaded).path();
-  let project = JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  );
+  let project = await downloadedProject(path!);
   expect(project.history[project.index].layers).toHaveLength(3);
 
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
@@ -1265,9 +1301,7 @@ test('layer menu copy, paste, hide and flatten preserve an undoable project', as
     .getByRole('menuitem', { name: 'Download project file', exact: true })
     .click();
   path = await (await downloaded).path();
-  project = JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  );
+  project = await downloadedProject(path!);
   expect(project.history[project.index].layers.length).toBe(3);
 });
 
@@ -1291,9 +1325,7 @@ test('layer clipboard shortcuts guard locked and last layers and survive undo/re
       .getByRole('menuitem', { name: 'Download project file', exact: true })
       .click();
     const path = await (await pending).path();
-    return JSON.parse(
-      await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-    ) as {
+    return await downloadedProject(path!) as unknown as {
       history: Array<{
         layers: Array<{ id: string; name: string; kind: string }>;
       }>;
@@ -1669,7 +1701,7 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const projectPath = await (await projectDownload).path();
-  const project = JSON.parse(await (await import('node:fs/promises')).readFile(projectPath!, 'utf8')) as {
+  const project = await downloadedProject(projectPath!) as {
     history: Array<{ layers: Array<{ adjustments: { colorBalance: { midtonesCyanRed: number } } }> }>;
     index: number;
   };
@@ -1713,7 +1745,7 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const projectPath = await (await projectDownload).path();
-  const project = JSON.parse(await (await import('node:fs/promises')).readFile(projectPath!, 'utf8')) as {
+  const project = await downloadedProject(projectPath!) as {
     history: Array<{ layers: Array<{ adjustments: { sharpenNoise: { noise: number; seed: number; monochromatic: boolean } } }> }>;
     index: number;
   };

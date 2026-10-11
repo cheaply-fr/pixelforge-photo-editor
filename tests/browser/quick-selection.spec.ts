@@ -1,6 +1,6 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) =>
@@ -16,7 +16,7 @@ const project = async (page: Page) => {
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  return JSON.parse(await readFile((await download.path())!, 'utf8')) as {
+  return await downloadedProject((await download.path())!) as {
     history: Array<{ selection?: { mask?: string } }>;
     assets: Record<string, { url: string; w: number; h: number }>;
     index: number;

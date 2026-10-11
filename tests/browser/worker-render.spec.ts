@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { downloadedProject } from './project-file';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -225,7 +226,7 @@ test('a superseded project import cannot replace the newer document or its pixel
   const downloading = page.waitForEvent('download');
   await page.getByRole('menuitem', {name: 'Download project file', exact: true}).click();
   const file = await (await downloading).path();
-  const original = JSON.parse(await (await import('node:fs/promises')).readFile(file!, 'utf8'));
+  const original = await downloadedProject(file!);
   const urls = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
     canvas.width = 1440; canvas.height = 960;

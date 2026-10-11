@@ -1,6 +1,6 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
 
 const openEditor = async (page: Page) => {
   await page.route(
@@ -24,7 +24,7 @@ const project = async (page: Page) => {
     .getByRole('menuitem', { name: 'Download project file', exact: true })
     .click();
   const download = await pending;
-  return JSON.parse(await readFile((await download.path())!, 'utf8')) as {
+  return await downloadedProject((await download.path())!) as {
     settings: { tool: string; size: number; brushOpacity?: number };
     history: Array<{
       selection?: { mask?: string };

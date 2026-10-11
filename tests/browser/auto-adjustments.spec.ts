@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 type Project = {
@@ -33,9 +34,7 @@ async function project(page: Page): Promise<Project> {
     .getByRole('menuitem', { name: 'Download project file', exact: true })
     .click();
   const path = await (await pending).path();
-  return JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  ) as Project;
+  return await downloadedProject(path!) as Project;
 }
 
 async function importPixels(page: Page, pixels: number[][]) {

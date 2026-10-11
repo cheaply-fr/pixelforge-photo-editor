@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 
 type Layer = Record<string, unknown> & { kind?: string; text?: string; id?: string };
@@ -24,7 +24,7 @@ const project = async (page: Page): Promise<Project> => {
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  return JSON.parse(await readFile((await download.path())!, 'utf8')) as Project;
+  return await downloadedProject((await download.path())!) as Project;
 };
 
 const maskStats = async (page: Page, asset: { url: string; w: number; h: number }) =>

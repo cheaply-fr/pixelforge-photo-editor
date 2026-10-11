@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 type Layer = {
@@ -70,9 +71,7 @@ const project = async (page: Page) => {
   const path = await download.path();
   return {
     path: path!,
-    value: JSON.parse(
-      await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-    ) as Project,
+    value: await downloadedProject(path!) as Project,
   };
 };
 

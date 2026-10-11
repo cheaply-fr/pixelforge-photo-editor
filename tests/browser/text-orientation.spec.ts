@@ -1,6 +1,6 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
 
 type TextLayer = {
   kind: 'text';
@@ -28,7 +28,7 @@ const project = async (page: Page): Promise<Project> => {
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  return JSON.parse(await readFile((await download.path())!, 'utf8')) as Project;
+  return await downloadedProject((await download.path())!) as Project;
 };
 
 const bounds = async (page: Page) => page.getByTestId('editor-canvas').evaluate((node) => {

@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 type ProjectLayer = {
@@ -39,9 +40,7 @@ const project = async (page: Page): Promise<Project> => {
     .click();
   const download = await pending;
   const file = await download.path();
-  return JSON.parse(
-    await (await import('node:fs/promises')).readFile(file!, 'utf8'),
-  ) as Project;
+  return await downloadedProject(file!) as Project;
 };
 
 const point = async (page: Page, x: number, y = 0.5) => {

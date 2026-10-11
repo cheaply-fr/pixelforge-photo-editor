@@ -280,6 +280,8 @@ function validSettings(settings: unknown): settings is Settings {
       'eraser',
       'background-eraser',
       'magic-eraser',
+      'mask-brush',
+      'mask-eraser',
       'adjustment-brush',
       'dodge',
       'burn',

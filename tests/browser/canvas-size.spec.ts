@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 const startEditor = async (page: Page) => {
@@ -146,8 +147,7 @@ test('Reveal All is enabled, preserves the existing canvas, and expands translat
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const downloaded = await pending;
   const path = await downloaded.path();
-  const fs = await import('node:fs/promises');
-  const project = JSON.parse(await fs.readFile(path!, 'utf8')) as { history: Array<{ layers: Array<{ matrix: number[] }> }>; index: number };
+  const project = await downloadedProject(path!) as { history: Array<{ layers: Array<{ matrix: number[] }> }>; index: number };
   for (const layer of project.history[project.index].layers) layer.matrix[4] = -220;
   await page.getByTestId('project-input').setInputFiles({ name: 'translated.pixelforge', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
   await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');

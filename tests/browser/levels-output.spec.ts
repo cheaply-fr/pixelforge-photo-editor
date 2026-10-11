@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { downloadedProject } from './project-file';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -46,7 +47,7 @@ async function downloadProject(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const path = await (await pending).path();
-  return JSON.parse(await (await import('node:fs/promises')).readFile(path!, 'utf8')) as {
+  return await downloadedProject(path!) as {
     history: Array<{ layers: Array<{ asset?: string; adjustments?: Record<string, number> }> }>;
     index: number;
     assets: Record<string, unknown>;

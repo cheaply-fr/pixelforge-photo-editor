@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { downloadedProject } from './project-file';
 
 const prepare = async (page: Page) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -11,7 +11,7 @@ const project = async (page: Page) => {
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  return JSON.parse(await readFile((await download.path())!, 'utf8')) as { history: Array<{ selection?: { mask?: string } }>; index: number; assets: Record<string, { url: string; w: number; h: number }> };
+  return await downloadedProject((await download.path())!) as { history: Array<{ selection?: { mask?: string } }>; index: number; assets: Record<string, { url: string; w: number; h: number }> };
 };
 const alphaCount = async (page: Page, asset: { url: string; w: number; h: number }) => page.evaluate(async ({ asset }) => {
   const image = new Image(); image.src = asset.url; await image.decode(); const canvas = document.createElement('canvas'); canvas.width = asset.w; canvas.height = asset.h; const context = canvas.getContext('2d')!; context.drawImage(image, 0, 0); const data = context.getImageData(0, 0, asset.w, asset.h).data; let selected = 0; for (let i = 3; i < data.length; i += 4) if (data[i] > 0) selected += 1; return selected;
