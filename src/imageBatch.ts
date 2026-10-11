@@ -119,7 +119,9 @@ export async function decodeBatchImage(source: BatchImageSource): Promise<HTMLCa
   if (source.file.size > MAX_BATCH_INPUT_BYTES)
     throw new Error('The selected file exceeds the 64 MB safety limit.');
   const format = describeImportFormat(source.name, source.file.type);
-  if (!format.tryDecode && format.format !== 'unknown')
+  // Unknown containers must stop before a permissive browser decoder can turn
+  // a renamed/opaque file into an unsafe raster import.
+  if (!format.tryDecode)
     throw new Error(format.disclosure);
   const imageBitmapFactory = globalThis.createImageBitmap;
   if (typeof imageBitmapFactory === 'function') {
