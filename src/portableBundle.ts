@@ -307,3 +307,5 @@ export const decodePortableBundle = readPortableBundle;
 export const createPortableBundle = writePortableBundle;
 export const decodePortableProjectBundle = readPortableBundle;
 export const isPortableManifest = isPortableBundleManifest;
+export const writeProjectBundle = writePortableBundle;
+export const readProjectBundle = readPortableBundle;
