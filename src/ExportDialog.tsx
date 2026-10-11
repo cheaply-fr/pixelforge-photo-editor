@@ -304,10 +304,11 @@ export default function ExportDialog({
             {error}
           </p>
         )}
-        <p>
-          Encoded locally. Original EXIF/GPS metadata is not copied; source
-          color profiles are not preserved. File size depends on image content
-          and browser encoding.
+        <p data-testid="export-privacy-disclosure">
+          Encoded locally. Browser exports contain rendered pixels only. Original
+          EXIF/GPS metadata and source color profiles are not copied. File Info
+          title, description and author stay in the local draft and editable
+          .pixelforge project only. File size depends on image content and browser encoding.
         </p>
         <div className="dialog-actions">
           <button type="button" onClick={close}>

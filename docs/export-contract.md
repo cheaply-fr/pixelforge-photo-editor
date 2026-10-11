@@ -10,7 +10,7 @@ The image export dialog renders the current editable frame locally, then encodes
 
 The dialog previews the actual encoded byte size before download. JPEG and WebP also accept an optional target size from 1 KB through 64 MB. When a target is present, PixelForge performs a bounded search over integer quality values and chooses the highest quality whose browser-produced blob fits. If even quality 1 is too large, the smallest valid blob is returned with an explicit “target not met” status; dimensions are never silently reduced. PNG remains lossless and has no target-size control. The filename uses the document name and the format extension. Exports contain only the rendered pixels; original EXIF/GPS metadata and source color profiles are not copied.
 
-The selected format, lossy quality and optional target size are validated and saved with the local draft, then restored from a bookmark or after reload. Legacy projects without these optional fields default to PNG at quality 92 with no target. The preference is UI state; the document's pixels and editable history do not depend on it.
+The selected format, lossy quality and optional target size are validated and saved with the local draft, then restored from a bookmark or after reload. Legacy projects without these optional fields default to PNG at quality 92 with no target. The preference is UI state; the document's pixels and editable history do not depend on it. File > File Info / Privacy… stores bounded title, multiline description and author fields in the local draft and editable project only. These fields are stripped from private-cloud request envelopes; see [metadata-privacy-contract.md](./metadata-privacy-contract.md).
 
 ## Batch history export
 
@@ -56,7 +56,7 @@ background-removal quality for arbitrary batches. Unsupported layered and
 camera formats are rejected with explicit per-file compatibility labels before
 the browser decoder runs.
 
-This contract does not claim metadata editing, ICC color management, HEIC/PSD output or Photoshop compatibility. Those remain later production-workflow milestones.
+The metadata privacy slice is implemented and tested, but this contract does not claim EXIF/ICC writing, color-managed output, HEIC/PSD output or Photoshop compatibility. Browser exports remain rendered-pixel downloads.
 
 ## Source-format compatibility disclosure
 

@@ -53,6 +53,7 @@ import {
   readDraft,
   saveDraft,
   stagePendingDraft,
+  stripPrivateMetadata,
   validateDraft,
   type Tool,
   type Draft,
@@ -114,6 +115,7 @@ import {
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import ExportDialog from '../src/ExportDialog';
+import MetadataDialog from '../src/MetadataDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
 import ImageBatchDialog from '../src/ImageBatchDialog';
 import type { BatchImageSource } from '../src/imageBatch';
@@ -129,6 +131,11 @@ import FillLayerDialog from '../src/FillLayerDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
+import {
+  DEFAULT_DOCUMENT_METADATA,
+  effectiveDocumentMetadata,
+  type DocumentMetadata,
+} from '../src/metadata';
 import {
   measuredTextLayerBounds,
   planCanvasSize,
@@ -393,6 +400,7 @@ type Command =
   | 'trim'
   | 'reveal-all'
   | 'project-save'
+  | 'file-info'
   | 'batch-export'
   | 'batch-images'
   | 'project-open'
@@ -708,6 +716,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
+    { label: 'File Info / Privacy…', command: 'file-info' },
     { label: 'Batch export history…', command: 'batch-export' },
     { label: 'Batch export images…', command: 'batch-images' },
     { label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' },
@@ -1654,6 +1663,9 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56);
+  const [metadata, setMetadata] = useState<DocumentMetadata>({
+    ...DEFAULT_DOCUMENT_METADATA,
+  });
   const setTool = useCallback((next: Tool) => {
     setActiveTool(next);
     const family = flyoutForTool(next);
@@ -1696,6 +1708,7 @@ export default function Home() {
     } | null>(null),
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [batchActionId, setBatchActionId] = useState<string>(),
+    [fileInfoOpen, setFileInfoOpen] = useState(false),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -1962,8 +1975,13 @@ export default function Home() {
     assets: assets.current,
     index: index.current,
     name,
+    metadata: { ...metadata },
     settings: settings(),
   });
+  /** File Info is intentionally local/project-only; never send personal metadata to cloud APIs. */
+  const cloudDocumentValue = (): Draft => {
+    return stripPrivateMetadata(documentValue());
+  };
   const restoreSettings = useCallback((s: Settings) => {
     setTool(s.tool);
     setZoom(s.zoom);
@@ -4007,6 +4025,7 @@ export default function Home() {
       setDraftId(createDraftId());
       clearCloud();
       setName(title.slice(0, 160));
+      setMetadata({ ...DEFAULT_DOCUMENT_METADATA });
       setZoom(72);
       return true;
     }
@@ -4031,6 +4050,7 @@ export default function Home() {
           await install(saved);
           if (cancelled) return;
           setName(saved.name);
+          setMetadata(effectiveDocumentMetadata(saved.metadata));
           setCloud(saved.cloud);
           localVersions.current.set(
             openingDraftId.current,
@@ -4161,6 +4181,7 @@ export default function Home() {
         fontSize,
         ...neutral,
       },
+      metadata: { ...metadata },
     };
     const pendingToken = stagePendingDraft(
       draftId,
@@ -4231,6 +4252,7 @@ export default function Home() {
     exportFormat,
     exportQuality,
     exportTargetBytes,
+    metadata,
     text,
     fontSize,
     history,
@@ -4293,7 +4315,7 @@ export default function Home() {
       const result = await saveCloudProject(
         link?.id || crypto.randomUUID(),
         link?.generation || '0',
-        documentValue(),
+        cloudDocumentValue(),
       );
       setCloud({ ...result, owner: member.id });
       setCloudMessage(
@@ -4333,6 +4355,7 @@ export default function Home() {
       await install(result.document);
       clearClipboard();
       setName(result.document.name);
+      setMetadata(effectiveDocumentMetadata(result.document.metadata));
       setCloud({
         id: result.id,
         generation: result.generation,
@@ -4380,6 +4403,7 @@ export default function Home() {
       setDraftId(createDraftId());
       clearCloud();
       setName(saved.name);
+      setMetadata(effectiveDocumentMetadata(saved.metadata));
       restoreSettings(saved.settings);
       setNotice('Project opened with editable layers and history');
     } catch (error) {
@@ -4609,6 +4633,7 @@ export default function Home() {
       await install(latest);
       clearClipboard();
       setName(latest.name);
+      setMetadata(effectiveDocumentMetadata(latest.metadata));
       setCloud(latest.cloud);
       restoreSettings(latest.settings);
       localVersions.current.set(draftId, latest.localRevision);
@@ -9438,6 +9463,7 @@ export default function Home() {
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') return revealAll();
     else if (command === 'project-save') exportProject();
+    else if (command === 'file-info') setFileInfoOpen(true);
     else if (command === 'batch-export')
       setBatchExporting({
         history: history.current.slice(),
@@ -10208,6 +10234,17 @@ export default function Home() {
           setTargetBytes={setExportTargetBytes}
           close={() => setExporting(null)}
           downloaded={setNotice}
+        />
+      )}
+      {fileInfoOpen && (
+        <MetadataDialog
+          metadata={metadata}
+          close={() => setFileInfoOpen(false)}
+          apply={(next) => {
+            setMetadata(next);
+            setFileInfoOpen(false);
+            setNotice('File info saved to the local project');
+          }}
         />
       )}
       {batchExporting && (
