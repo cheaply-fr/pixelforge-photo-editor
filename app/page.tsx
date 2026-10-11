@@ -512,6 +512,7 @@ type Command =
   | 'filter-mezzotint'
   | 'filter-pointillize'
   | 'filter-picture-frame'
+  | 'filter-difference-clouds'
   | 'filter-lens-correction'
   | 'filter-displace'
   | 'filter-pinch'
@@ -971,7 +972,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Render', command: 'noop', disabled: true },
     { label: 'Picture Frame…', command: 'filter-picture-frame' },
     { label: 'Clouds', command: 'noop', disabled: true },
-    { label: 'Difference Clouds', command: 'noop', disabled: true },
+    { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'noop', disabled: true },
     { label: 'Lens Flare…', command: 'noop', disabled: true },
     { label: 'Sharpen', command: 'sharpen-noise' },
@@ -3908,7 +3909,7 @@ export default function Home() {
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
-                  || type === 'pointillize' || type === 'mezzotint' || type === 'field-blur'
+                  || type === 'pointillize' || type === 'mezzotint' || type === 'difference-clouds' || type === 'field-blur'
                     ? 85
                   : type === 'picture-frame'
                     ? 85
@@ -3922,6 +3923,8 @@ export default function Home() {
                     ? 1
                     : type === 'picture-frame'
                     ? 12
+                    : type === 'difference-clouds'
+                    ? 18
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize'
                     ? 10
                     : type === 'lens-correction'
@@ -5405,13 +5408,15 @@ export default function Home() {
       setNotice(
         importInfo.format === 'heic'
           ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
+          : importInfo.format === 'tiff'
+            ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
           : asLayer
             ? 'Image layer added'
             : 'Photo opened as a flattened raster; source metadata omitted',
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic'
+        importInfo.format === 'heic' || importInfo.format === 'tiff'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -5484,11 +5489,21 @@ export default function Home() {
           sourceName,
         })
       ) {
-        setNotice('Embedded smart object added');
+        setNotice(
+          importInfo.format === 'heic'
+            ? 'HEIC/HEIF embedded as a flattened raster smart object; source metadata omitted'
+            : importInfo.format === 'tiff'
+              ? 'TIFF embedded as a flattened raster smart object; source metadata omitted'
+              : 'Embedded smart object added',
+        );
       }
     } catch (error) {
       setNotice(
-        error instanceof Error ? error.message : 'This image could not be embedded',
+        importInfo.format === 'heic' || importInfo.format === 'tiff'
+          ? importFailureMessage(importInfo)
+          : error instanceof Error
+            ? error.message
+            : 'This image could not be embedded',
       );
     } finally {
       if (smartObjectFile.current) smartObjectFile.current.value = '';
@@ -9544,6 +9559,8 @@ export default function Home() {
       chooseFilterEffect('pointillize', 'Pointillize (local approximation)');
     else if (command === 'filter-picture-frame')
       chooseFilterEffect('picture-frame', 'Picture Frame (local approximation)');
+    else if (command === 'filter-difference-clouds')
+      chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-displace')
@@ -9776,6 +9793,7 @@ export default function Home() {
       case 'filter-mezzotint':
       case 'filter-pointillize':
       case 'filter-picture-frame':
+      case 'filter-difference-clouds':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
@@ -9962,7 +9980,7 @@ export default function Home() {
         data-testid="layer-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => void load(e.target.files?.[0], true)}
       />
       <input
@@ -9970,7 +9988,7 @@ export default function Home() {
         data-testid="smart-object-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(event) =>
           void importSmartObject(
             event.target.files?.[0],
@@ -9999,7 +10017,7 @@ export default function Home() {
         data-testid="batch-image-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
@@ -10126,7 +10144,7 @@ export default function Home() {
         data-testid="file-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => load(e.target.files?.[0])}
       />
       <header className="topbar">
@@ -12042,6 +12060,9 @@ export default function Home() {
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
+            {filterEffects.type === 'difference-clouds' && (
+              <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
+            )}
                 <Slider
                   label="Effect amount"
                   value={filterEffects.amount}
@@ -12073,6 +12094,8 @@ export default function Home() {
                           ? 'Fragment offset'
                       : filterEffects.type === 'picture-frame'
                           ? 'Frame width'
+                      : filterEffects.type === 'difference-clouds'
+                          ? 'Cloud scale'
                       : filterEffects.type === 'radial-blur'
                           || filterEffects.type === 'spin-blur'
                           ? 'Angular sweep'
@@ -12408,6 +12431,7 @@ export default function Home() {
                   </>
                 )}
                 {filterEffects.type === 'picture-frame' && (
+                {filterEffects.type === 'difference-clouds' && (
                   <label className="slider">
                     <span>
                       <b>Random seed (0–4294967295)</b>
@@ -12415,6 +12439,7 @@ export default function Home() {
                     </span>
                     <input
                       className="text-input picture-frame-seed-input"
+                      className="text-input difference-clouds-seed-input"
                       aria-label="Random seed"
                       type="number"
                       min={0}

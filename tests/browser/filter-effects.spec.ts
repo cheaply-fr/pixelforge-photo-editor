@@ -1280,6 +1280,7 @@ test('Mezzotint exposes seeded grain controls and round-trips nondestructively',
 });
 
 test('Picture Frame is enabled, source-safe, editable and round-trips nondestructively', async ({ page }) => {
+test('Difference Clouds exposes seeded render controls and round-trips nondestructively', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
   const sourceLayer = before.history[before.index].layers.at(-1)!;
@@ -1297,6 +1298,15 @@ test('Picture Frame is enabled, source-safe, editable and round-trips nondestruc
   expect(await pixel(page, 0, 0)).toEqual([0, 0, 0, 0]);
   await page.getByLabel('Frame width', { exact: true }).press('ArrowRight');
   await page.getByLabel('Random seed', { exact: true }).fill('1');
+  const command = page.getByRole('menuitem', { name: 'Difference Clouds', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
+  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue('18');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('0');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Random seed', { exact: true }).fill('17');
+  await page.getByLabel('Cloud scale', { exact: true }).press('ArrowRight');
   const adjusted = await downloadProject(page);
   const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(adjustedLayer.asset).toBe(sourceAsset);
@@ -1308,6 +1318,17 @@ test('Picture Frame is enabled, source-safe, editable and round-trips nondestruc
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('picture-frame');
   await expect(page.getByLabel('Frame width', { exact: true })).toHaveValue('13');
   await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('1');
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
+    type: 'difference-clouds', amount: 85, radius: 19, seed: 17,
+  });
+  expect((await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
+    canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data[3]))).toBe(0);
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
+  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue('19');
+  await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('17');
   await expect.poll(() => pixels(page)).toEqual(changed);
   await openProject(page, adjusted);
   await expect.poll(() => pixels(page)).toEqual(changed);

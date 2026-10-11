@@ -118,6 +118,9 @@ test('records and replays the Pointillize Pixelate command', async ({ page }) =>
 test('records and replays the Picture Frame Render command', async ({ page }) => {
   await openActions(page);
   await page.getByLabel('Recipe name').fill('Frame finish');
+test('records and replays the Difference Clouds Render command', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Difference clouds finish');
   await page.getByTestId('start-action-recording').click();
   await page.getByRole('button', { name: 'Close action recipes' }).click();
 
@@ -132,6 +135,16 @@ test('records and replays the Picture Frame Render command', async ({ page }) =>
   await page.getByRole('button', { name: 'Run', exact: true }).click();
   await expect(page.locator('footer > span').first()).toContainText('replayed');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('picture-frame');
+  await page.getByRole('menuitem', { name: 'Difference Clouds', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
+
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Difference clouds finish', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 step', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('footer > span').first()).toContainText('replayed');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
 });
 
 test('closes the recipe surface without changing the document', async ({ page }) => {
