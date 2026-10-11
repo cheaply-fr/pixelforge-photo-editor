@@ -176,6 +176,7 @@ import {
   type LayerArrangeMode,
 } from '../src/layerArrange';
 import { combineSelectionBounds } from '../src/layerSelection';
+import { applyLayerLock, layerLockReason, planLayerLock } from '../src/layerLock';
 import {
   clippingCandidateBase,
   isClippingSourceLayer,
@@ -445,6 +446,7 @@ type Command =
   | 'distribute-horizontal'
   | 'distribute-vertical'
   | 'hide-layer'
+  | 'lock-layers'
   | 'arrange-front'
   | 'arrange-forward'
   | 'arrange-backward'
@@ -904,7 +906,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       command: 'distribute-horizontal',
     },
     { label: 'Distribute Vertical Centers', command: 'distribute-vertical' },
-    { label: 'Lock Layers…', command: 'noop', disabled: true },
+    { label: 'Lock Layers…', command: 'lock-layers' },
   ],
   Type: [
     { label: 'Text Tool', shortcut: 'T', command: 'text-tool' },
@@ -3020,6 +3022,20 @@ export default function Home() {
       return true;
     }
     return false;
+  };
+  const lockLayers = () => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before changing layer locks');
+      return;
+    }
+    const f = current();
+    const plan = planLayerLock(f);
+    if (!plan.ok) {
+      setNotice(layerLockReason(plan.reason));
+      return;
+    }
+    if (commit(applyLayerLock(f, plan)))
+      setNotice(plan.mode === 'lock' ? 'Selected layers locked' : 'Selected layers unlocked');
   };
   type SelectionCandidate = {
     selection: Selection;
@@ -9678,6 +9694,7 @@ export default function Home() {
     else if (command === 'distribute-vertical')
       distributeGroupLayers('vertical');
     else if (command === 'hide-layer') hideActiveLayer();
+    else if (command === 'lock-layers') lockLayers();
     else if (command === 'arrange-front') arrangeLayers('front');
     else if (command === 'arrange-forward') arrangeLayers('forward');
     else if (command === 'arrange-backward') arrangeLayers('backward');
@@ -9939,6 +9956,10 @@ export default function Home() {
           step.command.endsWith('layer-mask');
         if (quickMasking)
           throw new Error('Exit Quick Mask mode before replaying an action');
+        if (step.command === 'lock-layers') {
+          const plan = planLayerLock(f);
+          if (!plan.ok) throw new Error(layerLockReason(plan.reason));
+        }
         if (
           requiresLayer &&
           (!layer || layerIsLocked(f, layer) || !layer.visible)
@@ -10176,6 +10197,8 @@ export default function Home() {
         return !frame.selection;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
+      case 'lock-layers':
+        return !planLayerLock(frame).ok;
       case 'arrange-front':
         return !planLayerArrange(frame, 'front').ok;
       case 'arrange-forward':
