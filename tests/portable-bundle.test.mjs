@@ -82,6 +82,14 @@ test('v1 and v2 JSON project files remain importable through the v3 reader', asy
   assert.equal(reopened.history[0].layers[0].kind, 'raster');
 });
 
+test('mask refinement tools remain valid portable project settings', async () => {
+  for (const tool of ['mask-brush', 'mask-eraser']) {
+    const source = { ...draft(), settings: { ...settings, tool } };
+    const reopened = await readPortableBundle(await writePortableBundle(source));
+    assert.equal(reopened.settings.tool, tool);
+  }
+});
+
 test('reader rejects modified document and asset bytes', async () => {
   const original = await bytes(await createPortableProjectBundle(draft()));
   const modifiedDocument = replaceLocalData(original, PORTABLE_DOCUMENT_PATH, (copy, entry) => { copy[entry.dataStart] ^= 1; });
