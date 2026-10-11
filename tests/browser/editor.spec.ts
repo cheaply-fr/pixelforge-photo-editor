@@ -574,6 +574,16 @@ test('exact resizing and project file round-trip retain pixels, dimensions and u
   );
 });
 
+test('cancelling the project chooser leaves local edits untouched', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Document name').fill('Keep these edits');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Open project…', exact: true }).click();
+  await page.getByTestId('project-input').setInputFiles([]);
+  await expect(page.getByLabel('Document name')).toHaveValue('Keep these edits');
+});
+
 test('legacy v1 JSON projects remain importable beside v3 bundles', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
