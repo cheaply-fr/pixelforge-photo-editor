@@ -167,6 +167,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'select-all',
   'select-all-layers',
   'deselect-layers',
+  'lock-layers',
   'isolate-layers',
   'deselect',
   'invert-selection',
