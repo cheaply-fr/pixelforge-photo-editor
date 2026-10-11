@@ -574,6 +574,27 @@ test('exact resizing and project file round-trip retain pixels, dimensions and u
   );
 });
 
+test('legacy v1 JSON projects remain importable beside v3 bundles', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Document name').fill('Legacy source');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const path = await (await pending).path();
+  const source = await downloadedProject(path!);
+  const frame = source.history[source.index];
+  const raster = frame.layers.find((layer) => layer.kind === 'raster');
+  expect(raster?.kind).toBe('raster');
+  if (!raster || raster.kind !== 'raster') throw new Error('Legacy fixture has no raster layer');
+  const legacy = { version: 1, name: 'Imported legacy', index: 0, history: [{ url: source.assets[raster.asset].url, w: frame.w, h: frame.h }], settings: source.settings };
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Open project…', exact: true }).click();
+  await page.getByTestId('project-input').setInputFiles({ name: 'legacy.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(legacy)) });
+  await expect(page.getByLabel('Document name')).toHaveValue('Imported legacy');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', String(frame.w));
+});
+
 test('tampered v3 project imports fail closed and preserve the current draft', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
