@@ -50,6 +50,10 @@ import {
   type DraftBundleChunk,
 } from './draftBundle.ts';
 import { normalizeLayerSelection } from './layerSelection.ts';
+import {
+  normalizeDocumentMetadata,
+  type DocumentMetadata,
+} from './metadata.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -179,9 +183,17 @@ export type Draft = {
   index: number;
   name: string;
   settings: Settings;
+  /** Optional editable metadata retained in local/project JSON only. */
+  metadata?: DocumentMetadata;
   migrated?: true;
 };
 export const CURRENT_DRAFT_VERSION = 2 as const;
+
+/** Remove local-only File Info before a document is sent to a cloud API. */
+export function stripPrivateMetadata(value: Draft): Draft {
+  const { metadata: _metadata, ...cloudValue } = value;
+  return cloudValue;
+}
 
 /**
  * Cloud links are persisted in local drafts, but their values come from a
@@ -470,8 +482,16 @@ export function validateDraft(input: unknown): Draft {
     throw new Error('Invalid project revision');
   if (value.cloud !== undefined && !validCloudLink(value.cloud))
     throw new Error('Invalid cloud project link');
+  let metadata: DocumentMetadata | undefined;
+  if (value.metadata !== undefined) {
+    try {
+      metadata = normalizeDocumentMetadata(value.metadata);
+    } catch (error) {
+      throw new Error(`Invalid document metadata: ${error instanceof Error ? error.message : 'unsupported fields'}`);
+    }
+  }
   if (value.version !== CURRENT_DRAFT_VERSION)
-    return DRAFT_MIGRATIONS[value.version](value, settings as Settings);
+    return DRAFT_MIGRATIONS[value.version]({ ...value, metadata }, settings as Settings);
   if (
     value.version !== CURRENT_DRAFT_VERSION ||
     !value.assets ||
@@ -512,6 +532,9 @@ export function validateDraft(input: unknown): Draft {
     version: CURRENT_DRAFT_VERSION,
     history,
     settings: settings as Settings,
+    ...(metadata !== undefined
+      ? { metadata }
+      : {}),
     assets: referencedAssets(history, value.assets),
   };
 }
