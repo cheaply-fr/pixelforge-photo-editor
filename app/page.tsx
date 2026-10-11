@@ -6411,7 +6411,7 @@ export default function Home() {
       const editablePath = vectorMaskTarget?.path || (layer.kind === 'path' ? layer.path : undefined);
       if (layerIsLocked(f, layer) || !layer.visible || !editablePath) {
         setNotice(
-          'Select a visible, unlocked path or vector-mask layer before selecting nodes',
+          'Select a visible, unlocked path layer or vector-mask layer before selecting nodes',
         );
         return;
       }
