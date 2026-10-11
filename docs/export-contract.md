@@ -65,11 +65,11 @@ are decoded into an editable raster layer. PixelForge deliberately labels this
 as a **flattened raster import**: original EXIF/GPS metadata, camera RAW data,
 layer stacks and the source container are not retained in the document.
 
-HEIC/HEIF is a conditional import. When the current browser can decode the
-container, it is imported as the same flattened raster and the UI says so;
-when it cannot, the source draft remains untouched and the user is told to
-convert to PNG or JPEG. PSD/PSB and camera RAW extensions (including DNG,
-CR3, NEF and similar formats) are explicitly rejected at the import boundary
-with a develop/flatten-first message. PixelForge does not claim lossless
-HEIC, PSD or RAW round trips, and batch import uses the same labels in its
-per-file failure manifest.
+HEIC/HEIF and TIFF are conditional imports. When the current browser can
+decode the container, each is imported as the same flattened raster and the UI
+identifies the source format and the metadata loss; when it cannot, the source
+draft remains untouched and the user is told to convert to PNG or JPEG. PSD/PSB
+and camera RAW extensions (including DNG, CR3, NEF and similar formats) are
+explicitly rejected at the import boundary with a develop/flatten-first
+message. PixelForge does not claim lossless HEIC, TIFF, PSD or RAW round trips,
+and batch import uses the same labels in its per-file failure manifest.

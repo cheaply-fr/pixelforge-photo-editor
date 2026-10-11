@@ -132,3 +132,13 @@ test('batch decoding labels layered and camera formats before invoking browser d
     await assert.rejects(decodeBatchImage(source), /not supported yet|RAW/);
   }
 });
+
+test('batch decoding rejects unknown containers before invoking browser decoders', async () => {
+  await assert.rejects(
+    decodeBatchImage({
+      name: 'notes.bin',
+      file: blob([0, 1, 2], 'application/octet-stream'),
+    }),
+    /PNG, JPEG or WebP/,
+  );
+});

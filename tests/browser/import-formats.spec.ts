@@ -45,3 +45,30 @@ test('labels a browser-decoded HEIC source as flattened raster with metadata omi
   ).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
 });
+
+test('labels a browser-decoded TIFF source as conditional flattened raster import', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'scan.tiff',
+    // The bytes are a valid PNG fixture so this acceptance test exercises the
+    // browser decoder while the extension carries the TIFF capability label.
+    mimeType: 'image/png',
+    buffer: ONE_PIXEL_PNG,
+  });
+  await expect(
+    page.getByText('TIFF imported as a flattened raster; source metadata omitted', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
+});
+
+test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'scan.tif',
+    mimeType: 'image/tiff',
+    buffer: Buffer.from([0, 1, 2, 3, 4]),
+  });
+  await expect(
+    page.getByText('TIFF decoding is unavailable in this browser.', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');
+});

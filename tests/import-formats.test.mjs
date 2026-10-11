@@ -37,6 +37,32 @@ test('HEIC is conditional and discloses flattened raster import', () => {
   assert.match(importFailureMessage(byName), /Convert it to PNG or JPEG/);
 });
 
+test('TIFF is conditional and never claims a lossless container round trip', () => {
+  const byName = describeImportFormat('scan.TIF', 'application/octet-stream');
+  const byMime = describeImportFormat('scan.bin', 'image/x-tiff; charset=binary');
+  for (const info of [byName, byMime]) {
+    assert.deepEqual(
+      { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
+      { format: 'tiff', capability: 'conditional', tryDecode: true },
+    );
+    assert.match(info.disclosure, /browser decoder/);
+    assert.match(info.disclosure, /flattened editable raster/);
+  }
+  assert.match(importFailureMessage(byName), /^TIFF decoding is unavailable/);
+});
+
+test('format extension wins over a misleading browser MIME type', () => {
+  const psd = describeImportFormat('layer.psd', 'image/png');
+  const raw = describeImportFormat('camera.dng', 'image/jpeg');
+  const heic = describeImportFormat('photo.heic', 'image/png');
+  assert.equal(psd.format, 'psd');
+  assert.equal(psd.tryDecode, false);
+  assert.equal(raw.format, 'raw');
+  assert.equal(raw.tryDecode, false);
+  assert.equal(heic.format, 'heic');
+  assert.equal(heic.tryDecode, true);
+});
+
 test('ordinary browser raster sources are supported but explicitly flattened', () => {
   const info = describeImportFormat('portrait.jpeg', 'image/jpeg; charset=binary');
   assert.deepEqual(
