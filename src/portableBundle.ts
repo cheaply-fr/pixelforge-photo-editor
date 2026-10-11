@@ -196,7 +196,7 @@ function parseZip(input: Uint8Array): ZipEntry[] {
   const count = view.getUint16(end + 8, true), count2 = view.getUint16(end + 10, true);
   const centralSize = view.getUint32(end + 12, true), centralOffset = view.getUint32(end + 16, true);
   const commentLength = view.getUint16(end + 20, true);
-  if (disk !== 0 || centralDisk !== 0 || count !== count2 || count > PORTABLE_MAX_ENTRIES || end + 22 + commentLength !== input.byteLength || centralOffset + centralSize > end)
+  if (disk !== 0 || centralDisk !== 0 || count !== count2 || count > PORTABLE_MAX_ENTRIES || commentLength !== 0 || end + 22 !== input.byteLength || centralOffset + centralSize > end)
     throw new Error('Portable ZIP directory is invalid');
   const entries: ZipEntry[] = []; const names = new Set<string>(); let cursor = centralOffset;
   for (let index = 0; index < count; index += 1) {
@@ -204,7 +204,7 @@ function parseZip(input: Uint8Array): ZipEntry[] {
     const flags = view.getUint16(cursor + 8, true), method = view.getUint16(cursor + 10, true), compressed = view.getUint32(cursor + 20, true), uncompressed = view.getUint32(cursor + 24, true);
     const nameLength = view.getUint16(cursor + 28, true), extraLength = view.getUint16(cursor + 30, true), comment = view.getUint16(cursor + 32, true), localOffset = view.getUint32(cursor + 42, true);
     const nameStart = cursor + 46, next = nameStart + nameLength + extraLength + comment;
-    if (next > input.byteLength || (flags & 1) !== 0 || (flags & 8) !== 0 || method !== 0 || compressed !== uncompressed || !safePath(textDecoder.decode(input.subarray(nameStart, nameStart + nameLength))) || (flags & ~0x0800) !== 0)
+    if (next > input.byteLength || comment !== 0 || (flags & 1) !== 0 || (flags & 8) !== 0 || method !== 0 || compressed !== uncompressed || !safePath(textDecoder.decode(input.subarray(nameStart, nameStart + nameLength))) || (flags & ~0x0800) !== 0)
       throw new Error('Portable ZIP entry is compressed, encrypted or unsafe');
     const name = textDecoder.decode(input.subarray(nameStart, nameStart + nameLength));
     if (names.has(name) || localOffset + 30 > input.byteLength || view.getUint32(localOffset, true) !== ZIP_LOCAL_SIGNATURE)
