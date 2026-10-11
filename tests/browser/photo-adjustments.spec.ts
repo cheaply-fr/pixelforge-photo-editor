@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 type RGBA = [number, number, number, number];
@@ -45,12 +46,7 @@ async function project(page: Page): Promise<Project> {
     .getByRole('menuitem', { name: 'Download project file', exact: true })
     .click();
   const download = await pending;
-  return JSON.parse(
-    await (await import('node:fs/promises')).readFile(
-      (await download.path())!,
-      'utf8',
-    ),
-  ) as Project;
+  return await downloadedProject((await download.path())!) as Project;
 }
 
 const activeLayer = (value: Project) => value.history[value.index].layers.at(-1)!;

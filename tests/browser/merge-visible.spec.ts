@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { downloadedProject } from './project-file';
 
 async function project(page: Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -8,9 +9,7 @@ async function project(page: Page) {
     .click();
   const download = await pending;
   const path = await download.path();
-  return JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  ) as {
+  return await downloadedProject(path!) as {
     history: Array<{
       w: number;
       h: number;

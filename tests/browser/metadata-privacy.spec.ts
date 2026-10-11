@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { downloadedProject } from './project-file';
 import { readFile } from 'node:fs/promises';
 
 async function start(page: Page) {
@@ -22,7 +23,7 @@ async function downloadProject(page: Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  return JSON.parse(await readFile((await download.path())!, 'utf8')) as {
+  return await downloadedProject((await download.path())!) as {
     metadata?: { title: string; description: string; author: string };
     history: unknown[];
   };

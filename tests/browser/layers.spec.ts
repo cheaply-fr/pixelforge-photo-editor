@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 const png =
@@ -30,9 +31,7 @@ async function project(page: Page) {
   const path = await download.path();
   return {
     path: path!,
-    value: JSON.parse(
-      await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-    ),
+    value: await downloadedProject(path!),
   };
 }
 const pixels = async (page: Page) => {

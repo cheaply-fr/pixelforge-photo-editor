@@ -124,7 +124,7 @@ function stableAssetId(id: string): boolean {
 function safePath(name: string): boolean {
   return !!name && !name.startsWith('/') && !name.includes('\\') &&
     !name.split('/').some((part) => part === '' || part === '.' || part === '..') &&
-    !/[\u0000-\u001f\u007f]/.test(name);
+    !/\p{Cc}/u.test(name);
 }
 
 function crc32(data: Uint8Array): number {
@@ -277,7 +277,7 @@ export async function writePortableBundle(input: unknown): Promise<Blob> {
 /** Alias used by callers that prefer the project terminology. */
 export const createPortableProjectBundle = writePortableBundle;
 
-export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob | string | unknown): Promise<Draft> {
+export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob | string): Promise<Draft> {
   // v1/v2 JSON project files remain directly importable.
   if (typeof input === 'string') {
     try { return validateDraft(JSON.parse(input)); } catch { throw new Error('Invalid project file'); }

@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 const openEditor = async (page: Page) => {
@@ -13,7 +14,7 @@ const project = async (page: Page) => {
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
   const file = await download.path();
-  return JSON.parse(await (await import('node:fs/promises')).readFile(file!, 'utf8')) as {
+  return await downloadedProject(file!) as {
     settings: Record<string, unknown>;
     history: Array<{ layers: Array<{ kind: string; asset?: string }> }>;
     index: number;

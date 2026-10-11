@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect } from '@playwright/test';
 
 async function saved(page: import('@playwright/test').Page) {
@@ -13,9 +14,7 @@ async function project(page: import('@playwright/test').Page) {
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending,
     path = await download.path();
-  return JSON.parse(
-    await (await import('node:fs/promises')).readFile(path!, 'utf8'),
-  ) as {
+  return await downloadedProject(path!) as {
     history: Array<{
       layers: Array<Record<string, unknown>>;
       active: string;

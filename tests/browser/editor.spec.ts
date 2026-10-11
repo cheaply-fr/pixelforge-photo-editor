@@ -1,14 +1,9 @@
-import { readPortableBundle } from '../../src/portableBundle';
+import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 const additiveModifier: 'Meta' | 'Control' =
   process.platform === 'darwin' ? 'Meta' : 'Control';
-
-async function downloadedProject(path: string) {
-  const bytes = await (await import('node:fs/promises')).readFile(path);
-  return readPortableBundle(new Blob([bytes]));
-}
 
 async function project(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -18,7 +13,7 @@ async function project(page: import('@playwright/test').Page) {
     .click();
   const download = await pending;
   const path = await download.path();
-  return downloadedProject(path!);
+  return await downloadedProject(path!);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -592,7 +587,12 @@ test('legacy v1 JSON projects remain importable beside v3 bundles', async ({ pag
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const path = await (await pending).path();
-  const source = await downloadedProject(path!);
+  const source = await downloadedProject(path!) as {
+    history: Array<{ w: number; h: number; layers: Array<{ kind: string; asset: string }> }>;
+    index: number;
+    assets: Record<string, { url: string }>;
+    settings: Record<string, unknown>;
+  };
   const frame = source.history[source.index];
   const raster = frame.layers.find((layer) => layer.kind === 'raster');
   expect(raster?.kind).toBe('raster');

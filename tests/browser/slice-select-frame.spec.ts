@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 
 type Project = {
@@ -20,7 +21,7 @@ const downloadProject = async (page: import('@playwright/test').Page): Promise<P
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  return JSON.parse(await (await import('node:fs/promises')).readFile((await download.path())!, 'utf8')) as Project;
+  return await downloadedProject((await download.path())!) as Project;
 };
 
 test.beforeEach(async ({ page }) => setup(page));

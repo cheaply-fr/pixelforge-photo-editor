@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { downloadedProject } from './project-file';
 
 type Node = { x: number; y: number };
 type Path = {
@@ -48,7 +49,7 @@ const project = async (page: Page): Promise<Project> => {
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  return JSON.parse(await (await import('node:fs/promises')).readFile((await download.path())!, 'utf8')) as Project;
+  return await downloadedProject((await download.path())!) as Project;
 };
 
 const upload = async (page: Page, value: Project) => {

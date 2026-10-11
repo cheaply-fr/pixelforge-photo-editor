@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 type Asset = { url: string; w: number; h: number };
@@ -24,7 +25,7 @@ const project = async (page: Page): Promise<Project> => {
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const file = await (await pending).path();
-  return JSON.parse(await (await import('node:fs/promises')).readFile(file!, 'utf8')) as Project;
+  return await downloadedProject(file!) as Project;
 };
 
 const fixture = [

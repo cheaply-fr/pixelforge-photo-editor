@@ -1,6 +1,6 @@
 import { selectTool } from './tool-selection';
+import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
 
 const beforeEachEditor = async (page: Page) => {
   await page.route(
@@ -25,7 +25,7 @@ const project = async (page: Page) => {
     .click();
   const download = await pending;
   const path = await download.path();
-  return JSON.parse(await readFile(path!, 'utf8')) as {
+  return await downloadedProject(path!) as {
     history: Array<{
       w: number;
       h: number;
