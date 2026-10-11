@@ -155,6 +155,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-twirl',
   'filter-wave',
   'filter-clear-effect',
+  'filter-lens-flare',
   'rotate-left',
   'rotate-right',
   'flip-h',
