@@ -129,6 +129,15 @@ The new [`crop-slice-contract.md`](./crop-slice-contract.md) closes the geometry
 
 The current retouching increment adds bounded, nondestructive Spot Healing over an immutable raster asset. Its local median context-ring behavior, validation limits and semantic-removal boundary are documented in [`spot-healing-contract.md`](./spot-healing-contract.md), with pure and desktop/mobile undo, reload and source-identity coverage. Constrained **Content-Aware Fill** now operates only on an explicit selection, stores a layer-local mask asset and deterministic radius/opacity metadata, and keeps the source PNG plus alpha unchanged; see [`content-aware-cleanup-contract.md`](./content-aware-cleanup-contract.md). It does not detect objects or provide semantic/generative fill. The repeatable-workflow increment adds local allow-listed Action recipes: the recorder stores no pixels, credentials or network commands, caps recipes at 32 sets × 64 steps and 256 KB, and replays through the normal layer/lock/history guards. **Parameterized local Action batches now apply a recorded recipe to up to 64 selected images through a sequential, cancellable queue with per-file errors and a privacy-safe public manifest; unsupported editor-only commands fail explicitly per file.** See [`actions-contract.md`](./actions-contract.md); folder watchers, plugin APIs and synchronized cloud Actions remain staged.
 
+The Render increment now adds **Filter → Render → Picture Frame…**. It uses a
+bounded seeded inner-frame renderer with editable width, amount and seed,
+preserves source alpha and transparent RGB padding, and stores no generated
+pixels. The local approximation and its pure/desktop/mobile persistence,
+undo, source-safety and Action replay evidence are documented in
+[`picture-frame-effect-contract.md`](./picture-frame-effect-contract.md);
+named frame styles, foreground/background controls, texture/bevel simulation
+and geometric canvas expansion remain staged.
+
 The Pixelate increment now adds **Filter → Pixelate → Crystallize…**. It uses a
 seeded jittered cell layout, bounded cell size and editable amount metadata,
 preserving source assets, alpha and transparent-edge bytes. The local
