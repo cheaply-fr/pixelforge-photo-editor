@@ -31,6 +31,7 @@ export const FILTER_EFFECT_TYPES = [
   'color-halftone',
   'mezzotint',
   'pointillize',
+  'picture-frame',
   'difference-clouds',
   'lens-correction',
   'displace',
@@ -2065,6 +2066,62 @@ function applyPointillize(
 }
 
 /**
+ * Apply a bounded deterministic Picture Frame approximation.
+ *
+ * Photoshop's Render > Picture Frame exposes a larger set of frame styles
+ * and foreground/background colour controls. PixelForge keeps this local
+ * slice deliberately small: a seeded dark frame is composited inside the
+ * existing canvas bounds, with width and opacity stored as editable metadata.
+ * Only already-visible source pixels are touched, so alpha and transparent
+ * RGB padding remain source-owned.
+ */
+function applyPictureFrame(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const thickness = Math.max(1, Math.min(64, Math.round(effect.radius)));
+  const seed = effect.seed >>> 0;
+  // Derive a stable, restrained colour from the seed. A frame is intentionally
+  // darker than a neutral canvas, while changing the seed still gives users a
+  // reproducible variation without persisting generated pixels.
+  let hash = (Math.imul(seed ^ 0x9e3779b9, 1664525) + 1013904223) >>> 0;
+  hash = Math.imul(hash ^ (hash >>> 16), 2246822519) >>> 0;
+  const frameColor: [number, number, number] = [
+    20 + ((hash >>> 16) & 0x3f),
+    26 + ((hash >>> 8) & 0x3f),
+    36 + (hash & 0x5f),
+  ];
+  const highlight: [number, number, number] = [
+    Math.min(255, frameColor[0] + 34),
+    Math.min(255, frameColor[1] + 34),
+    Math.min(255, frameColor[2] + 40),
+  ];
+  const innerBand = Math.max(1, Math.round(thickness * 0.12));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      const distance = Math.min(x, y, width - 1 - x, height - 1 - y);
+      if (distance >= thickness) continue;
+      const edgeDistance = thickness - 1 - distance;
+      // A narrow highlight on the inside edge gives the frame a readable
+      // bevel, while the broad outer band remains a deterministic solid fill.
+      const color = edgeDistance < innerBand ? highlight : frameColor;
+      const edgeStrength = strength * clamp(1 - distance / Math.max(1, thickness), 0, 1);
+      output[destination] = clampByte(source[destination] * (1 - edgeStrength) + color[0] * edgeStrength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - edgeStrength) + color[1] * edgeStrength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - edgeStrength) + color[2] * edgeStrength);
+      output[destination + 3] = alpha;
+    }
+  }
+}
+
+/**
  * Apply a bounded, seeded approximation of Photoshop Lens Flare.
  *
  * The renderer adds a soft source-aligned glow, a narrow star streak and a
@@ -2341,6 +2398,8 @@ export function applyFilterEffectsPixels(
     applyDisplace(data, width, height, effect, output);
   } else if (effect.type === 'pointillize') {
     applyPointillize(data, width, height, effect, output);
+  } else if (effect.type === 'picture-frame') {
+    applyPictureFrame(data, width, height, effect, output, strength);
   } else if (effect.type === 'difference-clouds') {
     applyDifferenceClouds(data, width, height, effect, output, strength);
   } else if (effect.type === 'flame') {

@@ -115,6 +115,25 @@ test('records and replays the Pointillize Pixelate command', async ({ page }) =>
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('pointillize');
 });
 
+test('records and replays the Picture Frame Render command', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Frame finish');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Picture Frame…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('picture-frame');
+
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Frame finish', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 step', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Run', exact: true }).click();
+  await expect(page.locator('footer > span').first()).toContainText('replayed');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('picture-frame');
+});
+
 test('records and replays the Difference Clouds Render command', async ({ page }) => {
   await openActions(page);
   await page.getByLabel('Recipe name').fill('Difference clouds finish');
