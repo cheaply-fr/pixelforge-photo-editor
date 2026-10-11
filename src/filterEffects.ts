@@ -7,6 +7,8 @@
  * filter remains editable and source assets remain immutable.
  */
 
+import { deinterlacePixels, effectiveDeinterlaceSettings, validDeinterlaceSettings, type DeinterlaceSettings } from './deinterlace.ts';
+
 export const FILTER_EFFECT_TYPES = [
   'none',
   'average-blur',
@@ -47,6 +49,7 @@ export const FILTER_EFFECT_TYPES = [
   'zigzag',
   'lens-flare',
   'flame',
+  'deinterlace',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -165,6 +168,7 @@ export type FilterEffects = {
   mezzotint?: MezzotintSettings;
   /** Editable warp geometry for the seeded Fibers Render effect. */
   fibers?: FibersSettings;
+  deinterlace?: DeinterlaceSettings;
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -276,6 +280,7 @@ export function effectiveFilterEffects(
       variance: finite(variance) ? clamp(Math.round(variance), 1, 64) : DEFAULT_FIBERS_SETTINGS.variance,
     };
   }
+  if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
 
@@ -345,6 +350,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.colorHalftone === undefined || validColorHalftoneSettings(effect.colorHalftone)) &&
     (effect.mezzotint === undefined || validMezzotintSettings(effect.mezzotint)) &&
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
+    (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -379,7 +385,8 @@ export function isNeutralFilterEffects(
     (effect.type === 'twirl' && effect.angle === 0) ||
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.radius === 0) ||
+    (effect.type === 'deinterlace' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -2458,6 +2465,8 @@ export function applyFilterEffectsPixels(
   validateDimensions(data, width, height);
   const effect = effectiveFilterEffects(value);
   if (isNeutralFilterEffects(effect)) return new Uint8ClampedArray(data);
+  if (effect.type === 'deinterlace')
+    return deinterlacePixels(data, width, height, effectiveDeinterlaceSettings(effect.deinterlace), effect.amount);
   const output = new Uint8ClampedArray(data);
   const strength = effect.amount / 100;
   if (effect.type === 'average-blur') {
@@ -2571,6 +2580,7 @@ export function applyFilterEffectsPixels(
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
+
   } else {
     applyDistort(data, width, height, effect, output);
   }

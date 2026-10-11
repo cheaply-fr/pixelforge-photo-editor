@@ -160,6 +160,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-clear-effect',
   'filter-lens-flare',
   'filter-flame',
+  'filter-deinterlace',
   'rotate-left',
   'rotate-right',
   'flip-h',

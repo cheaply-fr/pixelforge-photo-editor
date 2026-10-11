@@ -60,6 +60,7 @@ import {
   type Settings,
 } from '../src/drafts';
 import { readPortableBundle, writePortableBundle } from '../src/portableBundle';
+import { DEFAULT_DEINTERLACE_SETTINGS } from '../src/deinterlace';
 import {
   useMember,
   openCloudProject,
@@ -558,6 +559,7 @@ type Command =
   | 'filter-shear'
   | 'filter-zigzag'
   | 'filter-flame'
+  | 'filter-deinterlace'
   | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
@@ -1027,7 +1029,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Unsharp Mask…', command: 'sharpen-noise' },
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Video', command: 'noop', disabled: true },
-    { label: 'De-Interlace…', command: 'noop', disabled: true },
+    { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
     { label: 'Clear local filter effect', command: 'filter-clear-effect' },
@@ -4067,11 +4069,12 @@ export default function Home() {
                 ...(type === 'mezzotint' ? {
                   mezzotint: { ...DEFAULT_MEZZOTINT_SETTINGS },
                 } : {}),
+                ...(type === 'deinterlace' ? { deinterlace: { ...DEFAULT_DEINTERLACE_SETTINGS } } : {}),
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
                 amount:
-                  type === 'fragment'
+                  type === 'fragment' || type === 'deinterlace'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -4085,6 +4088,8 @@ export default function Home() {
                       : 70,
                 radius:
                   type === 'fragment'
+                    ? 1
+                    : type === 'deinterlace'
                     ? 1
                     : type === 'picture-frame'
                     ? 12
@@ -9869,6 +9874,8 @@ export default function Home() {
       chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
     else if (command === 'filter-flame')
       chooseFilterEffect('flame', 'Flame (local approximation)');
+    else if (command === 'filter-deinterlace')
+      chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-lens-flare')
@@ -10135,6 +10142,7 @@ export default function Home() {
       case 'filter-fibers':
       case 'filter-difference-clouds':
       case 'filter-flame':
+      case 'filter-deinterlace':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
@@ -12449,6 +12457,27 @@ export default function Home() {
             {filterEffects.type === 'lens-flare' && (
               <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
             )}
+            {filterEffects.type === 'deinterlace' && (
+              <>
+                <p>Reconstruct alternating rows from one field. Source transparency is preserved. Single-frame processing cannot recover motion between fields.</p>
+                <label>
+                  Keep field
+                  <select className="text-input" aria-label="De-interlace field" value={filterEffects.deinterlace?.keep ?? 'first'}
+                    onChange={(event) => setFilterEffects({ deinterlace: { ...(filterEffects.deinterlace ?? DEFAULT_DEINTERLACE_SETTINGS), keep: event.target.value === 'second' ? 'second' : 'first' } })}>
+                    <option value="first">First field (rows 1, 3, 5…)</option>
+                    <option value="second">Second field (rows 2, 4, 6…)</option>
+                  </select>
+                </label>
+                <label>
+                  Reconstruct rows
+                  <select className="text-input" aria-label="De-interlace method" value={filterEffects.deinterlace?.method ?? 'interpolate'}
+                    onChange={(event) => setFilterEffects({ deinterlace: { ...(filterEffects.deinterlace ?? DEFAULT_DEINTERLACE_SETTINGS), method: event.target.value === 'duplicate' ? 'duplicate' : 'interpolate' } })}>
+                    <option value="interpolate">Interpolate adjacent rows</option>
+                    <option value="duplicate">Duplicate nearest upper row</option>
+                  </select>
+                </label>
+              </>
+            )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
@@ -12470,7 +12499,7 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                <Slider
+                {filterEffects.type !== 'deinterlace' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
@@ -12535,7 +12564,7 @@ export default function Home() {
                       ? '°'
                       : ' px'
                   }
-                />
+                />}
                 {filterEffects.type === 'twirl' && (
                   <Slider
                     label="Twirl angle"
