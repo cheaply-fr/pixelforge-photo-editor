@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { downloadedProject } from './project-file';
 
 async function lockMenu(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
@@ -10,7 +11,7 @@ async function project(page: import('@playwright/test').Page) {
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const path = await (await pending).path();
-  return { path: path!, value: JSON.parse(await (await import('node:fs/promises')).readFile(path!, 'utf8')) };
+  return { path: path!, value: await downloadedProject(path!) };
 }
 
 async function pixels(page: import('@playwright/test').Page) {
