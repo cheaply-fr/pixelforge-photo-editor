@@ -7,6 +7,8 @@
  * filter remains editable and source assets remain immutable.
  */
 
+import { deinterlacePixels, effectiveDeinterlaceSettings, validDeinterlaceSettings, type DeinterlaceSettings } from './deinterlace.ts';
+
 export const FILTER_EFFECT_TYPES = [
   'none',
   'average-blur',
@@ -166,6 +168,7 @@ export type FilterEffects = {
   mezzotint?: MezzotintSettings;
   /** Editable warp geometry for the seeded Fibers Render effect. */
   fibers?: FibersSettings;
+  deinterlace?: DeinterlaceSettings;
 };
 
 export const neutralFilterEffects: FilterEffects = {
@@ -277,6 +280,7 @@ export function effectiveFilterEffects(
       variance: finite(variance) ? clamp(Math.round(variance), 1, 64) : DEFAULT_FIBERS_SETTINGS.variance,
     };
   }
+  if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
 
@@ -346,6 +350,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.colorHalftone === undefined || validColorHalftoneSettings(effect.colorHalftone)) &&
     (effect.mezzotint === undefined || validMezzotintSettings(effect.mezzotint)) &&
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
+    (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -380,7 +385,8 @@ export function isNeutralFilterEffects(
     (effect.type === 'twirl' && effect.angle === 0) ||
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.radius === 0) ||
+    (effect.type === 'deinterlace' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -2450,40 +2456,6 @@ function applyTiltShift(
   });
 }
 
-/**
- * De-interlace an alternating-line raster with a bounded local field blend.
- * Even lines remain source-owned; odd lines are reconstructed from matching
- * pixels above and below them. Alpha stays byte-for-byte source-owned and
- * transparent RGB is never sampled into visible pixels.
- */
-function applyDeinterlace(
-  source: Uint8ClampedArray,
-  width: number,
-  height: number,
-  radius: number,
-  output: Uint8ClampedArray,
-  strength: number,
-): void {
-  const distance = Math.max(1, Math.min(8, Math.round(radius)));
-  for (let y = 1; y < height - 1; y += 2) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const top = sourcePixel(source, width, height, x, y - distance);
-      const bottom = sourcePixel(source, width, height, x, y + distance);
-      const samples = [top, bottom].filter((sample) => sample[3] > 0);
-      if (samples.length === 0) continue;
-      const reconstructed: [number, number, number, number] = [
-        samples.reduce((sum, sample) => sum + sample[0], 0) / samples.length,
-        samples.reduce((sum, sample) => sum + sample[1], 0) / samples.length,
-        samples.reduce((sum, sample) => sum + sample[2], 0) / samples.length,
-        source[destination + 3],
-      ];
-      blendPixel(output, destination, reconstructed, strength);
-    }
-  }
-}
-
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -2493,6 +2465,8 @@ export function applyFilterEffectsPixels(
   validateDimensions(data, width, height);
   const effect = effectiveFilterEffects(value);
   if (isNeutralFilterEffects(effect)) return new Uint8ClampedArray(data);
+  if (effect.type === 'deinterlace')
+    return deinterlacePixels(data, width, height, effectiveDeinterlaceSettings(effect.deinterlace), effect.amount);
   const output = new Uint8ClampedArray(data);
   const strength = effect.amount / 100;
   if (effect.type === 'average-blur') {
@@ -2606,8 +2580,7 @@ export function applyFilterEffectsPixels(
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
-  } else if (effect.type === 'deinterlace') {
-    applyDeinterlace(data, width, height, effect.radius, output, strength);
+
   } else {
     applyDistort(data, width, height, effect, output);
   }

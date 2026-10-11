@@ -36,6 +36,53 @@ test('linear shear follows the signed inverse map and retains the centre row', (
   assert.deepEqual(source, original);
 });
 
+test('De-Interlace supports both field parity choices and interpolation', () => {
+  const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
+  const first = applyFilterEffectsPixels(source, 2, 5, {
+    type: 'deinterlace', amount: 100, radius: 1,
+    deinterlace: { keep: 'first', method: 'interpolate' },
+  });
+  // Rows 0, 2 and 4 are retained; row 1 is reconstructed halfway between 0 and 2.
+  assert.deepEqual(pixel(first, 2, 1, 0), pixel(source, 2, 1, 0));
+  assert.deepEqual(pixel(first, 2, 1, 1), [41, 20, 90, 255]);
+  assert.deepEqual(pixel(first, 2, 1, 2), pixel(source, 2, 1, 2));
+
+  const second = applyFilterEffectsPixels(source, 2, 5, {
+    type: 'deinterlace', amount: 100, radius: 1,
+    deinterlace: { keep: 'second', method: 'interpolate' },
+  });
+  // Row 0 is reconstructed from the sole adjacent retained row and rows 1, 3 stay source-owned.
+  assert.deepEqual(pixel(second, 2, 1, 0), pixel(source, 2, 1, 1));
+  assert.deepEqual(pixel(second, 2, 1, 1), pixel(source, 2, 1, 1));
+  assert.deepEqual(pixel(second, 2, 1, 3), pixel(source, 2, 1, 3));
+});
+
+test('De-Interlace duplication, amount blending, transparency and metadata validation are deterministic', () => {
+  const source = rgba(1, 4, (_, y) => y === 0 ? [220, 10, 30, 255] : y === 1 ? [30, 220, 40, 255] : y === 2 ? [10, 20, 230, 255] : [40, 50, 60, 0]);
+  const original = source.slice();
+  const duplicate = applyFilterEffectsPixels(source, 1, 4, {
+    type: 'deinterlace', amount: 100, radius: 1,
+    deinterlace: { keep: 'first', method: 'duplicate' },
+  });
+  assert.deepEqual(pixel(duplicate, 1, 0, 1), pixel(source, 1, 0, 0));
+  assert.deepEqual(pixel(duplicate, 1, 0, 3), pixel(source, 1, 0, 3));
+  assert.deepEqual(source, original);
+  const half = applyFilterEffectsPixels(source, 1, 4, {
+    type: 'deinterlace', amount: 50, radius: 1,
+    deinterlace: { keep: 'first', method: 'duplicate' },
+  });
+  assert.deepEqual(pixel(half, 1, 0, 1), [125, 115, 35, 255]);
+  assert.deepEqual(pixel(half, 1, 0, 3), [40, 50, 60, 0]);
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    type: 'deinterlace', amount: 100, radius: 1,
+    deinterlace: { keep: 'second', method: 'duplicate' },
+  })), true);
+  assert.equal(validFilterEffects({
+    type: 'deinterlace', amount: 100, radius: 1,
+    deinterlace: { keep: 'invalid', method: 'interpolate' },
+  }), false);
+});
+
 test('linear shear interpolates fractional shifts and clamps image edges', () => {
   const source = rgba(9, 5, (x) => [x * 20, 0, 0, 255]);
   const output = applyFilterEffectsPixels(source, 9, 5, {

@@ -471,6 +471,8 @@ test('De-Interlace reconstructs alternating fields without baking the source', a
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('menuitem', { name: 'De-Interlace…', exact: true }).click();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('deinterlace');
+  await expect(page.getByLabel('De-interlace field', { exact: true })).toHaveValue('first');
+  await expect(page.getByLabel('De-interlace method', { exact: true })).toHaveValue('interpolate');
   await expect.poll(() => pixel(page, 4, 3)).not.toEqual(originalOdd);
   expect(await pixel(page, 4, 2)).toEqual(originalEven);
   expect((await pixel(page, 0, 0))[3]).toBe(0);
@@ -478,12 +480,22 @@ test('De-Interlace reconstructs alternating fields without baking the source', a
   const layer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(layer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
-  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'deinterlace', amount: 100, radius: 1 });
+  expect(layer.adjustments.filterEffects).toMatchObject({
+    type: 'deinterlace', amount: 100, radius: 1,
+    deinterlace: { keep: 'first', method: 'interpolate' },
+  });
   const changed = await pixel(page, 4, 3);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('deinterlace');
   await expect.poll(() => pixel(page, 4, 3)).toEqual(changed);
+  await page.getByLabel('De-interlace field', { exact: true }).selectOption('second');
+  await page.getByLabel('De-interlace method', { exact: true }).selectOption('duplicate');
+  const alternate = await pixel(page, 4, 0);
+  expect(alternate).toEqual(await pixel(page, 4, 1));
+  const alternateProject = await downloadProject(page);
+  expect(alternateProject.history[alternateProject.index].layers.at(-1)?.adjustments.filterEffects)
+    .toMatchObject({ deinterlace: { keep: 'second', method: 'duplicate' } });
   await openProject(page, adjusted);
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('deinterlace');
   await expect.poll(() => pixel(page, 4, 3)).toEqual(changed);
