@@ -276,7 +276,8 @@ export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob 
     try { return validateDraft(JSON.parse(input)); } catch { throw new Error('Invalid project file'); }
   }
   if (isRecord(input) && !(input instanceof Blob) && !(input instanceof Uint8Array) && !(input instanceof ArrayBuffer)) return validateDraft(input);
-  const bytes = await asBytes(input as Uint8Array | ArrayBuffer | Blob);
+  if (!(input instanceof Blob) && !(input instanceof Uint8Array) && !(input instanceof ArrayBuffer)) throw new Error('Portable bundle input is invalid');
+  const bytes = await asBytes(input);
   const entries = parseZip(bytes);
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
   if (byName.size !== entries.length || !byName.has(PORTABLE_MANIFEST_PATH) || !byName.has(PORTABLE_DOCUMENT_PATH)) throw new Error('Portable bundle is missing manifest or document');
