@@ -6,7 +6,8 @@
  * assets/<stable-id>.png.  This keeps imports deterministic and avoids a
  * decompression or archive filesystem dependency in the browser.
  */
-import { validateDraft, type Asset, type Assets, type Draft } from './drafts.ts';
+import { validateDraft, type Draft } from './drafts.ts';
+import type { Asset, Assets } from './document.ts';
 
 export const PORTABLE_BUNDLE_KIND = 'pixelforge-project' as const;
 export const PORTABLE_BUNDLE_VERSION = 3 as const;
@@ -64,7 +65,7 @@ function copyBytes(value: Uint8Array): Uint8Array {
 async function sha256(bytes: Uint8Array): Promise<string> {
   if (!globalThis.crypto?.subtle) throw new Error('Portable bundle integrity is unavailable');
   const copy = copyBytes(bytes);
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', copy.buffer);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', copy.buffer as ArrayBuffer);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -223,10 +224,16 @@ function parseZip(input: Uint8Array): ZipEntry[] {
 }
 
 export function isPortableBundleManifest(value: unknown): value is PortableBundleManifest {
-  if (!isRecord(value) || value.kind !== PORTABLE_BUNDLE_KIND || value.version !== PORTABLE_BUNDLE_VERSION || value.document !== PORTABLE_DOCUMENT_PATH || !Array.isArray(value.assets)) return false;
-  if (value.assets.length > PORTABLE_MAX_ASSETS || typeof value.documentSha256 !== 'string' || !SHA256_PATTERN.test(value.documentSha256) || !Number.isInteger(value.documentByteLength) || value.documentByteLength < 1 || value.documentByteLength > PORTABLE_MAX_JSON_BYTES || !Number.isInteger(value.archiveByteLength) || value.archiveByteLength < 1 || value.archiveByteLength > PORTABLE_MAX_BYTES) return false;
+  if (!isRecord(value)) return false;
+  const candidate = value as Partial<PortableBundleManifest>;
+  if (candidate.kind !== PORTABLE_BUNDLE_KIND || candidate.version !== PORTABLE_BUNDLE_VERSION || candidate.document !== PORTABLE_DOCUMENT_PATH || !Array.isArray(candidate.assets)) return false;
+  if (candidate.assets.length > PORTABLE_MAX_ASSETS || typeof candidate.documentSha256 !== 'string' || !SHA256_PATTERN.test(candidate.documentSha256) || typeof candidate.documentByteLength !== 'number' || !Number.isInteger(candidate.documentByteLength) || candidate.documentByteLength < 1 || candidate.documentByteLength > PORTABLE_MAX_JSON_BYTES || typeof candidate.archiveByteLength !== 'number' || !Number.isInteger(candidate.archiveByteLength) || candidate.archiveByteLength < 1 || candidate.archiveByteLength > PORTABLE_MAX_BYTES) return false;
   const paths = new Set<string>();
-  return value.assets.every((asset) => isRecord(asset) && typeof asset.id === 'string' && stableAssetId(asset.id) && asset.path === `${PORTABLE_ASSET_PREFIX}${asset.id}.png` && !paths.has(asset.path) && paths.add(asset.path) && typeof asset.sha256 === 'string' && SHA256_PATTERN.test(asset.sha256) && Number.isInteger(asset.byteLength) && asset.byteLength > 0 && asset.byteLength <= PORTABLE_MAX_ASSET_BYTES && Number.isInteger(asset.w) && Number.isInteger(asset.h) && asset.w >= 1 && asset.h >= 1 && asset.w <= 16000 && asset.h <= 16000 && asset.w * asset.h <= 16000000);
+  return candidate.assets.every((value) => {
+    if (!isRecord(value)) return false;
+    const asset = value as Partial<PortableAssetManifest>;
+    return typeof asset.id === 'string' && stableAssetId(asset.id) && asset.path === `${PORTABLE_ASSET_PREFIX}${asset.id}.png` && !paths.has(asset.path) && paths.add(asset.path) && typeof asset.sha256 === 'string' && SHA256_PATTERN.test(asset.sha256) && typeof asset.byteLength === 'number' && Number.isInteger(asset.byteLength) && asset.byteLength > 0 && asset.byteLength <= PORTABLE_MAX_ASSET_BYTES && typeof asset.w === 'number' && typeof asset.h === 'number' && Number.isInteger(asset.w) && Number.isInteger(asset.h) && asset.w >= 1 && asset.h >= 1 && asset.w <= 16000 && asset.h <= 16000 && asset.w * asset.h <= 16000000;
+  });
 }
 
 function portableDocument(value: Draft): PortableDocument {
@@ -255,7 +262,7 @@ export async function writePortableBundle(input: unknown): Promise<Blob> {
   // The manifest carries the archive length. Its decimal digits affect the
   // archive length, so converge the small fixed point before returning bytes.
   let archiveByteLength = 0;
-  let finalArchive = new Uint8Array();
+  let finalArchive: Uint8Array<ArrayBufferLike> = new Uint8Array();
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const manifest = jsonBytes({ ...manifestWithoutSize, archiveByteLength });
     finalArchive = makeZip([{ name: PORTABLE_MANIFEST_PATH, data: manifest }, { name: PORTABLE_DOCUMENT_PATH, data: documentBytes }, ...files]);
@@ -264,7 +271,7 @@ export async function writePortableBundle(input: unknown): Promise<Blob> {
   }
   if (finalArchive.byteLength !== archiveByteLength) throw new Error('Portable archive length could not be stabilized');
   if (finalArchive.byteLength > PORTABLE_MAX_BYTES) throw new Error('Portable bundle exceeds 64 MiB');
-  return new Blob([finalArchive], { type: 'application/zip' });
+  return new Blob([finalArchive.slice().buffer as ArrayBuffer], { type: 'application/zip' });
 }
 
 /** Alias used by callers that prefer the project terminology. */

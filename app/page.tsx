@@ -59,6 +59,7 @@ import {
   type Draft,
   type Settings,
 } from '../src/drafts';
+import { readPortableBundle, writePortableBundle } from '../src/portableBundle';
 import {
   useMember,
   openCloudProject,
@@ -4396,16 +4397,19 @@ export default function Home() {
       setCloudBusy(false);
     }
   };
-  const exportProject = () => {
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(documentValue())], { type: 'application/json' }),
-    );
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = (name || 'untitled') + '.pixelforge';
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNotice('Editable project file downloaded');
+  const exportProject = async () => {
+    try {
+      const blob = await writePortableBundle(documentValue());
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = (name || 'untitled') + '.pixelforge';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice('Editable project file downloaded');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Project could not be downloaded');
+    }
   };
   const importProject = async (selected?: File) => {
     if (!selected) return;
@@ -4413,7 +4417,9 @@ export default function Home() {
     try {
       if (selected.size > 64 * 1024 * 1024)
         throw new Error('Project file exceeds 64 MB');
-      const saved = validateDraft(JSON.parse(await selected.text()));
+      const saved = selected.type === 'application/json' || selected.name.toLowerCase().endsWith('.json')
+        ? validateDraft(JSON.parse(await selected.text()))
+        : await readPortableBundle(selected);
       if (current() !== expected)
         throw new Error('Document changed during import. Please try again.');
       await install(saved);
@@ -9348,7 +9354,7 @@ export default function Home() {
       }
       if (quickMasking && command) {
         e.preventDefault();
-        if (e.key.toLowerCase() === 's' && e.shiftKey) exportProject();
+        if (e.key.toLowerCase() === 's' && e.shiftKey) void exportProject();
         else setNotice('Exit Quick Mask mode before changing the document');
         return;
       }
@@ -9390,7 +9396,7 @@ export default function Home() {
         }
         if (k === 'y') redo();
         if (k === 's') {
-          if (e.shiftKey) exportProject();
+          if (e.shiftKey) void exportProject();
           else download();
         }
         if (k === 'o') openFile();
@@ -9524,7 +9530,7 @@ export default function Home() {
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') return revealAll();
-    else if (command === 'project-save') exportProject();
+    else if (command === 'project-save') void exportProject();
     else if (command === 'file-info') setFileInfoOpen(true);
     else if (command === 'batch-export')
       setBatchExporting({
