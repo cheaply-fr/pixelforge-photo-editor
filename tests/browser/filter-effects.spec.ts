@@ -36,6 +36,32 @@ async function importPixels(page: Page) {
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
 }
 
+async function importInterlacedPixels(page: Page) {
+  const encoded = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 9;
+    canvas.height = 5;
+    const context = canvas.getContext('2d')!;
+    const data = context.createImageData(9, 5);
+    for (let y = 0; y < 5; y += 1)
+      for (let x = 0; x < 9; x += 1) {
+        const offset = (y * 9 + x) * 4;
+        data.data[offset] = y === 3 ? 240 : y * 20 + x;
+        data.data[offset + 1] = y * 10;
+        data.data[offset + 2] = 80;
+        data.data[offset + 3] = x === 0 && y === 0 ? 0 : 255;
+      }
+    context.putImageData(data, 0, 0);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'interlaced-fixture.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(encoded, 'base64'),
+  });
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+}
+
 async function downloadProject(page: Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   const pending = page.waitForEvent('download');
@@ -433,6 +459,38 @@ test('Color Halftone exposes CMYK screen controls and round-trips nondestructive
   }
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() => pixels(page)).toEqual(original);
+});
+
+test('De-Interlace reconstructs alternating fields without baking the source', async ({ page }) => {
+  await importInterlacedPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const originalOdd = await pixel(page, 4, 3);
+  const originalEven = await pixel(page, 4, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'De-Interlace…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('deinterlace');
+  await expect.poll(() => pixel(page, 4, 3)).not.toEqual(originalOdd);
+  expect(await pixel(page, 4, 2)).toEqual(originalEven);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'deinterlace', amount: 100, radius: 1 });
+  const changed = await pixel(page, 4, 3);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('deinterlace');
+  await expect.poll(() => pixel(page, 4, 3)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('deinterlace');
+  await expect.poll(() => pixel(page, 4, 3)).toEqual(changed);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+  await expect.poll(() => pixel(page, 4, 3)).toEqual(originalOdd);
 });
 
 test('Lens Correction is enabled, editable and round-trips nondestructively', async ({ page }) => {

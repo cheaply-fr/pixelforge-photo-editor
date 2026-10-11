@@ -558,6 +558,7 @@ type Command =
   | 'filter-shear'
   | 'filter-zigzag'
   | 'filter-flame'
+  | 'filter-deinterlace'
   | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
@@ -1027,7 +1028,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Unsharp Mask…', command: 'sharpen-noise' },
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Video', command: 'noop', disabled: true },
-    { label: 'De-Interlace…', command: 'noop', disabled: true },
+    { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
     { label: 'Clear local filter effect', command: 'filter-clear-effect' },
@@ -4071,7 +4072,7 @@ export default function Home() {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
                 amount:
-                  type === 'fragment'
+                  type === 'fragment' || type === 'deinterlace'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -4085,6 +4086,8 @@ export default function Home() {
                       : 70,
                 radius:
                   type === 'fragment'
+                    ? 1
+                    : type === 'deinterlace'
                     ? 1
                     : type === 'picture-frame'
                     ? 12
@@ -9869,6 +9872,8 @@ export default function Home() {
       chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
     else if (command === 'filter-flame')
       chooseFilterEffect('flame', 'Flame (local approximation)');
+    else if (command === 'filter-deinterlace')
+      chooseFilterEffect('deinterlace', 'De-Interlace (local field blend)');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-lens-flare')
@@ -10135,6 +10140,7 @@ export default function Home() {
       case 'filter-fibers':
       case 'filter-difference-clouds':
       case 'filter-flame':
+      case 'filter-deinterlace':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':

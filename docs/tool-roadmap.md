@@ -224,6 +224,12 @@ Editable local solid-color layers are active. The source color is stored as vali
 
 Ripple is active as a bounded radial displacement with editable centre/radius metadata, premultiplied-alpha bilinear sampling, source retention and desktop/mobile acceptance; see [`ripple-effect-contract.md`](./ripple-effect-contract.md).
 
+The active filter increment now adds **Filter → Video → De-Interlace…** as a
+bounded local alternating-field reconstruction with source-safe alpha,
+editable metadata and desktop/mobile round-trip evidence. NTSC Colors remains
+staged behind an explicit colour-space contract; see
+[`deinterlace-effect-contract.md`](./deinterlace-effect-contract.md).
+
 The Render increment now adds **Filter → Render → Lens Flare…** as a bounded
 seeded local glow, star streak and ghost-ring approximation. Brightness, size,
 centre, streak angle and seed remain editable metadata and the renderer keeps

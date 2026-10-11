@@ -47,6 +47,7 @@ export const FILTER_EFFECT_TYPES = [
   'zigzag',
   'lens-flare',
   'flame',
+  'deinterlace',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -2449,6 +2450,40 @@ function applyTiltShift(
   });
 }
 
+/**
+ * De-interlace an alternating-line raster with a bounded local field blend.
+ * Even lines remain source-owned; odd lines are reconstructed from matching
+ * pixels above and below them. Alpha stays byte-for-byte source-owned and
+ * transparent RGB is never sampled into visible pixels.
+ */
+function applyDeinterlace(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const distance = Math.max(1, Math.min(8, Math.round(radius)));
+  for (let y = 1; y < height - 1; y += 2) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      const top = sourcePixel(source, width, height, x, y - distance);
+      const bottom = sourcePixel(source, width, height, x, y + distance);
+      const samples = [top, bottom].filter((sample) => sample[3] > 0);
+      if (samples.length === 0) continue;
+      const reconstructed: [number, number, number, number] = [
+        samples.reduce((sum, sample) => sum + sample[0], 0) / samples.length,
+        samples.reduce((sum, sample) => sum + sample[1], 0) / samples.length,
+        samples.reduce((sum, sample) => sum + sample[2], 0) / samples.length,
+        source[destination + 3],
+      ];
+      blendPixel(output, destination, reconstructed, strength);
+    }
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -2571,6 +2606,8 @@ export function applyFilterEffectsPixels(
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
+  } else if (effect.type === 'deinterlace') {
+    applyDeinterlace(data, width, height, effect.radius, output, strength);
   } else {
     applyDistort(data, width, height, effect, output);
   }

@@ -1033,3 +1033,32 @@ test('iris blur keeps a central focal ellipse sharp while blurring the outside',
   assert.ok(pixel(output, 9, 4, 2)[0] > pixel(output, 9, 0, 2)[0]);
   assert.equal(pixel(output, 9, 0, 0)[3], 255);
 });
+
+test('de-interlace reconstructs alternating lines from adjacent fields', () => {
+  const source = rgba(3, 6, (x, y) => [y === 3 ? 240 : y * 20 + x, y * 10, 80, 255]);
+  const original = source.slice();
+  const effect = { type: 'deinterlace', amount: 100, radius: 1 };
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  const output = applyFilterEffectsPixels(source, 3, 6, effect);
+  assert.deepEqual(pixel(output, 3, 1, 2), pixel(source, 3, 1, 2));
+  assert.deepEqual(pixel(output, 3, 1, 3), [61, 30, 80, 255]);
+  assert.deepEqual(pixel(output, 3, 1, 4), pixel(source, 3, 1, 4));
+  assert.deepEqual(source, original);
+});
+
+test('de-interlace blends strength, preserves alpha and hidden transparent RGB', () => {
+  const source = rgba(3, 5, (x, y) => {
+    if (x === 0 && y === 2) return [255, 0, 255, 0];
+    return [y * 30, 90, 40, y === 2 ? 128 : 255];
+  });
+  const identity = applyFilterEffectsPixels(source, 3, 5, {
+    type: 'deinterlace', amount: 0, radius: 1,
+  });
+  assert.deepEqual(identity, source);
+  const output = applyFilterEffectsPixels(source, 3, 5, {
+    type: 'deinterlace', amount: 50, radius: 1,
+  });
+  assert.equal(pixel(output, 3, 1, 2)[3], 128);
+  assert.deepEqual(pixel(output, 3, 0, 2).slice(0, 3), [255, 0, 255]);
+  assert.equal(isNeutralFilterEffects({ type: 'deinterlace', amount: 100, radius: 0 }), true);
+});
