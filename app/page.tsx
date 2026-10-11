@@ -362,6 +362,14 @@ import {
   type MeasurementAnnotation,
   type MeasurementPoint,
 } from '../src/measurements';
+import {
+  cycleScreenMode,
+  normalizeScreenMode,
+  screenModeClass,
+  screenModeLabel,
+  SCREEN_MODE_STORAGE_KEY,
+  type ScreenMode,
+} from '../src/screenModes';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -533,7 +541,10 @@ type Command =
   | 'actual'
   | 'rotate-view-left'
   | 'rotate-view-right'
-  | 'reset-rotate-view';
+  | 'reset-rotate-view'
+  | 'screen-standard'
+  | 'screen-full-menu'
+  | 'screen-full';
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -999,7 +1010,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Rotate View left 15°', command: 'rotate-view-left' },
     { label: 'Rotate View right 15°', command: 'rotate-view-right' },
     { label: 'Reset Rotate View', command: 'reset-rotate-view' },
-    { label: 'Full Screen Mode', command: 'noop', disabled: true },
+    {
+      label: 'Standard Screen Mode',
+      shortcut: 'F',
+      command: 'screen-standard',
+    },
+    { label: 'Full Screen with Menu', command: 'screen-full-menu' },
+    { label: 'Full Screen', command: 'screen-full' },
   ],
   Plugins: [
     { label: 'No plugins installed', command: 'noop', disabled: true },
@@ -1595,6 +1612,16 @@ export default function Home() {
       useState<SelectionOperation>('replace'),
     [zoom, setZoom] = useState(72),
     [viewRotation, setViewRotation] = useState(0),
+    [screenMode, setScreenMode] = useState<ScreenMode>(() => {
+      if (typeof window === 'undefined') return 'standard';
+      try {
+        return normalizeScreenMode(
+          window.localStorage.getItem(SCREEN_MODE_STORAGE_KEY),
+        );
+      } catch {
+        return 'standard';
+      }
+    }),
     [color, setColor] = useState('#ff5c35'),
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
@@ -9007,10 +9034,48 @@ export default function Home() {
       setNotice('Fit to screen');
     },
     openFile = () => file.current?.click();
+  const setWorkspaceScreenMode = (next: ScreenMode) => {
+    setScreenMode(next);
+    setNotice(`${screenModeLabel(next)} active`);
+    if (typeof document === 'undefined') return;
+    if (next === 'standard') {
+      if (document.fullscreenElement)
+        void document.exitFullscreen().catch(() => undefined);
+      return;
+    }
+    const root = document.documentElement;
+    if (
+      !document.fullscreenElement &&
+      typeof root.requestFullscreen === 'function'
+    )
+      void root.requestFullscreen().catch(() => {
+        setNotice(`${screenModeLabel(next)} active in the browser viewport`);
+      });
+  };
+  const cycleWorkspaceScreenMode = () =>
+    setWorkspaceScreenMode(cycleScreenMode(screenMode));
   const closeToolFlyout = () => {
     setToolFlyout(null);
     setToolFlyoutAnchor(null);
   };
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SCREEN_MODE_STORAGE_KEY, screenMode);
+    } catch {
+      // Workspace preferences are best-effort; editing remains local-first.
+    }
+  }, [screenMode]);
+  useEffect(() => {
+    const syncNativeFullscreen = () => {
+      if (!document.fullscreenElement && screenMode !== 'standard') {
+        setScreenMode('standard');
+        setNotice('Standard Screen Mode active');
+      }
+    };
+    document.addEventListener('fullscreenchange', syncNativeFullscreen);
+    return () =>
+      document.removeEventListener('fullscreenchange', syncNativeFullscreen);
+  }, [screenMode]);
   useEffect(() => {
     const close = (e: PointerEvent) => {
       if (!menuArea.current?.contains(e.target as Node)) setActiveMenu(null);
@@ -9178,12 +9243,22 @@ export default function Home() {
         return;
       }
       if (gesture.current) return;
+      if (e.key === 'Escape' && screenMode !== 'standard') {
+        e.preventDefault();
+        setWorkspaceScreenMode('standard');
+        return;
+      }
       if (e.key === 'Escape') {
         closeToolFlyout();
         closeMenu(true);
         return;
       }
       if (typing) return;
+      if (!command && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        cycleWorkspaceScreenMode();
+        return;
+      }
       if (quickMasking && command) {
         e.preventDefault();
         if (e.key.toLowerCase() === 's' && e.shiftKey) exportProject();
@@ -9343,6 +9418,9 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'screen-standard',
+        'screen-full-menu',
+        'screen-full',
       ].includes(command)
     ) {
       setNotice('Exit Quick Mask mode before changing the document');
@@ -9631,6 +9709,10 @@ export default function Home() {
     } else if (command === 'rotate-view-left') rotateViewBy(-15);
     else if (command === 'rotate-view-right') rotateViewBy(15);
     else if (command === 'reset-rotate-view') resetViewRotation();
+    else if (command === 'screen-standard') setWorkspaceScreenMode('standard');
+    else if (command === 'screen-full-menu')
+      setWorkspaceScreenMode('full-menu');
+    else if (command === 'screen-full') setWorkspaceScreenMode('full');
     else if (command === 'zoom-in') setZoom((v) => Math.min(140, v + 10));
     else if (command === 'zoom-out') setZoom((v) => Math.max(20, v - 10));
     else if (command === 'fit') fitToScreen();
@@ -9689,6 +9771,9 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'screen-standard',
+        'screen-full-menu',
+        'screen-full',
       ].includes(item.command)
     )
       return true;
@@ -9973,9 +10058,11 @@ export default function Home() {
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
-      className="editor-shell"
+      className={`editor-shell ${screenModeClass(screenMode)}`}
       role="application"
       aria-label="PixelForge photo editor"
+      data-testid="editor-shell"
+      data-screen-mode={screenMode}
       aria-busy={!ready || doc.rendering}
       inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
@@ -10162,6 +10249,16 @@ export default function Home() {
         accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => load(e.target.files?.[0])}
       />
+      {screenMode !== 'standard' && (
+        <button
+          type="button"
+          className="screen-mode-exit"
+          aria-label="Exit screen mode"
+          onClick={() => setWorkspaceScreenMode('standard')}
+        >
+          Exit {screenModeLabel(screenMode)} <kbd>Esc</kbd>
+        </button>
+      )}
       <header className="topbar">
         <BrandLockup />
         <nav ref={menuArea} aria-label="Editor menus">

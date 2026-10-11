@@ -3,7 +3,8 @@
 PixelForge follows the Photoshop shortcut vocabulary where the corresponding
 tool or document action exists. The editor is a browser application, so
 unsupported desktop commands such as print, quit, clipboard layer operations,
-merge, rulers and fullscreen are left to the browser or remain unhandled.
+merge and rulers remain unhandled. Screen modes use the Photoshop `F` cycle;
+the preference is UI-only and does not change pixels or document history.
 Shortcuts are ignored while a text field, select, or dialog is being edited.
 Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 
@@ -59,7 +60,8 @@ yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View 
 | `0` | Fit to screen |
 | `1` | Actual size |
 | `+` / `-` | Zoom in/out |
-| `Escape` | Close an open menu |
+| `F` | Cycle Standard Screen Mode, Full Screen with Menu and Full Screen |
+| `Escape` | Exit a reduced screen mode, or close an open menu |
 
 Quick Mask mode uses the current selection as its starting alpha. Paint hides
 selected pixels with the standard red overlay; hold `Alt` or enable Reveal in
