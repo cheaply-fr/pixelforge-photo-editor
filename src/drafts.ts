@@ -30,10 +30,13 @@ import {
 import { validBrushPresetId, type BrushPresetId } from './brushPresets.ts';
 import {
   DEFAULT_HISTORY_BRUSH,
+  DEFAULT_ART_HISTORY_BRUSH,
   DEFAULT_MIXER_BRUSH,
+  validArtHistoryBrushSettings,
   validHistoryBrushSettings,
   validMixerBrushSettings,
   type HistoryBrushSettings,
+  type ArtHistoryBrushSettings,
   type MixerBrushSettings,
 } from './mixerHistoryBrush.ts';
 import {
@@ -80,6 +83,7 @@ export type Tool =
   | 'brush'
   | 'mixer-brush'
   | 'history-brush'
+  | 'art-history-brush'
   | 'pencil'
   | 'color-replace'
   | 'eraser'
@@ -155,6 +159,8 @@ export type Settings = {
   mixerBrush?: MixerBrushSettings;
   /** Bounded restore controls persisted for the History Brush. */
   historyBrush?: HistoryBrushSettings;
+  /** Bounded painterly source-safe controls persisted for Art History Brush. */
+  artHistoryBrush?: ArtHistoryBrushSettings;
   /** Index into the local undo history used as the History Brush source. */
   historySourceIndex?: number;
   exportFormat?: ExportFormat;
@@ -268,6 +274,7 @@ function validSettings(settings: unknown): settings is Settings {
       'brush',
       'mixer-brush',
       'history-brush',
+      'art-history-brush',
       'pencil',
       'color-replace',
       'eraser',
@@ -353,6 +360,7 @@ function validSettings(settings: unknown): settings is Settings {
   }
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
+  if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
   if (candidate.historySourceIndex !== undefined &&
     (!Number.isInteger(candidate.historySourceIndex) || candidate.historySourceIndex < 0 || candidate.historySourceIndex > 23)) return false;
   return (
@@ -464,6 +472,7 @@ export function validateDraft(input: unknown): Draft {
           ),
           mixerBrush: (value.settings as Partial<Settings>).mixerBrush ?? { ...DEFAULT_MIXER_BRUSH },
           historyBrush: (value.settings as Partial<Settings>).historyBrush ?? { ...DEFAULT_HISTORY_BRUSH },
+          artHistoryBrush: (value.settings as Partial<Settings>).artHistoryBrush ?? { ...DEFAULT_ART_HISTORY_BRUSH },
         }
       : value.settings;
   if (

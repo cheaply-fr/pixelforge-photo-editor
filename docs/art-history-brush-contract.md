@@ -1,0 +1,7 @@
+# Art History Brush contract
+
+PixelForge's Art History Brush is a bounded, source-safe approximation of the Photoshop workflow. A stroke reads from the selected local undo snapshot and lays down deterministic painterly dabs over the active raster layer. The selected snapshot is copied before rendering, and the current layer is only replaced when the stroke commits as one undoable history entry.
+
+The controls are persisted in anonymous local drafts: brush size (1–10,000 px), hardness (0–100), opacity and flow (1–100), style neighbourhood radius (1–24 px), and fidelity to the exact historical source colour (0–100). A selection mask gates every dab. Transparent source pixels are skipped so the brush never erases or resurrects alpha. A stroke whose footprint exceeds the one-million-candidate local work budget fails closed with an actionable notice; it does not silently shrink the requested brush.
+
+The implementation is deterministic and offline. It does not upload images, call AI services, or mutate the source snapshot. Pointer segments are interpolated at deterministic brush spacing so fast drags remain continuous. A bounded alpha-weighted neighbourhood colour is computed once per dab, while the full requested footprint is painted. It intentionally does not model Photoshop's bristle brushes, wet-media buildup, canvas texture, semantic subject reconstruction, or PSD history metadata; those capabilities remain staged.
