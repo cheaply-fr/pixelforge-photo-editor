@@ -17,6 +17,20 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
 });
 
+test('pastes a browser clipboard image as an editable layer when no layer clipboard exists', async ({ page }) => {
+  await page.evaluate((encoded) => {
+    const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+    const clipboardFile = new File([bytes], 'clipboard.png', { type: 'image/png' });
+    const transfer = new DataTransfer();
+    transfer.items.add(clipboardFile);
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: transfer });
+    document.querySelector('[data-testid="editor-shell"]')?.dispatchEvent(event);
+  }, ONE_PIXEL_PNG.toString('base64'));
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  await expect(page.getByText('Image layer added', { exact: true })).toBeVisible();
+});
+
 test('rejects PSD with an explicit layered-document compatibility label', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'layered.psd',
