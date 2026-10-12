@@ -50,6 +50,7 @@ export const FILTER_EFFECT_TYPES = [
   'lens-flare',
   'flame',
   'deinterlace',
+  'ntsc-colors',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -386,7 +387,7 @@ export function isNeutralFilterEffects(
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
     (effect.type === 'deinterlace' && effect.radius === 0) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -1489,6 +1490,38 @@ function applyColorHalftone(
 }
 
 /**
+ * Conservative local composite-envelope limiter. Y' uses gamma-encoded RGB;
+ * hypot(I,Q) bounds the chroma excursion around Y'. Unsafe colours move
+ * toward equal-RGB gray while retaining Y' and chroma direction. Reserving
+ * one byte of headroom bounds quantization at the signal limits. This does
+ * not model an encoder, receiver, ICC conversion, setup or chroma bandwidth.
+ * Work is O(pixels), constant scratch space, with one caller-owned output.
+ */
+function applyNtscColors(
+  source: Uint8ClampedArray,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  for (let offset = 0; offset < source.length; offset += 4) {
+    if (source[offset + 3] === 0) continue;
+    const red = source[offset] / 255;
+    const green = source[offset + 1] / 255;
+    const blue = source[offset + 2] / 255;
+    const luma = 0.299 * red + 0.587 * green + 0.114 * blue;
+    const inPhase = 0.596 * red - 0.274 * green - 0.322 * blue;
+    const quadrature = 0.211 * red - 0.523 * green + 0.312 * blue;
+    const chroma = Math.hypot(inPhase, quadrature);
+    const headroom = Math.min(luma, 1 - luma);
+    if (chroma <= headroom) continue;
+    const scale = Math.max(0, headroom - 1 / 255) / chroma;
+    const blendScale = 1 - strength * (1 - scale);
+    output[offset] = clampByte((luma + (red - luma) * blendScale) * 255);
+    output[offset + 1] = clampByte((luma + (green - luma) * blendScale) * 255);
+    output[offset + 2] = clampByte((luma + (blue - luma) * blendScale) * 255);
+  }
+}
+
+/**
  * Apply a bounded seeded monochrome-grain approximation of Photoshop
  * Mezzotint. The source is converted to luminance and compared with a
  * deterministic, cell-aware threshold field. Amount blends the binary grain
@@ -2550,6 +2583,8 @@ export function applyFilterEffectsPixels(
     applyFacet(data, width, height, effect.radius, effect.seed, output, strength);
   } else if (effect.type === 'color-halftone') {
     applyColorHalftone(data, width, height, effect, output, strength);
+  } else if (effect.type === 'ntsc-colors') {
+    applyNtscColors(data, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {

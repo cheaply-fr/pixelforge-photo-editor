@@ -560,6 +560,7 @@ type Command =
   | 'filter-zigzag'
   | 'filter-flame'
   | 'filter-deinterlace'
+  | 'filter-ntsc-colors'
   | 'filter-clear-effect'
   | 'zoom-in'
   | 'zoom-out'
@@ -1030,7 +1031,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
-    { label: 'NTSC Colors', command: 'noop', disabled: true },
+    { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
     { label: '', command: 'noop', separator: true },
     { label: 'Clear local filter effect', command: 'filter-clear-effect' },
   ],
@@ -4074,7 +4075,7 @@ export default function Home() {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -9876,6 +9877,8 @@ export default function Home() {
       chooseFilterEffect('flame', 'Flame (local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
+    else if (command === 'filter-ntsc-colors')
+      chooseFilterEffect('ntsc-colors', 'NTSC Colors');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-lens-flare')
@@ -10143,6 +10146,7 @@ export default function Home() {
       case 'filter-difference-clouds':
       case 'filter-flame':
       case 'filter-deinterlace':
+      case 'filter-ntsc-colors':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
@@ -12381,7 +12385,7 @@ export default function Home() {
                 <option key={type} value={type}>
                   {type === 'none'
                     ? 'None'
-                    : type
+                    : type === 'ntsc-colors' ? 'NTSC Colors' : type
                         .split('-')
                         .map((part) => part[0].toUpperCase() + part.slice(1))
                         .join(' ')}
@@ -12478,6 +12482,9 @@ export default function Home() {
                 </label>
               </>
             )}
+            {filterEffects.type === 'ntsc-colors' && (
+              <p>Reduces oversaturated colors while keeping brightness and transparency. Local television-color approximation; not a broadcast compliance check.</p>
+            )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
@@ -12499,7 +12506,7 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {filterEffects.type !== 'deinterlace' && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
