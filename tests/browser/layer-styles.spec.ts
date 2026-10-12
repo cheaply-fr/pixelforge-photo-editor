@@ -92,3 +92,9 @@ test('Layer Style controls are disabled for locked layers', async ({ page }) => 
   await expect(page.getByLabel('Enable outline', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Outline width', { exact: true })).toBeDisabled();
 });
+
+test('Layer Style menu activates the existing nondestructive style controls', async ({ page }) => {
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Layer Style', exact: true }).click();
+  await expect(page.getByLabel('Enable outline', { exact: true })).toBeFocused();
+});

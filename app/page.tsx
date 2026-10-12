@@ -436,6 +436,8 @@ type Command =
   | 'rasterize-layer'
   | 'duplicate-layer'
   | 'delete-layer'
+  | 'rename-layer'
+  | 'layer-style'
   | 'group-layer'
   | 'ungroup-layer'
   | 'align-left'
@@ -514,6 +516,7 @@ type Command =
   | 'frame'
   | 'rotate-left'
   | 'rotate-right'
+  | 'rotate-180'
   | 'flip-h'
   | 'flip-v'
   | 'filter-original'
@@ -831,7 +834,6 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
     { label: 'Generative Upscale…', command: 'noop', disabled: true },
     { label: 'Canvas Size…', command: 'canvas-size' },
-    { label: 'Image Rotation', command: 'noop', disabled: true },
     { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
     { label: 'Perspective Crop…', command: 'perspective-crop' },
@@ -840,6 +842,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Frame tool', shortcut: 'K', command: 'frame' },
     { label: 'Rotate left', command: 'rotate-left' },
     { label: 'Rotate right', command: 'rotate-right' },
+    { label: 'Rotate 180°', command: 'rotate-180' },
     { label: 'Flip horizontal', command: 'flip-h' },
     { label: 'Flip vertical', command: 'flip-v' },
     { label: 'Trim…', command: 'trim' },
@@ -861,8 +864,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Quick Export document as PNG', command: 'png' },
     { label: 'Export As…', command: 'png' },
-    { label: 'Rename Layer…', command: 'noop', disabled: true },
-    { label: 'Layer Style', command: 'noop', disabled: true },
+    { label: 'Rename Layer…', command: 'rename-layer' },
+    { label: 'Layer Style', command: 'layer-style' },
     { label: 'Smart Filter', command: 'noop', disabled: true },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
@@ -9184,7 +9187,7 @@ export default function Home() {
     gesture.current = null;
     finishPolygonalLasso(g);
   };
-  const transform = async (a: 'left' | 'right' | 'h' | 'v') => {
+  const transform = async (a: 'left' | 'right' | '180' | 'h' | 'v') => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before transforming the document');
       return;
@@ -9195,6 +9198,8 @@ export default function Home() {
         ? [0, -1, 1, 0, 0, f.w]
         : a === 'right'
           ? [0, 1, -1, 0, f.h, 0]
+          : a === '180'
+            ? [-1, 0, 0, -1, f.w, f.h]
           : a === 'h'
             ? [-1, 0, 0, 1, f.w, 0]
             : [1, 0, 0, -1, 0, f.h];
@@ -9761,6 +9766,23 @@ export default function Home() {
         setNotice('Find layers focused; search by name, type, group or state');
       }
     }
+    else if (command === 'rename-layer') {
+      const input = document.getElementById('layer-name');
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+        input.select();
+        setNotice('Layer name focused; enter a new name');
+      }
+    }
+    else if (command === 'layer-style') {
+      const input = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Enable outline"]',
+      );
+      if (input) {
+        input.focus();
+        setNotice('Layer Style controls focused');
+      }
+    }
     else if (command === 'isolate-layers') isolateLayers();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
@@ -9933,6 +9955,7 @@ export default function Home() {
       setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
     else if (command === 'rotate-right') return transform('right');
+    else if (command === 'rotate-180') return transform('180');
     else if (command === 'flip-h') return transform('h');
     else if (command === 'flip-v') return transform('v');
     else if (command.startsWith('filter-')) {
@@ -10042,6 +10065,10 @@ export default function Home() {
           }) ||
           frame.layers.length + selectedIdsForFrame(frame).length > 32
         );
+      case 'rename-layer':
+        return !layer || locked;
+      case 'layer-style':
+        return !layer || locked;
       case 'delete-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'group-layer':
