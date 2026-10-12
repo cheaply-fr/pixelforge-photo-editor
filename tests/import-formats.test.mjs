@@ -51,6 +51,33 @@ test('TIFF is conditional and never claims a lossless container round trip', () 
   assert.match(importFailureMessage(byName), /^TIFF decoding is unavailable/);
 });
 
+test('SVG is conditional flattened rasterization with vector-loss disclosure', () => {
+  const byName = describeImportFormat('illustration.svg', 'application/octet-stream');
+  const byMime = describeImportFormat('illustration.bin', 'image/svg+xml; charset=utf-8');
+  for (const info of [byName, byMime]) {
+    assert.deepEqual(
+      { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
+      { format: 'svg', capability: 'conditional', tryDecode: true },
+    );
+    assert.match(info.disclosure, /flattened/);
+    assert.match(info.disclosure, /vector paths/);
+  }
+  assert.match(importFailureMessage(byName), /SVG rasterization/);
+});
+
+test('PDF is explicitly unsupported before browser decoding', () => {
+  for (const info of [
+    describeImportFormat('proof.pdf', 'application/octet-stream'),
+    describeImportFormat('proof.bin', 'application/pdf'),
+  ]) {
+    assert.deepEqual(
+      { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
+      { format: 'pdf', capability: 'unsupported', tryDecode: false },
+    );
+    assert.match(info.disclosure, /PDF import is not supported/);
+  }
+});
+
 test('format extension wins over a misleading browser MIME type', () => {
   const psd = describeImportFormat('layer.psd', 'image/png');
   const raw = describeImportFormat('camera.dng', 'image/jpeg');

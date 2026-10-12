@@ -4,6 +4,9 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+const SIMPLE_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="#ff5c35"/></svg>',
+);
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -69,6 +72,29 @@ test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
   await expect(
     page.getByText('TIFF decoding is unavailable in this browser.', { exact: false }),
   ).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');
+});
+
+test('rasterizes SVG with an explicit vector-loss disclosure', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'illustration.svg',
+    mimeType: 'image/svg+xml',
+    buffer: SIMPLE_SVG,
+  });
+  await expect(
+    page.getByText('SVG rasterized as a flattened raster; vector data and external resources omitted', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+});
+
+test('rejects PDF before decoding with an explicit page-rendering hint', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'proof.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.7\n'),
+  });
+  await expect(page.getByText('PDF import is not supported yet.', { exact: false })).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');
 });
