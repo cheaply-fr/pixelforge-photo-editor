@@ -5601,13 +5601,15 @@ export default function Home() {
           ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
           : importInfo.format === 'tiff'
             ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
+            : importInfo.format === 'svg'
+              ? `SVG rasterized as a flattened raster${asLayer ? ' layer' : ''}; vector data and external resources omitted`
           : asLayer
             ? 'Image layer added'
             : 'Photo opened as a flattened raster; source metadata omitted',
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic' || importInfo.format === 'tiff'
+        importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -5685,12 +5687,14 @@ export default function Home() {
             ? 'HEIC/HEIF embedded as a flattened raster smart object; source metadata omitted'
             : importInfo.format === 'tiff'
               ? 'TIFF embedded as a flattened raster smart object; source metadata omitted'
+              : importInfo.format === 'svg'
+                ? 'SVG embedded as a flattened raster smart object; vector data and external resources omitted'
               : 'Embedded smart object added',
         );
       }
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic' || importInfo.format === 'tiff'
+        importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message

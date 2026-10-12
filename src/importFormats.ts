@@ -7,7 +7,15 @@
  * the browser decoder lets the UI give an honest message before it touches a
  * draft, even when a file has an unusual MIME type.
  */
-export type ImportFormat = 'raster' | 'heic' | 'tiff' | 'psd' | 'raw' | 'unknown';
+export type ImportFormat =
+  | 'raster'
+  | 'heic'
+  | 'tiff'
+  | 'svg'
+  | 'pdf'
+  | 'psd'
+  | 'raw'
+  | 'unknown';
 
 export type ImportCapability = 'supported' | 'conditional' | 'unsupported';
 
@@ -23,6 +31,8 @@ export type ImportFormatInfo = {
 
 const HEIC_EXTENSIONS = new Set(['heic', 'heif', 'heics', 'heifs']);
 const TIFF_EXTENSIONS = new Set(['tif', 'tiff']);
+const SVG_EXTENSIONS = new Set(['svg', 'svgz']);
+const PDF_EXTENSIONS = new Set(['pdf']);
 const PSD_EXTENSIONS = new Set(['psd', 'psb']);
 const RASTER_EXTENSIONS = new Set([
   'apng',
@@ -80,6 +90,8 @@ const HEIC_MIME_TYPES = [
 ];
 
 const TIFF_MIME_TYPES = ['image/tiff', 'image/x-tiff'];
+const SVG_MIME_TYPES = ['image/svg+xml', 'image/svg'];
+const PDF_MIME_TYPES = ['application/pdf'];
 
 export function describeImportFormat(
   fileName: string,
@@ -107,6 +119,26 @@ export function describeImportFormat(
       tryDecode: true,
       disclosure:
         'TIFF import depends on this browser decoder. When decoded, it is a flattened editable raster; source metadata, layers and the original container are not retained.',
+    };
+  }
+  if (SVG_EXTENSIONS.has(extension) || hasMime(mimeType, ...SVG_MIME_TYPES)) {
+    return {
+      format: 'svg',
+      label: 'SVG',
+      capability: 'conditional',
+      tryDecode: true,
+      disclosure:
+        'SVG import is conditional browser rasterization. It is flattened into editable pixels; vector paths, embedded fonts, external resources and source metadata are not retained.',
+    };
+  }
+  if (PDF_EXTENSIONS.has(extension) || hasMime(mimeType, ...PDF_MIME_TYPES)) {
+    return {
+      format: 'pdf',
+      label: 'PDF',
+      capability: 'unsupported',
+      tryDecode: false,
+      disclosure:
+        'PDF import is not supported yet. Render the required page to PNG or JPEG first; page structure, vectors, text and PDF metadata are not retained.',
     };
   }
   if (
@@ -160,6 +192,9 @@ export function importFailureMessage(info: ImportFormatInfo): string {
   }
   if (info.format === 'tiff') {
     return 'TIFF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
+  }
+  if (info.format === 'svg') {
+    return 'SVG rasterization is unavailable in this browser. Export a PNG or JPEG; the current draft is unchanged.';
   }
   return `${info.label} could not be decoded. Convert it to PNG or JPEG; the current draft is unchanged.`;
 }
