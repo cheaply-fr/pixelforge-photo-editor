@@ -9494,6 +9494,7 @@ export default function Home() {
           void autoCorrect('tone');
           return;
         }
+        const browserImagePaste = k === 'v' && !e.shiftKey && !hasClipboard;
         if (
           [
             'z',
@@ -9512,7 +9513,9 @@ export default function Home() {
             't',
           ].includes(k) ||
           (k === 'w' && !e.altKey)
-        )
+        ) {
+          if (!browserImagePaste) e.preventDefault();
+        }
           e.preventDefault();
         if (k === 'z') {
           if (e.shiftKey) redo();
@@ -9542,7 +9545,7 @@ export default function Home() {
         if (k === 'j' && !e.shiftKey) duplicate();
         if (k === 'c' && !e.shiftKey) copyLayer();
         if (k === 'x' && !e.shiftKey) cutLayer();
-        if (k === 'v' && !e.shiftKey) pasteLayer();
+        if (k === 'v' && !e.shiftKey && hasClipboard) pasteLayer();
         if (k === 't') beginLayerTransform();
         return;
       }
@@ -10334,6 +10337,20 @@ export default function Home() {
         e.preventDefault();
         setDrag(false);
         void load(e.dataTransfer.files[0]);
+      }}
+      onPaste={(e) => {
+        // Keep the internal layer clipboard authoritative when it exists. If
+        // it does not, accept an image item from the browser/OS clipboard as
+        // a new editable raster layer. Text and unsupported clipboard types
+        // remain untouched so native editing controls keep their behavior.
+        if (hasClipboard) return;
+        const image = Array.from(e.clipboardData.items).find((item) =>
+          item.kind === 'file' && item.type.startsWith('image/'),
+        );
+        const file = image?.getAsFile();
+        if (!file) return;
+        e.preventDefault();
+        void load(file, true);
       }}
     >
       <input
