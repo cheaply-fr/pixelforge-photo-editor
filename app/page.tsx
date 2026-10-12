@@ -467,6 +467,7 @@ type Command =
   | 'text-align-right'
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
+  | 'rasterize-type'
   | 'text-mask-horizontal'
   | 'text-mask-vertical'
   | 'select-all'
@@ -928,7 +929,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'OpenType', command: 'noop', disabled: true },
     { label: 'Create Work Path', command: 'noop', disabled: true },
     { label: 'Convert to Shape', command: 'noop', disabled: true },
-    { label: 'Rasterize Type Layer', command: 'noop', disabled: true },
+    { label: 'Rasterize Type Layer', command: 'rasterize-type' },
     { label: 'Warp Text…', command: 'noop', disabled: true },
     { label: 'Font Preview Size', command: 'noop', disabled: true },
     { label: 'Language Options', command: 'noop', disabled: true },
@@ -9751,6 +9752,14 @@ export default function Home() {
       setTextOrientation('horizontal');
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
+    else if (command === 'rasterize-type') {
+      const layer = current().layers.find((item) => item.id === current().active);
+      if (!layer || layer.kind !== 'text') {
+        setNotice('Select a text layer before rasterizing type');
+        return;
+      }
+      return rasterize();
+    }
     else if (command === 'text-mask-horizontal')
       await applyTextMask('horizontal');
     else if (command === 'text-mask-vertical')
@@ -10263,6 +10272,8 @@ export default function Home() {
       case 'text-align-right':
       case 'text-orientation-horizontal':
       case 'text-orientation-vertical':
+        return !layer || layer.kind !== 'text' || locked;
+      case 'rasterize-type':
         return !layer || layer.kind !== 'text' || locked;
       case 'text-mask-horizontal':
       case 'text-mask-vertical': {
