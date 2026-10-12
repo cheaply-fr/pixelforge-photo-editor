@@ -437,6 +437,7 @@ type Command =
   | 'duplicate-layer'
   | 'delete-layer'
   | 'rename-layer'
+  | 'layer-style'
   | 'group-layer'
   | 'ungroup-layer'
   | 'align-left'
@@ -864,7 +865,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Quick Export document as PNG', command: 'png' },
     { label: 'Export As…', command: 'png' },
     { label: 'Rename Layer…', command: 'rename-layer' },
-    { label: 'Layer Style', command: 'noop', disabled: true },
+    { label: 'Layer Style', command: 'layer-style' },
     { label: 'Smart Filter', command: 'noop', disabled: true },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
@@ -9773,6 +9774,15 @@ export default function Home() {
         setNotice('Layer name focused; enter a new name');
       }
     }
+    else if (command === 'layer-style') {
+      const input = document.querySelector<HTMLInputElement>(
+        'input[aria-label="Enable outline"]',
+      );
+      if (input) {
+        input.focus();
+        setNotice('Layer Style controls focused');
+      }
+    }
     else if (command === 'isolate-layers') isolateLayers();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
@@ -10056,6 +10066,8 @@ export default function Home() {
           frame.layers.length + selectedIdsForFrame(frame).length > 32
         );
       case 'rename-layer':
+        return !layer || locked;
+      case 'layer-style':
         return !layer || locked;
       case 'delete-layer':
         return !layer || locked || frame.layers.length <= 1;
