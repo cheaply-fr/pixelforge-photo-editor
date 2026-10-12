@@ -425,6 +425,7 @@ type Command =
   | 'undo'
   | 'redo'
   | 'copy-layer'
+  | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
   | 'clear-layer'
@@ -772,12 +773,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
-    {
-      label: 'Copy Merged',
-      shortcut: 'Ctrl+Shift+C',
-      command: 'noop',
-      disabled: true,
-    },
+    { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Search', shortcut: 'Ctrl+F', command: 'noop', disabled: true },
@@ -5161,6 +5157,43 @@ export default function Home() {
     setHasClipboard(true);
     setNotice('Active layer copied');
     return true;
+  };
+  const copyMerged = async () => {
+    const beforeFrame = current();
+    const beforeIndex = index.current;
+    const beforeRevision = revisionRef.current;
+    try {
+      const output = await renderFrame(beforeFrame, assets.current);
+      if (
+        index.current !== beforeIndex ||
+        current() !== beforeFrame ||
+        revisionRef.current !== beforeRevision
+      )
+        return;
+      if (beforeFrame.selection) {
+        const mask = await renderSelection(
+          beforeFrame.selection,
+          beforeFrame.w,
+          beforeFrame.h,
+          assets.current,
+        );
+        const context = output.getContext('2d');
+        if (!context) throw new Error('Canvas context unavailable');
+        context.globalCompositeOperation = 'destination-in';
+        context.drawImage(mask, 0, 0);
+        context.globalCompositeOperation = 'source-over';
+      }
+      const merged = rasterFrame(output, assets.current, 'Merged copy');
+      clipboardLayer.current = structuredClone(merged.layers[0]);
+      setHasClipboard(true);
+      setNotice(
+        beforeFrame.selection
+          ? 'Merged selection copied'
+          : 'Merged visible image copied',
+      );
+    } catch {
+      setNotice('Could not copy the merged image');
+    }
   };
   const clearClipboard = () => {
     clipboardLayer.current = null;
@@ -9647,7 +9680,10 @@ export default function Home() {
           else groupActiveLayer();
         }
         if (k === 'j' && !e.shiftKey) duplicate();
-        if (k === 'c' && !e.shiftKey) copyLayer();
+        if (k === 'c') {
+          if (e.shiftKey) void copyMerged();
+          else copyLayer();
+        }
         if (k === 'x' && !e.shiftKey) cutLayer();
         if (k === 'v' && !e.shiftKey && hasClipboard) pasteLayer();
         if (k === 't') beginLayerTransform();
@@ -9785,6 +9821,7 @@ export default function Home() {
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'copy-layer') copyLayer();
+    else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
     else if (command === 'clear-layer') return clearActiveLayer();
@@ -10157,6 +10194,8 @@ export default function Home() {
         return !canRedo || quickMasking;
       case 'copy-layer':
         return !layer;
+      case 'copy-merged':
+        return !frame;
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
