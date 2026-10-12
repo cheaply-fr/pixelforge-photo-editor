@@ -9516,7 +9516,6 @@ export default function Home() {
         ) {
           if (!browserImagePaste) e.preventDefault();
         }
-          e.preventDefault();
         if (k === 'z') {
           if (e.shiftKey) redo();
           else undo();
