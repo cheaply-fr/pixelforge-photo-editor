@@ -414,6 +414,7 @@ type Command =
   | 'file-info'
   | 'batch-export'
   | 'batch-images'
+  | 'duplicate-document'
   | 'project-open'
   | 'new-white'
   | 'new-transparent'
@@ -850,7 +851,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Trim…', command: 'trim' },
     { label: 'Reveal All', command: 'reveal-all' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Duplicate…', command: 'noop', disabled: true },
+    { label: 'Duplicate…', command: 'duplicate-document' },
     { label: 'Apply Image…', command: 'noop', disabled: true },
     { label: 'Calculations…', command: 'noop', disabled: true },
     { label: 'Analysis', command: 'noop', disabled: true },
@@ -4168,6 +4169,33 @@ export default function Home() {
     }
     startRaster(image, transparent ? 'untitled-transparent' : 'untitled');
     setNotice(transparent ? 'New transparent document' : 'New document');
+  };
+  const duplicateDocument = async () => {
+    if (!frame) {
+      setNotice('Open a document before duplicating it');
+      return;
+    }
+    try {
+      const copy = structuredClone(documentValue());
+      copy.name = `${name || 'untitled'} copy`.slice(0, 160);
+      await install(copy);
+      clearClipboard();
+      clearCloud();
+      setDraftId(createDraftId());
+      setName(copy.name);
+      setMetadata(effectiveDocumentMetadata(copy.metadata));
+      restoreSettings(copy.settings);
+      quickMaskRef.current = null;
+      setQuickMask(null);
+      setQuickMasking(false);
+      setNotice('Document duplicated as a new editable draft');
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Could not duplicate the document',
+      );
+    }
   };
   useEffect(() => {
     let cancelled = false;
@@ -9746,6 +9774,7 @@ export default function Home() {
       setBatchActionId(undefined);
       batchImageFile.current?.click();
     }
+    else if (command === 'duplicate-document') return duplicateDocument();
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
