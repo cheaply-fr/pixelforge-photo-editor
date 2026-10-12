@@ -428,6 +428,7 @@ type Command =
   | 'paste-layer'
   | 'clear-layer'
   | 'fill-layer'
+  | 'stroke-selection'
   | 'new-layer'
   | 'new-fill-layer'
   | 'new-adjustment-layer'
@@ -789,7 +790,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'History Brush Tool', shortcut: 'Y', command: 'history-brush-tool' },
     { label: 'Art History Brush Tool', shortcut: 'Y', command: 'art-history-brush-tool' },
     { label: 'Set History Brush Source', command: 'set-history-source' },
-    { label: 'Stroke…', command: 'noop', disabled: true },
+    { label: 'Stroke…', command: 'stroke-selection' },
     { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
     { label: 'Generative Fill…', command: 'noop', disabled: true },
@@ -5244,6 +5245,76 @@ export default function Home() {
       setNotice('Could not fill this layer');
     }
   };
+  /** Paint an editable inner border from the current selection onto the active raster layer. */
+  const strokeSelection = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before stroking it');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Select a visible, unlocked raster layer before stroking');
+      return;
+    }
+    const entered = window.prompt('Stroke width in pixels', '4');
+    if (entered === null) return;
+    const width = Math.max(1, Math.min(128, Math.round(Number(entered))));
+    if (!Number.isFinite(width)) {
+      setNotice('Stroke width must be a number');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        output = surface(image.naturalWidth, image.naturalHeight),
+        context = output.getContext('2d')!,
+        mask = await localSelectionMask(
+          f.selection,
+          f.w,
+          f.h,
+          layer,
+          output.width,
+          output.height,
+        ),
+        maskPixels = mask.getContext('2d')!.getImageData(0, 0, output.width, output.height),
+        border = context.createImageData(output.width, output.height),
+        radius = Math.max(1, Math.ceil(width / 2)),
+        alpha = new Uint8ClampedArray(output.width * output.height);
+      context.drawImage(image, 0, 0);
+      const match = /^#?([0-9a-f]{6})$/i.exec(color.trim());
+      if (!match) {
+        setNotice('Stroke color must be a six-digit hex color');
+        return;
+      }
+      const rgb = [
+        Number.parseInt(match[1].slice(0, 2), 16),
+        Number.parseInt(match[1].slice(2, 4), 16),
+        Number.parseInt(match[1].slice(4, 6), 16),
+      ];
+      for (let index = 0; index < alpha.length; index += 1)
+        alpha[index] = maskPixels.data[index * 4 + 3];
+      const borderAlpha = refineSelectionAlpha(
+        alpha,
+        output.width,
+        output.height,
+        'border',
+        radius,
+      );
+      for (let index = 0; index < borderAlpha.length; index += 1) {
+        const offset = index * 4;
+        border.data[offset] = rgb[0];
+        border.data[offset + 1] = rgb[1];
+        border.data[offset + 2] = rgb[2];
+        border.data[offset + 3] = borderAlpha[index];
+      }
+      context.putImageData(border, 0, 0);
+      const asset = addAsset(assets.current, output);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
+        setNotice(`Selection stroked with ${width}px ${color}`);
+    } catch {
+      setNotice('Could not stroke the selection');
+    }
+  };
   const clearActiveLayer = async () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -9689,6 +9760,7 @@ export default function Home() {
     else if (command === 'paste-layer') pasteLayer();
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
+    else if (command === 'stroke-selection') return strokeSelection();
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
@@ -10249,6 +10321,8 @@ export default function Home() {
       case 'smooth-selection':
       case 'similar-selection':
         return !frame.selection;
+      case 'stroke-selection':
+        return !frame.selection || !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'lock-layers':
