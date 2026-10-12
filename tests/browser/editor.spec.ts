@@ -706,6 +706,27 @@ test('Image rotation exposes a nondestructive 180 degree transform with undo', a
   expect(restored).toEqual([255, 0, 0, 255, 0, 0, 255, 255]);
 });
 
+test('Layer Rename focuses the existing editable name field and respects locks', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  const name = page.getByLabel('Layer name');
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Rename Layer…', exact: true }).click();
+  await expect(name).toBeFocused();
+  await name.fill('Renamed artwork');
+  await expect(name).toHaveValue('Renamed artwork');
+  await page.getByLabel('Lock layer').check();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: 'Rename Layer…', exact: true }),
+  ).toBeDisabled();
+});
+
 test('Photoshop-style tool, color and selection shortcuts are implemented', async ({
   page,
 }) => {

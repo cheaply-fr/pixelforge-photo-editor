@@ -524,6 +524,7 @@ export default function LayersPanel({
       <label className="layer-field">
         Layer name
         <input
+          id="layer-name"
           aria-label="Layer name"
           maxLength={160}
           value={layer.name}

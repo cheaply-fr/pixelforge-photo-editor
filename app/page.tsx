@@ -436,6 +436,7 @@ type Command =
   | 'rasterize-layer'
   | 'duplicate-layer'
   | 'delete-layer'
+  | 'rename-layer'
   | 'group-layer'
   | 'ungroup-layer'
   | 'align-left'
@@ -862,7 +863,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Quick Export document as PNG', command: 'png' },
     { label: 'Export As…', command: 'png' },
-    { label: 'Rename Layer…', command: 'noop', disabled: true },
+    { label: 'Rename Layer…', command: 'rename-layer' },
     { label: 'Layer Style', command: 'noop', disabled: true },
     { label: 'Smart Filter', command: 'noop', disabled: true },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
@@ -9764,6 +9765,14 @@ export default function Home() {
         setNotice('Find layers focused; search by name, type, group or state');
       }
     }
+    else if (command === 'rename-layer') {
+      const input = document.getElementById('layer-name');
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+        input.select();
+        setNotice('Layer name focused; enter a new name');
+      }
+    }
     else if (command === 'isolate-layers') isolateLayers();
     else if (command === 'deselect') setSelection(undefined);
     else if (command === 'reselect') reselect();
@@ -10046,6 +10055,8 @@ export default function Home() {
           }) ||
           frame.layers.length + selectedIdsForFrame(frame).length > 32
         );
+      case 'rename-layer':
+        return !layer || locked;
       case 'delete-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'group-layer':
