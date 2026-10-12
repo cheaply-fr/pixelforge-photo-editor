@@ -31,6 +31,20 @@ test('pastes a browser clipboard image as an editable layer when no layer clipbo
   await expect(page.getByText('Image layer added', { exact: true })).toBeVisible();
 });
 
+test('keeps the native keyboard paste event cancellable only for internal layer clips', async ({ page }) => {
+  const defaultPrevented = await page.evaluate(() => {
+    const event = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'v',
+      metaKey: true,
+    });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(defaultPrevented).toBe(false);
+});
+
 test('rejects PSD with an explicit layered-document compatibility label', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'layered.psd',
