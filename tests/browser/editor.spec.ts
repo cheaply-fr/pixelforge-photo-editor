@@ -1607,6 +1607,10 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   ).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(
+    editMenu.getByRole('menuitem', { name: /^Copy Merged/ }),
+  ).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(
     editMenu.getByRole('menuitem', { name: 'Clear', exact: true }),
   ).toBeFocused();
   await page.keyboard.press('ArrowDown');
