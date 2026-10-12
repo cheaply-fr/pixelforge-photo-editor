@@ -514,6 +514,7 @@ type Command =
   | 'frame'
   | 'rotate-left'
   | 'rotate-right'
+  | 'rotate-180'
   | 'flip-h'
   | 'flip-v'
   | 'filter-original'
@@ -831,7 +832,6 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
     { label: 'Generative Upscale…', command: 'noop', disabled: true },
     { label: 'Canvas Size…', command: 'canvas-size' },
-    { label: 'Image Rotation', command: 'noop', disabled: true },
     { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
     { label: 'Perspective Crop…', command: 'perspective-crop' },
@@ -840,6 +840,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Frame tool', shortcut: 'K', command: 'frame' },
     { label: 'Rotate left', command: 'rotate-left' },
     { label: 'Rotate right', command: 'rotate-right' },
+    { label: 'Rotate 180°', command: 'rotate-180' },
     { label: 'Flip horizontal', command: 'flip-h' },
     { label: 'Flip vertical', command: 'flip-v' },
     { label: 'Trim…', command: 'trim' },
@@ -9184,7 +9185,7 @@ export default function Home() {
     gesture.current = null;
     finishPolygonalLasso(g);
   };
-  const transform = async (a: 'left' | 'right' | 'h' | 'v') => {
+  const transform = async (a: 'left' | 'right' | '180' | 'h' | 'v') => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before transforming the document');
       return;
@@ -9195,6 +9196,8 @@ export default function Home() {
         ? [0, -1, 1, 0, 0, f.w]
         : a === 'right'
           ? [0, 1, -1, 0, f.h, 0]
+          : a === '180'
+            ? [-1, 0, 0, -1, f.w, f.h]
           : a === 'h'
             ? [-1, 0, 0, 1, f.w, 0]
             : [1, 0, 0, -1, 0, f.h];
@@ -9933,6 +9936,7 @@ export default function Home() {
       setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
     else if (command === 'rotate-right') return transform('right');
+    else if (command === 'rotate-180') return transform('180');
     else if (command === 'flip-h') return transform('h');
     else if (command === 'flip-v') return transform('v');
     else if (command.startsWith('filter-')) {

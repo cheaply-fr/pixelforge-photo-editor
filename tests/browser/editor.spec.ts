@@ -658,6 +658,54 @@ test('flipping transparent artwork does not leave duplicate opaque pixels', asyn
   expect(pixels).toEqual([0, 0, 0, 0, 255, 0, 0, 255]);
 });
 
+test('Image rotation exposes a nondestructive 180 degree transform with undo', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  const fixture = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2;
+    canvas.height = 1;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#ff0000';
+    context.fillRect(0, 0, 1, 1);
+    context.fillStyle = '#0000ff';
+    context.fillRect(1, 0, 1, 1);
+    return canvas.toDataURL().split(',')[1];
+  });
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'rotate-180.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(fixture, 'base64'),
+  });
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  const rotate180 = page.getByRole('menuitem', {
+    name: 'Rotate 180°',
+    exact: true,
+  });
+  await rotate180.scrollIntoViewIfNeeded();
+  await rotate180.click();
+  const rotated = await page
+    .getByTestId('editor-canvas')
+    .evaluate((canvas: HTMLCanvasElement) =>
+      Array.from(canvas.getContext('2d')!.getImageData(0, 0, 2, 1).data),
+    );
+  expect(rotated).toEqual([0, 0, 255, 255, 255, 0, 0, 255]);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const restored = await page
+    .getByTestId('editor-canvas')
+    .evaluate((canvas: HTMLCanvasElement) =>
+      Array.from(canvas.getContext('2d')!.getImageData(0, 0, 2, 1).data),
+    );
+  expect(restored).toEqual([255, 0, 0, 255, 0, 0, 255, 255]);
+});
+
 test('Photoshop-style tool, color and selection shortcuts are implemented', async ({
   page,
 }) => {
