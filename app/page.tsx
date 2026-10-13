@@ -117,6 +117,11 @@ import {
   normalizeCustomBrushPresets,
   type CustomBrushPreset,
 } from '../src/customBrushPresets';
+import {
+  createCustomPatternPreset,
+  normalizeCustomPatternPresets,
+  type CustomPatternPreset,
+} from '../src/customPatternPresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
 import { MATTING_MODES, effectiveMatting } from '../src/matting';
 import { cookieCutterPath, COOKIE_CUTTER_SHAPES, type CookieCutterShape } from '../src/cookieCutter';
@@ -483,6 +488,7 @@ type Command =
   | 'apply-image'
   | 'calculations'
   | 'define-brush-preset'
+  | 'define-pattern'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -920,7 +926,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
     { label: '', command: 'noop', separator: true },
     { label: 'Define Brush Preset…', command: 'define-brush-preset' },
-    { label: 'Define Pattern…', command: 'noop', disabled: true },
+    { label: 'Define Pattern…', command: 'define-pattern' },
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
     { label: 'Color Settings…', command: 'noop', disabled: true },
@@ -1837,6 +1843,7 @@ export default function Home() {
     [pressureOpacity, setPressureOpacity] = useState(false),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
+    [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -2165,6 +2172,7 @@ export default function Home() {
     pressureOpacity,
     brushPreset,
     customBrushPresets,
+    customPatternPresets,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -2231,6 +2239,7 @@ export default function Home() {
     setPressureOpacity(s.pressureOpacity ?? false);
     setBrushPreset(s.brushPreset ?? 'round-hard');
     setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
+    setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -2282,6 +2291,7 @@ export default function Home() {
     setPressureOpacity,
     setBrushPreset,
     setCustomBrushPresets,
+    setCustomPatternPresets,
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
@@ -2385,6 +2395,35 @@ export default function Home() {
       setNotice(`Brush preset “${trimmed}” saved on this device`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Brush preset could not be saved');
+    }
+  };
+  const applyCustomPatternPreset = (preset: CustomPatternPreset) => {
+    setPatternId(preset.pattern);
+    setPatternTileSize(preset.tileSize);
+    setColor(preset.foreground);
+    setBackgroundColor(preset.background);
+    setNotice(`Pattern preset “${preset.label}” applied`);
+  };
+  const definePattern = () => {
+    const label = window.prompt('Name this pattern preset', 'Custom pattern');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Pattern preset name cannot be empty');
+      return;
+    }
+    try {
+      const preset = createCustomPatternPreset(crypto.randomUUID(), trimmed, {
+        pattern: patternId,
+        tileSize: patternTileSize,
+        foreground: color,
+        background: backgroundColor,
+      });
+      setCustomPatternPresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      applyCustomPatternPreset(preset);
+      setNotice(`Pattern preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Pattern preset could not be saved');
     }
   };
   const resetColors = () => {
@@ -5009,6 +5048,7 @@ export default function Home() {
         pressureOpacity,
         brushPreset,
         customBrushPresets,
+        customPatternPresets,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -5101,6 +5141,7 @@ export default function Home() {
     pressureOpacity,
     brushPreset,
     customBrushPresets,
+    customPatternPresets,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -11034,6 +11075,7 @@ export default function Home() {
     else if (command === 'apply-image') return applyImage();
     else if (command === 'calculations') return calculateImage();
     else if (command === 'define-brush-preset') return defineBrushPreset();
+    else if (command === 'define-pattern') return definePattern();
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -14080,6 +14122,24 @@ export default function Home() {
                           ))}
                         </select>
                       </label>
+                      {customPatternPresets.length > 0 && (
+                        <label className="select-row">
+                          <span>Saved pattern</span>
+                          <select
+                            aria-label="Saved pattern"
+                            defaultValue=""
+                            onChange={(event) => {
+                              const preset = customPatternPresets.find((item) => item.id === event.target.value);
+                              if (preset) applyCustomPatternPreset(preset);
+                            }}
+                          >
+                            <option value="">Choose saved pattern</option>
+                            {customPatternPresets.map((preset) => (
+                              <option key={preset.id} value={preset.id}>{preset.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                       <Slider
                         label="Tile size"
                         value={patternTileSize}
