@@ -37,3 +37,18 @@ test('Toolbar settings hide unused categories and preserve the compact palette a
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByRole('region', { name: 'Measure tools' })).toHaveCount(0);
 });
+
+test('Toolbar settings persist category ordering', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Toolbar…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Toolbar' });
+  await dialog.getByRole('button', { name: 'Move Measure category up', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  const firstCategory = page.getByTestId('tool-palette').locator(':scope > .tool-category').first();
+  await expect(firstCategory).toHaveAttribute('aria-label', 'Measure tools');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('tool-palette').locator(':scope > .tool-category').first()).toHaveAttribute('aria-label', 'Measure tools');
+});

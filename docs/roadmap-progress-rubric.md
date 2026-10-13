@@ -236,3 +236,8 @@ The toolbar increment adds persistent category visibility controls to
 space; the UI keeps one category visible and returns to Move if the active
 tool's category is hidden. Desktop/mobile reload tests cover the preference and
 the compact palette remains free of duplicate family slots.
+
+The same toolbar settings now persist category ordering with keyboard-accessible
+up/down controls. Desktop/mobile tests verify reordered categories survive a
+reload; individual tool reordering and arbitrary shortcut rebinding remain
+future work.

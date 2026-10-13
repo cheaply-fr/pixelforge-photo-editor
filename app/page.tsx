@@ -1971,6 +1971,19 @@ export default function Home() {
         return parsed.filter((id): id is string => typeof id === 'string' && allowed.has(id) && id !== 'navigation');
       } catch { return []; }
     }),
+    [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => {
+      const defaults = TOOL_CATEGORIES.map((category) => category.id);
+      if (typeof window === 'undefined') return defaults;
+      try {
+        const raw = window.localStorage.getItem('pixelforge.toolbar-category-order');
+        if (!raw) return defaults;
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return defaults;
+        const allowed = new Set(defaults);
+        const stored = parsed.filter((id): id is string => typeof id === 'string' && allowed.has(id));
+        return [...stored, ...defaults.filter((id) => !stored.includes(id))];
+      } catch { return defaults; }
+    }),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
@@ -12425,15 +12438,18 @@ export default function Home() {
           value={toolbarColumns}
           categories={TOOL_CATEGORIES}
           hiddenCategories={hiddenToolCategories}
+          categoryOrder={toolbarCategoryOrder}
           close={() => setToolbarSettingsOpen(false)}
-          apply={({ columns, hiddenCategories }) => {
+          apply={({ columns, hiddenCategories, categoryOrder }) => {
             const nextHidden = hiddenCategories.filter((id) => id !== 'navigation');
             setToolbarColumns(columns);
             setHiddenToolCategories(nextHidden);
+            setToolbarCategoryOrder(categoryOrder);
             setToolbarSettingsOpen(false);
             try {
               window.localStorage.setItem('pixelforge.toolbar-columns', columns);
               window.localStorage.setItem('pixelforge.toolbar-hidden-categories', JSON.stringify(nextHidden));
+              window.localStorage.setItem('pixelforge.toolbar-category-order', JSON.stringify(categoryOrder));
             } catch { /* private mode */ }
             const activeCategory = categoryForTool(tool);
             if (activeCategory && nextHidden.includes(activeCategory)) {
@@ -12675,7 +12691,10 @@ export default function Home() {
           data-testid="tool-palette"
           data-toolbar-columns={toolbarColumns}
         >
-          {TOOL_CATEGORIES.filter((category) => !hiddenToolCategories.includes(category.id)).map((category) => {
+          {TOOL_CATEGORIES
+            .filter((category) => !hiddenToolCategories.includes(category.id))
+            .sort((a, b) => toolbarCategoryOrder.indexOf(a.id) - toolbarCategoryOrder.indexOf(b.id))
+            .map((category) => {
             const compactTools = compactCategoryTools(category, tool, toolFamilyChoices);
             const layout = compactTools.length === 1 ? 'one' : compactTools.length === 2 ? 'two' : 'many';
             return (
