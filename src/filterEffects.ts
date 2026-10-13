@@ -15,9 +15,11 @@ export const FILTER_EFFECT_TYPES = [
   'blur-more',
   'box-blur',
   'gaussian-blur',
+  'sharpen',
   'unsharp-mask',
   'sharpen-more',
   'sharpen-edges',
+  'smart-sharpen'
   'lens-blur',
   'iris-blur',
   'smart-blur',
@@ -2726,6 +2728,36 @@ function applySharpenEdges(
 }
 
 /**
+ * Apply a bounded Smart Sharpen approximation using an edge-preserving
+ * bilateral reference. Tonal surfaces receive little high-frequency gain,
+ * while genuine local contrast boundaries receive a stronger response.
+ */
+function applySmartSharpen(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const reference = new Uint8ClampedArray(source.length);
+  applySmartBlur(source, width, height, radius, reference, 1);
+  const strength = clamp(amount, 0, 100) / 100;
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const alpha = source[offset + 3];
+    output[offset + 3] = alpha;
+    if (!alpha) continue;
+    const sourceLuma = source[offset] * 0.2126 + source[offset + 1] * 0.7152 + source[offset + 2] * 0.0722;
+    const referenceLuma = reference[offset] * 0.2126 + reference[offset + 1] * 0.7152 + reference[offset + 2] * 0.0722;
+    const contrast = clamp(Math.abs(sourceLuma - referenceLuma) / 24, 0, 1);
+    const effective = strength * contrast;
+    output[offset] = clampByte(source[offset] + (source[offset] - reference[offset]) * effective);
+    output[offset + 1] = clampByte(source[offset + 1] + (source[offset + 1] - reference[offset + 1]) * effective);
+    output[offset + 2] = clampByte(source[offset + 2] + (source[offset + 2] - reference[offset + 2]) * effective);
+  }
+}
+
+/**
  * Apply a bounded Tilt-Shift focal-band blur.
  *
  * `centerX`/`centerY` locate the middle of the focus line and `angle` rotates
@@ -2794,12 +2826,16 @@ export function applyFilterEffectsPixels(
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'sharpen') {
+    applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'unsharp-mask') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'sharpen-more') {
     applySharpenMore(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'sharpen-edges') {
     applySharpenEdges(data, width, height, effect.radius, output, effect.amount);
+  } else if (effect.type === 'smart-sharpen') {
+    applySmartSharpen(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-blur') {
     applySmartBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'surface-blur') {

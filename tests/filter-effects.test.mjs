@@ -155,6 +155,33 @@ test('Sharpen More is a distinct deterministic two-pass effect with source-safe 
   })), true);
 });
 
+test('basic Sharpen is a distinct deterministic one-pass effect with source-safe alpha', () => {
+  const source = rgba(9, 1, (x) => {
+    if (x === 0) return [17, 23, 29, 0];
+    return [x < 4 ? 24 : 232, 80, 120, x === 8 ? 128 : 255];
+  });
+  const original = source.slice();
+  const output = applyFilterEffectsPixels(source, 9, 1, {
+    type: 'sharpen', amount: 70, radius: 3,
+  });
+  const onePass = applyFilterEffectsPixels(source, 9, 1, {
+    type: 'unsharp-mask', amount: 70, radius: 3,
+  });
+  assert.deepEqual(source, original);
+  assert.deepEqual(output, onePass);
+  assert.notDeepEqual(output, source);
+  assert.equal(output[3], 0);
+  assert.deepEqual(Array.from(output.slice(0, 3)), [17, 23, 29]);
+  for (let offset = 3; offset < source.length; offset += 4)
+    assert.equal(output[offset + 3], source[offset + 3]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 1, {
+    type: 'sharpen', amount: 70, radius: 3,
+  }));
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    type: 'sharpen', amount: 120, radius: 99,
+  })), true);
+});
+
 test('Sharpen Edges is edge-weighted, deterministic and source-safe', () => {
   const source = rgba(9, 3, (x, y) => {
     if (x === 0 && y === 0) return [17, 23, 29, 0];
@@ -174,6 +201,28 @@ test('Sharpen Edges is edge-weighted, deterministic and source-safe', () => {
   }));
   assert.equal(validFilterEffects(effectiveFilterEffects({
     type: 'sharpen-edges', amount: 120, radius: 99,
+  })), true);
+});
+
+test('Smart Sharpen is edge-aware, deterministic and source-safe', () => {
+  const source = rgba(9, 3, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    return [x < 4 ? 30 : 220, 80, 90, 255];
+  });
+  const original = source.slice();
+  const output = applyFilterEffectsPixels(source, 9, 3, {
+    type: 'smart-sharpen', amount: 100, radius: 3,
+  });
+  assert.deepEqual(source, original);
+  assert.equal(output[3], 0);
+  assert.deepEqual(Array.from(output.slice(0, 3)), [17, 23, 29]);
+  assert.deepEqual(pixel(output, 9, 1, 1), pixel(source, 9, 1, 1));
+  assert.notDeepEqual(pixel(output, 9, 4, 1), pixel(source, 9, 4, 1));
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 3, {
+    type: 'smart-sharpen', amount: 100, radius: 3,
+  }));
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    type: 'smart-sharpen', amount: 120, radius: 99,
   })), true);
 });
 

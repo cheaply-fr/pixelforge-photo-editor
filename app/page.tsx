@@ -537,9 +537,11 @@ type Command =
   | 'filter-blur-more'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
+  | 'filter-sharpen'
   | 'filter-unsharp-mask'
   | 'filter-sharpen-more'
   | 'filter-sharpen-edges'
+  | 'filter-smart-sharpen'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
   | 'filter-smart-blur'
@@ -1037,10 +1039,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Fibers…', command: 'filter-fibers' },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Flame…', command: 'filter-flame' },
-    { label: 'Sharpen', command: 'sharpen-noise' },
-    { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
+    { label: 'Sharpen', command: 'filter-sharpen' },
+    { label: 'Sharpen Edges', command: 'filter-sharpen-edges' }
     { label: 'Sharpen More', command: 'filter-sharpen-more' },
-    { label: 'Smart Sharpen…', command: 'sharpen-noise' },
+    { label: 'Smart Sharpen…', command: 'filter-smart-sharpen' },
     { label: 'Unsharp Mask…', command: 'filter-unsharp-mask' },
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Find Edges…', command: 'filter-find-edges' },
@@ -10102,12 +10104,16 @@ export default function Home() {
       chooseFilterEffect('box-blur', 'Box Blur');
     else if (command === 'filter-gaussian-blur')
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
+    else if (command === 'filter-sharpen')
+      chooseFilterEffect('sharpen', 'Sharpen (nondestructive)');
     else if (command === 'filter-unsharp-mask')
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-sharpen-more')
       chooseFilterEffect('sharpen-more', 'Sharpen More (two-pass nondestructive)');
     else if (command === 'filter-sharpen-edges')
       chooseFilterEffect('sharpen-edges', 'Sharpen Edges (edge-weighted nondestructive)');
+    else if (command === 'filter-smart-sharpen')
+      chooseFilterEffect('smart-sharpen', 'Smart Sharpen (edge-aware nondestructive)');
     else if (command === 'filter-lens-blur')
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-iris-blur')
@@ -12732,8 +12738,14 @@ export default function Home() {
             {filterEffects.type === 'unsharp-mask' && (
               <p>Unsharp Mask adds a bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; threshold, halo suppression and channel-specific controls remain planned.</p>
             )}
+            {filterEffects.type === 'sharpen' && (
+              <p>Sharpen adds one bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; halo suppression and channel-specific controls remain planned.</p>
+            )}
             {filterEffects.type === 'sharpen-more' && (
               <p>Sharpen More applies two bounded unsharp passes for a stronger distinct result. Amount and radius stay editable; edge-aware halo suppression remains planned.</p>
+            )}
+            {filterEffects.type === 'smart-sharpen' && (
+              <p>Smart Sharpen uses a bounded edge-preserving reference to limit gain on flat tonal surfaces while retaining local detail. Amount and radius stay editable; threshold, halo suppression and camera-aware controls remain planned.</p>
             )}
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
@@ -12852,9 +12864,11 @@ export default function Home() {
                       ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
+                          filterEffects.type === 'sharpen' ||
                           filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'sharpen-more' ||
                           filterEffects.type === 'sharpen-edges' ||
+                          filterEffects.type === 'smart-sharpen' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||
