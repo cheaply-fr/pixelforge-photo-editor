@@ -1851,24 +1851,31 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
   expect(adjusted[3]).toBe(before[3]);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
-  await expect(page.getByLabel('Noise amount', { exact: true })).toHaveValue('35');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('70');
+  await page.getByLabel('Effect amount', { exact: true }).fill('35');
+  await page.getByLabel('Add Noise monochromatic', { exact: true }).check();
+  await page.getByLabel('Add Noise distribution', { exact: true }).selectOption('gaussian');
+  const filtered = await sample();
   const projectDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const projectPath = await (await projectDownload).path();
   const project = await downloadedProject(projectPath!) as {
-    history: Array<{ layers: Array<{ adjustments: { sharpenNoise: { noise: number; seed: number; monochromatic: boolean } } }> }>;
+    history: Array<{ layers: Array<{ adjustments: { filterEffects: { type: string; amount: number; noiseMonochromatic?: boolean; noiseDistribution?: string } } }> }>;
     index: number;
   };
-  expect(project.history[project.index].layers.at(-1)!.adjustments.sharpenNoise).toMatchObject({
-    noise: 35,
-    seed: 42,
-    monochromatic: true,
+  expect(project.history[project.index].layers.at(-1)!.adjustments.filterEffects).toMatchObject({
+    type: 'add-noise',
+    amount: 35,
+    noiseMonochromatic: true,
+    noiseDistribution: 'gaussian',
   });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await expect(page.getByLabel('Noise amount', { exact: true })).toHaveValue('35');
-  await expect(page.getByLabel('Noise seed', { exact: true })).toHaveValue('42');
-  await expect(page.getByLabel('Monochromatic noise', { exact: true })).toBeChecked();
-  await expect.poll(sample).toEqual(adjusted);
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('35');
+  await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Add Noise distribution', { exact: true })).toHaveValue('gaussian');
+  await expect.poll(sample).toEqual(filtered);
 });
