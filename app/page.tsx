@@ -15368,6 +15368,22 @@ export default function Home() {
                     <option value="gaussian">Gaussian</option>
                   </select>
                 </label>
+                <label>
+                  Noise seed
+                  <input
+                    className="number-input"
+                    type="number"
+                    min={0}
+                    max={4294967295}
+                    step={1}
+                    aria-label="Add Noise seed"
+                    value={filterEffects.seed}
+                    onChange={(event) => {
+                      const parsed = Number(event.target.value);
+                      setFilterEffects({ seed: Number.isFinite(parsed) ? Math.max(0, Math.min(0xffffffff, Math.trunc(parsed))) : 0 });
+                    }}
+                  />
+                </label>
               </>
             )}
             {filterEffects.type === 'flame' && (
