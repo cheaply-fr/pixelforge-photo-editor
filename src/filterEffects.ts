@@ -57,6 +57,7 @@ export const FILTER_EFFECT_TYPES = [
   'flame',
   'find-edges',
   'emboss',
+  'solarize',
   'deinterlace',
   'ntsc-colors',
 ] as const;
@@ -421,7 +422,7 @@ export function isNeutralFilterEffects(
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
     (effect.type === 'deinterlace' && effect.radius === 0) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -1590,6 +1591,27 @@ function applyNtscColors(
     output[offset] = clampByte((luma + (red - luma) * blendScale) * 255);
     output[offset + 1] = clampByte((luma + (green - luma) * blendScale) * 255);
     output[offset + 2] = clampByte((luma + (blue - luma) * blendScale) * 255);
+  }
+}
+
+function applySolarize(
+  source: Uint8ClampedArray,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const strength = clamp(amount, 0, 100) / 100;
+  for (let offset = 0; offset < source.length; offset += 4) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      const input = source[offset + channel];
+      const inverted = input >= 128 ? 255 - input : input;
+      output[offset + channel] = clampByte(input + (inverted - input) * strength);
+    }
+    output[offset + 3] = source[offset + 3];
+    if (output[offset + 3] === 0) {
+      output[offset] = source[offset];
+      output[offset + 1] = source[offset + 1];
+      output[offset + 2] = source[offset + 2];
+    }
   }
 }
 
@@ -2939,6 +2961,8 @@ export function applyFilterEffectsPixels(
     applyFindEdges(data, width, height, output, strength);
   } else if (effect.type === 'emboss') {
     applyEmboss(data, width, height, effect, output, strength);
+  } else if (effect.type === 'solarize') {
+    applySolarize(data, output, effect.amount);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {

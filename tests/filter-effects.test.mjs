@@ -1252,3 +1252,16 @@ test('de-interlace blends strength, preserves alpha and hidden transparent RGB',
   assert.deepEqual(pixel(output, 3, 0, 2).slice(0, 3), [255, 0, 255]);
   assert.equal(isNeutralFilterEffects({ type: 'deinterlace', amount: 100, radius: 0 }), true);
 });
+
+test('Solarize is deterministic, amount-blended, and alpha-safe', () => {
+  const source = rgba(4, 1, (x) => [x * 70, 255 - x * 50, 30, x === 0 ? 0 : 255]);
+  const original = source.slice();
+  assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'solarize', amount: 100, radius: 0 })), true);
+  const output = applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 100, radius: 0 });
+  assert.deepEqual(source, original);
+  assert.equal(output[3], 0);
+  assert.deepEqual(Array.from(output.slice(0, 3)), [0, 255, 30]);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 100, radius: 0 }));
+  assert.deepEqual(applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 0, radius: 0 }), source);
+});
