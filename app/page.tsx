@@ -307,6 +307,10 @@ import {
   BRUSH_DUAL_DEFAULT,
   dualBrushOpacity,
 } from '../src/brushDual';
+import {
+  BRUSH_BRISTLE_DEFAULT,
+  bristleOpacity,
+} from '../src/brushBristle';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
@@ -1211,6 +1215,7 @@ type StampCanvasOptions = {
   scatter?: number;
   texture?: number;
   dual?: number;
+  bristle?: number;
   angle?: number;
   roundness?: number;
   flipX?: boolean;
@@ -1228,7 +1233,8 @@ const stampCanvas = (
   options: StampCanvasOptions,
 ) => {
   const texturedOpacity = options.opacity * brushTextureOpacity(options.x, options.y, options.texture ?? 0) *
-    dualBrushOpacity(options.x, options.y, options.dual ?? 0),
+    dualBrushOpacity(options.x, options.y, options.dual ?? 0) *
+    bristleOpacity(options.x, options.y, options.bristle ?? 0),
     resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity }),
     radius = resolved.radius,
     left = Math.max(0, Math.floor(options.x - radius)),
@@ -1715,6 +1721,7 @@ export default function Home() {
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
+    [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
     [brushFlow, setBrushFlow] = useState(100),
     [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
@@ -2032,6 +2039,7 @@ export default function Home() {
     brushScatter,
     brushTexture,
     brushDual,
+    brushBristle,
     brushFlow,
     gradientMode,
     gradientEnd,
@@ -2090,6 +2098,7 @@ export default function Home() {
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
+    setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
     setGradientEnd(s.gradientEnd ?? 'transparent');
@@ -2133,6 +2142,7 @@ export default function Home() {
     setBrushScatter,
     setBrushTexture,
     setBrushDual,
+    setBrushBristle,
     setBrushFlow,
     setGradientMode,
     setGradientEnd,
@@ -4468,6 +4478,7 @@ export default function Home() {
         brushScatter,
         brushTexture,
         brushDual,
+        brushBristle,
         brushFlow,
         gradientMode,
         gradientEnd,
@@ -4552,6 +4563,7 @@ export default function Home() {
     brushScatter,
     brushTexture,
     brushDual,
+    brushBristle,
     brushFlow,
     gradientMode,
     gradientEnd,
@@ -7861,6 +7873,7 @@ export default function Home() {
               scatter: brushScatter,
               texture: brushTexture,
               dual: brushDual,
+              bristle: brushBristle,
               angle: brushAngle,
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
@@ -8400,6 +8413,7 @@ export default function Home() {
         scatter: brushScatter,
         texture: brushTexture,
         dual: brushDual,
+        bristle: brushBristle,
         angle: brushAngle,
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
@@ -8996,6 +9010,7 @@ export default function Home() {
           scatter: brushScatter,
           texture: brushTexture,
           dual: brushDual,
+          bristle: brushBristle,
           angle: brushAngle,
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
@@ -12598,6 +12613,14 @@ export default function Home() {
                             suffix="%"
                           />
                           <Slider
+                            label="Bristle"
+                            value={brushBristle}
+                            min={0}
+                            max={100}
+                            set={setBrushBristle}
+                            suffix="%"
+                          />
+                          <Slider
                             label="Flow"
                             value={brushFlow}
                             min={1}
@@ -12643,9 +12666,10 @@ export default function Home() {
                       </label>
                       <p className="adjust-note">
                         Tip settings apply to future local dabs. Advanced
-                        Dual brush is a deterministic secondary opacity weave;
-                        bristle and wet-media dynamics remain staged. Scatter is
-                        a deterministic local stamp offset.
+                        Dual brush and Bristle are deterministic local opacity
+                        dynamics; full physical tip simulation and wet-media
+                        buildup remain staged. Scatter is a deterministic local
+                        stamp offset.
                       </p>
                     </>
                   )}

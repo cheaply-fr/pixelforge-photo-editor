@@ -20,10 +20,13 @@ test('brush scatter is exposed for raster brush tools and persists safely', asyn
   const dual = page.getByLabel('Dual brush', { exact: true });
   await dual.fill('63');
   await expect(dual).toHaveValue('63');
+  const bristle = page.getByLabel('Bristle', { exact: true });
+  await bristle.fill('51');
+  await expect(bristle).toHaveValue('51');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
   const project = await downloadedProject((await download.path())!);
-  expect(project.settings).toMatchObject({ brushScatter: 74, brushDual: 63 });
+  expect(project.settings).toMatchObject({ brushScatter: 74, brushDual: 63, brushBristle: 51 });
 });

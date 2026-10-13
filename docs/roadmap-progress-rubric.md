@@ -69,6 +69,12 @@ in `tests/brush-dual.test.mjs`, with desktop/mobile project-file coverage in
 `tests/browser/brush-dynamics.spec.ts`; full secondary tip selection, bristle
 and wet-media simulation remain staged.
 
+Brush-family controls now also include a persisted deterministic Bristle amount.
+It applies bounded filament-like opacity modulation to each local stamp while
+preserving the zero-value path and source-safe commit boundary. Pure coverage is
+in `tests/brush-bristle.test.mjs`, with the same desktop/mobile project-file
+acceptance; physical bristle geometry and wet-media simulation remain staged.
+
 Brush-family controls also include a persisted Flow amount that scales local
 dab opacity independently from overall Opacity. `tests/browser/brush-flow.spec.ts`
 covers the accessible control and project-file round-trip; the setting defaults
