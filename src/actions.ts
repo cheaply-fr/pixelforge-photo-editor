@@ -140,6 +140,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-sharpen',
   'filter-unsharp-mask',
   'filter-sharpen-more',
+  'filter-sharpen-edges',
   'filter-smart-sharpen',
   'filter-motion-blur',
   'filter-radial-blur',

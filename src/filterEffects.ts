@@ -18,6 +18,7 @@ export const FILTER_EFFECT_TYPES = [
   'sharpen',
   'unsharp-mask',
   'sharpen-more',
+  'sharpen-edges',
   'smart-sharpen',
   'lens-blur',
   'iris-blur',
@@ -2681,6 +2682,52 @@ function applySharpenMore(
 }
 
 /**
+ * Apply a bounded edge-weighted sharpen. Unlike Unsharp Mask, the
+ * high-frequency contribution is gated by a local Sobel luminance magnitude,
+ * so broad flat regions remain stable while contrast boundaries receive the
+ * editable sharpen amount. Alpha and transparent RGB padding stay source
+ * owned and the source buffer remains immutable.
+ */
+function applySharpenEdges(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const blurred = new Uint8ClampedArray(source.length);
+  applyGaussianBlur(source, width, height, radius, blurred, 1);
+  const strength = clamp(amount, 0, 100) / 100;
+  const lumaAt = (x: number, y: number) => {
+    const sx = Math.max(0, Math.min(width - 1, x));
+    const sy = Math.max(0, Math.min(height - 1, y));
+    const offset = (sy * width + sx) * 4;
+    return source[offset] * 0.2126 + source[offset + 1] * 0.7152 + source[offset + 2] * 0.0722;
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      output[offset + 3] = alpha;
+      if (!alpha) continue;
+      const gx =
+        -lumaAt(x - 1, y - 1) + lumaAt(x + 1, y - 1) -
+        2 * lumaAt(x - 1, y) + 2 * lumaAt(x + 1, y) -
+        lumaAt(x - 1, y + 1) + lumaAt(x + 1, y + 1);
+      const gy =
+        -lumaAt(x - 1, y - 1) - 2 * lumaAt(x, y - 1) - lumaAt(x + 1, y - 1) +
+        lumaAt(x - 1, y + 1) + 2 * lumaAt(x, y + 1) + lumaAt(x + 1, y + 1);
+      const edgeWeight = clamp(Math.hypot(gx, gy) / 180, 0, 1);
+      const effective = strength * edgeWeight;
+      output[offset] = clampByte(source[offset] + (source[offset] - blurred[offset]) * effective);
+      output[offset + 1] = clampByte(source[offset + 1] + (source[offset + 1] - blurred[offset + 1]) * effective);
+      output[offset + 2] = clampByte(source[offset + 2] + (source[offset + 2] - blurred[offset + 2]) * effective);
+    }
+  }
+}
+
+/**
  * Apply a bounded Smart Sharpen approximation using an edge-preserving
  * bilateral reference. Tonal surfaces receive little high-frequency gain,
  * while genuine local contrast boundaries receive a stronger response.
@@ -2785,6 +2832,8 @@ export function applyFilterEffectsPixels(
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'sharpen-more') {
     applySharpenMore(data, width, height, effect.radius, output, effect.amount);
+  } else if (effect.type === 'sharpen-edges') {
+    applySharpenEdges(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-sharpen') {
     applySmartSharpen(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-blur') {

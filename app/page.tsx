@@ -540,6 +540,7 @@ type Command =
   | 'filter-sharpen'
   | 'filter-unsharp-mask'
   | 'filter-sharpen-more'
+  | 'filter-sharpen-edges'
   | 'filter-smart-sharpen'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
@@ -1039,7 +1040,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'filter-sharpen' },
-    { label: 'Sharpen Edges', command: 'sharpen-noise' },
+    { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
     { label: 'Sharpen More', command: 'filter-sharpen-more' },
     { label: 'Smart Sharpen…', command: 'filter-smart-sharpen' },
     { label: 'Unsharp Mask…', command: 'filter-unsharp-mask' },
@@ -10109,6 +10110,8 @@ export default function Home() {
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-sharpen-more')
       chooseFilterEffect('sharpen-more', 'Sharpen More (two-pass nondestructive)');
+    else if (command === 'filter-sharpen-edges')
+      chooseFilterEffect('sharpen-edges', 'Sharpen Edges (edge-weighted nondestructive)');
     else if (command === 'filter-smart-sharpen')
       chooseFilterEffect('smart-sharpen', 'Smart Sharpen (edge-aware nondestructive)');
     else if (command === 'filter-lens-blur')
@@ -12864,6 +12867,7 @@ export default function Home() {
                           filterEffects.type === 'sharpen' ||
                           filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'sharpen-more' ||
+                          filterEffects.type === 'sharpen-edges' ||
                           filterEffects.type === 'smart-sharpen' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
