@@ -36,6 +36,23 @@ test('linear shear follows the signed inverse map and retains the centre row', (
   assert.deepEqual(source, original);
 });
 
+test('Twirl uses a deterministic alpha-safe bilinear inverse map', () => {
+  const source = rgba(9, 9, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    return [x * 24, y * 24, (x + y) * 10, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'twirl', amount: 100, radius: 12, angle: 90, centerX: 0.5, centerY: 0.5 };
+  const output = applyFilterEffectsPixels(source, 9, 9, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 9, 0, 0), [17, 23, 29, 0]);
+  assert.equal(pixel(output, 9, 4, 4)[3], 255);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 9, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(isNeutralFilterEffects({ ...effect, angle: 0 }), true);
+});
+
 test('Gradient Map interpolates editable endpoints while preserving alpha and source bytes', () => {
   const source = rgba(3, 1, (x) => x === 0 ? [0, 20, 40, 255] : x === 1 ? [128, 128, 128, 255] : [255, 240, 220, 0]);
   const original = source.slice();

@@ -223,3 +223,9 @@ The follow-up noise increment adds `Filter → Noise → Dust & Scratches…`: a
 The noise family now also includes `Filter → Noise → Despeckle`, a fixed-radius local cleanup command with deterministic source-safe rendering and desktop/mobile persistence coverage. This bounded approximation does not claim Photoshop's texture-aware detector.
 
 The Noise family now also includes `Filter → Noise → Reduce Noise…`, a bounded colour-weighted local filter with an editable preserve-details threshold. Pure and desktop/mobile tests cover representative smoothing, edge retention, transparent-RGB safety, source retention and project persistence.
+
+The current geometry increment adds `Filter → Distort → Twirl…`. It uses a
+bounded quadratically tapered rotational inverse map with premultiplied-alpha
+bilinear sampling, preserving source bytes and transparent edge RGB. Pure and
+desktop/mobile persistence tests cover the editable angle and reload behavior;
+full mesh/liquify semantics remain staged.

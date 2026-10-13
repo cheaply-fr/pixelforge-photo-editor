@@ -90,6 +90,31 @@ test('Diffuse is an enabled nondestructive Stylize filter with editable persiste
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
+test('Twirl is an enabled nondestructive Distort filter with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Twirl…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('twirl');
+  await expect(page.getByLabel('Twirl angle', { exact: true })).toHaveValue('75');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'twirl', angle: 75 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('twirl');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 test('Wind is an enabled nondestructive Stylize filter with editable angle persistence', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

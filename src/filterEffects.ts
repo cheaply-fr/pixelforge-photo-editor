@@ -2424,8 +2424,13 @@ function applyDistort(
         sampleX = x + (dx / Math.max(1, distance)) * wave;
         sampleY = y + (dy / Math.max(1, distance)) * wave;
       }
+      // Distortions that move a pixel through a fractional coordinate use
+      // premultiplied-alpha bilinear sampling. This keeps transparent edge
+      // padding from bleeding into visible pixels and makes Twirl stable on
+      // diagonal boundaries instead of producing nearest-neighbour stair
+      // steps.
       const sample =
-        (effect.type === 'pinch' || effect.type === 'spherize' || effect.type === 'ripple')
+        (effect.type === 'twirl' || effect.type === 'pinch' || effect.type === 'spherize' || effect.type === 'ripple')
           ? sourcePixelBilinear(source, width, height, sampleX, sampleY)
           : sourcePixel(source, width, height, sampleX, sampleY);
       if (sample[3] === 0) continue;
