@@ -169,7 +169,8 @@ smart-object layers. Validated white/black matte metadata decontaminates
 semi-transparent edge RGB before masks and filters without changing alpha or
 the immutable source asset. Pure pixel/validation coverage and desktop/mobile
 acceptance cover representative output, persistence and undo. The local suite
-now passes 747/747 tests; protected CI, deployment and live acceptance remain
+now passes 747/747 tests at that historical increment; subsequent local
+increments raise the current full suite to 753/753. Protected CI, deployment and live acceptance remain
 separate gates.
 
 The next filter increment adds `Filter → Stylize → Gradient Map…`. It maps
