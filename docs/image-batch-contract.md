@@ -37,8 +37,9 @@ history…” command remains a separate history-snapshot workflow, and editable
 `.pixelforge` project export remains the recovery format. Recorded Actions now
 reuse the same deterministic filter renderer for active nondestructive filters
 when applying a flattened batch, including the enabled blur family (box,
-Gaussian, lens, iris, smart, surface and shape blur) and other bounded filter
-effects. Unsupported editor-only commands still fail per file rather than
+Gaussian, lens, iris, smart, surface and shape blur), Gradient Map endpoint
+colours/blend/interior stops, and other bounded filter effects. Unsupported
+editor-only commands still fail per file rather than
 silently changing semantics. HEIC/RAW/PSD decode,
 background-removal batches and worker/tiled processing need separate
 compatibility, quality and performance gates.
