@@ -135,6 +135,8 @@ export type Settings = {
   brushPreset?: BrushPresetId;
   /** Spacing between brush dabs as a percent of diameter. */
   spacing?: number;
+  /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
+  brushSmoothing?: number;
   /** Brush tip rotation in degrees. */
   angle?: number;
   /** Brush tip roundness (100 is circular). */
@@ -352,6 +354,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.colorTolerance ?? 24, 0, 255] as [number, number, number],
     [candidate.tonalExposure ?? 50, 1, 100] as [number, number, number],
     [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],
+    [candidate.brushSmoothing ?? 0, 0, 100] as [number, number, number],
   ];
   if (candidate.patternTileSize !== undefined) {
     try {

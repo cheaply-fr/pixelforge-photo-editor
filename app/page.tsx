@@ -291,6 +291,10 @@ import {
   flyoutTools,
 } from '../src/toolPalette';
 import { removeRedEye } from '../src/redEye';
+import {
+  BRUSH_SMOOTHING_DEFAULT,
+  stabilizeBrushPoint,
+} from '../src/brushSmoothing';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
@@ -1154,6 +1158,7 @@ type Gesture = {
     pressure?: number;
     pointerType?: string;
   }>;
+  smoothedLast?: { x: number; y: number };
   points?: PathNode[];
   lastPressure?: number;
   pointerType?: string;
@@ -1688,6 +1693,7 @@ export default function Home() {
     [pressureOpacity, setPressureOpacity] = useState(false),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
+    [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -1997,6 +2003,7 @@ export default function Home() {
     pressureOpacity,
     brushPreset,
     spacing: brushSpacing,
+    brushSmoothing,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2047,6 +2054,7 @@ export default function Home() {
     setPressureOpacity(s.pressureOpacity ?? false);
     setBrushPreset(s.brushPreset ?? 'round-hard');
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
+    setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2082,6 +2090,7 @@ export default function Home() {
     setPressureOpacity,
     setBrushPreset,
     setBrushSpacing,
+    setBrushSmoothing,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -7755,6 +7764,7 @@ export default function Home() {
       tool,
       start: tool === 'move' ? p : local,
       last: tool === 'move' ? p : local,
+      smoothedLast: local,
       frame: f,
       layer,
       lastPressure: pressure(e),
@@ -7772,10 +7782,12 @@ export default function Home() {
           if (gesture.current !== g) return;
           g.buffer = buffer;
           let from = local;
+          let stabilized = local;
           for (const point of g.queued || [
             { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
           ]) {
-            stampCanvasSegment(buffer, from, point, {
+            const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
+            stampCanvasSegment(buffer, from, destination, {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: brushOpacity / 100,
@@ -7791,8 +7803,10 @@ export default function Home() {
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
               color: tool === 'eraser' ? undefined : brushColor(color),
             });
-            from = point;
+            from = destination;
+            stabilized = destination;
           }
+          g.smoothedLast = stabilized;
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
         } catch {
@@ -8307,7 +8321,9 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
-      stampCanvasSegment(g.buffer, g.last, local, {
+      const from = g.smoothedLast ?? g.last;
+      const destination = stabilizeBrushPoint(from, local, brushSmoothing);
+      stampCanvasSegment(g.buffer, from, destination, {
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: brushOpacity / 100,
@@ -8324,6 +8340,8 @@ export default function Home() {
         color: g.tool === 'eraser' ? undefined : brushColor(color),
       });
       void paint(g.frame, { [g.layer.id]: g.buffer });
+      g.smoothedLast = destination;
+      g.last = local;
     } else if (
       g.tool === 'rectangle' ||
       g.tool === 'ellipse' ||
@@ -8895,8 +8913,10 @@ export default function Home() {
     ) {
       g.lastPressure = g.lastPressure ?? 1;
       g.pointerType = g.pointerType || e.pointerType;
-      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
-        stampCanvasSegment(g.buffer, g.last, local, {
+      const from = g.smoothedLast ?? g.last;
+      const destination = stabilizeBrushPoint(from, local, brushSmoothing);
+      if (g.moved && (from.x !== destination.x || from.y !== destination.y))
+        stampCanvasSegment(g.buffer, from, destination, {
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: brushOpacity / 100,
@@ -8912,6 +8932,7 @@ export default function Home() {
           mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
           color: g.tool === 'eraser' ? undefined : brushColor(color),
         });
+      g.smoothedLast = destination;
       const asset = addAsset(assets.current, g.buffer);
       const changed = commit({
         ...f,
@@ -12406,6 +12427,16 @@ export default function Home() {
                         set={setBrushSpacing}
                         suffix="%"
                       />
+                      {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+                        <Slider
+                          label="Smoothing"
+                          value={brushSmoothing}
+                          min={0}
+                          max={100}
+                          set={setBrushSmoothing}
+                          suffix="%"
+                        />
+                      )}
                       <Slider
                         label="Angle"
                         value={brushAngle}

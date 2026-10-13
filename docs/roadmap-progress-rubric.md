@@ -40,3 +40,10 @@ in `tests/history-timeline.test.mjs`, and desktop/mobile acceptance coverage is
 in `tests/browser/history-panel.spec.ts`. This increment is locally verified;
 it is not CI, deployment or live acceptance until a protected workflow runs for
 the candidate SHA.
+
+The brush-family controls also include a persisted, bounded smoothing amount
+for Brush, Pencil and Eraser. `src/brushSmoothing.ts` keeps pointer response
+deterministic and source-safe, with pure coverage in
+`tests/brush-smoothing.test.mjs`; details and limitations are recorded in
+`docs/brush-smoothing-contract.md`. This remains local evidence until the
+protected workflow and live candidate verification pass.
