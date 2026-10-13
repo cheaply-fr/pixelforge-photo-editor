@@ -58,14 +58,14 @@ export default function KeyboardShortcutsDialog({
         {toolItems && applyToolBindings && (
           <fieldset className="tool-shortcut-settings">
             <legend>Custom tool bindings</legend>
-            <p className="toolbar-category-help">Assign one letter or number to a tool. Duplicate, invalid, and reserved modifier combinations are ignored.</p>
+            <p className="toolbar-category-help">Assign a letter or number, optionally with Shift, Ctrl, Alt, or Cmd (for example <code>shift+q</code>). Duplicate and invalid chords are ignored.</p>
             {toolItems.map((item) => (
               <label className="tool-shortcut-row" key={item.id}>
                 <span><b>{item.label}</b><small>Default {item.key || '—'}</small></span>
                 <input
                   aria-label={`${item.label} custom shortcut`}
                   value={bindings[item.id] ?? ''}
-                  maxLength={1}
+                  maxLength={24}
                   inputMode="text"
                   onChange={(event) => setBindings((current) => ({ ...current, [item.id]: event.target.value.slice(-1) }))}
                 />

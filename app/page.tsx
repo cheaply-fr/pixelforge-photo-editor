@@ -335,6 +335,7 @@ import {
 } from '../src/toolPalette';
 import {
   normalizeToolShortcutPreferences,
+  toolShortcutMatches,
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
 import { normalizeLastFilterType } from '../src/lastFilter';
@@ -11211,6 +11212,15 @@ export default function Home() {
         else setNotice('Exit Quick Mask mode before changing the document');
         return;
       }
+      const customTool = Object.entries(toolShortcutBindings).find(([, binding]) =>
+        toolShortcutMatches(binding, e),
+      )?.[0] as Tool | undefined;
+      if (customTool) {
+        e.preventDefault();
+        setTool(customTool);
+        setNotice(toolSelectionNotice(customTool, TOOLS.find((item) => item.id === customTool)?.label || customTool));
+        return;
+      }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
         void fillActiveLayer();
@@ -11304,13 +11314,6 @@ export default function Home() {
       }
       if (e.altKey) return;
       const lower = e.key.toLowerCase();
-      const customTool = Object.entries(toolShortcutBindings).find(([, key]) => key === lower)?.[0] as Tool | undefined;
-      if (customTool) {
-        e.preventDefault();
-        setTool(customTool);
-        setNotice(toolSelectionNotice(customTool, TOOLS.find((item) => item.id === customTool)?.label || customTool));
-        return;
-      }
       const group = TOOL_GROUPS[lower];
       if (group) {
         e.preventDefault();
