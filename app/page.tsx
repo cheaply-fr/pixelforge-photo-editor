@@ -716,6 +716,7 @@ type Command =
   | 'filter-lens-flare'
   | 'filter-displace'
   | 'filter-pinch'
+  | 'filter-liquify'
   | 'filter-polar-coordinates'
   | 'filter-ripple'
   | 'filter-spherize'
@@ -1161,7 +1162,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'AI Denoise…', command: 'noop', disabled: true },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
-    { label: 'Liquify…', command: 'noop', disabled: true },
+    { label: 'Liquify…', command: 'filter-liquify' },
     { label: 'Vanishing Point…', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
     { label: 'Blur', command: 'noop', disabled: true },
@@ -5205,7 +5206,7 @@ export default function Home() {
                       ? 64
                     : type === 'lens-flare'
                       ? 36
-                    : type === 'pinch'
+                    : type === 'pinch' || type === 'liquify'
                       ? 40
                     : type === 'spherize'
                         ? 40
@@ -5219,7 +5220,7 @@ export default function Home() {
                           ? 12
                         : 6,
                 angle:
-                  type === 'twirl'
+                  type === 'twirl' || type === 'liquify'
                     ? 75
                     : type === 'shear'
                       ? 90
@@ -11916,6 +11917,8 @@ export default function Home() {
       chooseFilterEffect('ripple', 'Ripple');
     else if (command === 'filter-pinch')
       chooseFilterEffect('pinch', 'Pinch');
+    else if (command === 'filter-liquify')
+      chooseFilterEffect('liquify', 'Liquify (bounded local approximation)');
     else if (command === 'filter-polar-coordinates')
       chooseFilterEffect('polar-coordinates', 'Polar Coordinates (local approximation)');
     else if (command === 'filter-spherize')
@@ -12232,6 +12235,7 @@ export default function Home() {
       case 'filter-displace':
       case 'filter-ripple':
       case 'filter-polar-coordinates':
+      case 'filter-liquify':
       case 'filter-spherize':
       case 'filter-twirl':
       case 'filter-wave':
@@ -15148,6 +15152,9 @@ export default function Home() {
             {filterEffects.type === 'shear' && (
               <p>Linear horizontal shear with clamped edges and unchanged alpha. Editable shear curves and wrap-around remain planned.</p>
             )}
+            {filterEffects.type === 'liquify' && (
+              <p>Bounded local push/twist approximation with editable centre, radius and angle. The source remains immutable; Photoshop mesh, face-aware and brush-stroke semantics remain staged.</p>
+            )}
             {filterEffects.type === 'polar-coordinates' && (
               <p>Bounded rectangular-to-polar remap with clamped seams and unchanged alpha. Polar-to-rectangular mode and canvas-aware seam controls remain planned.</p>
             )}
@@ -15402,6 +15409,8 @@ export default function Home() {
                           ? 'Angular sweep'
                       : filterEffects.type === 'pinch'
                           ? 'Pinch radius'
+                      : filterEffects.type === 'liquify'
+                          ? 'Liquify radius'
                       : filterEffects.type === 'spherize'
                           ? 'Spherize radius'
                       : filterEffects.type === 'wave'
@@ -15435,9 +15444,9 @@ export default function Home() {
                       : ' px'
                   }
                 />}
-                {filterEffects.type === 'twirl' && (
+                {(filterEffects.type === 'twirl' || filterEffects.type === 'liquify') && (
                   <Slider
-                    label="Twirl angle"
+                    label={filterEffects.type === 'liquify' ? 'Liquify angle' : 'Twirl angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
@@ -15473,6 +15482,12 @@ export default function Home() {
                       set={(value) => setFilterEffects({ centerY: value / 100 })}
                       suffix="%"
                     />
+                  </>
+                )}
+                {filterEffects.type === 'liquify' && (
+                  <>
+                    <Slider label="Liquify center X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
+                    <Slider label="Liquify center Y" value={Math.round(filterEffects.centerY * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
                   </>
                 )}
                 {filterEffects.type === 'ripple' && (

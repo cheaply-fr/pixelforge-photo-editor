@@ -47,6 +47,7 @@ export const FILTER_EFFECT_TYPES = [
   'lens-correction',
   'displace',
   'pinch',
+  'liquify',
   'polar-coordinates',
   'ripple',
   'spherize',
@@ -2389,7 +2390,7 @@ function applyDistort(
     centerX = effect.centerX * (width - 1),
     centerY = effect.centerY * (height - 1),
     radius =
-      effect.type === 'pinch'
+      effect.type === 'pinch' || effect.type === 'liquify'
         ? Math.max(
             1,
             (Math.min(width, height) * 0.7 * Math.max(1, effect.radius)) / 64,
@@ -2422,6 +2423,17 @@ function applyDistort(
         const scale = 1 - amount * falloff * falloff;
         sampleX = centerX + dx * scale;
         sampleY = centerY + dy * scale;
+      } else if (effect.type === 'liquify' && distance < radius) {
+        // Bounded local push/twist approximation. The inverse map samples
+        // only the immutable source and fades to identity at the influence
+        // boundary; it intentionally does not claim Photoshop mesh semantics.
+        const falloff = 1 - normalized;
+        const scale = 1 - amount * 0.35 * falloff * falloff;
+        const turn = angle * amount * falloff * falloff;
+        const cosine = Math.cos(turn);
+        const sine = Math.sin(turn);
+        sampleX = centerX + (dx * cosine - dy * sine) * scale;
+        sampleY = centerY + (dx * sine + dy * cosine) * scale;
       } else if (effect.type === 'spherize' && distance < radius) {
         // Inverse-map a bounded spherical bulge with a smooth edge falloff.
         // The exact centre and influence boundary remain stable.
@@ -2440,7 +2452,7 @@ function applyDistort(
       // diagonal boundaries instead of producing nearest-neighbour stair
       // steps.
       const sample =
-        (effect.type === 'twirl' || effect.type === 'pinch' || effect.type === 'spherize' || effect.type === 'ripple')
+        (effect.type === 'twirl' || effect.type === 'pinch' || effect.type === 'liquify' || effect.type === 'spherize' || effect.type === 'ripple')
           ? sourcePixelBilinear(source, width, height, sampleX, sampleY)
           : sourcePixel(source, width, height, sampleX, sampleY);
       if (sample[3] === 0) continue;

@@ -231,6 +231,13 @@ bilinear sampling, preserving source bytes and transparent edge RGB. Pure and
 desktop/mobile persistence tests cover the editable angle and reload behavior;
 full mesh/liquify semantics remain staged.
 
+The follow-up geometry increment adds `Filter → Distort → Liquify…` as a
+bounded local push/twist inverse map with editable centre, radius and angle.
+It preserves immutable source assets, alpha and transparent hidden RGB and is
+covered by pure pixel/metadata tests plus desktop/mobile menu, undo-source and
+reload acceptance. Photoshop mesh, face-aware and brush-history semantics
+remain staged.
+
 The toolbar increment adds persistent category visibility controls to
 `Edit → Toolbar…`. Users can hide unused categories to reduce empty vertical
 space; the UI keeps one category visible and returns to Move if the active

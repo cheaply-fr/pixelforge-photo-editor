@@ -1219,6 +1219,25 @@ test('pinch uses deterministic alpha-safe bilinear sampling for subpixel maps', 
   assert.deepEqual(pixel(result, 2, 0, 0), [250, 5, 240, 0]);
 });
 
+test('liquify is a bounded source-safe push/twist remap with editable centre', () => {
+  const source = rgba(13, 9, (x, y) => {
+    if (x === 0 && y === 0) return [250, 9, 240, 0];
+    return [(x * 29 + y * 5) % 256, (x * 7 + y * 31) % 256, (x * 13 + y * 11) % 256, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'liquify', amount: 100, radius: 48, angle: 90, centerX: 0.5, centerY: 0.5 };
+  const first = applyFilterEffectsPixels(source, 13, 9, effect);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 13, 9, effect));
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(first, 13, 0, 0), pixel(source, 13, 0, 0));
+  assert.deepEqual(pixel(first, 13, 6, 4), pixel(source, 13, 6, 4));
+  assert.notDeepEqual(pixel(first, 13, 4, 4), pixel(source, 13, 4, 4));
+  assert.deepEqual(applyFilterEffectsPixels(source, 13, 9, { ...effect, amount: 0 }), source);
+  const normalized = effectiveFilterEffects({ ...effect, amount: 140, radius: 99, angle: 999, centerX: -2, centerY: 9 });
+  assert.deepEqual({ type: normalized.type, amount: normalized.amount, radius: normalized.radius, angle: normalized.angle, centerX: normalized.centerX, centerY: normalized.centerY }, { type: 'liquify', amount: 100, radius: 64, angle: 180, centerX: 0, centerY: 1 });
+  assert.equal(validFilterEffects(normalized), true);
+});
+
 test('wave is a deterministic directional remap with wavelength and alpha-safe edges', () => {
   const source = rgba(13, 9, (x, y) => {
     if (x === 0 && y === 0) return [241, 17, 233, 0];

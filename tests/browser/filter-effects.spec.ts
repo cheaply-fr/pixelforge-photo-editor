@@ -2062,3 +2062,31 @@ test('Sharpen More is a distinct enabled nondestructive Sharpen filter', async (
   expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
   expect(layer.adjustments.filterEffects).toMatchObject({ type: 'sharpen-more', radius: 7 });
 });
+
+test('Liquify is enabled as a bounded nondestructive local warp with round-trip controls', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Liquify…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Liquify (bounded local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('liquify');
+  await expect(page.getByLabel('Liquify radius', { exact: true })).toHaveValue('40');
+  await expect(page.getByLabel('Liquify center X', { exact: true })).toHaveValue('50');
+  await page.getByLabel('Liquify radius', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Liquify angle', { exact: true }).press('ArrowRight');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'liquify', radius: 41, angle: 76 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('liquify');
+  await expect(page.getByLabel('Liquify radius', { exact: true })).toHaveValue('41');
+});
