@@ -5444,31 +5444,41 @@ export default function Home() {
   const distributeGroupLayers = (axis: DistributionAxis) => {
     const f = current(),
       activeLayer = f.layers.find((item) => item.id === f.active),
+      selected = selectedLayersForFrame(f),
       groupId = activeLayer?.groupId,
-      group = groupId
-        ? f.groups?.find((item) => item.id === groupId)
-        : undefined;
-    if (!activeLayer || !group) {
-      setNotice('Select a grouped layer before distributing');
+      group = groupId ? f.groups?.find((item) => item.id === groupId) : undefined,
+      selectedGroups = new Set(selected.flatMap((item) => item.groupId ? [item.groupId] : [])),
+      eligible = selected.length >= 3
+        ? selected
+        : group
+          ? f.layers.filter((item) => item.groupId === group.id)
+          : [];
+    if (!eligible.length) {
+      setNotice('Select at least three layers before distributing');
       return;
     }
-    if (group.locked) {
+    if (selectedGroups.size > 1 || (selectedGroups.size === 1 && selected.some((item) => item.groupId !== [...selectedGroups][0]))) {
+      setNotice('Select layers from one folder or from the root stack');
+      return;
+    }
+    const selectedGroup = selectedGroups.size === 1
+      ? f.groups?.find((item) => item.id === [...selectedGroups][0])
+      : undefined;
+    if (selectedGroup?.locked || group?.locked) {
       setNotice('Unlock this group before distributing');
       return;
     }
-    if (!group.visible) {
+    if (selectedGroup?.visible === false || group?.visible === false) {
       setNotice('Show this group before distributing');
       return;
     }
-    const eligible = f.layers.filter(
-      (item) => item.groupId === group.id && item.visible && !item.locked,
-    );
-    if (eligible.length < 3) {
-      setNotice('A group needs three visible unlocked layers to distribute');
+    const visibleEligible = eligible.filter((item) => item.visible && !item.locked);
+    if (visibleEligible.length < 3) {
+      setNotice('At least three visible unlocked layers are required to distribute');
       return;
     }
     try {
-      const bounds = eligible.map((item) => ({
+      const bounds = visibleEligible.map((item) => ({
           id: item.id,
           ...layerBounds(item, assets.current),
         })),
@@ -10900,13 +10910,24 @@ export default function Home() {
       case 'distribute-horizontal':
       case 'distribute-vertical': {
         const group = layer ? groupForLayer(frame, layer) : undefined;
+        const selected = selectedLayersForFrame(frame);
+        const selectedGroups = new Set(selected.flatMap((item) => item.groupId ? [item.groupId] : []));
+        const selectedGroup = selectedGroups.size === 1
+          ? frame.groups?.find((item) => item.id === [...selectedGroups][0])
+          : undefined;
+        const candidates = selected.length >= 3
+          ? selected
+          : group
+            ? frame.layers.filter((item) => item.groupId === group.id)
+            : [];
         return (
-          !group ||
-          group.locked ||
-          !group.visible ||
-          frame.layers.filter(
-            (item) => item.groupId === group.id && item.visible && !item.locked,
-          ).length < 3
+          candidates.length < 3 ||
+          selectedGroups.size > 1 ||
+          (selectedGroups.size === 1 && selected.some((item) => item.groupId !== [...selectedGroups][0])) ||
+          Boolean(selectedGroup?.locked || group?.locked) ||
+          selectedGroup?.visible === false ||
+          group?.visible === false ||
+          candidates.filter((item) => item.visible && !item.locked).length < 3
         );
       }
       case 'grow-selection':

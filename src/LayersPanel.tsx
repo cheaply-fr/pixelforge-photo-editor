@@ -138,9 +138,22 @@ export default function LayersPanel({
   ) => updateStyles({ dropShadow: { ...styles.dropShadow, ...patch } });
   const updateOutline = (patch: Partial<LayerStyles['outline']>) =>
     updateStyles({ outline: { ...styles.outline, ...patch } });
-  const distributableCount = activeGroup
-    ? frame.layers.filter((item) => item.groupId === activeGroup.id && item.visible && !item.locked).length
-    : 0;
+  const selectedLayers = frame.layers.filter((item) => selectedIds.has(item.id));
+  const selectedGroupIds = new Set(selectedLayers.flatMap((item) => item.groupId ? [item.groupId] : []));
+  const distributionGroup = selectedGroupIds.size === 1
+    ? groupById.get([...selectedGroupIds][0])
+    : activeGroup;
+  const distributionCandidates = selectedLayers.length >= 3
+    ? selectedLayers
+    : distributionGroup
+      ? frame.layers.filter((item) => item.groupId === distributionGroup.id)
+      : [];
+  const distributableCount = distributionCandidates.filter((item) => item.visible && !item.locked).length;
+  const canDistribute = distributionCandidates.length >= 3 &&
+    (selectedGroupIds.size === 0 || selectedGroupIds.size === 1) &&
+    !distributionCandidates.some((item) => item.groupId && item.groupId !== [...selectedGroupIds][0]) &&
+    !distributionGroup?.locked && distributionGroup?.visible !== false &&
+    distributableCount >= 3;
   const renderedGroups = new Set<string>();
   const rows: ReactNode[] = [];
   for (const item of [...frame.layers].reverse()) {
@@ -324,9 +337,9 @@ export default function LayersPanel({
       </fieldset>
       <fieldset
         className="layer-alignment"
-        disabled={!activeGroup || activeGroup.locked || !activeGroup.visible || distributableCount < 3}
+        disabled={!canDistribute}
       >
-        <legend>Distribute folder layers</legend>
+        <legend>{selectedLayers.length >= 3 && selectedGroupIds.size === 0 ? 'Distribute selected layers' : 'Distribute folder layers'}</legend>
         <div className="layer-actions">
           <button onClick={() => distribute('horizontal')}>Distribute horizontally</button>
           <button onClick={() => distribute('vertical')}>Distribute vertically</button>

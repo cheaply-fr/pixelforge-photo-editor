@@ -76,7 +76,8 @@ delete, group and combined-bounds alignment operate on the selected set with
 one undo entry, stable order and locked-member guards. The pure and
 desktop/mobile acceptance contract is documented in
 [`layer-selection-contract.md`](./layer-selection-contract.md); clipping,
-links and arbitrary-selection distribution remain staged. A bounded
+links remain staged; distribution now accepts three or more selected root layers
+or the active folder and spaces their painted centers without baking pixels. A bounded
 nondestructive vector-mask slice is now active for visible raster, Smart
 Object, text, shape and path layers; see
 [`vector-mask-contract.md`](./vector-mask-contract.md). Merge
