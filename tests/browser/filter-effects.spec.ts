@@ -2090,3 +2090,33 @@ test('Liquify is enabled as a bounded nondestructive local warp with round-trip 
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('liquify');
   await expect(page.getByLabel('Liquify radius', { exact: true })).toHaveValue('41');
 });
+
+test('Add Noise is an enabled seeded nondestructive filter with monochromatic control', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Add Noise…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Add Noise (seeded local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).not.toBeChecked();
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Add Noise monochromatic', { exact: true }).check();
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'add-noise', noiseMonochromatic: true });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).toBeChecked();
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});

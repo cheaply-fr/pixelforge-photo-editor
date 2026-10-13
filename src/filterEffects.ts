@@ -69,6 +69,7 @@ export const FILTER_EFFECT_TYPES = [
   'dust-scratches',
   'despeckle',
   'reduce-noise',
+  'add-noise',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -195,6 +196,8 @@ export type FilterEffects = {
   centerY: number;
   /** Stable seed reserved for deterministic procedural variants. */
   seed: number;
+  /** Use one seeded value for all channels in the Add Noise effect. */
+  noiseMonochromatic?: boolean;
   /** Authored polyline in normalized layer coordinates, limited to 2–8 points. */
   path?: BlurPathPoint[];
   /** Omitted for legacy global radial Spin Blur records. */
@@ -270,6 +273,9 @@ export function effectiveFilterEffects(
     ? Math.trunc(source.seed) >>> 0
     : neutralFilterEffects.seed;
   const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
+  if (type === 'add-noise') {
+    normalized.noiseMonochromatic = source.noiseMonochromatic === true;
+  }
   if (type === 'radial-blur') {
     normalized.radialMode = source.radialMode === 'zoom' ? 'zoom' : 'spin';
   }
@@ -452,6 +458,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
@@ -489,7 +496,7 @@ export function isNeutralFilterEffects(
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
     (effect.type === 'deinterlace' && effect.radius === 0) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.type !== 'add-noise' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -3196,6 +3203,34 @@ function applyReduceNoise(
   }
 }
 
+/** Apply a seeded uniform Add Noise approximation without touching alpha. */
+function applyAddNoise(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const amplitude = clamp(effect.amount, 0, 100) * 2.55;
+  const monochromatic = effect.noiseMonochromatic === true;
+  for (let index = 0; index < width * height; index += 1) {
+    const offset = index * 4;
+    if (!source[offset + 3]) continue;
+    const sample = (channel: number) => {
+      const channelKey = monochromatic ? 0 : channel;
+      let value = (Math.imul((effect.seed >>> 0) ^ 0x9e3779b9, index + 1) ^ Math.imul(channelKey + 1, 0x85ebca6b)) >>> 0;
+      value ^= value >>> 16;
+      value = Math.imul(value, 0x7feb352d) >>> 0;
+      value ^= value >>> 15;
+      return (value / 0xffffffff) * 2 - 1;
+    };
+    output[offset] = clampByte(source[offset] + sample(0) * amplitude);
+    output[offset + 1] = clampByte(source[offset + 1] + sample(1) * amplitude);
+    output[offset + 2] = clampByte(source[offset + 2] + sample(2) * amplitude);
+    output[offset + 3] = source[offset + 3];
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -3305,6 +3340,8 @@ export function applyFilterEffectsPixels(
     applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
   } else if (effect.type === 'reduce-noise') {
     applyReduceNoise(data, width, height, effect, output, strength);
+  } else if (effect.type === 'add-noise') {
+    applyAddNoise(data, width, height, effect, output);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {

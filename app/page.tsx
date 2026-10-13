@@ -735,6 +735,7 @@ type Command =
   | 'filter-dust-scratches'
   | 'filter-despeckle'
   | 'filter-reduce-noise'
+  | 'filter-add-noise'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1193,7 +1194,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Wave…', command: 'filter-wave' },
     { label: 'ZigZag…', command: 'filter-zigzag' },
     { label: 'Noise', command: 'noop', disabled: true },
-    { label: 'Add Noise…', command: 'sharpen-noise' },
+    { label: 'Add Noise…', command: 'filter-add-noise' },
     { label: 'Median…', command: 'filter-median' },
     { label: 'Dust & Scratches…', command: 'filter-dust-scratches' },
     { label: 'Despeckle', command: 'filter-despeckle' },
@@ -11903,6 +11904,8 @@ export default function Home() {
       chooseFilterEffect('despeckle', 'Despeckle (local approximation)');
     else if (command === 'filter-reduce-noise')
       chooseFilterEffect('reduce-noise', 'Reduce Noise (edge-aware local approximation)');
+    else if (command === 'filter-add-noise')
+      chooseFilterEffect('add-noise', 'Add Noise (seeded local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -15331,6 +15334,20 @@ export default function Home() {
             {filterEffects.type === 'reduce-noise' && (
               <p>Bounded colour-weighted neighbourhood smoothing that favours nearby similar tones. Radius, preserve-details threshold and amount remain editable; temporal and high-bit-depth parity remain staged.</p>
             )}
+            {filterEffects.type === 'add-noise' && (
+              <>
+                <p>Seeded uniform noise is blended into visible pixels without changing alpha or transparent RGB. Amount, seed and monochromatic mode remain editable; Gaussian distribution, film grain and channel clipping parity remain staged.</p>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    aria-label="Add Noise monochromatic"
+                    checked={filterEffects.noiseMonochromatic === true}
+                    onChange={(event) => setFilterEffects({ noiseMonochromatic: event.target.checked })}
+                  />
+                  Monochromatic
+                </label>
+              </>
+            )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
@@ -15367,7 +15384,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'

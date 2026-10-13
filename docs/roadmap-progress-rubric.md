@@ -219,6 +219,13 @@ and live acceptance pass.
 
 The latest local filter increment adds `Filter → Noise → Median…`: a bounded editable median kernel with amount blending, source/alpha/transparent-RGB safety and desktop/mobile persistence coverage. It remains local evidence until the protected workflow and live endpoint are independently verified.
 
+The next local filter increment adds `Filter → Noise → Add Noise…`: a seeded
+uniform perturbation with editable amount and monochromatic mode. Visible
+pixels change deterministically while alpha, transparent RGB and source assets
+remain unchanged; pure and desktop/mobile persistence coverage is included.
+The implementation is an explicitly bounded approximation and remains local
+evidence until protected CI, deployment and live acceptance pass.
+
 The follow-up noise increment adds `Filter → Noise → Dust & Scratches…`: a bounded thresholded local-median cleanup with editable radius, threshold and amount. Pure and desktop/mobile round-trip tests cover outlier replacement, transparent-RGB safety and source retention; protected CI and live deployment remain separate gates.
 
 The noise family now also includes `Filter → Noise → Despeckle`, a fixed-radius local cleanup command with deterministic source-safe rendering and desktop/mobile persistence coverage. This bounded approximation does not claim Photoshop's texture-aware detector.
