@@ -19,6 +19,7 @@ import {
   selectedLayerIdsForFrame,
   toggleLayerSelection,
 } from './layerSelection';
+import { TileCache } from './tilePlan';
 
 export type RenderProgress = {
   completed: number;
@@ -46,7 +47,12 @@ export function useDocument(onError: (message: string) => void) {
   const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
   const [tiledProgress, setTiledProgress] = useState<TiledNeighborhoodProgress | null>(null);
   const renderSequence = useRef(0),
-    renderAbort = useRef<AbortController | null>(null);
+    renderAbort = useRef<AbortController | null>(null),
+    documentRevision = useRef(0),
+    // Keep a small in-memory session cache for repeat renders of the same
+    // document revision. Keys include the revision, so edits cannot reuse
+    // stale pixels; the byte cap keeps anonymous mobile drafts bounded.
+    tiledCache = useRef(new TileCache<Uint8ClampedArray>(8 * 1024 * 1024));
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };
@@ -73,7 +79,8 @@ export function useDocument(onError: (message: string) => void) {
           {
             signal: controller.signal,
             reuseWorker: true,
-            tiledRevision: sequence,
+            tiledRevision: documentRevision.current,
+            tiledCache: tiledCache.current,
             isCancelled: () => sequence !== renderSequence.current,
             onProgress: (completed, total) => {
               if (sequence === renderSequence.current)
@@ -115,6 +122,7 @@ export function useDocument(onError: (message: string) => void) {
   );
   const publish = useCallback(
     (value: Frame) => {
+      documentRevision.current += 1;
       setFrame(value);
       setRevision((v) => v + 1);
       void paint(value);
@@ -199,6 +207,7 @@ export function useDocument(onError: (message: string) => void) {
           signal: installController.signal,
           reuseWorker: true,
           tiledRevision: installSequence,
+          tiledCache: tiledCache.current,
           isCancelled: () => installSequence !== renderSequence.current,
           onProgress: (completed, total) => {
             if (installSequence === renderSequence.current)
