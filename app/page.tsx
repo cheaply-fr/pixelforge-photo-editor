@@ -465,6 +465,7 @@ import {
   sanitizeArtboardLayerMembership,
   setArtboardVisibility,
 } from '../src/artboards';
+import { fitLayerToArtboard, type FrameFit } from '../src/artboardFit';
 import { sliceAtPoint } from '../src/slices';
 import {
   formatMeasurement,
@@ -3067,6 +3068,23 @@ export default function Home() {
       }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not update artboard visibility');
+    }
+  };
+  const fitActiveLayerToArtboard = (fit: FrameFit) => {
+    const f = current();
+    const artboardId = f.activeArtboardId;
+    if (!artboardId || !f.active) {
+      setNotice('Select an artboard and editable layer first');
+      return;
+    }
+    try {
+      const next = fitLayerToArtboard(f, assets.current, artboardId, f.active, fit);
+      if (commit(next)) {
+        void paint(current());
+        setNotice(`Active layer fitted to artboard (${fit})`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not fit the active layer to the artboard');
     }
   };
   const appendMeasurement = (annotation: MeasurementAnnotation) => {
@@ -13001,6 +13019,25 @@ export default function Home() {
                   </label>
                 ))}
               </div>
+              <label>
+                <span>Fit active layer</span>
+                <select
+                  aria-label="Artboard fit mode"
+                  defaultValue="cover"
+                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
+                >
+                  <option value="cover">Cover</option>
+                  <option value="contain">Contain</option>
+                  <option value="stretch">Stretch</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                data-testid="artboard-fit-active"
+                onClick={() => fitActiveLayerToArtboard('cover')}
+              >
+                Fit active layer to artboard
+              </button>
               <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
             </fieldset>
           ) : null}
