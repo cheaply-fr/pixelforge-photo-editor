@@ -83,6 +83,27 @@ test('De-Interlace duplication, amount blending, transparency and metadata valid
   }), false);
 });
 
+test('Find Edges extracts deterministic Sobel luminance edges without mutating alpha or source pixels', () => {
+  const source = rgba(5, 3, (x, y) => {
+    if (x === 0 && y === 0) return [9, 8, 7, 0];
+    return [x < 2 ? 20 : 220, y * 20, 80, 255];
+  });
+  const original = source.slice();
+  const output = applyFilterEffectsPixels(source, 5, 3, {
+    type: 'find-edges', amount: 100, radius: 0,
+  });
+  assert.deepEqual(source, original);
+  assert.equal(output[3], 0);
+  assert.equal(output[(1 * 5 + 1) * 4 + 3], 255);
+  assert.ok(output[(1 * 5 + 2) * 4] > output[(1 * 5 + 0) * 4]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 3, {
+    type: 'find-edges', amount: 100, radius: 0,
+  }));
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    type: 'find-edges', amount: 100, radius: 99,
+  })), true);
+});
+
 test('linear shear interpolates fractional shifts and clamps image edges', () => {
   const source = rgba(9, 5, (x) => [x * 20, 0, 0, 255]);
   const output = applyFilterEffectsPixels(source, 9, 5, {

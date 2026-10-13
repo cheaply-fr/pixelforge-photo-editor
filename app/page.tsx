@@ -566,6 +566,7 @@ type Command =
   | 'filter-shear'
   | 'filter-zigzag'
   | 'filter-flame'
+  | 'filter-find-edges'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1031,6 +1032,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Smart Sharpen…', command: 'sharpen-noise' },
     { label: 'Unsharp Mask…', command: 'sharpen-noise' },
     { label: 'Stylize', command: 'noop', disabled: true },
+    { label: 'Find Edges…', command: 'filter-find-edges' },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
@@ -4077,7 +4079,7 @@ export default function Home() {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -10050,6 +10052,8 @@ export default function Home() {
       chooseFilterEffect('difference-clouds', 'Difference Clouds (local approximation)');
     else if (command === 'filter-flame')
       chooseFilterEffect('flame', 'Flame (local approximation)');
+    else if (command === 'filter-find-edges')
+      chooseFilterEffect('find-edges', 'Find Edges (Sobel local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -12688,6 +12692,9 @@ export default function Home() {
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
+            {filterEffects.type === 'find-edges' && (
+              <p>Deterministic Sobel luminance edges blended nondestructively with the source. Alpha and transparent padding remain unchanged; semantic edge tracing and vector extraction remain separate roadmap work.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
@@ -12706,7 +12713,7 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
