@@ -59,6 +59,22 @@ distributional guarantee. A later release should collect repeated p50/p95
 samples on representative physical desktop and mobile devices before turning
 the candidate targets below into blocking assertions.
 
+### Latest local browser sample
+
+On 2026-10-13, the same test passed on the current Chromium 153 profiles with
+one worker. The observed values were:
+
+| Playwright project | Ready | Stroke | PNG encode |
+| --- | ---: | ---: | ---: |
+| desktop (`Desktop Chrome`) | 374.4 ms | 1,100.3 ms | 8.2 ms |
+| mobile (`Pixel 7` emulation) | 375.8 ms | 1,124.4 ms | 8.1 ms |
+
+This sample is still emulated mobile hardware and includes Playwright input
+dispatch in the stroke measurement. It proves completion under the watchdog,
+not physical-device acceptance or a support guarantee. The stroke values exceed
+the candidate 250/500 ms targets, so those targets remain unmet until the
+interaction path is measured and improved on representative devices.
+
 The test currently uses a 30-second watchdog for each operation. That is
 deliberately much looser than a user-facing budget: it catches a stalled
 render without making hosted CI hardware look like a supported performance
