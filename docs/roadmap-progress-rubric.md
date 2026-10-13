@@ -215,3 +215,5 @@ local draft or flattening its layer tree. Pure planning and desktop/mobile
 confirmation, disabled-state, dimension, and project round-trip coverage are
 present; the candidate remains local evidence until protected CI, deployment
 and live acceptance pass.
+
+The latest local filter increment adds `Filter → Noise → Median…`: a bounded editable median kernel with amount blending, source/alpha/transparent-RGB safety and desktop/mobile persistence coverage. It remains local evidence until the protected workflow and live endpoint are independently verified.

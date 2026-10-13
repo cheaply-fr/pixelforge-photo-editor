@@ -63,6 +63,7 @@ export const FILTER_EFFECT_TYPES = [
   'deinterlace',
   'ntsc-colors',
   'gradient-map',
+  'median',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -3018,6 +3019,43 @@ function applyGradientMap(
   }
 }
 
+/** Apply a bounded median neighbourhood filter while retaining source alpha. */
+function applyMedian(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const span = Math.min(8, Math.max(1, Math.round(radius)));
+  const values: [number[], number[], number[]] = [[], [], []];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (!source[offset + 3]) continue;
+      values[0].length = 0;
+      values[1].length = 0;
+      values[2].length = 0;
+      for (let sy = Math.max(0, y - span); sy <= Math.min(height - 1, y + span); sy += 1) {
+        for (let sx = Math.max(0, x - span); sx <= Math.min(width - 1, x + span); sx += 1) {
+          const sample = (sy * width + sx) * 4;
+          if (!source[sample + 3]) continue;
+          values[0].push(source[sample]);
+          values[1].push(source[sample + 1]);
+          values[2].push(source[sample + 2]);
+        }
+      }
+      for (const channel of values) channel.sort((a, b) => a - b);
+      const median = values.map((channel) => channel[Math.floor(channel.length / 2)] ?? source[offset]);
+      output[offset] = clampByte(source[offset] + (median[0] - source[offset]) * strength);
+      output[offset + 1] = clampByte(source[offset + 1] + (median[1] - source[offset + 1]) * strength);
+      output[offset + 2] = clampByte(source[offset + 2] + (median[2] - source[offset + 2]) * strength);
+      output[offset + 3] = source[offset + 3];
+    }
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -3119,6 +3157,8 @@ export function applyFilterEffectsPixels(
     applyNtscColors(data, output, strength);
   } else if (effect.type === 'gradient-map') {
     applyGradientMap(data, effect, output, strength);
+  } else if (effect.type === 'median') {
+    applyMedian(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {

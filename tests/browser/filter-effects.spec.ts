@@ -270,6 +270,31 @@ test('Gradient Map keeps editable endpoints, source assets and project pixels ac
   await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
 });
 
+test('Median is a nondestructive noise filter with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Median…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('median');
+  await expect(page.getByLabel('Radius', { exact: true })).toHaveValue('2');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'median', amount: 100, radius: 2 });
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('median');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+});
+
 test('Gaussian Blur uses bounded tiled rendering and preserves the editable source', async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;

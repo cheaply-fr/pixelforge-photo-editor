@@ -708,6 +708,7 @@ type Command =
   | 'filter-diffuse'
   | 'filter-wind'
   | 'filter-gradient-map'
+  | 'filter-median'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1162,6 +1163,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'ZigZag…', command: 'filter-zigzag' },
     { label: 'Noise', command: 'noop', disabled: true },
     { label: 'Add Noise…', command: 'sharpen-noise' },
+    { label: 'Median…', command: 'filter-median' },
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
     { label: 'Crystallize…', command: 'filter-crystallize' },
@@ -4993,7 +4995,7 @@ export default function Home() {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -5022,6 +5024,8 @@ export default function Home() {
                       ? 16
                     : type === 'gradient-map'
                     ? 1
+                    : type === 'median'
+                    ? 2
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
@@ -11616,6 +11620,8 @@ export default function Home() {
       chooseFilterEffect('wind', 'Wind (directional local approximation)');
     else if (command === 'filter-gradient-map')
       chooseFilterEffect('gradient-map', 'Gradient Map (local tonal mapping)');
+    else if (command === 'filter-median')
+      chooseFilterEffect('median', 'Median (local noise reduction)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -14877,6 +14883,9 @@ export default function Home() {
                   />
                 </div>
               </>
+            )}
+            {filterEffects.type === 'median' && (
+              <p>Bounded median neighbourhood noise reduction. Visible source pixels are sampled without pulling RGB from transparent neighbours; radius and amount remain editable.</p>
             )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
