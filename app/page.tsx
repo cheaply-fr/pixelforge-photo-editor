@@ -573,6 +573,7 @@ type Command =
   | 'filter-zigzag'
   | 'filter-flame'
   | 'filter-find-edges'
+  | 'filter-emboss'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1040,6 +1041,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Unsharp Mask…', command: 'sharpen-noise' },
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Find Edges…', command: 'filter-find-edges' },
+    { label: 'Emboss…', command: 'filter-emboss' },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
@@ -10147,6 +10149,8 @@ export default function Home() {
       chooseFilterEffect('flame', 'Flame (local approximation)');
     else if (command === 'filter-find-edges')
       chooseFilterEffect('find-edges', 'Find Edges (Sobel local approximation)');
+    else if (command === 'filter-emboss')
+      chooseFilterEffect('emboss', 'Emboss (directional local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -12794,6 +12798,9 @@ export default function Home() {
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
+            {filterEffects.type === 'emboss' && (
+              <p>Directional relief approximation with source-safe luminance shading. Light angle, depth scale and amount remain editable; Photoshop&apos;s exact highlight/shadow and material controls remain planned.</p>
+            )}
             {filterEffects.type === 'find-edges' && (
               <p>Deterministic Sobel luminance edges blended nondestructively with the source. Alpha and transparent padding remain unchanged; semantic edge tracing and vector extraction remain separate roadmap work.</p>
             )}
@@ -12870,6 +12877,9 @@ export default function Home() {
                           ? 'Correction radius'
                       : filterEffects.type === 'lens-flare'
                           ? 'Flare size'
+                      : filterEffects.type === 'emboss'
+                          ? 'Emboss depth'
+
                       : 'Radius'
                   }
                   value={filterEffects.radius}
@@ -12892,9 +12902,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur') && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss') && (
                   <Slider
-                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : 'Wave angle'}
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
