@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { applyFilterEffectsPixels } from '../src/filterEffects.ts';
 import {
   isTiledNeighborhoodBlur,
+  tiledNeighborhoodRadius,
   renderTiledNeighborhoodEffect,
   TiledMemoryBudgetError,
 } from '../src/tiledDocument.ts';
@@ -67,6 +68,8 @@ for (const type of [
 
 test('only bounded local blur families enter the visible tiled path', () => {
   assert.equal(isTiledNeighborhoodBlur({ type: 'blur-more', amount: 100, radius: 32 }), true);
+  assert.equal(isTiledNeighborhoodBlur({ type: 'blur', amount: 100, radius: 64 }), true);
+  assert.equal(tiledNeighborhoodRadius({ type: 'blur', amount: 100, radius: 64 }), 1);
   assert.equal(isTiledNeighborhoodBlur({ type: 'box-blur', amount: 100, radius: 64 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 64 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 65 }), false);
