@@ -18,6 +18,9 @@ test('radial gradient has an editable mode, changes pixels, and persists', async
   const dither = page.getByLabel('Dither', { exact: true });
   await dither.fill('58');
   await expect(dither).toHaveValue('58');
+  const noise = page.getByLabel('Noise', { exact: true });
+  await noise.fill('42');
+  await expect(noise).toHaveValue('42');
   const canvas = page.getByTestId('editor-canvas');
   const before = await canvas.screenshot();
   const box = (await canvas.boundingBox())!;
@@ -60,6 +63,7 @@ test('radial gradient has an editable mode, changes pixels, and persists', async
     gradientMidpoint: '#00ff00',
     gradientMidpointPosition: 64,
     gradientDither: 58,
+    gradientNoise: 42,
     gradientReverse: true,
   });
 });

@@ -103,5 +103,7 @@ either the transparent default or the current background colour, including for
 the reflected midpoint. An optional persisted authored midpoint colour now adds
 a deterministic third stop. A bounded deterministic Dither control is also
 persisted and tested for nontransparent gradient pixels, with a configurable
-1%-99% midpoint position; a persisted Reverse control swaps Linear/Radial start
+1%-99% midpoint position; a bounded deterministic RGB Noise control now adds
+independent opaque-pixel variation while preserving alpha and transparent RGB;
+a persisted Reverse control swaps Linear/Radial start
 and end colours while preserving Reflected symmetry.

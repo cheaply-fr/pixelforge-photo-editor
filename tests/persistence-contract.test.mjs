@@ -167,6 +167,7 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
       gradientMidpoint: '#00ff00',
       gradientMidpointPosition: 64,
       gradientDither: 58,
+      gradientNoise: 42,
       gradientReverse: true,
       gradientStops: [
         { position: 24, color: '#123456' },
@@ -179,6 +180,7 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
   assert.equal(radial.settings.gradientMidpoint, '#00ff00');
   assert.equal(radial.settings.gradientMidpointPosition, 64);
   assert.equal(radial.settings.gradientDither, 58);
+  assert.equal(radial.settings.gradientNoise, 42);
   assert.equal(radial.settings.gradientReverse, true);
   assert.deepEqual(radial.settings.gradientStops, [
     { position: 24, color: '#123456' },
@@ -198,6 +200,10 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
   );
   assert.throws(
     () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientDither: 101 } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientNoise: 101 } }),
     /Saved document is not supported/,
   );
   assert.throws(

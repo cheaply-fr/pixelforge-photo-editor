@@ -316,6 +316,10 @@ import {
   applyGradientDither,
 } from '../src/gradientDither';
 import {
+  GRADIENT_NOISE_DEFAULT,
+  applyGradientNoise,
+} from '../src/gradientNoise';
+import {
   MAX_GRADIENT_STOPS,
   normalizeGradientStops,
   type GradientStop,
@@ -1744,6 +1748,7 @@ export default function Home() {
     [gradientMidpointPosition, setGradientMidpointPosition] = useState(50),
     [gradientReverse, setGradientReverse] = useState(false),
     [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
+    [gradientNoise, setGradientNoise] = useState(GRADIENT_NOISE_DEFAULT),
     [gradientStops, setGradientStops] = useState<GradientStop[]>([]),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
@@ -2066,6 +2071,7 @@ export default function Home() {
     gradientMidpointPosition,
     gradientReverse,
     gradientDither,
+    gradientNoise,
     gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -2129,6 +2135,7 @@ export default function Home() {
     setGradientMidpointPosition(s.gradientMidpointPosition ?? 50);
     setGradientReverse(s.gradientReverse ?? false);
     setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
+    setGradientNoise(s.gradientNoise ?? GRADIENT_NOISE_DEFAULT);
     setGradientStops(normalizeGradientStops(s.gradientStops));
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
@@ -2177,6 +2184,7 @@ export default function Home() {
     setGradientMidpointPosition,
     setGradientReverse,
     setGradientDither,
+    setGradientNoise,
     setGradientStops,
     setBrushAngle,
     setBrushRoundness,
@@ -4587,6 +4595,7 @@ export default function Home() {
         gradientReverse,
         gradientDither,
         gradientStops,
+        gradientNoise,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4676,6 +4685,7 @@ export default function Home() {
     gradientReverse,
     gradientDither,
     gradientStops,
+    gradientNoise,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -9380,9 +9390,11 @@ export default function Home() {
         }
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
-        if (gradientDither > 0) {
+        if (gradientNoise > 0 || gradientDither > 0) {
           const imageData = context.getImageData(0, 0, buffer.width, buffer.height);
-          imageData.data.set(applyGradientDither(imageData.data, buffer.width, buffer.height, gradientDither));
+          let pixels = applyGradientNoise(imageData.data, buffer.width, buffer.height, gradientNoise);
+          pixels = applyGradientDither(pixels, buffer.width, buffer.height, gradientDither);
+          imageData.data.set(pixels);
           context.putImageData(imageData, 0, 0);
         }
         const asset = addAsset(assets.current, buffer);
@@ -12652,6 +12664,16 @@ export default function Home() {
                   min={0}
                   max={100}
                   set={setGradientDither}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Noise"
+                  value={gradientNoise}
+                  min={0}
+                  max={100}
+                  set={setGradientNoise}
                   suffix="%"
                 />
               )}

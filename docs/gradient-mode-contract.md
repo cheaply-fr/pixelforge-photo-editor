@@ -22,4 +22,6 @@ interior colour stops are supported for Linear and Radial modes, bounded to
 committed as one undoable raster operation. The legacy midpoint control remains
 the fallback when no authored stop list exists; Reflected mode remains symmetric
 and uses its legacy midpoint behaviour. This contract does not claim Photoshop's
-full gradient noise or gradient-map feature set.
+full gradient-map or Adobe algorithm parity. A separate deterministic RGB Noise
+control is bounded to 0%-100%, skips transparent pixels, preserves alpha, and
+defaults to zero for older drafts.

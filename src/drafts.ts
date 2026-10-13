@@ -154,6 +154,8 @@ export type Settings = {
   gradientDither?: number;
   /** Ordered authored interior gradient stops; endpoints remain controlled by the tool colours. */
   gradientStops?: GradientStop[];
+  /** Deterministic RGB gradient noise amount, from 0 to 100. */
+  gradientNoise?: number;
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
   /** Deterministic secondary-brush modulation amount, from 0 to 100. */
@@ -385,6 +387,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.brushDual ?? 0, 0, 100] as [number, number, number],
     [candidate.brushBristle ?? 0, 0, 100] as [number, number, number],
     [candidate.gradientDither ?? 0, 0, 100] as [number, number, number],
+    [candidate.gradientNoise ?? 0, 0, 100] as [number, number, number],
     [candidate.gradientMidpointPosition ?? 50, 1, 99] as [number, number, number],
     [candidate.brushFlow ?? 100, 1, 100] as [number, number, number],
   ];
