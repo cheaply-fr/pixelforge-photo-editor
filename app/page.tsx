@@ -227,6 +227,7 @@ import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearc
 import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
 import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGalleryDialog';
 import ToolbarSettingsDialog, { type ToolbarColumns } from '../src/ToolbarSettingsDialog';
+import { normalizeToolbarPreferences } from '../src/toolbarPreferences';
 import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
 import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
@@ -1804,6 +1805,22 @@ const selectionMaskForLayer = async (
   return mask;
 };
 
+function readToolbarPreferences() {
+  const categoryIds = TOOL_CATEGORIES.map((category) => category.id);
+  if (typeof window === 'undefined') return normalizeToolbarPreferences(undefined, categoryIds);
+  try {
+    const rawHidden = window.localStorage.getItem('pixelforge.toolbar-hidden-categories');
+    const rawOrder = window.localStorage.getItem('pixelforge.toolbar-category-order');
+    return normalizeToolbarPreferences({
+      columns: window.localStorage.getItem('pixelforge.toolbar-columns'),
+      hiddenCategories: rawHidden ? JSON.parse(rawHidden) : [],
+      categoryOrder: rawOrder ? JSON.parse(rawOrder) : categoryIds,
+    }, categoryIds);
+  } catch {
+    return normalizeToolbarPreferences(undefined, categoryIds);
+  }
+}
+
 export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
@@ -1947,43 +1964,16 @@ export default function Home() {
   } | null>(null);
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
+  const initialToolbarPreferences = readToolbarPreferences();
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
     [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
     [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
-    [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => {
-      if (typeof window === 'undefined') return 'auto';
-      try {
-        const value = window.localStorage.getItem('pixelforge.toolbar-columns');
-        return value === '2' || value === '3' ? value : 'auto';
-      } catch { return 'auto'; }
-    }),
-    [hiddenToolCategories, setHiddenToolCategories] = useState<string[]>(() => {
-      if (typeof window === 'undefined') return [];
-      try {
-        const raw = window.localStorage.getItem('pixelforge.toolbar-hidden-categories');
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return [];
-        const allowed = new Set(TOOL_CATEGORIES.map((category) => category.id));
-        return parsed.filter((id): id is string => typeof id === 'string' && allowed.has(id) && id !== 'navigation');
-      } catch { return []; }
-    }),
-    [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => {
-      const defaults = TOOL_CATEGORIES.map((category) => category.id);
-      if (typeof window === 'undefined') return defaults;
-      try {
-        const raw = window.localStorage.getItem('pixelforge.toolbar-category-order');
-        if (!raw) return defaults;
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return defaults;
-        const allowed = new Set(defaults);
-        const stored = parsed.filter((id): id is string => typeof id === 'string' && allowed.has(id));
-        return [...stored, ...defaults.filter((id) => !stored.includes(id))];
-      } catch { return defaults; }
-    }),
+    [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
+    [hiddenToolCategories, setHiddenToolCategories] = useState<string[]>(() => initialToolbarPreferences.hiddenCategories),
+    [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),

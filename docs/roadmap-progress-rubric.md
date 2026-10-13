@@ -241,3 +241,8 @@ The same toolbar settings now persist category ordering with keyboard-accessible
 up/down controls. Desktop/mobile tests verify reordered categories survive a
 reload; individual tool reordering and arbitrary shortcut rebinding remain
 future work.
+
+Toolbar local-storage values now pass through a versioned normalization
+contract that removes unknown and duplicate category IDs, completes newly added
+categories, validates column values, and prevents hiding every category. Pure
+migration tests cover malformed and collision cases.
