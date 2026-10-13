@@ -184,6 +184,7 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
   }
   const filterTypes: Record<string, FilterEffectType> = {
     'filter-average': 'average-blur',
+    'filter-blur': 'blur',
     'filter-blur-more': 'blur-more',
     'filter-box-blur': 'box-blur',
     'filter-gaussian-blur': 'gaussian-blur',

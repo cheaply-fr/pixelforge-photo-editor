@@ -13,6 +13,7 @@ import { isGradientStops, normalizeGradientStops, type GradientStop } from './gr
 export const FILTER_EFFECT_TYPES = [
   'none',
   'average-blur',
+  'blur',
   'blur-more',
   'box-blur',
   'gaussian-blur',
@@ -3258,6 +3259,10 @@ export function applyFilterEffectsPixels(
   const strength = effect.amount / 100;
   if (effect.type === 'average-blur') {
     applyAverageBlur(data, width, height, output, strength);
+  } else if (effect.type === 'blur') {
+    // Photoshop's one-click Blur is a light, bounded box blur. Keep it
+    // distinct from Average (whole-image average) and Blur More (stronger).
+    applyBoxBlur(data, width, height, 1, output, strength);
   } else if (effect.type === 'blur-more') {
     // Photoshop's one-click Blur More is a stronger, bounded box blur. Keep
     // the source-safe renderer and metadata contract while doubling radius.

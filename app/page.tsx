@@ -682,6 +682,7 @@ type Command =
   | 'filter-warm'
   | 'filter-cool'
   | 'filter-average'
+  | 'filter-blur'
   | 'filter-blur-more'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
@@ -1171,6 +1172,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Field Blur…', command: 'filter-field-blur' },
     { label: 'Tilt-Shift…', command: 'filter-tilt-shift' },
     { label: 'Average', command: 'filter-average' },
+    { label: 'Blur', command: 'filter-blur' },
     { label: 'Blur More', command: 'filter-blur-more' },
     { label: 'Box Blur…', command: 'filter-box-blur' },
     { label: 'Gaussian Blur…', command: 'filter-gaussian-blur' },
@@ -11843,6 +11845,8 @@ export default function Home() {
     else if (command === 'clear-smart-filters') return clearSmartFilters();
     else if (command === 'filter-average')
       chooseFilterEffect('average-blur', 'Average Blur');
+    else if (command === 'filter-blur')
+      chooseFilterEffect('blur', 'Blur');
     else if (command === 'filter-blur-more')
       chooseFilterEffect('blur-more', 'Blur More');
     else if (command === 'filter-box-blur')
@@ -12229,6 +12233,7 @@ export default function Home() {
       case 'auto-color':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'filter-average':
+      case 'filter-blur':
       case 'filter-blur-more':
       case 'filter-sharpen':
       case 'filter-unsharp-mask':
