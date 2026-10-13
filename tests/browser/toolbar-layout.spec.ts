@@ -287,3 +287,29 @@ test('family slots remember the last chosen subtool after switching tools', asyn
   await expect(page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
 });
+
+test('categories stack in one column while their tools keep the responsive grid', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openEditor(page);
+  const layout = await page.getByTestId('tool-palette').evaluate((element) => {
+    const categories = [...element.querySelectorAll<HTMLElement>(':scope > .tool-category')];
+    const rects = categories.map((category) => {
+      const rect = category.getBoundingClientRect();
+      const grid = category.querySelector<HTMLElement>('.tool-category-grid');
+      return {
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        top: Math.round(rect.top),
+        gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
+      };
+    });
+    return { rects, palette: element.getBoundingClientRect().toJSON() };
+  });
+  expect(layout.rects.length).toBeGreaterThan(4);
+  expect(new Set(layout.rects.map((rect) => rect.left)).size).toBe(1);
+  expect(new Set(layout.rects.map((rect) => rect.right)).size).toBe(1);
+  expect(layout.rects.every((rect, index) => index === 0 || rect.top >= layout.rects[index - 1].top)).toBe(true);
+  expect(layout.rects.every((rect) => rect.gridColumns === 3)).toBe(true);
+});
