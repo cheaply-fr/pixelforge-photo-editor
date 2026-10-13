@@ -73,13 +73,13 @@ Brush-family controls now also include a persisted deterministic Dual brush
 amount. It applies a bounded secondary opacity weave to each local stamp while
 preserving the zero-value path and source-safe commit boundary. Pure coverage is
 in `tests/brush-dual.test.mjs`, with desktop/mobile project-file coverage in
-`tests/browser/brush-dynamics.spec.ts`; physical bristle geometry and wet-media simulation remain staged; the optional secondary preset tip is active.
+`tests/browser/brush-dynamics.spec.ts`; wet-media simulation remains staged; physical bristle filament coverage and the optional secondary preset tip are active.
 
 Brush-family controls now also include a persisted deterministic Bristle amount.
 It applies bounded filament-like opacity modulation to each local stamp while
 preserving the zero-value path and source-safe commit boundary. Pure coverage is
 in `tests/brush-bristle.test.mjs`, with the same desktop/mobile project-file
-acceptance; physical bristle geometry and wet-media simulation remain staged.
+acceptance; wet-media simulation remains staged; physical bristle filament coverage is active.
 
 Brush-family controls also include a persisted Flow amount that scales local
 dab opacity independently from overall Opacity. `tests/browser/brush-flow.spec.ts`

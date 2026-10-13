@@ -120,6 +120,15 @@ test('source-over applies color and opacity monotonically without mutating a sep
   assert.ok(destination[(4 * 9 + 3) * 4] !== undefined);
 });
 
+test('bristle geometry changes the raster footprint while zero remains legacy-identical', () => {
+  const plain = pixels(17, 17), filament = pixels(17, 17), legacy = pixels(17, 17);
+  applyRadialStamp(plain, { ...base, width: 17, height: 17, color: [255, 0, 0, 255], mode: 'source-over', bristle: 0 });
+  applyRadialStamp(legacy, { ...base, width: 17, height: 17, color: [255, 0, 0, 255], mode: 'source-over' });
+  applyRadialStamp(filament, { ...base, width: 17, height: 17, color: [255, 0, 0, 255], mode: 'source-over', bristle: 100 });
+  assert.deepEqual(Array.from(plain), Array.from(legacy));
+  assert.notDeepEqual(Array.from(filament), Array.from(plain));
+});
+
 test('destination-out eraser reduces alpha monotonically and clears fully transparent RGB', () => {
   const destination = pixels(9, 9, [50, 60, 70, 255]);
   const first = applyRadialStamp(destination, { ...base, size: 5, opacity: 0.25, mode: 'destination-out' });
