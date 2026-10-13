@@ -230,3 +230,9 @@ bounded quadratically tapered rotational inverse map with premultiplied-alpha
 bilinear sampling, preserving source bytes and transparent edge RGB. Pure and
 desktop/mobile persistence tests cover the editable angle and reload behavior;
 full mesh/liquify semantics remain staged.
+
+The toolbar increment adds persistent category visibility controls to
+`Edit → Toolbar…`. Users can hide unused categories to reduce empty vertical
+space; the UI keeps one category visible and returns to Move if the active
+tool's category is hidden. Desktop/mobile reload tests cover the preference and
+the compact palette remains free of duplicate family slots.
