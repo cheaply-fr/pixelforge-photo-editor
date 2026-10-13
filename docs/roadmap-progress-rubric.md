@@ -148,3 +148,10 @@ pixels unchanged. Pure coverage includes malformed input and contour topology;
 desktop/mobile acceptance verifies the command, export and reload round trip.
 The 710-test local suite, typecheck, lint and production build pass for this
 candidate; protected CI, deployment and live acceptance remain separate gates.
+
+The follow-up typography increment adds `Type → Convert to Shape` for visible,
+unlocked editable text. It vectorizes the current rendered glyph alpha into a
+bounded compound path, retains layer identity and group/opacity/blend metadata,
+and restores the editable text through undo. Desktop/mobile acceptance checks
+representative alpha coverage, path persistence, reload-safe export and undo;
+font-outline fidelity and OpenType semantics remain explicitly out of scope.

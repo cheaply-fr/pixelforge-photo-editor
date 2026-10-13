@@ -529,6 +529,7 @@ type Command =
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
   | 'text-warp'
+  | 'convert-to-shape'
   | 'rasterize-type'
   | 'create-work-path'
   | 'text-mask-horizontal'
@@ -1006,7 +1007,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Vertical Type Mask', command: 'text-mask-vertical' },
     { label: 'OpenType', command: 'noop', disabled: true },
     { label: 'Create Work Path', command: 'create-work-path' },
-    { label: 'Convert to Shape', command: 'noop', disabled: true },
+    { label: 'Convert to Shape', command: 'convert-to-shape' },
     { label: 'Rasterize Type Layer', command: 'rasterize-type' },
     { label: 'Warp Text…', command: 'text-warp' },
     { label: 'Font Preview Size', command: 'noop', disabled: true },
@@ -6288,6 +6289,75 @@ export default function Home() {
       setNotice('Could not rasterize layer');
     }
   };
+  const convertTextToShape = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before converting to shape');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the text layer before converting to shape');
+      return;
+    }
+    try {
+      // Render only the editable glyph source at full opacity, then vectorize
+      // its alpha. This bakes the current font/wrap/warp pixels into a local
+      // path while preserving the original text in undo history.
+      const rendered = await renderFrame(
+        {
+          ...f,
+          groups: [],
+          layers: [{
+            ...layer,
+            groupId: undefined,
+            visible: true,
+            opacity: 1,
+            blend: 'source-over',
+            adjustments: { ...neutral },
+          }],
+        },
+        assets.current,
+      );
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('Shape conversion cancelled because the document changed');
+        return;
+      }
+      const pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+        alpha = new Uint8ClampedArray(f.w * f.h);
+      for (let index = 0; index < alpha.length; index += 1) alpha[index] = pixels[index * 4 + 3];
+      const traced = traceAlphaContours(alpha, f.w, f.h, 16);
+      if (!traced.contours.length) {
+        setNotice('The text has no visible glyph pixels to convert');
+        return;
+      }
+      const first = traced.contours[0], path: PathModel = {
+        nodes: first.nodes,
+        closed: true,
+        fill: true,
+        stroke: false,
+        strokeWidth: 1,
+        fillColor: layer.color,
+        strokeColor: layer.color,
+        contours: traced.contours,
+        fillRule: 'evenodd',
+      };
+      const converted: Layer = {
+        ...commonLayer(`${layer.name} shape`),
+        id: layer.id,
+        kind: 'path',
+        path,
+        opacity: layer.opacity,
+        blend: layer.blend,
+        visible: layer.visible,
+        groupId: layer.groupId,
+        styles: layer.styles,
+      };
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? converted : item) }))
+        setNotice(`Text converted to ${traced.contours.length} editable shape contour${traced.contours.length === 1 ? '' : 's'}; undo restores the text layer`);
+    } catch {
+      setNotice('Could not convert the text layer to shape');
+    }
+  };
   const load = async (selected?: File, asLayer = false) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before opening an image');
@@ -10563,6 +10633,7 @@ export default function Home() {
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
     else if (command === 'text-warp') setTextWarp();
+    else if (command === 'convert-to-shape') return convertTextToShape();
     else if (command === 'rasterize-type') {
       const layer = current().layers.find((item) => item.id === current().active);
       if (!layer || layer.kind !== 'text') {
@@ -11148,6 +11219,8 @@ export default function Home() {
       case 'text-orientation-vertical':
       case 'text-warp':
         return !layer || layer.kind !== 'text' || locked;
+      case 'convert-to-shape':
+        return !layer || layer.kind !== 'text' || locked || !layer.visible;
       case 'rasterize-type':
         return !layer || layer.kind !== 'text' || locked;
       case 'text-mask-horizontal':
