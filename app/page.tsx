@@ -245,6 +245,7 @@ import {
   type PathBooleanOperation,
 } from '../src/pathBooleans';
 import { pathContours, transformPath } from '../src/paths';
+import { pathToSvg } from '../src/svgExport';
 import { traceAlphaContours } from '../src/alphaContours';
 import { shapePoints } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
@@ -500,6 +501,7 @@ type Command =
   | 'rasterize-layer'
   | 'matting'
   | 'duplicate-layer'
+  | 'copy-svg'
   | 'delete-layer'
   | 'rename-layer'
   | 'layer-style'
@@ -946,6 +948,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       shortcut: 'Ctrl+J',
       command: 'duplicate-layer',
     },
+    { label: 'Copy SVG', command: 'copy-svg' },
     { label: 'Delete Layer', command: 'delete-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Quick Export document as PNG', command: 'png' },
@@ -5803,6 +5806,21 @@ export default function Home() {
     setNotice('Active layer copied');
     return true;
   };
+  const copySvg = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !['path', 'rectangle', 'ellipse', 'polygon'].includes(layer.kind)) {
+      setNotice('Select a path, rectangle, ellipse or polygon layer before copying SVG');
+      return;
+    }
+    try {
+      const svg = pathToSvg(booleanOperand(layer), f.w, f.h);
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(svg);
+      setNotice('SVG copied from the editable vector layer');
+    } catch {
+      setNotice('Could not serialize this layer as SVG');
+    }
+  };
   const copyMerged = async () => {
     const beforeFrame = current();
     const beforeIndex = index.current;
@@ -10627,6 +10645,7 @@ export default function Home() {
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'copy-layer') copyLayer();
+    else if (command === 'copy-svg') return copySvg();
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
@@ -11044,6 +11063,8 @@ export default function Home() {
         return !canRedo || quickMasking;
       case 'copy-layer':
         return !layer;
+      case 'copy-svg':
+        return !layer || !['path', 'rectangle', 'ellipse', 'polygon'].includes(layer.kind);
       case 'copy-merged':
         return !frame;
       case 'cut-layer':

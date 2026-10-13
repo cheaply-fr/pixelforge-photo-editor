@@ -259,3 +259,6 @@ source assets and persists through undo, export and reload. Pure order/limit
 tests and desktop/mobile representative-pixel acceptance are included;
 provider-backed, linked-source and full Photoshop filter-graph semantics remain
 staged.
+
+
+The vector interoperability increment adds `Layer → Copy SVG` for path, rectangle, ellipse and polygon layers. It serializes transformed geometry through the existing path model, preserves fill/stroke/even-odd metadata, writes to the browser clipboard without mutating the draft, and rejects unsupported raster/text sources. Pure serialization and desktop/mobile clipboard tests are included; font embedding, styles and Photoshop document graphs remain staged.

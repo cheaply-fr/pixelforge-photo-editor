@@ -170,3 +170,10 @@ as an ordered stack of up to eight nondestructive entries, rendered before a
 later effect while preserving source pixels and project identity. Pure stack
 validation and desktop/mobile representative-pixel/reload coverage are present;
 the candidate is still awaiting protected CI, deployment and live acceptance.
+
+The vector interoperability increment adds `Layer → Copy SVG`. Editable path,
+rectangle, ellipse and polygon layers are converted through the shared
+transformed path model and copied as deterministic standalone SVG without a
+history commit. Pure serialization and desktop/mobile clipboard evidence cover
+geometry, fill/stroke metadata and unsupported-layer guards; font embedding and
+Photoshop document-graph export remain staged.
