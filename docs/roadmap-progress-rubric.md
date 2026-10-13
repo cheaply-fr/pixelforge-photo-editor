@@ -193,3 +193,10 @@ so disabled roadmap entries remain visibly disabled and command execution still
 passes through the normal history and privacy boundaries. Desktop/mobile
 acceptance covers filtering and running a transform command; this remains local
 evidence until protected CI, deployment and live acceptance pass.
+
+The performance increment adds `Edit → Purge Undo History…`. It explicitly
+compacts retained history to the current validated frame without deleting the
+local draft or flattening its layer tree. Pure planning and desktop/mobile
+confirmation, disabled-state, dimension, and project round-trip coverage are
+present; the candidate remains local evidence until protected CI, deployment
+and live acceptance pass.

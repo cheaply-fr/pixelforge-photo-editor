@@ -204,6 +204,8 @@ import ActionsPanel from '../src/ActionsPanel';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
 import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
+import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
+import { purgeUndoHistory } from '../src/historyPurge';
 import {
   MAX_ACTION_SETS,
   appendActionStep,
@@ -464,6 +466,7 @@ type MenuName =
 type Command =
   | 'noop'
   | 'search-commands'
+  | 'purge-history'
   | 'find-replace-text'
   | 'fade'
   | 'actions'
@@ -903,7 +906,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Define Brush Preset…', command: 'noop', disabled: true },
     { label: 'Define Pattern…', command: 'noop', disabled: true },
-    { label: 'Purge', command: 'noop', disabled: true },
+    { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
     { label: 'Color Settings…', command: 'noop', disabled: true },
     { label: 'Keyboard Shortcuts…', command: 'noop', disabled: true },
@@ -1880,6 +1883,7 @@ export default function Home() {
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
+    [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
@@ -10312,6 +10316,15 @@ export default function Home() {
       travel(1);
       setNotice('Redone');
     };
+  const purgeHistory = () => {
+    try {
+      const retained = purgeUndoHistory(history.current, index.current);
+      if (commit(retained[0], true)) setNotice('Undo history purged; current document retained');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Undo history could not be purged');
+    }
+    setPurgeHistoryOpen(false);
+  };
   const download = (format?: ExportFormat) => {
     if (format) setExportFormat(format);
     setExporting({ frame: current(), assets: { ...assets.current }, name });
@@ -10714,6 +10727,10 @@ export default function Home() {
     if (command === 'noop') return;
     if (command === 'search-commands') {
       setCommandSearchOpen(true);
+      return;
+    }
+    if (command === 'purge-history') {
+      setPurgeHistoryOpen(true);
       return;
     }
     if (command === 'actions') {
@@ -11196,6 +11213,8 @@ export default function Home() {
         return !canUndo || quickMasking;
       case 'redo':
         return !canRedo || quickMasking;
+      case 'purge-history':
+        return quickMasking || history.current.length <= 1;
       case 'toggle-last-state':
         return quickMasking || (!canUndo && !canRedo);
       case 'fade': {
@@ -11776,6 +11795,12 @@ export default function Home() {
             setCommandSearchOpen(false);
             void runCommand(command as Command);
           }}
+        />
+      )}
+      {purgeHistoryOpen && (
+        <PurgeHistoryDialog
+          close={() => setPurgeHistoryOpen(false)}
+          apply={purgeHistory}
         />
       )}
       {batchExporting && (
