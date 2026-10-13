@@ -8784,6 +8784,12 @@ export default function Home() {
       const asset = assets.current[layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
         y = Math.max(0, Math.min(asset.h - 1, local.y)),
+        selectionMask =
+          f.selection?.mask &&
+          assets.current[f.selection.mask]?.w === asset.w &&
+          assets.current[f.selection.mask]?.h === asset.h
+            ? f.selection.mask
+            : undefined,
         g: Gesture = {
           tool,
           start: { x, y },
@@ -8801,6 +8807,7 @@ export default function Home() {
               x: cloneSource.x - x,
               y: cloneSource.y - y,
             },
+            ...(selectionMask ? { selectionMask } : {}),
           },
         };
       gesture.current = g;

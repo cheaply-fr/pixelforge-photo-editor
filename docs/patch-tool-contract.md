@@ -16,7 +16,8 @@ Each committed stroke stores only versioned metadata on a raster layer:
   size: 1..10000,
   hardness: 0..100,
   opacity: 0..1,
-  sourceOffset: { x: number, y: number }
+  sourceOffset: { x: number, y: number },
+  selectionMask?: string
 }
 ```
 
@@ -37,10 +38,11 @@ and edit metadata therefore remain available to Undo, local reload and
 The user workflow is intentionally explicit: select Patch (or cycle the J
 tools), click once to set a source, then drag over the destination. A locked,
 hidden or non-raster active layer rejects the gesture. Escape or touch
-cancellation restores the prior frame without a history entry. Selection
-clipping is supported by the pure renderer's alpha-mask input; the initial UI
-slice keeps the active selection contract separate until a persisted selection
-snapshot is added.
+cancellation restores the prior frame without a history entry. When the active
+selection already has a layer-sized alpha asset, the stroke captures that
+asset id at pointer-down; replay resolves the immutable mask and clips writes
+to the same selection after reload. A selection with a different canvas or
+transformed geometry remains unbound rather than being silently misaligned.
 
 This contract is local and deterministic. Patch is not Photoshop-compatible
 content-aware fill and does not claim broad perspective reconstruction. Future
@@ -50,9 +52,9 @@ offline and cancellation gates.
 ## Required evidence
 
 Pure tests cover source immutability, offset mapping, multi-point strokes,
-clipping, alpha and transparent RGB handling, deterministic repeat rendering,
-validation bounds and malformed inputs. Desktop and mobile browser acceptance
-covers source selection, destination drag, source-asset retention, undo,
-Escape/touch cancellation, locked-layer rejection and local reload/project
-round trips. The protected CI build and live revision verification remain
-required before release claims.
+named selection-mask snapshots, clipping, alpha and transparent RGB handling,
+deterministic repeat rendering, validation bounds and malformed inputs. Desktop
+and mobile browser acceptance covers source selection, destination drag,
+source-asset retention, undo, Escape/touch cancellation, locked-layer
+rejection and local reload/project round trips. The protected CI build and live
+revision verification remain required before release claims.

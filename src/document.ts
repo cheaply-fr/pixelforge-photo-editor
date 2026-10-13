@@ -1383,6 +1383,16 @@ export function validateFrame(
         !validPatchStrokes(layer.patchStrokes, assets[layer.asset].w, assets[layer.asset].h)
       )
         return fail();
+      if (
+        layer.patchStrokes?.some(
+          (stroke) =>
+            stroke.selectionMask !== undefined &&
+            (!Object.hasOwn(assets, stroke.selectionMask) ||
+              assets[stroke.selectionMask].w !== assets[layer.asset].w ||
+              assets[stroke.selectionMask].h !== assets[layer.asset].h),
+        )
+      )
+        return fail();
       const contentAwareFills = layer.contentAwareFills as
         | ContentAwareFill[]
         | undefined;
@@ -2164,12 +2174,31 @@ export async function renderFrame(
         patchedContext = patched.getContext('2d')!;
       patchedContext.drawImage(rasterSource, 0, 0);
       const imageData = patchedContext.getImageData(0, 0, patched.width, patched.height);
+      const patchMasks: Record<string, Uint8ClampedArray> = {};
+      for (const stroke of layer.patchStrokes) {
+        if (!stroke.selectionMask || patchMasks[stroke.selectionMask]) continue;
+        const maskImage = await decodeAsset(assets[stroke.selectionMask]);
+        const maskSurface = surface(maskImage.naturalWidth, maskImage.naturalHeight);
+        const maskContext = maskSurface.getContext('2d')!;
+        maskContext.drawImage(maskImage, 0, 0);
+        const rgba = maskContext.getImageData(
+          0,
+          0,
+          maskSurface.width,
+          maskSurface.height,
+        ).data;
+        const alpha = new Uint8ClampedArray(maskSurface.width * maskSurface.height);
+        for (let pixel = 0; pixel < alpha.length; pixel += 1)
+          alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
+        patchMasks[stroke.selectionMask] = alpha;
+      }
       imageData.data.set(
         applyPatchStrokes(
           imageData.data,
           patched.width,
           patched.height,
           layer.patchStrokes,
+          patchMasks,
         ),
       );
       patchedContext.putImageData(imageData, 0, 0);

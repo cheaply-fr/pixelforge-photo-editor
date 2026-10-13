@@ -9,6 +9,7 @@ type ProjectLayer = {
     version: number;
     points: unknown[];
     sourceOffset: { x: number; y: number };
+    selectionMask?: string;
   }>;
 };
 type Project = {
