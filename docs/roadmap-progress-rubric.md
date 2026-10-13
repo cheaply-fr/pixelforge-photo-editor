@@ -26,7 +26,7 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 
 ## Current baseline
 
-The repository contains broad partial implementations across all eight stages. The locally verified custom-path increment raises the aggregate pure suite to **744 passing tests** and adds **2/2 focused desktop/mobile browser checks** for save, project-file round-trip, reload discovery and applying a second editable path layer. Protected run `38386650794` completed successfully for `7495c1b4…`, including its production deploy. Independent live checks then matched that SHA in `/release.json` and `/api/readyz.json`; DNS resolves through `photoeditor-cheaply.web.app` to `199.36.158.100`, TLS verifies for `photoeditor.cheaply.fr`, the editor reports `v0.1.0 · Server online · 7495c1b4…`, and the export dialog confirmed a downloaded 102,221-byte JPEG with metadata privacy disclosure. PR #136 is open and currently carries newer local work; its checks and deployment are pending, so the custom-path increment is not yet production evidence. Newer local work remains separate from the deployed baseline until the protected workflow completes.
+The repository contains broad partial implementations across all eight stages. The locally verified artboard-visibility increment raises the aggregate pure suite to **745 passing tests** and adds **8/8 focused desktop/mobile browser checks** for named viewport persistence, guarded per-artboard visibility, active-target fallback and isolated export. Protected run `38386650794` completed successfully for `7495c1b4…`, including its production deploy. Independent live checks then matched that SHA in `/release.json` and `/api/readyz.json`; DNS resolves through `photoeditor-cheaply.web.app` to `199.36.158.100`, TLS verifies for `photoeditor.cheaply.fr`, the editor reports `v0.1.0 · Server online · 7495c1b4…`, and the export dialog confirmed a downloaded 102,221-byte JPEG with metadata privacy disclosure. PR #136 is open and currently carries newer local work; its checks and deployment are pending, so the artboard-visibility increment is not yet production evidence. Newer local work remains separate from the deployed baseline until the protected workflow completes.
 
 Progress percentages in status reports are estimates derived from this rubric and must identify the stage evidence that is still missing. They must never be increased solely because source files changed.
 
@@ -169,7 +169,7 @@ smart-object layers. Validated white/black matte metadata decontaminates
 semi-transparent edge RGB before masks and filters without changing alpha or
 the immutable source asset. Pure pixel/validation coverage and desktop/mobile
 acceptance cover representative output, persistence and undo. The local suite
-now passes 744/744 tests; protected CI, deployment and live acceptance remain
+now passes 745/745 tests; protected CI, deployment and live acceptance remain
 separate gates.
 
 The next filter increment adds `Filter → Convert for Smart Filters` and
