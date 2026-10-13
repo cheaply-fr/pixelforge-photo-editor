@@ -72,3 +72,19 @@ test('Keyboard Shortcuts can persist and invoke a custom menu command chord', as
   await page.keyboard.press('Shift+9');
   await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('92');
 });
+
+
+test('Keyboard Shortcuts can reset all custom bindings before applying', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Keyboard Shortcuts…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+  const brush = dialog.getByLabel('Brush custom shortcut', { exact: true });
+  await brush.fill('9');
+  await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
+  await expect(brush).toHaveValue('');
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  await page.keyboard.press('9');
+  await expect(page.getByRole('button', { name: 'Brush tool', exact: true })).not.toHaveAttribute('aria-pressed', 'true');
+});

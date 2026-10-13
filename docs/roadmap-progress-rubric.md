@@ -282,9 +282,8 @@ Keyboard Shortcuts now provides editable local tool and menu-command binding
 sections. Tools accept validated alphanumeric chords, while commands accept
 validated alphanumeric, punctuation and function-key chords. Collisions,
 malformed values and unknown IDs fail closed; the built-in Photoshop-style
-shortcuts stay active when a command has no override. Exact modifier matching,
-versioned local persistence and the normal command guards are covered by pure
-tests and desktop/mobile reload acceptance. Browser-reserved shortcuts,
+shortcuts stay active when a command has no override. Exact modifier matching, versioned local persistence, per-row resets and a
+Reset all action are covered by pure tests and desktop/mobile reload acceptance. Browser-reserved shortcuts,
 disabled menu entries and physical-device parity remain explicit limitations.
 
 Filter → Last Filter now remembers the most recently selected nondestructive

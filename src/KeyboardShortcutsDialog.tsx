@@ -98,7 +98,7 @@ export default function KeyboardShortcutsDialog({
             ))}
           </fieldset>
         )}
-        <div className="dialog-actions"><button type="button" onClick={close}>Close</button>{(toolItems && applyToolBindings) || applyCommandBindings ? <button type="submit">Apply</button> : null}</div>
+        <div className="dialog-actions">{(toolItems && applyToolBindings) || applyCommandBindings ? <button type="button" onClick={() => { setBindings({}); setCommandOverrides({}); }}>Reset all</button> : null}<button type="button" onClick={close}>Close</button>{(toolItems && applyToolBindings) || applyCommandBindings ? <button type="submit">Apply</button> : null}</div>
       </form>
     </dialog>
   );
