@@ -155,6 +155,28 @@ test('Sharpen More is a distinct deterministic two-pass effect with source-safe 
   })), true);
 });
 
+test('Smart Sharpen is edge-aware, deterministic and source-safe', () => {
+  const source = rgba(9, 3, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    return [x < 4 ? 30 : 220, 80, 90, 255];
+  });
+  const original = source.slice();
+  const output = applyFilterEffectsPixels(source, 9, 3, {
+    type: 'smart-sharpen', amount: 100, radius: 3,
+  });
+  assert.deepEqual(source, original);
+  assert.equal(output[3], 0);
+  assert.deepEqual(Array.from(output.slice(0, 3)), [17, 23, 29]);
+  assert.deepEqual(pixel(output, 9, 1, 1), pixel(source, 9, 1, 1));
+  assert.notDeepEqual(pixel(output, 9, 4, 1), pixel(source, 9, 4, 1));
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 3, {
+    type: 'smart-sharpen', amount: 100, radius: 3,
+  }));
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    type: 'smart-sharpen', amount: 120, radius: 99,
+  })), true);
+});
+
 test('linear shear interpolates fractional shifts and clamps image edges', () => {
   const source = rgba(9, 5, (x) => [x * 20, 0, 0, 255]);
   const output = applyFilterEffectsPixels(source, 9, 5, {

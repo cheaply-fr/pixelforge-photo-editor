@@ -539,6 +539,7 @@ type Command =
   | 'filter-gaussian-blur'
   | 'filter-unsharp-mask'
   | 'filter-sharpen-more'
+  | 'filter-smart-sharpen'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
   | 'filter-smart-blur'
@@ -1039,7 +1040,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Sharpen', command: 'sharpen-noise' },
     { label: 'Sharpen Edges', command: 'sharpen-noise' },
     { label: 'Sharpen More', command: 'filter-sharpen-more' },
-    { label: 'Smart Sharpen…', command: 'sharpen-noise' },
+    { label: 'Smart Sharpen…', command: 'filter-smart-sharpen' },
     { label: 'Unsharp Mask…', command: 'filter-unsharp-mask' },
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Find Edges…', command: 'filter-find-edges' },
@@ -10105,6 +10106,8 @@ export default function Home() {
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-sharpen-more')
       chooseFilterEffect('sharpen-more', 'Sharpen More (two-pass nondestructive)');
+    else if (command === 'filter-smart-sharpen')
+      chooseFilterEffect('smart-sharpen', 'Smart Sharpen (edge-aware nondestructive)');
     else if (command === 'filter-lens-blur')
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-iris-blur')
@@ -12732,6 +12735,9 @@ export default function Home() {
             {filterEffects.type === 'sharpen-more' && (
               <p>Sharpen More applies two bounded unsharp passes for a stronger distinct result. Amount and radius stay editable; edge-aware halo suppression remains planned.</p>
             )}
+            {filterEffects.type === 'smart-sharpen' && (
+              <p>Smart Sharpen uses a bounded edge-preserving reference to limit gain on flat tonal surfaces while retaining local detail. Amount and radius stay editable; threshold, halo suppression and camera-aware controls remain planned.</p>
+            )}
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
             )}
@@ -12851,6 +12857,7 @@ export default function Home() {
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'sharpen-more' ||
+                          filterEffects.type === 'smart-sharpen' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||
