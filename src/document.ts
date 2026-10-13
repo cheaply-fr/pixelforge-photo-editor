@@ -301,6 +301,8 @@ export type Layer = Common &
         sides: number;
         /** Legacy drafts omit this and render as a regular polygon. */
         variant?: ParametricShapeVariant;
+        /** Star inner radius, expressed as a fraction of the outer radius. */
+        innerRadius?: number;
       }
     | {
         /** A local-coordinate, straight-segment Pen path. */
@@ -1427,6 +1429,8 @@ export function validateFrame(
           (!('fill' in layer) || typeof layer.fill !== 'boolean')) ||
         (layer.kind === 'polygon' &&
           (!integer(layer.sides, 3, 32) ||
+            (layer.innerRadius !== undefined &&
+              !number(layer.innerRadius, 0.1, 0.9)) ||
             (() => {
               try {
                 validateShapeVariant(layer.variant);
@@ -2537,6 +2541,7 @@ export async function renderFrame(
         Math.max(1, layer.height - layer.stroke),
         layer.variant,
         layer.sides,
+        layer.innerRadius,
       ).map((point) => ({
         x: point.x + layer.stroke / 2,
         y: point.y + layer.stroke / 2,

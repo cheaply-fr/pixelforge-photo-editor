@@ -154,6 +154,8 @@ export type Settings = {
   polygonVariant?: 'polygon' | 'triangle' | 'star';
   /** Parametric polygon/star side count, bounded to the editable shape range. */
   polygonSides?: number;
+  /** Parametric star inner radius (0.1–0.9 of the outer radius). */
+  polygonInnerRadius?: number;
   /** Spacing between brush dabs as a percent of diameter. */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */

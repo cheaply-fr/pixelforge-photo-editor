@@ -8,6 +8,7 @@ export type CustomShapePreset = {
   color: string;
   variant?: 'polygon' | 'triangle' | 'star';
   sides?: number;
+  innerRadius?: number;
 };
 
 const idPattern = /^[0-9a-f-]{8,64}$/i;
@@ -20,7 +21,8 @@ export function validCustomShapePreset(value: unknown): value is CustomShapePres
     CUSTOM_SHAPE_KINDS.includes(candidate.kind as CustomShapeKind) &&
     typeof candidate.color === 'string' && hexPattern.test(candidate.color) &&
     (candidate.variant === undefined || candidate.variant === 'polygon' || candidate.variant === 'triangle' || candidate.variant === 'star') &&
-    (candidate.sides === undefined || (Number.isInteger(candidate.sides) && candidate.sides >= 3 && candidate.sides <= 32));
+    (candidate.sides === undefined || (Number.isInteger(candidate.sides) && candidate.sides >= 3 && candidate.sides <= 32)) &&
+    (candidate.innerRadius === undefined || (typeof candidate.innerRadius === 'number' && Number.isFinite(candidate.innerRadius) && candidate.innerRadius >= 0.1 && candidate.innerRadius <= 0.9));
 }
 
 export function normalizeCustomShapePresets(value: unknown): CustomShapePreset[] {
@@ -38,6 +40,7 @@ export function normalizeCustomShapePresets(value: unknown): CustomShapePreset[]
       ...(item.kind === 'polygon' ? {
         variant: item.variant ?? 'polygon',
         sides: item.sides ?? 5,
+        innerRadius: item.innerRadius ?? 0.5,
       } : {}),
     });
     if (output.length >= CUSTOM_SHAPE_PRESET_LIMIT) break;

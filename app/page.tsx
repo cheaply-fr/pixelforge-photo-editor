@@ -1867,6 +1867,7 @@ export default function Home() {
     [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
     [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
     [polygonSides, setPolygonSides] = useState(5),
+    [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -2212,6 +2213,7 @@ export default function Home() {
     customShapePresets,
     polygonVariant,
     polygonSides,
+    polygonInnerRadius,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -2282,6 +2284,7 @@ export default function Home() {
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setPolygonVariant(s.polygonVariant ?? 'polygon');
     setPolygonSides(Math.max(3, Math.min(32, Math.round(s.polygonSides ?? 5))));
+    setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -2337,6 +2340,7 @@ export default function Home() {
     setCustomShapePresets,
     setPolygonVariant,
     setPolygonSides,
+    setPolygonInnerRadius,
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
@@ -2477,6 +2481,7 @@ export default function Home() {
     if (preset.kind === 'polygon') {
       setPolygonVariant(preset.variant ?? 'polygon');
       setPolygonSides(Math.max(3, Math.min(32, Math.round(preset.sides ?? 5))));
+      setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(preset.innerRadius ?? 0.5))));
     }
     setSelectedCustomShapePresetId(preset.id);
     setNotice(`Shape preset “${preset.label}” applied`);
@@ -2510,6 +2515,7 @@ export default function Home() {
         kind,
         color,
         ...(kind === 'polygon' ? { variant: polygonVariant, sides: polygonSides } : {}),
+        ...(kind === 'polygon' ? { innerRadius: polygonInnerRadius } : {}),
       });
       setCustomShapePresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomShapePreset(preset);
@@ -5144,6 +5150,7 @@ export default function Home() {
         customShapePresets,
         polygonVariant,
         polygonSides,
+        polygonInnerRadius,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -5240,6 +5247,7 @@ export default function Home() {
     customShapePresets,
     polygonVariant,
     polygonSides,
+    polygonInnerRadius,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -9549,7 +9557,7 @@ export default function Home() {
               height: Math.max(1, height),
               stroke: Math.max(1, size / 3),
               color,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant } : { fill: false }),
+              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : { fill: false }),
               matrix: [
                 1,
                 0,
@@ -10195,7 +10203,7 @@ export default function Home() {
               stroke: Math.max(1, size / 3),
               color,
               fill: false,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant } : {}),
+              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : {}),
               matrix,
             } as Layer),
       );
@@ -13929,6 +13937,16 @@ export default function Home() {
                   max={32}
                   set={setPolygonSides}
                   suffix=""
+                />
+              )}
+              {tool === 'polygon' && polygonVariant === 'star' && (
+                <Slider
+                  label="Star inner radius"
+                  value={Math.round(polygonInnerRadius * 100)}
+                  min={10}
+                  max={90}
+                  set={(value) => setPolygonInnerRadius(value / 100)}
+                  suffix="%"
                 />
               )}
               {tool !== 'magic-eraser' && (
