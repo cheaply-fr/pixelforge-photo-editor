@@ -1807,13 +1807,14 @@ const selectionMaskForLayer = async (
 
 function readToolbarPreferences() {
   const categoryIds = TOOL_CATEGORIES.map((category) => category.id);
-  if (typeof window === 'undefined') return normalizeToolbarPreferences(undefined, categoryIds);
+  const categoryTools = Object.fromEntries(TOOL_CATEGORIES.map((category) => [category.id, category.tools]));
+  if (typeof window === 'undefined') return normalizeToolbarPreferences(undefined, categoryIds, categoryTools);
   try {
     const envelope = window.localStorage.getItem('pixelforge.toolbar-preferences');
     if (envelope) {
       const parsed = JSON.parse(envelope);
       if (parsed?.version === TOOLBAR_PREFERENCES_VERSION)
-        return normalizeToolbarPreferences(parsed, categoryIds);
+        return normalizeToolbarPreferences(parsed, categoryIds, categoryTools);
     }
     const rawHidden = window.localStorage.getItem('pixelforge.toolbar-hidden-categories');
     const rawOrder = window.localStorage.getItem('pixelforge.toolbar-category-order');
@@ -1821,9 +1822,9 @@ function readToolbarPreferences() {
       columns: window.localStorage.getItem('pixelforge.toolbar-columns'),
       hiddenCategories: rawHidden ? JSON.parse(rawHidden) : [],
       categoryOrder: rawOrder ? JSON.parse(rawOrder) : categoryIds,
-    }, categoryIds);
+    }, categoryIds, categoryTools);
   } catch {
-    return normalizeToolbarPreferences(undefined, categoryIds);
+    return normalizeToolbarPreferences(undefined, categoryIds, categoryTools);
   }
 }
 
@@ -1980,6 +1981,7 @@ export default function Home() {
     [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
     [hiddenToolCategories, setHiddenToolCategories] = useState<string[]>(() => initialToolbarPreferences.hiddenCategories),
     [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
+    [toolbarToolOrder, setToolbarToolOrder] = useState<Record<string, string[]>>(() => initialToolbarPreferences.toolOrder),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
@@ -12435,12 +12437,14 @@ export default function Home() {
           categories={TOOL_CATEGORIES}
           hiddenCategories={hiddenToolCategories}
           categoryOrder={toolbarCategoryOrder}
+          toolOrder={toolbarToolOrder}
           close={() => setToolbarSettingsOpen(false)}
-          apply={({ columns, hiddenCategories, categoryOrder }) => {
+          apply={({ columns, hiddenCategories, categoryOrder, toolOrder }) => {
             const nextHidden = hiddenCategories.filter((id) => id !== 'navigation');
             setToolbarColumns(columns);
             setHiddenToolCategories(nextHidden);
             setToolbarCategoryOrder(categoryOrder);
+            setToolbarToolOrder(toolOrder);
             setToolbarSettingsOpen(false);
             try {
               window.localStorage.setItem('pixelforge.toolbar-columns', columns);
@@ -12451,6 +12455,7 @@ export default function Home() {
                 columns,
                 hiddenCategories: nextHidden,
                 categoryOrder,
+                toolOrder,
               }));
             } catch { /* private mode */ }
             const activeCategory = categoryForTool(tool);
@@ -12697,7 +12702,8 @@ export default function Home() {
             .filter((category) => !hiddenToolCategories.includes(category.id))
             .sort((a, b) => toolbarCategoryOrder.indexOf(a.id) - toolbarCategoryOrder.indexOf(b.id))
             .map((category) => {
-            const compactTools = compactCategoryTools(category, tool, toolFamilyChoices);
+            const orderedTools = (toolbarToolOrder[category.id] ?? category.tools) as typeof category.tools;
+            const compactTools = compactCategoryTools({ ...category, tools: orderedTools }, tool, toolFamilyChoices);
             const layout = compactTools.length === 1 ? 'one' : compactTools.length === 2 ? 'two' : 'many';
             return (
             <section

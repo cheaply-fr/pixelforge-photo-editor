@@ -52,3 +52,25 @@ test('Toolbar settings persist category ordering', async ({ page }) => {
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByTestId('tool-palette').locator(':scope > .tool-category').first()).toHaveAttribute('aria-label', 'Measure tools');
 });
+
+test('Toolbar settings persist individual tool ordering without duplicating slots', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Toolbar…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Toolbar' });
+  const drawTools = dialog.locator('details.toolbar-tool-group').nth(9);
+  await drawTools.locator('summary').click();
+  const directSelect = drawTools.getByRole('button', { name: /Move Direct Select tool up/ });
+  await directSelect.click();
+  await directSelect.click();
+  await directSelect.click();
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  const draw = page.getByRole('region', { name: 'Draw & Type tools' });
+  await expect(draw.locator('button').first()).toHaveAttribute('data-tool-id', 'direct-select');
+  const ids = await draw.locator('button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('data-tool-id')));
+  expect(new Set(ids).size).toBe(ids.length);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('region', { name: 'Draw & Type tools' }).locator('button').first()).toHaveAttribute('data-tool-id', 'direct-select');
+});

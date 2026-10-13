@@ -247,6 +247,13 @@ contract that removes unknown and duplicate category IDs, completes newly added
 categories, validates column values, and prevents hiding every category. Pure
 migration tests cover malformed and collision cases.
 
+Toolbar settings also persist per-category tool-slot ordering. The order is
+normalized against the current taxonomy, unknown and duplicate tool IDs are
+discarded, newly introduced tools are appended, and family variants remain one
+compact slot with their existing press-and-hold menu. Desktop/mobile reload
+coverage and pure migration tests cover the preference boundary; shortcut
+rebinding remains staged.
+
 The normalized values are also stored in a versioned toolbar-preferences
 envelope, while the earlier individual keys remain readable for migration.
 Unsupported envelope versions fail closed to the canonical defaults.

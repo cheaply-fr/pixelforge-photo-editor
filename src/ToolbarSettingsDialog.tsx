@@ -3,13 +3,16 @@ import type { ToolCategory } from './toolPalette';
 
 export type ToolbarColumns = 'auto' | '2' | '3';
 
-export default function ToolbarSettingsDialog({ value, categories, hiddenCategories, categoryOrder, close, apply }: {
+const displayToolLabel = (id: string) => id.split('-').map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
+
+export default function ToolbarSettingsDialog({ value, categories, hiddenCategories, categoryOrder, toolOrder, close, apply }: {
   value: ToolbarColumns;
   categories: readonly ToolCategory[];
   hiddenCategories: readonly string[];
   categoryOrder: readonly string[];
+  toolOrder: Readonly<Record<string, readonly string[]>>;
   close: () => void;
-  apply: (value: { columns: ToolbarColumns; hiddenCategories: string[]; categoryOrder: string[] }) => void;
+  apply: (value: { columns: ToolbarColumns; hiddenCategories: string[]; categoryOrder: string[]; toolOrder: Record<string, string[]> }) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [columns, setColumns] = useState<ToolbarColumns>(value);
@@ -19,6 +22,9 @@ export default function ToolbarSettingsDialog({ value, categories, hiddenCategor
     const stored = categoryOrder.filter((id) => known.has(id));
     return [...stored, ...categories.map((category) => category.id).filter((id) => !stored.includes(id))];
   });
+  const [toolOrders, setToolOrders] = useState<Record<string, string[]>>(() => Object.fromEntries(
+    categories.map((category) => [category.id, [...(toolOrder[category.id] ?? category.tools)]]),
+  ));
   useEffect(() => { dialog.current?.showModal(); }, []);
   const toggleCategory = (id: string) => setHidden((current) => {
     const next = new Set(current);
@@ -34,9 +40,18 @@ export default function ToolbarSettingsDialog({ value, categories, hiddenCategor
     [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
     return next;
   });
+  const moveTool = (categoryId: string, toolId: string, direction: -1 | 1) => setToolOrders((current) => {
+    const tools = current[categoryId] ?? [];
+    const index = tools.indexOf(toolId);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= tools.length) return current;
+    const next = [...tools];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    return { ...current, [categoryId]: next };
+  });
   return (
     <dialog ref={dialog} className="editor-dialog toolbar-settings-dialog" aria-labelledby="toolbar-settings-title" onCancel={close}>
-      <form onSubmit={(event) => { event.preventDefault(); apply({ columns, hiddenCategories: [...hidden], categoryOrder: order }); }}>
+      <form onSubmit={(event) => { event.preventDefault(); apply({ columns, hiddenCategories: [...hidden], categoryOrder: order, toolOrder: toolOrders }); }}>
         <h2 id="toolbar-settings-title">Toolbar</h2>
         <p>Choose a compact palette width. Auto uses two columns at normal widths and three columns on wide editor viewports; mobile layouts stay touch-sized.</p>
         <label className="select-row">
@@ -65,6 +80,32 @@ export default function ToolbarSettingsDialog({ value, categories, hiddenCategor
               <button type="button" onClick={() => moveCategory(category.id, -1)} disabled={index === 0} aria-label={`Move ${category.label} category up`}>↑</button>
               <button type="button" onClick={() => moveCategory(category.id, 1)} disabled={index === order.length - 1} aria-label={`Move ${category.label} category down`}>↓</button>
             </label>
+            );
+          })}
+        </fieldset>
+        <fieldset className="toolbar-tool-settings">
+          <legend>Tool order</legend>
+          <p className="toolbar-category-help">Reorder tool slots within each category. Family variants stay grouped in their press-and-hold menu.</p>
+          {order.map((categoryId) => {
+            const category = categories.find((candidate) => candidate.id === categoryId);
+            if (!category) return null;
+            const tools = toolOrders[category.id] ?? [...category.tools];
+            return (
+              <details key={category.id} className="toolbar-tool-group">
+                <summary>{category.label}</summary>
+                <div className="toolbar-tool-list">
+                  {tools.map((toolId, index) => {
+                    const label = displayToolLabel(toolId);
+                    return (
+                      <div className="toolbar-tool-option" key={toolId}>
+                        <span>{label}</span>
+                        <button type="button" onClick={() => moveTool(category.id, toolId, -1)} disabled={index === 0} aria-label={`Move ${label} tool up`}>↑</button>
+                        <button type="button" onClick={() => moveTool(category.id, toolId, 1)} disabled={index === tools.length - 1} aria-label={`Move ${label} tool down`}>↓</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
             );
           })}
         </fieldset>
