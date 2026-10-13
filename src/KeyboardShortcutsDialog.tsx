@@ -10,12 +10,19 @@ export type KeyboardShortcutItem = {
 export default function KeyboardShortcutsDialog({
   items,
   close,
+  toolItems,
+  toolBindings,
+  applyToolBindings,
 }: {
   items: KeyboardShortcutItem[];
   close: () => void;
+  toolItems?: { id: string; label: string; key: string }[];
+  toolBindings?: Readonly<Record<string, string>>;
+  applyToolBindings?: (bindings: Record<string, string>) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState('');
+  const [bindings, setBindings] = useState<Record<string, string>>(() => ({ ...toolBindings }));
   useEffect(() => {
     dialog.current?.showModal();
     dialog.current?.querySelector<HTMLInputElement>('input')?.focus();
@@ -29,7 +36,7 @@ export default function KeyboardShortcutsDialog({
   }, [items, query]);
   return (
     <dialog ref={dialog} className="editor-dialog keyboard-shortcuts-dialog" aria-labelledby="keyboard-shortcuts-title" onCancel={close}>
-      <form onSubmit={(event) => event.preventDefault()}>
+      <form onSubmit={(event) => { event.preventDefault(); applyToolBindings?.(bindings); close(); }}>
         <h2 id="keyboard-shortcuts-title">Keyboard Shortcuts</h2>
         <p>Search the advertised Photoshop-style shortcuts. A command may still be unavailable for the current document or selection.</p>
         <input
@@ -48,7 +55,26 @@ export default function KeyboardShortcutsDialog({
             </div>
           )) : <p className="command-search-empty">No matching shortcuts</p>}
         </div>
-        <div className="dialog-actions"><button type="button" onClick={close}>Close</button></div>
+        {toolItems && applyToolBindings && (
+          <fieldset className="tool-shortcut-settings">
+            <legend>Custom tool bindings</legend>
+            <p className="toolbar-category-help">Assign one letter or number to a tool. Duplicate, invalid, and reserved modifier combinations are ignored.</p>
+            {toolItems.map((item) => (
+              <label className="tool-shortcut-row" key={item.id}>
+                <span><b>{item.label}</b><small>Default {item.key || '—'}</small></span>
+                <input
+                  aria-label={`${item.label} custom shortcut`}
+                  value={bindings[item.id] ?? ''}
+                  maxLength={1}
+                  inputMode="text"
+                  onChange={(event) => setBindings((current) => ({ ...current, [item.id]: event.target.value.slice(-1) }))}
+                />
+                <button type="button" onClick={() => setBindings((current) => { const next = { ...current }; delete next[item.id]; return next; })}>Reset</button>
+              </label>
+            ))}
+          </fieldset>
+        )}
+        <div className="dialog-actions"><button type="button" onClick={close}>Close</button>{toolItems && applyToolBindings && <button type="submit">Apply</button>}</div>
       </form>
     </dialog>
   );

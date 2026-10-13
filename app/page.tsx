@@ -333,6 +333,10 @@ import {
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
+import {
+  normalizeToolShortcutPreferences,
+  TOOL_SHORTCUTS_VERSION,
+} from '../src/toolShortcuts';
 import { removeRedEye } from '../src/redEye';
 import {
   BRUSH_SMOOTHING_DEFAULT,
@@ -1828,6 +1832,17 @@ function readToolbarPreferences() {
   }
 }
 
+function readToolShortcutPreferences() {
+  const toolIds = TOOLS.map((item) => item.id);
+  if (typeof window === 'undefined') return normalizeToolShortcutPreferences(undefined, toolIds);
+  try {
+    const raw = window.localStorage.getItem('pixelforge.tool-shortcuts');
+    return normalizeToolShortcutPreferences(raw ? JSON.parse(raw) : undefined, toolIds);
+  } catch {
+    return normalizeToolShortcutPreferences(undefined, toolIds);
+  }
+}
+
 export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
@@ -1972,6 +1987,7 @@ export default function Home() {
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const initialToolbarPreferences = readToolbarPreferences();
+  const initialToolShortcutPreferences = readToolShortcutPreferences();
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
@@ -1982,6 +1998,7 @@ export default function Home() {
     [hiddenToolCategories, setHiddenToolCategories] = useState<string[]>(() => initialToolbarPreferences.hiddenCategories),
     [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
     [toolbarToolOrder, setToolbarToolOrder] = useState<Record<string, string[]>>(() => initialToolbarPreferences.toolOrder),
+    [toolShortcutBindings, setToolShortcutBindings] = useState<Record<string, string>>(() => initialToolShortcutPreferences.bindings),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
@@ -11244,6 +11261,13 @@ export default function Home() {
       }
       if (e.altKey) return;
       const lower = e.key.toLowerCase();
+      const customTool = Object.entries(toolShortcutBindings).find(([, key]) => key === lower)?.[0] as Tool | undefined;
+      if (customTool) {
+        e.preventDefault();
+        setTool(customTool);
+        setNotice(toolSelectionNotice(customTool, TOOLS.find((item) => item.id === customTool)?.label || customTool));
+        return;
+      }
       const group = TOOL_GROUPS[lower];
       if (group) {
         e.preventDefault();
@@ -12418,6 +12442,16 @@ export default function Home() {
       {keyboardShortcutsOpen && (
         <KeyboardShortcutsDialog
           items={keyboardShortcutItems}
+          toolItems={TOOLS}
+          toolBindings={toolShortcutBindings}
+          applyToolBindings={(bindings) => {
+            const normalized = normalizeToolShortcutPreferences({ version: TOOL_SHORTCUTS_VERSION, bindings }, TOOLS.map((item) => item.id));
+            setToolShortcutBindings(normalized.bindings);
+            try {
+              window.localStorage.setItem('pixelforge.tool-shortcuts', JSON.stringify(normalized));
+            } catch { /* private mode */ }
+            setNotice('Custom tool shortcuts updated');
+          }}
           close={() => setKeyboardShortcutsOpen(false)}
         />
       )}

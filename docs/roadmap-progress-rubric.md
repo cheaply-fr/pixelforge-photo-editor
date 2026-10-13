@@ -254,6 +254,13 @@ compact slot with their existing press-and-hold menu. Desktop/mobile reload
 coverage and pure migration tests cover the preference boundary; shortcut
 rebinding remains staged.
 
+Keyboard Shortcuts now provides an editable local tool-binding section. One
+letter or number may be assigned per tool; collisions, malformed values and
+unknown tool IDs fail closed, while the existing default family shortcuts stay
+active for unbound tools. Pure normalization and desktop/mobile reload tests
+cover the versioned preference boundary; modifier-command rebinding and
+physical keyboard/device acceptance remain staged.
+
 The normalized values are also stored in a versioned toolbar-preferences
 envelope, while the earlier individual keys remain readable for migration.
 Unsupported envelope versions fail closed to the canonical defaults.
