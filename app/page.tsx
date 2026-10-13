@@ -338,6 +338,11 @@ import {
   toolShortcutMatches,
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
+import {
+  commandShortcutMatches,
+  normalizeCommandShortcutPreferences,
+  COMMAND_SHORTCUTS_VERSION,
+} from '../src/commandShortcuts';
 import { normalizeLastFilterType } from '../src/lastFilter';
 import {
   normalizeToolFamilyChoices,
@@ -1852,6 +1857,16 @@ function readToolShortcutPreferences() {
   }
 }
 
+function readCommandShortcutPreferences(commandIds: readonly string[]) {
+  if (typeof window === 'undefined') return normalizeCommandShortcutPreferences(undefined, commandIds);
+  try {
+    const raw = window.localStorage.getItem('pixelforge.command-shortcuts');
+    return normalizeCommandShortcutPreferences(raw ? JSON.parse(raw) : undefined, commandIds);
+  } catch {
+    return normalizeCommandShortcutPreferences(undefined, commandIds);
+  }
+}
+
 function readToolFamilyChoices() {
   if (typeof window === 'undefined') return {};
   try {
@@ -1888,6 +1903,7 @@ export default function Home() {
     menuItemRefs = useRef<Record<MenuName, Array<HTMLButtonElement | null>>>(
       {} as Record<MenuName, Array<HTMLButtonElement | null>>,
     ),
+    runCommandRef = useRef<((command: Command) => void) | null>(null),
     pendingMenuFocus = useRef<Record<MenuName, 'first' | 'last' | undefined>>(
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
@@ -1922,6 +1938,12 @@ export default function Home() {
   }, [revision]);
   const initialToolbarPreferences = readToolbarPreferences();
   const initialToolShortcutPreferences = readToolShortcutPreferences();
+  const commandShortcutIds = Array.from(new Set(
+    (Object.values(MENU_DEFS) as MenuItem[][]).flatMap((items) =>
+      items.filter((item) => item.shortcut && item.command !== 'noop').map((item) => item.command),
+    ),
+  ));
+  const initialCommandShortcutPreferences = readCommandShortcutPreferences(commandShortcutIds);
   const initialToolFamilyChoices = readToolFamilyChoices();
   const initialLastFilterType = readLastFilterType();
   const [tool, setActiveTool] = useState<Tool>('move'),
@@ -2038,6 +2060,7 @@ export default function Home() {
     [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
     [toolbarToolOrder, setToolbarToolOrder] = useState<Record<string, string[]>>(() => initialToolbarPreferences.toolOrder),
     [toolShortcutBindings, setToolShortcutBindings] = useState<Record<string, string>>(() => initialToolShortcutPreferences.bindings),
+    [commandShortcutBindings, setCommandShortcutBindings] = useState<Record<string, string>>(() => initialCommandShortcutPreferences.bindings),
     [lastFilterType, setLastFilterType] = useState<FilterEffectType | undefined>(() => initialLastFilterType),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
@@ -11221,6 +11244,14 @@ export default function Home() {
         setNotice(toolSelectionNotice(customTool, TOOLS.find((item) => item.id === customTool)?.label || customTool));
         return;
       }
+      const customCommand = Object.entries(commandShortcutBindings).find(([, binding]) =>
+        commandShortcutMatches(binding, e),
+      )?.[0] as Command | undefined;
+      if (customCommand) {
+        e.preventDefault();
+        runCommandRef.current?.(customCommand);
+        return;
+      }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
         void fillActiveLayer();
@@ -11859,6 +11890,9 @@ export default function Home() {
       setNotice(`Action “${action.name}” replayed (${result.completed} step${result.completed === 1 ? '' : 's'})`);
     }
   };
+  useEffect(() => {
+    runCommandRef.current = runCommand;
+  });
   const menuItemDisabled = (item: MenuItem) => {
     if (item.disabled || !frame) return true;
     if (
@@ -12268,6 +12302,9 @@ export default function Home() {
       })));
   const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
     .filter((item) => Boolean(item.shortcut));
+  const editableCommandShortcutItems = keyboardShortcutItems.filter((item, index, items) =>
+    items.findIndex((candidate) => candidate.command === item.command) === index,
+  );
   const filterGalleryItems: FilterGalleryItem[] = FILTERS.map(([label, , first, second]) => ({
     label,
     command: `filter-${label.toLocaleLowerCase()}`,
@@ -12495,7 +12532,7 @@ export default function Home() {
       )}
       {keyboardShortcutsOpen && (
         <KeyboardShortcutsDialog
-          items={keyboardShortcutItems}
+          items={editableCommandShortcutItems}
           toolItems={TOOLS}
           toolBindings={toolShortcutBindings}
           applyToolBindings={(bindings) => {
@@ -12505,6 +12542,18 @@ export default function Home() {
               window.localStorage.setItem('pixelforge.tool-shortcuts', JSON.stringify(normalized));
             } catch { /* private mode */ }
             setNotice('Custom tool shortcuts updated');
+          }}
+          commandBindings={commandShortcutBindings}
+          applyCommandBindings={(bindings) => {
+            const normalized = normalizeCommandShortcutPreferences(
+              { version: COMMAND_SHORTCUTS_VERSION, bindings },
+              commandShortcutIds,
+            );
+            setCommandShortcutBindings(normalized.bindings);
+            try {
+              window.localStorage.setItem('pixelforge.command-shortcuts', JSON.stringify(normalized));
+            } catch { /* private mode */ }
+            setNotice('Custom menu shortcuts updated');
           }}
           close={() => setKeyboardShortcutsOpen(false)}
         />

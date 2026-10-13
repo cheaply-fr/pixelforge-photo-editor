@@ -254,12 +254,14 @@ compact slot with their existing press-and-hold menu. Desktop/mobile reload
 coverage and pure migration tests cover the preference boundary; shortcut
 rebinding remains staged.
 
-Keyboard Shortcuts now provides an editable local tool-binding section. One
-letter or number may be assigned per tool; collisions, malformed values and
-unknown tool IDs fail closed, while the existing default family shortcuts stay
-active for unbound tools. Pure normalization and desktop/mobile reload tests
-cover the versioned preference boundary; modifier-command rebinding and
-physical keyboard/device acceptance remain staged.
+Keyboard Shortcuts now provides editable local tool and menu-command binding
+sections. Tools accept validated alphanumeric chords, while commands accept
+validated alphanumeric, punctuation and function-key chords. Collisions,
+malformed values and unknown IDs fail closed; the built-in Photoshop-style
+shortcuts stay active when a command has no override. Exact modifier matching,
+versioned local persistence and the normal command guards are covered by pure
+tests and desktop/mobile reload acceptance. Browser-reserved shortcuts,
+disabled menu entries and physical-device parity remain explicit limitations.
 
 Filter → Last Filter now remembers the most recently selected nondestructive
 effect in a validated local preference, survives reload, remains disabled until
@@ -270,3 +272,11 @@ guarded empty state, reload and repeat selection.
 The normalized values are also stored in a versioned toolbar-preferences
 envelope, while the earlier individual keys remain readable for migration.
 Unsupported envelope versions fail closed to the canonical defaults.
+
+Command shortcuts now have a separate versioned local preference envelope.
+Edit → Keyboard Shortcuts exposes validated overrides for the advertised menu
+commands, including punctuation and function-key chords; exact modifier
+matching routes through the normal command dispatcher and survives reload.
+Pure and desktop/mobile acceptance cover normalization, collision rejection,
+invocation and persistence. See
+[`command-shortcuts-contract.md`](command-shortcuts-contract.md).

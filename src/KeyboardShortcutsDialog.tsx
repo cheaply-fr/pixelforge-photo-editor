@@ -13,16 +13,21 @@ export default function KeyboardShortcutsDialog({
   toolItems,
   toolBindings,
   applyToolBindings,
+  commandBindings,
+  applyCommandBindings,
 }: {
   items: KeyboardShortcutItem[];
   close: () => void;
   toolItems?: { id: string; label: string; key: string }[];
   toolBindings?: Readonly<Record<string, string>>;
   applyToolBindings?: (bindings: Record<string, string>) => void;
+  commandBindings?: Readonly<Record<string, string>>;
+  applyCommandBindings?: (bindings: Record<string, string>) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState('');
   const [bindings, setBindings] = useState<Record<string, string>>(() => ({ ...toolBindings }));
+  const [commandOverrides, setCommandOverrides] = useState<Record<string, string>>(() => ({ ...commandBindings }));
   useEffect(() => {
     dialog.current?.showModal();
     dialog.current?.querySelector<HTMLInputElement>('input')?.focus();
@@ -36,7 +41,7 @@ export default function KeyboardShortcutsDialog({
   }, [items, query]);
   return (
     <dialog ref={dialog} className="editor-dialog keyboard-shortcuts-dialog" aria-labelledby="keyboard-shortcuts-title" onCancel={close}>
-      <form onSubmit={(event) => { event.preventDefault(); applyToolBindings?.(bindings); close(); }}>
+      <form onSubmit={(event) => { event.preventDefault(); applyToolBindings?.(bindings); applyCommandBindings?.(commandOverrides); close(); }}>
         <h2 id="keyboard-shortcuts-title">Keyboard Shortcuts</h2>
         <p>Search the advertised Photoshop-style shortcuts. A command may still be unavailable for the current document or selection.</p>
         <input
@@ -67,14 +72,33 @@ export default function KeyboardShortcutsDialog({
                   value={bindings[item.id] ?? ''}
                   maxLength={24}
                   inputMode="text"
-                  onChange={(event) => setBindings((current) => ({ ...current, [item.id]: event.target.value.slice(-1) }))}
+                  onChange={(event) => setBindings((current) => ({ ...current, [item.id]: event.target.value }))}
                 />
                 <button type="button" onClick={() => setBindings((current) => { const next = { ...current }; delete next[item.id]; return next; })}>Reset</button>
               </label>
             ))}
           </fieldset>
         )}
-        <div className="dialog-actions"><button type="button" onClick={close}>Close</button>{toolItems && applyToolBindings && <button type="submit">Apply</button>}</div>
+        {applyCommandBindings && (
+          <fieldset className="tool-shortcut-settings command-shortcut-settings">
+            <legend>Custom menu command bindings</legend>
+            <p className="toolbar-category-help">Override a listed menu shortcut with a key, punctuation key, or function-key chord. Leave blank to keep the built-in shortcut. Duplicate and invalid chords are ignored.</p>
+            {shortcuts.map((item) => (
+              <label className="tool-shortcut-row" key={`command-${item.menu}-${item.command}`}>
+                <span><b>{item.label}</b><small>{item.menu} · Default {item.shortcut}</small></span>
+                <input
+                  aria-label={`${item.label} custom command shortcut`}
+                  value={commandOverrides[item.command] ?? ''}
+                  maxLength={24}
+                  inputMode="text"
+                  onChange={(event) => setCommandOverrides((current) => ({ ...current, [item.command]: event.target.value }))}
+                />
+                <button type="button" onClick={() => setCommandOverrides((current) => { const next = { ...current }; delete next[item.command]; return next; })}>Reset</button>
+              </label>
+            ))}
+          </fieldset>
+        )}
+        <div className="dialog-actions"><button type="button" onClick={close}>Close</button>{(toolItems && applyToolBindings) || applyCommandBindings ? <button type="submit">Apply</button> : null}</div>
       </form>
     </dialog>
   );
