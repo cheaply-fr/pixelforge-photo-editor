@@ -29,3 +29,14 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 The repository contains broad partial implementations across all eight stages. The last locally recorded toolbar milestone had 658 passing unit tests and 18/18 focused desktop/mobile toolbar tests. Protected run `38386650794` completed successfully for `7495c1b4…`, including its production deploy. Independent live checks then matched that SHA in `/release.json` and `/api/readyz.json`; DNS resolves through `photoeditor-cheaply.web.app` to `199.36.158.100`, TLS verifies for `photoeditor.cheaply.fr`, the editor reports `v0.1.0 · Server online · 7495c1b4…`, and the export dialog confirmed a downloaded 102,221-byte JPEG with metadata privacy disclosure. PR #136 remains a separate, unmerged documentation change.
 
 Progress percentages in status reports are estimates derived from this rubric and must identify the stage evidence that is still missing. They must never be increased solely because source files changed.
+
+## Latest local increment
+
+The inspector now exposes a History timeline backed by the existing bounded
+immutable frame stack. It provides keyboard-addressable summaries and direct
+restore navigation without a second document model; the restore path retains
+the existing branch semantics and local conflict protections. Pure coverage is
+in `tests/history-timeline.test.mjs`, and desktop/mobile acceptance coverage is
+in `tests/browser/history-panel.spec.ts`. This increment is locally verified;
+it is not CI, deployment or live acceptance until a protected workflow runs for
+the candidate SHA.

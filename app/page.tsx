@@ -292,6 +292,7 @@ import {
 } from '../src/toolPalette';
 import { removeRedEye } from '../src/redEye';
 import { ToolFlyout } from '../src/ToolFlyout';
+import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -11827,6 +11828,18 @@ export default function Home() {
               selectionOperation={selectionOperation}
               setSelectionOperation={setSelectionOperation}
               setSelectionFeather={setSelectionFeather}
+            />
+          )}
+          {frame && (
+            <HistoryPanel
+              history={history.current}
+              currentIndex={index.current}
+              restore={(targetIndex) => {
+                const distance = targetIndex - index.current;
+                if (!distance) return;
+                travel(distance);
+                setNotice(`History step ${targetIndex + 1} restored`);
+              }}
             />
           )}
           {frame && (
