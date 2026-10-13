@@ -262,9 +262,9 @@ tool's category is hidden. Desktop/mobile reload tests cover the preference and
 the compact palette remains free of duplicate family slots.
 
 The same toolbar settings now persist category ordering with keyboard-accessible
-up/down controls. Desktop/mobile tests verify reordered categories survive a
-reload; individual tool reordering and arbitrary shortcut rebinding remain
-future work.
+up/down controls and a Reset defaults action. Desktop/mobile tests verify
+reordered categories and safe reset survive the editor session; arbitrary shortcut
+rebinding remains future work.
 
 Toolbar local-storage values now pass through a versioned normalization
 contract that removes unknown and duplicate category IDs, completes newly added

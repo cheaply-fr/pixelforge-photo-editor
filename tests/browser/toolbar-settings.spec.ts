@@ -90,3 +90,22 @@ test('Toolbar settings persist individual tool ordering without duplicating slot
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByRole('region', { name: 'Draw & Type tools' }).locator('button').first()).toHaveAttribute('data-tool-id', 'direct-select');
 });
+
+
+test('Toolbar settings can reset columns, spacing, categories and tool order', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Toolbar…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Toolbar' });
+  await dialog.getByLabel('Tool columns').selectOption('3');
+  await dialog.getByLabel('Category spacing').selectOption('comfortable');
+  await dialog.getByLabel('Measure category', { exact: true }).uncheck();
+  await dialog.getByRole('button', { name: 'Reset defaults', exact: true }).click();
+  await expect(dialog.getByLabel('Tool columns')).toHaveValue('auto');
+  await expect(dialog.getByLabel('Category spacing')).toHaveValue('compact');
+  await expect(dialog.getByLabel('Measure category', { exact: true })).toBeChecked();
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByTestId('tool-palette')).toHaveAttribute('data-toolbar-density', 'compact');
+  await expect(page.getByRole('region', { name: 'Measure tools' })).toBeVisible();
+});

@@ -52,6 +52,13 @@ export default function ToolbarSettingsDialog({ value, density, categories, hidd
     [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
     return { ...current, [categoryId]: next };
   });
+  const resetDefaults = () => {
+    setColumns('auto');
+    setToolbarDensity('compact');
+    setHidden(new Set());
+    setOrder(categories.map((category) => category.id));
+    setToolOrders(Object.fromEntries(categories.map((category) => [category.id, [...category.tools]])));
+  };
   return (
     <dialog ref={dialog} className="editor-dialog toolbar-settings-dialog" aria-labelledby="toolbar-settings-title" onCancel={close}>
       <form onSubmit={(event) => { event.preventDefault(); apply({ columns, density: toolbarDensity, hiddenCategories: [...hidden], categoryOrder: order, toolOrder: toolOrders }); }}>
@@ -119,7 +126,7 @@ export default function ToolbarSettingsDialog({ value, density, categories, hidd
             );
           })}
         </fieldset>
-        <div className="dialog-actions"><button type="button" onClick={close}>Cancel</button><button type="submit">Apply</button></div>
+        <div className="dialog-actions"><button type="button" onClick={resetDefaults}>Reset defaults</button><button type="button" onClick={close}>Cancel</button><button type="submit">Apply</button></div>
       </form>
     </dialog>
   );
