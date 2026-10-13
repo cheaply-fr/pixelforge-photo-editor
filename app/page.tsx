@@ -105,7 +105,12 @@ import {
   type TextAlign,
   type Assets,
 } from '../src/document';
-import { applyImagePixels } from '../src/applyImage';
+import {
+  applyImagePixels,
+  CALCULATION_MODES,
+  calculateImagePixels,
+  type CalculationMode,
+} from '../src/applyImage';
 import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
 import { defaultVectorMaskPath } from '../src/vectorMask';
 import { MATTING_MODES, effectiveMatting } from '../src/matting';
@@ -471,6 +476,7 @@ type Command =
   | 'purge-history'
   | 'find-replace-text'
   | 'apply-image'
+  | 'calculations'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -951,7 +957,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Duplicate…', command: 'duplicate-document' },
     { label: 'Apply Image…', command: 'apply-image' },
-    { label: 'Calculations…', command: 'noop', disabled: true },
+    { label: 'Calculations…', command: 'calculations' },
     { label: 'Analysis', command: 'noop', disabled: true },
   ],
   Layer: [
@@ -5999,6 +6005,97 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Apply Image could not be applied');
     }
   };
+  const calculateImage = async () => {
+    const beforeFrame = current();
+    const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
+    if (!layer || layer.kind !== 'raster') {
+      setNotice('Select an unlocked raster layer before using Calculations');
+      return;
+    }
+    if (layerIsLocked(beforeFrame, layer) || !layer.visible) {
+      setNotice('Unlock and show the active raster layer before using Calculations');
+      return;
+    }
+    const modeText = window.prompt(
+      `Calculations blend mode (${CALCULATION_MODES.join(', ')})`,
+      'multiply',
+    );
+    if (modeText === null) return;
+    const mode = modeText.trim().toLowerCase() as CalculationMode;
+    if (!CALCULATION_MODES.includes(mode)) {
+      setNotice(`Calculations mode must be one of: ${CALCULATION_MODES.join(', ')}`);
+      return;
+    }
+    const opacityText = window.prompt('Calculations opacity (0–100%)', '100');
+    if (opacityText === null) return;
+    const opacity = Number(opacityText);
+    if (!Number.isFinite(opacity) || opacity < 0 || opacity > 100) {
+      setNotice('Calculations opacity must be between 0 and 100%');
+      return;
+    }
+    const beforeIndex = index.current;
+    const beforeRevision = revisionRef.current;
+    try {
+      const activeImage = await decodeAsset(assets.current[layer.asset]);
+      if (activeImage.naturalWidth !== beforeFrame.w || activeImage.naturalHeight !== beforeFrame.h)
+        throw new Error('Calculations requires the active raster to match the document dimensions');
+      const source = await renderFrame(beforeFrame, assets.current);
+      if (beforeFrame.selection) {
+        const mask = await renderSelection(
+          beforeFrame.selection,
+          beforeFrame.w,
+          beforeFrame.h,
+          assets.current,
+        );
+        const sourceContext = source.getContext('2d');
+        if (!sourceContext) throw new Error('Calculations source canvas is unavailable');
+        sourceContext.globalCompositeOperation = 'destination-in';
+        sourceContext.drawImage(mask, 0, 0);
+        sourceContext.globalCompositeOperation = 'source-over';
+      }
+      const target = surface(beforeFrame.w, beforeFrame.h);
+      const targetContext = target.getContext('2d');
+      if (!targetContext) throw new Error('Calculations target canvas is unavailable');
+      targetContext.drawImage(activeImage, 0, 0);
+      const targetPixels = targetContext.getImageData(0, 0, beforeFrame.w, beforeFrame.h);
+      const sourcePixels = source.getContext('2d')?.getImageData(0, 0, beforeFrame.w, beforeFrame.h);
+      if (!sourcePixels) throw new Error('Calculations source pixels are unavailable');
+      targetPixels.data.set(calculateImagePixels(targetPixels.data, sourcePixels.data, mode, opacity));
+      targetContext.putImageData(targetPixels, 0, 0);
+      if (
+        current() !== beforeFrame ||
+        index.current !== beforeIndex ||
+        revisionRef.current !== beforeRevision
+      ) {
+        setNotice('Document changed while Calculations was preparing; nothing was overwritten');
+        return;
+      }
+      const asset = addAsset(assets.current, target);
+      if (commit({
+        ...beforeFrame,
+        layers: beforeFrame.layers.map((item) => item.id === layer.id ? {
+          ...item,
+          asset,
+          matrix: identity(),
+          adjustments: { ...neutral },
+          mask: undefined,
+          maskEnabled: undefined,
+          maskInverted: undefined,
+          vectorMask: undefined,
+          spotHealing: undefined,
+          patchStrokes: undefined,
+          contentAwareFills: undefined,
+          matting: undefined,
+          smartFilters: [],
+          clippingTo: undefined,
+        } : item),
+      })) {
+        setNotice(`Calculations applied ${mode} at ${Math.round(opacity)}%; undo restores the editable source`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Calculations could not be applied');
+    }
+  };
   const copyLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -10872,6 +10969,7 @@ export default function Home() {
     else if (command === 'webp') download('webp');
     else if (command === 'fade') return fadeLastEdit();
     else if (command === 'apply-image') return applyImage();
+    else if (command === 'calculations') return calculateImage();
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();

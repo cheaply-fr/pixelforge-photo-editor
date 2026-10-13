@@ -16,3 +16,10 @@ Pure coverage verifies source-over alpha math, endpoint opacity, input
 immutability and malformed-buffer rejection. Browser coverage exercises the
 Image menu on desktop and mobile, prompt cancellation/invalid values,
 selection clipping, one undoable commit, and a project round trip.
+
+`Image → Calculations…` shares the same safety boundary and supports the local
+`multiply`, `screen`, `add`, `subtract`, `difference`, and `overlay` channel
+modes with explicit opacity. It renders the visible source, clips it to an
+active selection when present, and bakes the result into the active raster as
+one undoable commit. Unsupported modes and invalid opacity are rejected before
+rendering.
