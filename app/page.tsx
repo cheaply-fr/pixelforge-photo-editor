@@ -537,6 +537,7 @@ type Command =
   | 'filter-blur-more'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
+  | 'filter-sharpen'
   | 'filter-unsharp-mask'
   | 'filter-sharpen-more'
   | 'filter-smart-sharpen'
@@ -1037,7 +1038,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Fibers…', command: 'filter-fibers' },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Flame…', command: 'filter-flame' },
-    { label: 'Sharpen', command: 'sharpen-noise' },
+    { label: 'Sharpen', command: 'filter-sharpen' },
     { label: 'Sharpen Edges', command: 'sharpen-noise' },
     { label: 'Sharpen More', command: 'filter-sharpen-more' },
     { label: 'Smart Sharpen…', command: 'filter-smart-sharpen' },
@@ -10102,6 +10103,8 @@ export default function Home() {
       chooseFilterEffect('box-blur', 'Box Blur');
     else if (command === 'filter-gaussian-blur')
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
+    else if (command === 'filter-sharpen')
+      chooseFilterEffect('sharpen', 'Sharpen (nondestructive)');
     else if (command === 'filter-unsharp-mask')
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-sharpen-more')
@@ -12732,6 +12735,9 @@ export default function Home() {
             {filterEffects.type === 'unsharp-mask' && (
               <p>Unsharp Mask adds a bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; threshold, halo suppression and channel-specific controls remain planned.</p>
             )}
+            {filterEffects.type === 'sharpen' && (
+              <p>Sharpen adds one bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; halo suppression and channel-specific controls remain planned.</p>
+            )}
             {filterEffects.type === 'sharpen-more' && (
               <p>Sharpen More applies two bounded unsharp passes for a stronger distinct result. Amount and radius stay editable; edge-aware halo suppression remains planned.</p>
             )}
@@ -12855,6 +12861,7 @@ export default function Home() {
                       ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
+                          filterEffects.type === 'sharpen' ||
                           filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'sharpen-more' ||
                           filterEffects.type === 'smart-sharpen' ||

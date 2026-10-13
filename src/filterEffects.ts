@@ -15,6 +15,7 @@ export const FILTER_EFFECT_TYPES = [
   'blur-more',
   'box-blur',
   'gaussian-blur',
+  'sharpen',
   'unsharp-mask',
   'sharpen-more',
   'smart-sharpen',
@@ -2778,6 +2779,8 @@ export function applyFilterEffectsPixels(
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'sharpen') {
+    applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'unsharp-mask') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'sharpen-more') {
