@@ -337,6 +337,7 @@ import {
   normalizeToolShortcutPreferences,
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
+import { normalizeLastFilterType } from '../src/lastFilter';
 import { removeRedEye } from '../src/redEye';
 import {
   BRUSH_SMOOTHING_DEFAULT,
@@ -1845,6 +1846,16 @@ function readToolShortcutPreferences() {
   }
 }
 
+function readLastFilterType(): FilterEffectType | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const raw = window.localStorage.getItem('pixelforge.last-filter');
+    return normalizeLastFilterType(raw, FILTER_EFFECT_TYPES) as FilterEffectType | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
@@ -1990,6 +2001,7 @@ export default function Home() {
   const [hasClipboard, setHasClipboard] = useState(false);
   const initialToolbarPreferences = readToolbarPreferences();
   const initialToolShortcutPreferences = readToolShortcutPreferences();
+  const initialLastFilterType = readLastFilterType();
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
@@ -2001,7 +2013,7 @@ export default function Home() {
     [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
     [toolbarToolOrder, setToolbarToolOrder] = useState<Record<string, string[]>>(() => initialToolbarPreferences.toolOrder),
     [toolShortcutBindings, setToolShortcutBindings] = useState<Record<string, string>>(() => initialToolShortcutPreferences.bindings),
-    [lastFilterType, setLastFilterType] = useState<FilterEffectType>(),
+    [lastFilterType, setLastFilterType] = useState<FilterEffectType | undefined>(() => initialLastFilterType),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
@@ -5013,7 +5025,10 @@ export default function Home() {
     patch: Partial<Adjustments['photoAdjustments']>,
   ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
-    if (type !== 'none') setLastFilterType(type);
+    if (type !== 'none') {
+      setLastFilterType(type);
+      try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
+    }
     if (
       adjust({
         filterEffects:

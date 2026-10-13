@@ -262,9 +262,10 @@ cover the versioned preference boundary; modifier-command rebinding and
 physical keyboard/device acceptance remain staged.
 
 Filter → Last Filter now remembers the most recently selected nondestructive
-effect in the current editor session. It remains disabled until a valid effect
-is chosen, reuses the existing source-safe editable metadata path, and has
-desktop/mobile coverage for the guarded empty state and repeat selection.
+effect in a validated local preference, survives reload, remains disabled until
+a valid effect is chosen, and reuses the existing source-safe editable metadata
+path. Pure malformed-value normalization and desktop/mobile coverage cover the
+guarded empty state, reload and repeat selection.
 
 The normalized values are also stored in a versioned toolbar-preferences
 envelope, while the earlier individual keys remain readable for migration.

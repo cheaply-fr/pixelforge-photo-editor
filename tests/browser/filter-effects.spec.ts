@@ -17,6 +17,8 @@ test('Filter menu repeats the last nondestructive effect and stays disabled befo
   await expect(page.getByRole('menuitem', { name: 'Last Filter', exact: true })).toBeDisabled();
   await page.getByRole('menuitem', { name: 'Gaussian Blur…', exact: true }).click();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Last Filter', exact: true })).toBeEnabled();
   await page.getByRole('menuitem', { name: 'Last Filter', exact: true }).click();
