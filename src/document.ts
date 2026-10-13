@@ -43,6 +43,7 @@ import {
   type ResampleMethod,
 } from './imageSize.ts';
 import { pathContours, validatePath, type PathModel } from './paths.ts';
+import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
   applyVectorMaskPixels,
@@ -223,6 +224,8 @@ type Common = {
   patchStrokes?: PatchStroke[];
   /** Optional constrained local cleanup operations over layer-local masks. */
   contentAwareFills?: ContentAwareFill[];
+  /** Optional nondestructive known-matte colour decontamination. */
+  matting?: MattingSettings;
   /** Optional source-to-base relationship for a nondestructive clipping mask. */
   clippingTo?: string;
 };
@@ -1280,6 +1283,7 @@ export function validateFrame(
       !layer.matrix.every((v) => number(v, -1000000, 1000000)) ||
       !validAdjustments(layer.adjustments) ||
       (layer.styles !== undefined && !validLayerStyles(layer.styles)) ||
+      (layer.matting !== undefined && (!isRasterContentLayer(layer) || !validMattingSettings(layer.matting))) ||
       (layer.clippingTo !== undefined &&
         typeof layer.clippingTo !== 'string') ||
       (layer.groupId !== undefined &&
@@ -2159,6 +2163,21 @@ export async function renderFrame(
       );
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
+    }
+    if (isRasterContentLayer(layer) && rasterSource && layer.matting) {
+      const asset = assets[layer.asset],
+        matted = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        mattedContext = matted.getContext('2d')!;
+      mattedContext.drawImage(rasterSource, 0, 0);
+      const imageData = mattedContext.getImageData(0, 0, matted.width, matted.height);
+      imageData.data.set(applyMattingPixels(
+        imageData.data,
+        matted.width,
+        matted.height,
+        effectiveMatting(layer.matting),
+      ));
+      mattedContext.putImageData(imageData, 0, 0);
+      rasterSource = matted;
     }
     if (isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
       const asset = assets[layer.asset];

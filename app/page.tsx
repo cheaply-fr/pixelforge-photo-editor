@@ -106,6 +106,7 @@ import {
 } from '../src/document';
 import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
 import { defaultVectorMaskPath } from '../src/vectorMask';
+import { MATTING_MODES, effectiveMatting } from '../src/matting';
 import { cookieCutterPath, COOKIE_CUTTER_SHAPES, type CookieCutterShape } from '../src/cookieCutter';
 import {
   alphaFromRgba,
@@ -495,6 +496,7 @@ type Command =
   | 'new-smart-object'
   | 'replace-smart-object'
   | 'rasterize-layer'
+  | 'matting'
   | 'duplicate-layer'
   | 'delete-layer'
   | 'rename-layer'
@@ -962,6 +964,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'New Smart Object…', command: 'new-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
     { label: 'Rasterize', command: 'rasterize-layer' },
+    { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
     { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
     {
@@ -6289,6 +6292,33 @@ export default function Home() {
       setNotice('Could not rasterize layer');
     }
   };
+  const applyMatting = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object')) {
+      setNotice('Select a raster or smart-object layer before applying matting');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the layer before applying matting');
+      return;
+    }
+    const modeText = window.prompt('Matting colour (white or black)', effectiveMatting(layer.matting).mode);
+    if (modeText === null) return;
+    const mode = modeText.trim().toLowerCase();
+    if (!MATTING_MODES.includes(mode as (typeof MATTING_MODES)[number])) {
+      setNotice('Matting colour must be white or black');
+      return;
+    }
+    const amountText = window.prompt('Matting amount (0-100%)', String(effectiveMatting(layer.matting).amount));
+    if (amountText === null) return;
+    const amount = Number(amountText);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
+      setNotice('Matting amount must be between 0 and 100');
+      return;
+    }
+    if (editLayer({ matting: { mode: mode as (typeof MATTING_MODES)[number], amount } }))
+      setNotice(`${mode[0].toUpperCase()}${mode.slice(1)} matte removal applied nondestructively`);
+  };
   const convertTextToShape = async () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || layer.kind !== 'text') {
@@ -10571,6 +10601,7 @@ export default function Home() {
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
     else if (command === 'rasterize-layer') return rasterize();
+    else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
     else if (command === 'group-layer') groupActiveLayer();
@@ -11147,6 +11178,8 @@ export default function Home() {
       case 'free-transform':
         return !layer || locked;
       case 'perspective-warp':
+        return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
+      case 'matting':
         return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'align-left':
       case 'align-center-horizontal':

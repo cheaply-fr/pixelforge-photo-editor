@@ -155,3 +155,11 @@ bounded compound path, retains layer identity and group/opacity/blend metadata,
 and restores the editable text through undo. Desktop/mobile acceptance checks
 representative alpha coverage, path persistence, reload-safe export and undo;
 font-outline fidelity and OpenType semantics remain explicitly out of scope.
+
+The compositing increment adds `Layer → Matting…` for visible raster and
+smart-object layers. Validated white/black matte metadata decontaminates
+semi-transparent edge RGB before masks and filters without changing alpha or
+the immutable source asset. Pure pixel/validation coverage and desktop/mobile
+acceptance cover representative output, persistence and undo. The local suite
+now passes 713/713 tests; protected CI, deployment and live acceptance remain
+separate gates.

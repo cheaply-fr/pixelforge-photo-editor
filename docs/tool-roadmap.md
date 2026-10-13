@@ -243,3 +243,11 @@ alpha and transparent RGB source-safe through undo, reload, project export and
 Action replay. See [`lens-flare-effect-contract.md`](./lens-flare-effect-contract.md);
 camera-specific optical profiles, highlight reconstruction and depth-aware
 occlusion remain staged.
+
+The compositing increment adds **Layer → Matting…** for visible raster and
+smart-object layers. White/black edge decontamination is stored as editable
+metadata and replayed before masks, styles and filters while preserving alpha,
+transparent RGB and immutable source assets. Pure pixel/validation tests and
+desktop/mobile menu, undo and project round-trip acceptance are included;
+semantic hair matting, background inference and advanced defringe remain
+staged.
