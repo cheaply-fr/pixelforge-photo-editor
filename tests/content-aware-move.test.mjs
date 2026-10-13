@@ -6,6 +6,8 @@ const pixel = (r, g, b, a = 255) => [r, g, b, a];
 
 test('content-aware move validates bounded metadata', () => {
   assert.equal(validContentAwareMove({ version: 1, dx: 2, dy: -1, radius: 4, opacity: 1 }), true);
+  assert.equal(validContentAwareMove({ version: 1, mask: 'mask-asset', dx: 2, dy: -1, radius: 4, opacity: 1 }), true);
+  assert.equal(validContentAwareMove({ version: 1, mask: 'bad value', dx: 2, dy: -1, radius: 4, opacity: 1 }), false);
   assert.equal(validContentAwareMove({ version: 1, dx: 4097, dy: 0, radius: 4, opacity: 1 }), false);
   assert.equal(validContentAwareMove({ version: 1, dx: 0, dy: 0, radius: 0, opacity: 1 }), false);
 });

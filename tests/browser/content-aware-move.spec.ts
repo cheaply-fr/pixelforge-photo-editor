@@ -16,7 +16,7 @@ const project = async (page: Page) => {
   return (await downloadedProject((await download.path())!)) as unknown as {
     history: Array<{
       active: string;
-      layers: Array<{ id: string; asset: string }>;
+      layers: Array<{ id: string; asset: string; contentAwareMoves?: Array<{ mask?: string; dx: number; dy: number }> }>;
       selection?: { mask?: string };
     }>;
     index: number;
@@ -47,9 +47,12 @@ test('Content-Aware Move translates an explicit selection and survives reload', 
   const afterFrame = after.history[after.index];
   const afterAsset = afterFrame.layers.find((layer) => layer.id === afterFrame.active)!.asset;
   expect(after.index).toBeGreaterThan(before.index);
-  expect(afterAsset).not.toBe(beforeAsset);
+  expect(afterAsset).toBe(beforeAsset);
+  expect(afterFrame.layers.find((layer) => layer.id === afterFrame.active)!.contentAwareMoves).toHaveLength(1);
   expect(afterFrame.selection).toBeTruthy();
   await page.reload();
   const reloaded = await project(page);
-  expect(reloaded.history[reloaded.index].layers.find((layer) => layer.id === reloaded.history[reloaded.index].active)!.asset).toBe(afterAsset);
+  const restoredLayer = reloaded.history[reloaded.index].layers.find((layer) => layer.id === reloaded.history[reloaded.index].active)!;
+  expect(restoredLayer.asset).toBe(afterAsset);
+  expect(restoredLayer.contentAwareMoves).toHaveLength(1);
 });

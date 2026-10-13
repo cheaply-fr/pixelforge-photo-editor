@@ -114,6 +114,12 @@ import {
   type ContentAwareFill,
 } from './contentAwareCleanup.ts';
 import {
+  validContentAwareMove,
+  moveContentAwareSelection,
+  CONTENT_AWARE_MOVE_MAX_OPERATIONS,
+  type ContentAwareMove,
+} from './contentAwareMove.ts';
+import {
   applyLayerStylesPixels,
   isNeutralLayerStyles,
   validLayerStyles,
@@ -227,6 +233,8 @@ type Common = {
   patchStrokes?: PatchStroke[];
   /** Optional constrained local cleanup operations over layer-local masks. */
   contentAwareFills?: ContentAwareFill[];
+  /** Optional nondestructive local selection moves over layer-local masks. */
+  contentAwareMoves?: ContentAwareMove[];
   /** Optional nondestructive known-matte colour decontamination. */
   matting?: MattingSettings;
   /** Optional bounded ordered nondestructive filter stack. */
@@ -1336,7 +1344,8 @@ export function validateFrame(
         layer.maskInverted !== undefined ||
         layer.spotHealing !== undefined ||
         layer.patchStrokes !== undefined ||
-        layer.contentAwareFills !== undefined)
+        layer.contentAwareFills !== undefined ||
+        layer.contentAwareMoves !== undefined)
     )
       return fail();
     if (
@@ -1376,7 +1385,7 @@ export function validateFrame(
         !validSpotHealingStrokes(layer.spotHealing, assets[layer.asset].w, assets[layer.asset].h)
       )
         return fail();
-      if (layer.kind === 'smart-object' && (layer.spotHealing !== undefined || layer.patchStrokes !== undefined || layer.contentAwareFills !== undefined))
+      if (layer.kind === 'smart-object' && (layer.spotHealing !== undefined || layer.patchStrokes !== undefined || layer.contentAwareFills !== undefined || layer.contentAwareMoves !== undefined))
         return fail();
       if (
         layer.patchStrokes !== undefined &&
@@ -1408,6 +1417,24 @@ export function validateFrame(
             return fail();
         }
       }
+      const contentAwareMoves = layer.contentAwareMoves as ContentAwareMove[] | undefined;
+      if (contentAwareMoves !== undefined) {
+        if (
+          !Array.isArray(contentAwareMoves) ||
+          contentAwareMoves.length > CONTENT_AWARE_MOVE_MAX_OPERATIONS ||
+          !contentAwareMoves.every((move) => validContentAwareMove(move))
+        )
+          return fail();
+        for (const move of contentAwareMoves) {
+          if (
+            !move.mask ||
+            !Object.hasOwn(assets, move.mask) ||
+            assets[move.mask].w !== assets[layer.asset].w ||
+            assets[move.mask].h !== assets[layer.asset].h
+          )
+            return fail();
+        }
+      }
       pixels += assets[layer.asset].w * assets[layer.asset].h;
     } else if (layer.kind === 'adjustment') {
       // Adjustment nodes are source-free and operate on the composite below;
@@ -1429,6 +1456,7 @@ export function validateFrame(
         layer.spotHealing !== undefined ||
         layer.patchStrokes !== undefined ||
         layer.contentAwareFills !== undefined ||
+        layer.contentAwareMoves !== undefined ||
         Object.hasOwn(layer, 'asset')
       )
         return fail();
@@ -1616,6 +1644,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
         used[layer.asset] = assets[layer.asset];
         for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
+        for (const move of layer.kind === 'raster' ? layer.contentAwareMoves || [] : [])
+          if (move.mask && assets[move.mask]) used[move.mask] = assets[move.mask];
       }
     }
   }
@@ -2239,6 +2269,42 @@ export async function renderFrame(
       );
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
+    }
+    if (layer.kind === 'raster' && rasterSource && layer.contentAwareMoves?.length) {
+      const asset = assets[layer.asset],
+        moved = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        movedContext = moved.getContext('2d')!;
+      movedContext.drawImage(rasterSource, 0, 0);
+      const imageData = movedContext.getImageData(0, 0, moved.width, moved.height),
+        masks: Record<string, Uint8ClampedArray> = {};
+      for (const move of layer.contentAwareMoves) {
+        if (!move.mask || masks[move.mask]) continue;
+        const maskAsset = assets[move.mask];
+        if (!maskAsset) continue;
+        const maskImage = await decodeAsset(maskAsset),
+          maskCanvas = surface(maskImage.naturalWidth, maskImage.naturalHeight),
+          maskContext = maskCanvas.getContext('2d')!;
+        maskContext.drawImage(maskImage, 0, 0);
+        const rgba = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data,
+          alpha = new Uint8ClampedArray(maskCanvas.width * maskCanvas.height);
+        for (let pixel = 0; pixel < alpha.length; pixel += 1)
+          alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
+        masks[move.mask] = alpha;
+      }
+      for (const move of layer.contentAwareMoves) {
+        if (!move.mask || !masks[move.mask]) continue;
+        imageData.data.set(
+          moveContentAwareSelection(
+            imageData.data,
+            moved.width,
+            moved.height,
+            masks[move.mask],
+            move,
+          ),
+        );
+      }
+      movedContext.putImageData(imageData, 0, 0);
+      rasterSource = moved;
     }
     if (isRasterContentLayer(layer) && rasterSource && layer.matting) {
       const asset = assets[layer.asset],

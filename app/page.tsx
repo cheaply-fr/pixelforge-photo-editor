@@ -442,7 +442,6 @@ import {
 } from '../src/contentAwareCleanup';
 import {
   CONTENT_AWARE_MOVE_MAX_OFFSET,
-  moveContentAwareSelection,
 } from '../src/contentAwareMove';
 import {
   CONTENT_AWARE_SCALE_MAX_PERCENT,
@@ -3265,6 +3264,20 @@ export default function Home() {
     context.putImageData(data, 0, 0);
     return addAsset(assets.current, image);
   };
+  const alphaMaskAsset = (width: number, height: number, alpha: ArrayLike<number>) => {
+    const image = surface(width, height),
+      context = image.getContext('2d')!,
+      data = context.createImageData(width, height);
+    for (let i = 0; i < width * height; i += 1) {
+      const offset = i * 4;
+      data.data[offset] = 255;
+      data.data[offset + 1] = 255;
+      data.data[offset + 2] = 255;
+      data.data[offset + 3] = alpha[i] ?? 0;
+    }
+    context.putImageData(data, 0, 0);
+    return addAsset(assets.current, image);
+  };
   const selectionBrushPreview = (g: Gesture) => {
     const points = g.points || [];
     if (!points.length) return;
@@ -4934,28 +4947,24 @@ export default function Home() {
         setNotice('The selection does not intersect the active raster layer');
         return;
       }
-      const source = surface(width, height),
-        sourceContext = source.getContext('2d');
-      if (!sourceContext) throw new Error('Content-Aware Move canvas is unavailable');
-      sourceContext.drawImage(image, 0, 0);
-      const imageData = sourceContext.getImageData(0, 0, width, height),
-        moved = moveContentAwareSelection(imageData.data, width, height, mask, {
-          version: 1,
-          dx,
-          dy,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
-        });
-      imageData.data.set(moved);
-      sourceContext.putImageData(imageData, 0, 0);
       if (current() !== f || current().active !== layer.id) {
         setNotice('The document changed while Content-Aware Move was prepared');
         return;
       }
-      const asset = addAsset(assets.current, source);
+      const maskAsset = alphaMaskAsset(width, height, mask),
+        move = {
+          version: 1 as const,
+          mask: maskAsset,
+          dx,
+          dy,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        };
       if (commit({
         ...f,
-        layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item),
+        layers: f.layers.map((item) => item.id === layer.id
+          ? { ...item, contentAwareMoves: [...(item.contentAwareMoves ?? []), move] }
+          : item),
       })) setNotice('Content-Aware Move applied locally; undo restores the original pixels');
     } catch {
       setNotice('Content-Aware Move could not be applied');

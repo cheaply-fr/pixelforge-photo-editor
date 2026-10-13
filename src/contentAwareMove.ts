@@ -2,9 +2,12 @@ import { applyContentAwareFill, type ContentAwareFill } from './contentAwareClea
 
 export const CONTENT_AWARE_MOVE_VERSION = 1 as const;
 export const CONTENT_AWARE_MOVE_MAX_OFFSET = 4096;
+export const CONTENT_AWARE_MOVE_MAX_OPERATIONS = 16;
 
 export type ContentAwareMove = {
   version: typeof CONTENT_AWARE_MOVE_VERSION;
+  /** Optional layer-local selection mask asset for persisted operations. */
+  mask?: string;
   dx: number;
   dy: number;
   radius: number;
@@ -18,6 +21,11 @@ export function validContentAwareMove(value: unknown): value is ContentAwareMove
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Partial<ContentAwareMove>;
   const radius = candidate.radius;
+  if (
+    candidate.mask !== undefined &&
+    (typeof candidate.mask !== 'string' || !/^[a-z\d-]{1,160}$/i.test(candidate.mask))
+  )
+    return false;
   if (typeof radius !== 'number' || !Number.isInteger(radius) || radius < 1 || radius > 128) return false;
   return (
     candidate.version === CONTENT_AWARE_MOVE_VERSION &&
