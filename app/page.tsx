@@ -2474,6 +2474,10 @@ export default function Home() {
   const applyCustomShapePreset = (preset: CustomShapePreset) => {
     setTool(preset.kind as Tool);
     setColor(preset.color);
+    if (preset.kind === 'polygon') {
+      setPolygonVariant(preset.variant ?? 'polygon');
+      setPolygonSides(Math.max(3, Math.min(32, Math.round(preset.sides ?? 5))));
+    }
     setSelectedCustomShapePresetId(preset.id);
     setNotice(`Shape preset “${preset.label}” applied`);
   };
@@ -2500,7 +2504,13 @@ export default function Home() {
       return;
     }
     try {
-      const preset = createCustomShapePreset({ label: trimmed, kind: chosen as CustomShapeKind, color });
+      const kind = chosen as CustomShapeKind;
+      const preset = createCustomShapePreset({
+        label: trimmed,
+        kind,
+        color,
+        ...(kind === 'polygon' ? { variant: polygonVariant, sides: polygonSides } : {}),
+      });
       setCustomShapePresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomShapePreset(preset);
       setNotice(`Shape preset “${trimmed}” saved on this device`);

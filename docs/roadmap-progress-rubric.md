@@ -34,8 +34,9 @@ The Polygon tool now persists a bounded parametric variant (`polygon`,
 `triangle`, or `star`) and a 3–32 side count in local settings and project
 files. Rendering, boolean operations and reload preserve the editable variant
 and side count; the desktop/mobile acceptance suite covers control selection
-and project-file round-trip. Freeform custom path libraries and per-star
-inner-radius editing remain staged.
+and project-file round-trip. Custom polygon presets now retain the same
+variant and side count when applied. Freeform custom path libraries and
+per-star inner-radius editing remain staged.
 
 The bounded local Content-Aware Move slice is available through `Edit →
 Content-Aware Move…`. It requires an explicit selection, fills the vacated

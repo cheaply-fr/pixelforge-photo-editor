@@ -70,3 +70,24 @@ test('Polygon tool persists triangle and star variants in project settings', asy
   await expect(page.getByLabel('Polygon variant', { exact: true })).toHaveValue('star');
   await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('7');
 });
+
+test('custom polygon presets retain their variant and side count', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await selectTool(page, 'Polygon');
+  await page.getByLabel('Polygon variant', { exact: true }).selectOption('star');
+  await page.getByLabel('Polygon sides', { exact: true }).fill('9');
+  page.once('dialog', (dialog) => dialog.accept('Star badge'));
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Define Custom Shape…', exact: true }).click();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const project = await downloadedProject((await (await pending).path())!);
+  expect(project.settings.customShapePresets?.[0]).toMatchObject({ kind: 'polygon', variant: 'star', sides: 9 });
+  await page.getByLabel('Polygon variant', { exact: true }).selectOption('polygon');
+  await page.getByLabel('Polygon sides', { exact: true }).fill('5');
+  await page.getByLabel('Saved shape preset', { exact: true }).selectOption({ label: 'Star badge (polygon)' });
+  await expect(page.getByLabel('Polygon variant', { exact: true })).toHaveValue('star');
+  await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('9');
+});

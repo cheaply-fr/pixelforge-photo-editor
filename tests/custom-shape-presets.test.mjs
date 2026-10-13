@@ -5,7 +5,7 @@ import { normalizeCustomShapePresets, validCustomShapePreset } from '../src/cust
 test('custom shape presets validate, trim labels and normalize colors', () => {
   const value = { id: '12345678-abcd', label: '  Star  ', kind: 'polygon', color: '#AABBCC' };
   assert.equal(validCustomShapePreset(value), true);
-  assert.deepEqual(normalizeCustomShapePresets([value]), [{ ...value, label: 'Star', color: '#aabbcc' }]);
+  assert.deepEqual(normalizeCustomShapePresets([value]), [{ ...value, label: 'Star', color: '#aabbcc', variant: 'polygon', sides: 5 }]);
 });
 
 test('custom shape presets reject malformed, duplicate and oversized entries', () => {
@@ -15,4 +15,7 @@ test('custom shape presets reject malformed, duplicate and oversized entries', (
   const normalized = normalizeCustomShapePresets([valid, valid, ...many]);
   assert.equal(normalized.length, 32);
   assert.equal(new Set(normalized.map((item) => item.id)).size, 32);
+  assert.equal(validCustomShapePreset({ ...valid, variant: 'star', sides: 9, kind: 'polygon' }), true);
+  assert.equal(validCustomShapePreset({ ...valid, kind: 'polygon', sides: 33 }), false);
+  assert.equal(validCustomShapePreset({ ...valid, kind: 'polygon', variant: 'hexagon' }), false);
 });
