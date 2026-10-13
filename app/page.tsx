@@ -222,6 +222,7 @@ import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
 import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
 import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
+import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGalleryDialog';
 import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
 import { purgeUndoHistory } from '../src/historyPurge';
 import {
@@ -491,6 +492,7 @@ type Command =
   | 'define-brush-preset'
   | 'define-pattern'
   | 'keyboard-shortcuts'
+  | 'filter-gallery'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -1100,7 +1102,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
     { label: 'Neural Filters…', command: 'noop', disabled: true },
-    { label: 'Filter Gallery…', command: 'noop', disabled: true },
+    { label: 'Filter Gallery…', command: 'filter-gallery' },
     { label: 'Camera Raw Filter…', command: 'noop', disabled: true },
     { label: 'AI Denoise…', command: 'noop', disabled: true },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
@@ -1909,6 +1911,7 @@ export default function Home() {
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
     [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
+    [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
@@ -11080,6 +11083,7 @@ export default function Home() {
     else if (command === 'define-brush-preset') return defineBrushPreset();
     else if (command === 'define-pattern') return definePattern();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
+    else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -11881,6 +11885,13 @@ export default function Home() {
       })));
   const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
     .filter((item) => Boolean(item.shortcut));
+  const filterGalleryItems: FilterGalleryItem[] = FILTERS.map(([label, , first, second]) => ({
+    label,
+    command: `filter-${label.toLocaleLowerCase()}`,
+    description: 'Quick filter preset',
+    first,
+    second,
+  }));
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -12096,6 +12107,16 @@ export default function Home() {
         <KeyboardShortcutsDialog
           items={keyboardShortcutItems}
           close={() => setKeyboardShortcutsOpen(false)}
+        />
+      )}
+      {filterGalleryOpen && (
+        <FilterGalleryDialog
+          items={filterGalleryItems}
+          close={() => setFilterGalleryOpen(false)}
+          apply={(command) => {
+            setFilterGalleryOpen(false);
+            void runCommand(command as Command);
+          }}
         />
       )}
       {purgeHistoryOpen && (
