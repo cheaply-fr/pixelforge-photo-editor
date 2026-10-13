@@ -227,6 +227,8 @@ import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGaller
 import ToolbarSettingsDialog, { type ToolbarColumns } from '../src/ToolbarSettingsDialog';
 import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
+import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
+import { findSpellingHints } from '../src/spellcheck';
 import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
 import { purgeUndoHistory } from '../src/historyPurge';
 import {
@@ -499,6 +501,7 @@ type Command =
   | 'filter-gallery'
   | 'toolbar-settings'
   | 'update-text-layers'
+  | 'spellcheck'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -905,7 +908,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Search', shortcut: 'Ctrl+F', command: 'search-commands' },
-    { label: 'Check Spelling…', command: 'noop', disabled: true },
+    { label: 'Check Spelling…', command: 'spellcheck' },
     { label: 'Find and Replace Text…', command: 'find-replace-text' },
     { label: '', command: 'noop', separator: true },
     { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
@@ -1929,6 +1932,7 @@ export default function Home() {
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
+    [spellcheckOpen, setSpellcheckOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
       try {
@@ -11101,6 +11105,7 @@ export default function Home() {
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
+    else if (command === 'spellcheck') return setSpellcheckOpen(true);
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -11555,6 +11560,8 @@ export default function Home() {
         return !frame.layers.some((candidate) => candidate.kind === 'text');
       case 'update-text-layers':
         return !frame.layers.some((candidate) => candidate.kind === 'text');
+      case 'spellcheck':
+        return !frame.layers.some((candidate) => candidate.kind === 'text');
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
@@ -11912,6 +11919,10 @@ export default function Home() {
     second,
   }));
   const textLayers = (frame?.layers ?? []).filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text');
+  const spellcheckLayers: SpellcheckLayer[] = textLayers.map((layer) => ({
+    name: layer.name,
+    hints: findSpellingHints(layer.text),
+  }));
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -12167,6 +12178,9 @@ export default function Home() {
             }
           }}
         />
+      )}
+      {spellcheckOpen && (
+        <SpellcheckDialog layers={spellcheckLayers} close={() => setSpellcheckOpen(false)} />
       )}
       {purgeHistoryOpen && (
         <PurgeHistoryDialog
