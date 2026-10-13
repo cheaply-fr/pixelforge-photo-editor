@@ -711,6 +711,7 @@ type Command =
   | 'filter-median'
   | 'filter-dust-scratches'
   | 'filter-despeckle'
+  | 'filter-reduce-noise'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1168,6 +1169,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Median…', command: 'filter-median' },
     { label: 'Dust & Scratches…', command: 'filter-dust-scratches' },
     { label: 'Despeckle', command: 'filter-despeckle' },
+    { label: 'Reduce Noise…', command: 'filter-reduce-noise' },
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
     { label: 'Crystallize…', command: 'filter-crystallize' },
@@ -4998,8 +5000,10 @@ export default function Home() {
                 ...(type === 'gradient-map' ? {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
+                ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
+                ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -5034,6 +5038,8 @@ export default function Home() {
                     ? 2
                     : type === 'despeckle'
                     ? 1
+                    : type === 'reduce-noise'
+                    ? 2
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
@@ -11634,6 +11640,8 @@ export default function Home() {
       chooseFilterEffect('dust-scratches', 'Dust & Scratches (local outlier cleanup)');
     else if (command === 'filter-despeckle')
       chooseFilterEffect('despeckle', 'Despeckle (local approximation)');
+    else if (command === 'filter-reduce-noise')
+      chooseFilterEffect('reduce-noise', 'Reduce Noise (edge-aware local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -14905,6 +14913,9 @@ export default function Home() {
             {filterEffects.type === 'despeckle' && (
               <p>Bounded one-pixel local despeckle approximation using a fixed visible-neighbour median. Amount remains editable; full texture-aware and edge-preserving Photoshop behaviour remains staged.</p>
             )}
+            {filterEffects.type === 'reduce-noise' && (
+              <p>Bounded colour-weighted neighbourhood smoothing that favours nearby similar tones. Radius, preserve-details threshold and amount remain editable; temporal and high-bit-depth parity remain staged.</p>
+            )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
@@ -14932,10 +14943,10 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {filterEffects.type === 'dust-scratches' && (
+                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise') && (
                   <Slider
-                    label="Outlier threshold"
-                    value={filterEffects.threshold ?? 12}
+                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : 'Outlier threshold'}
+                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : 12)}
                     min={0}
                     max={255}
                     set={(value) => setFilterEffects({ threshold: value })}

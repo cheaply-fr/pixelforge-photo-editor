@@ -108,6 +108,23 @@ test('Despeckle applies the fixed local cleanup contract deterministically', () 
   assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
 });
 
+test('Reduce Noise smooths similar tones while preserving strong edges and source bytes', () => {
+  const source = rgba(4, 2, (x, y) => {
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    if (x < 2) return [42 + x * 8, 80 + y * 3, 120, 255];
+    return [220 + x * 4, 30 + y * 4, 40, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'reduce-noise', amount: 100, radius: 2, threshold: 32 };
+  const output = applyFilterEffectsPixels(source, 4, 2, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(pixel(output, 4, 1, 0), pixel(source, 4, 1, 0));
+  assert.ok(pixel(output, 4, 2, 0)[0] > 150);
+  assert.deepEqual(pixel(output, 4, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 4, 2, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
 test('De-Interlace supports both field parity choices and interpolation', () => {
   const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
   const first = applyFilterEffectsPixels(source, 2, 5, {

@@ -66,6 +66,7 @@ export const FILTER_EFFECT_TYPES = [
   'median',
   'dust-scratches',
   'despeckle',
+  'reduce-noise',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -351,8 +352,10 @@ export function effectiveFilterEffects(
         : DEFAULT_GRADIENT_MAP_SETTINGS.highlight,
     };
   }
-  if (type === 'dust-scratches') {
-    normalized.threshold = finite(source.threshold) ? clamp(Math.round(source.threshold), 0, 255) : 12;
+  if (type === 'dust-scratches' || type === 'reduce-noise') {
+    normalized.threshold = finite(source.threshold)
+      ? clamp(Math.round(source.threshold), 0, 255)
+      : type === 'reduce-noise' ? 25 : 12;
   }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
@@ -3101,6 +3104,43 @@ function applyDustScratches(
   }
 }
 
+/** Bounded edge-aware Reduce Noise approximation using a colour-weighted kernel. */
+function applyReduceNoise(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const preserve = clamp(Math.round(effect.threshold ?? 25), 1, 255);
+  const mix = clamp(strength, 0, 1);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    if (!source[destination + 3]) continue;
+    const baseR = source[destination], baseG = source[destination + 1], baseB = source[destination + 2];
+    let sumR = 0, sumG = 0, sumB = 0, weight = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const distance = Math.abs(source[sample] - baseR) + Math.abs(source[sample + 1] - baseG) + Math.abs(source[sample + 2] - baseB);
+        const similarity = Math.max(0, 1 - distance / (preserve * 3));
+        const spatial = 1 / (1 + Math.hypot(sx - x, sy - y));
+        const sampleWeight = similarity * spatial;
+        sumR += source[sample] * sampleWeight;
+        sumG += source[sample + 1] * sampleWeight;
+        sumB += source[sample + 2] * sampleWeight;
+        weight += sampleWeight;
+      }
+    if (!weight) continue;
+    output[destination] = clampByte(baseR + (sumR / weight - baseR) * mix);
+    output[destination + 1] = clampByte(baseG + (sumG / weight - baseG) * mix);
+    output[destination + 2] = clampByte(baseB + (sumB / weight - baseB) * mix);
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -3208,6 +3248,8 @@ export function applyFilterEffectsPixels(
     applyDustScratches(data, width, height, effect, output, strength);
   } else if (effect.type === 'despeckle') {
     applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
+  } else if (effect.type === 'reduce-noise') {
+    applyReduceNoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {

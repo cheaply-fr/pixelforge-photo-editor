@@ -221,3 +221,5 @@ The latest local filter increment adds `Filter → Noise → Median…`: a bound
 The follow-up noise increment adds `Filter → Noise → Dust & Scratches…`: a bounded thresholded local-median cleanup with editable radius, threshold and amount. Pure and desktop/mobile round-trip tests cover outlier replacement, transparent-RGB safety and source retention; protected CI and live deployment remain separate gates.
 
 The noise family now also includes `Filter → Noise → Despeckle`, a fixed-radius local cleanup command with deterministic source-safe rendering and desktop/mobile persistence coverage. This bounded approximation does not claim Photoshop's texture-aware detector.
+
+The Noise family now also includes `Filter → Noise → Reduce Noise…`, a bounded colour-weighted local filter with an editable preserve-details threshold. Pure and desktop/mobile tests cover representative smoothing, edge retention, transparent-RGB safety, source retention and project persistence.
