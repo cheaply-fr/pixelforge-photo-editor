@@ -38,10 +38,18 @@ test('radial gradient has an editable mode, changes pixels, and persists', async
   const end = page.getByLabel('Gradient end', { exact: true });
   await end.selectOption('background');
   await expect(end).toHaveValue('background');
+  await page.getByLabel('Gradient midpoint enabled', { exact: true }).check();
+  const midpoint = page.getByLabel('Gradient midpoint colour', { exact: true });
+  await midpoint.fill('#00ff00');
+  await expect(midpoint).toHaveValue('#00ff00');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   const endpointPending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const endpointDownload = await endpointPending;
   const endpointProject = await downloadedProject((await endpointDownload.path())!);
-  expect(endpointProject.settings).toMatchObject({ gradientMode: 'reflected', gradientEnd: 'background' });
+  expect(endpointProject.settings).toMatchObject({
+    gradientMode: 'reflected',
+    gradientEnd: 'background',
+    gradientMidpoint: '#00ff00',
+  });
 });

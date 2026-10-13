@@ -1711,6 +1711,7 @@ export default function Home() {
     [brushFlow, setBrushFlow] = useState(100),
     [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
+    [gradientMidpoint, setGradientMidpoint] = useState('none'),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -2026,6 +2027,7 @@ export default function Home() {
     brushFlow,
     gradientMode,
     gradientEnd,
+    gradientMidpoint,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2082,6 +2084,7 @@ export default function Home() {
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
     setGradientEnd(s.gradientEnd ?? 'transparent');
+    setGradientMidpoint(s.gradientMidpoint ?? 'none');
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2123,6 +2126,7 @@ export default function Home() {
     setBrushFlow,
     setGradientMode,
     setGradientEnd,
+    setGradientMidpoint,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -4456,6 +4460,7 @@ export default function Home() {
         brushFlow,
         gradientMode,
         gradientEnd,
+        gradientMidpoint,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4538,6 +4543,7 @@ export default function Home() {
     brushFlow,
     gradientMode,
     gradientEnd,
+    gradientMidpoint,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -9217,10 +9223,11 @@ export default function Home() {
         const endColor = gradientEnd === 'background' ? backgroundColor : '#ffffff00';
         if (gradientMode === 'reflected') {
           gradient.addColorStop(0, color);
-          gradient.addColorStop(0.5, endColor);
+          gradient.addColorStop(0.5, gradientMidpoint === 'none' ? endColor : gradientMidpoint);
           gradient.addColorStop(1, color);
         } else {
           gradient.addColorStop(0, color);
+          if (gradientMidpoint !== 'none') gradient.addColorStop(0.5, gradientMidpoint);
           gradient.addColorStop(1, endColor);
         }
         context.fillStyle = gradient;
@@ -12386,6 +12393,26 @@ export default function Home() {
                     <option value="reflected">Reflected</option>
                   </select>
                 </label>
+              )}
+              {tool === 'gradient' && (
+                <div className="select-row">
+                  <label>
+                    <input
+                      aria-label="Gradient midpoint enabled"
+                      type="checkbox"
+                      checked={gradientMidpoint !== 'none'}
+                      onChange={(event) => setGradientMidpoint(event.target.checked ? '#ffffff' : 'none')}
+                    />
+                    <span>Midpoint colour</span>
+                  </label>
+                  <input
+                    aria-label="Gradient midpoint colour"
+                    type="color"
+                    value={gradientMidpoint === 'none' ? '#ffffff' : gradientMidpoint}
+                    disabled={gradientMidpoint === 'none'}
+                    onChange={(event) => setGradientMidpoint(event.target.value)}
+                  />
+                </div>
               )}
               {tool === 'gradient' && (
                 <label className="select-row">

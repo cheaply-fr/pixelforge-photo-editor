@@ -6,9 +6,11 @@ background colour. All three modes preserve the original raster asset until one
 undoable pointer-up commit and remain local to the browser. Radial mode uses the
 drag start as its centre and the drag distance as its bounded radius; linear mode
 retains the existing start-to-end direction; reflected mode puts the foreground
-colour at both ends and uses the selected endpoint colour at the midpoint.
+colour at both ends and uses the selected endpoint colour at the midpoint unless
+an authored midpoint colour is enabled.
 
 The mode and endpoint are validated in project settings, default to Linear and
 transparent for older drafts, and are covered by desktop/mobile UI, pixel-change,
-reload and portable-project round-trip tests. This contract does not claim
+reload and portable-project round-trip tests. Midpoint colours are bounded
+six-digit RGB values and default to disabled for older drafts. This contract does not claim
 Photoshop's full gradient-stop, noise, dithering, or gradient-map feature set.

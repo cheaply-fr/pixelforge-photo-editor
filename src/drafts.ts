@@ -143,6 +143,8 @@ export type Settings = {
   gradientMode?: 'linear' | 'radial' | 'reflected';
   /** Gradient endpoint behaviour. */
   gradientEnd?: 'transparent' | 'background';
+  /** Optional authored colour stop at the midpoint; `none` preserves the legacy two-stop gradient. */
+  gradientMidpoint?: string;
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
   /** Brush-family flow amount, from 1 to 100 percent. */
@@ -378,6 +380,8 @@ function validSettings(settings: unknown): settings is Settings {
   }
   if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected'].includes(candidate.gradientMode)) return false;
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
+  if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
+    (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
