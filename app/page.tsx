@@ -327,6 +327,7 @@ import {
 } from '../src/patternStamp';
 import {
   TOOL_CATEGORIES,
+  categoryForTool,
   compactCategoryTools,
   flyoutForTool,
   flyoutTools,
@@ -1958,6 +1959,17 @@ export default function Home() {
         const value = window.localStorage.getItem('pixelforge.toolbar-columns');
         return value === '2' || value === '3' ? value : 'auto';
       } catch { return 'auto'; }
+    }),
+    [hiddenToolCategories, setHiddenToolCategories] = useState<string[]>(() => {
+      if (typeof window === 'undefined') return [];
+      try {
+        const raw = window.localStorage.getItem('pixelforge.toolbar-hidden-categories');
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        const allowed = new Set(TOOL_CATEGORIES.map((category) => category.id));
+        return parsed.filter((id): id is string => typeof id === 'string' && allowed.has(id) && id !== 'navigation');
+      } catch { return []; }
     }),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
@@ -12411,12 +12423,25 @@ export default function Home() {
       {toolbarSettingsOpen && (
         <ToolbarSettingsDialog
           value={toolbarColumns}
+          categories={TOOL_CATEGORIES}
+          hiddenCategories={hiddenToolCategories}
           close={() => setToolbarSettingsOpen(false)}
-          apply={(next) => {
-            setToolbarColumns(next);
+          apply={({ columns, hiddenCategories }) => {
+            const nextHidden = hiddenCategories.filter((id) => id !== 'navigation');
+            setToolbarColumns(columns);
+            setHiddenToolCategories(nextHidden);
             setToolbarSettingsOpen(false);
-            try { window.localStorage.setItem('pixelforge.toolbar-columns', next); } catch { /* private mode */ }
-            setNotice(`Toolbar set to ${next === 'auto' ? 'automatic' : `${next} columns`}`);
+            try {
+              window.localStorage.setItem('pixelforge.toolbar-columns', columns);
+              window.localStorage.setItem('pixelforge.toolbar-hidden-categories', JSON.stringify(nextHidden));
+            } catch { /* private mode */ }
+            const activeCategory = categoryForTool(tool);
+            if (activeCategory && nextHidden.includes(activeCategory)) {
+              setActiveTool('move');
+              setNotice('Toolbar updated; active hidden category reset to Move');
+            } else {
+              setNotice(`Toolbar set to ${columns === 'auto' ? 'automatic' : `${columns} columns`}`);
+            }
           }}
         />
       )}
@@ -12650,7 +12675,7 @@ export default function Home() {
           data-testid="tool-palette"
           data-toolbar-columns={toolbarColumns}
         >
-          {TOOL_CATEGORIES.map((category) => {
+          {TOOL_CATEGORIES.filter((category) => !hiddenToolCategories.includes(category.id)).map((category) => {
             const compactTools = compactCategoryTools(category, tool, toolFamilyChoices);
             const layout = compactTools.length === 1 ? 'one' : compactTools.length === 2 ? 'two' : 'many';
             return (

@@ -21,3 +21,19 @@ test('Toolbar settings persist a two or three column preference without empty sl
   await page.reload();
   await expect(page.getByTestId('tool-palette')).toHaveAttribute('data-toolbar-columns', '3');
 });
+
+test('Toolbar settings hide unused categories and preserve the compact palette after reload', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Toolbar…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Toolbar' });
+  await expect(dialog.getByLabel('Measure category', { exact: true })).toBeChecked();
+  await dialog.getByLabel('Measure category', { exact: true }).uncheck();
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Measure tools' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Navigate tools' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('region', { name: 'Measure tools' })).toHaveCount(0);
+});
