@@ -8,9 +8,9 @@ Reconcile source, tests, pull requests, deployment records and live behavior int
 
 Replace the provisional completion percentages with a documented weighted rubric derived from the complete inventory. Hourly reports must identify new verified work, test results, PR/CI status, exact deployed revision, live health, limitations and next steps. No code change means no implementation progress.
 
-## Immediate unfinished milestone
+## Recently shipped milestone
 
-NTSC Colors now has a documented local Y'IQ composite-envelope contract, editable nondestructive UI, unit coverage, and desktop/mobile browser coverage for worker/fallback rendering, locks, source retention, undo/redo, draft reload, portable projects and PNG pixels. The remaining milestone work is protected CI, PR review/merge, deployment and independent live-revision, DNS/TLS and authorization verification. The local approximation does not claim broadcast compliance or Photoshop parity.
+NTSC Colors has a documented local Y'IQ composite-envelope contract, editable nondestructive UI, unit coverage, and desktop/mobile browser coverage for worker/fallback rendering, locks, source retention, undo/redo, draft reload, portable projects and PNG pixels. Protected CI, PR review/merge, deployment and independent live-revision plus DNS/TLS verification completed in the main workflow for `0fc1857d07d08083b960a34dc77c6f6b2ecb3bde`; `/release.json` and `/api/readyz.json` report that exact revision. The local approximation does not claim broadcast compliance or Photoshop parity.
 
 ## Remaining roadmap stages
 
