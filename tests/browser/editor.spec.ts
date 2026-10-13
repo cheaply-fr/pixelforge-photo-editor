@@ -1398,6 +1398,20 @@ test('layer menu copy, paste, hide and flatten preserve an undoable project', as
   expect(project.history[project.index].layers.length).toBe(3);
 });
 
+test('Cookie Cutter creates an editable vector mask and survives reload', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const prompts = ['star'];
+  page.on('dialog', async (dialog) => await dialog.accept(prompts.shift()!));
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Cookie Cutter Mask…', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Cookie Cutter Mask…', exact: true }).click();
+  await expect(page.getByText(/Cookie Cutter star mask created/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByText(/Vector mask/)).toBeVisible();
+});
+
 test('layer clipboard shortcuts guard locked and last layers and survive undo/reload', async ({
   page,
 }) => {

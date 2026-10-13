@@ -106,6 +106,7 @@ import {
 } from '../src/document';
 import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
 import { defaultVectorMaskPath } from '../src/vectorMask';
+import { cookieCutterPath, COOKIE_CUTTER_SHAPES, type CookieCutterShape } from '../src/cookieCutter';
 import {
   alphaFromRgba,
   normalizeTextMaskRequest,
@@ -550,6 +551,7 @@ type Command =
   | 'select-and-mask'
   | 'mask-selection'
   | 'remove-background'
+  | 'cookie-cutter'
   | 'invert-layer-mask'
   | 'toggle-layer-mask'
   | 'remove-layer-mask'
@@ -862,6 +864,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Generate Image…', command: 'noop', disabled: true },
     { label: 'Reflection Removal…', command: 'noop', disabled: true },
     { label: 'Remove Background…', command: 'remove-background' },
+    { label: 'Cookie Cutter Mask…', command: 'cookie-cutter' },
     { label: '', command: 'noop', separator: true },
     {
       label: 'Free Transform',
@@ -4072,6 +4075,32 @@ export default function Home() {
     const bounds = vectorMaskBounds(layer);
     if (editLayer({ vectorMask: { path: defaultVectorMaskPath(bounds.width, bounds.height), enabled: true, inverted: false } }))
       setNotice('Vector mask created; edit the path with Direct Selection');
+  };
+  const createCookieCutterMask = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !isVectorMaskableLayer(layer) || !layer.visible) {
+      setNotice('Select a visible pixel-producing layer before using Cookie Cutter');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Cookie Cutter');
+      return;
+    }
+    if (layer.vectorMask) {
+      setNotice('Remove the existing vector mask before using Cookie Cutter');
+      return;
+    }
+    const choice = window.prompt(`Cookie Cutter shape (${COOKIE_CUTTER_SHAPES.join(', ')})`, 'ellipse');
+    if (choice === null) return;
+    const shape = COOKIE_CUTTER_SHAPES.includes(choice as CookieCutterShape)
+      ? choice as CookieCutterShape : 'ellipse';
+    try {
+      const bounds = vectorMaskBounds(layer);
+      if (editLayer({ vectorMask: { path: cookieCutterPath(bounds.width, bounds.height, shape), enabled: true, inverted: false } }))
+        setNotice(`Cookie Cutter ${shape} mask created; edit it with Direct Selection`);
+    } catch {
+      setNotice('Cookie Cutter could not create a bounded mask');
+    }
   };
   const invertVectorMask = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
@@ -10486,6 +10515,7 @@ export default function Home() {
     }
     else if (command === 'mask-selection') return createMaskFromSelection();
     else if (command === 'remove-background') return removeBackground();
+    else if (command === 'cookie-cutter') return createCookieCutterMask();
     else if (command === 'free-transform') beginLayerTransform();
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
@@ -10778,6 +10808,8 @@ export default function Home() {
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
       case 'remove-background':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'cookie-cutter':
+        return !layer || !isVectorMaskableLayer(layer) || Boolean(layer.vectorMask) || locked || !layer.visible;
       case 'patch-tool':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'content-aware-fill':
