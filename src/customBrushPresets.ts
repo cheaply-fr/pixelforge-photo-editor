@@ -18,6 +18,7 @@ export type CustomBrushPreset = {
   brushTexture: number;
   brushDual: number;
   brushBristle: number;
+  brushWetEdges: number;
   brushBuildUp: number;
   brushFlow: number;
 };
@@ -38,7 +39,7 @@ export function validCustomBrushPreset(value: unknown): value is CustomBrushPres
     typeof candidate.pressureSize === 'boolean' && typeof candidate.pressureOpacity === 'boolean' &&
     finite(candidate.brushSmoothing, 0, 100) && finite(candidate.brushScatter, 0, 100) &&
     finite(candidate.brushTexture, 0, 100) && finite(candidate.brushDual, 0, 100) &&
-    finite(candidate.brushBristle, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100)
+    finite(candidate.brushBristle, 0, 100) && finite(candidate.brushWetEdges ?? 0, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100)
   );
 }
 
@@ -53,7 +54,7 @@ export function normalizeCustomBrushPresets(value: unknown): CustomBrushPreset[]
       return true;
     })
     .slice(-CUSTOM_BRUSH_PRESET_LIMIT)
-    .map((item) => ({ ...item, label: item.label.trim().slice(0, 80), brushBuildUp: item.brushBuildUp ?? 0 }));
+    .map((item) => ({ ...item, label: item.label.trim().slice(0, 80), brushWetEdges: item.brushWetEdges ?? 0, brushBuildUp: item.brushBuildUp ?? 0 }));
 }
 
 export function createCustomBrushPreset(
