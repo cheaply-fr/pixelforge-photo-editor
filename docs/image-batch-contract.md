@@ -36,8 +36,10 @@ This contract is local multi-input processing. The existing “Batch export
 history…” command remains a separate history-snapshot workflow, and editable
 `.pixelforge` project export remains the recovery format. Recorded Actions now
 reuse the same deterministic filter renderer for active nondestructive filters
-when applying a flattened batch; unsupported editor-only commands still fail
-per file rather than silently changing semantics. HEIC/RAW/PSD decode,
+when applying a flattened batch, including the enabled blur family (box,
+Gaussian, lens, iris, smart, surface and shape blur) and other bounded filter
+effects. Unsupported editor-only commands still fail per file rather than
+silently changing semantics. HEIC/RAW/PSD decode,
 background-removal batches and worker/tiled processing need separate
 compatibility, quality and performance gates.
 
