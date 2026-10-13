@@ -76,6 +76,27 @@ test('Gradient Map interpolates editable endpoints while preserving alpha and so
   }), false);
 });
 
+test('Gradient Map validates and interpolates ordered interior stops', () => {
+  const effect = effectiveFilterEffects({
+    type: 'gradient-map', amount: 100, radius: 1,
+    gradientMap: {
+      shadow: '#000000', highlight: '#ffffff',
+      stops: [{ position: 50, color: '#ff0000' }],
+    },
+  });
+  assert.deepEqual(effect.gradientMap?.stops, [{ position: 50, color: '#ff0000' }]);
+  assert.equal(validFilterEffects(effect), true);
+  assert.equal(validFilterEffects({
+    ...effect,
+    gradientMap: { ...effect.gradientMap, stops: [{ position: 50, color: '#fff' }] },
+  }), false);
+  const source = rgba(3, 1, (x) => x === 0 ? [0, 0, 0, 255] : x === 1 ? [128, 128, 128, 255] : [255, 255, 255, 255]);
+  const output = applyFilterEffectsPixels(source, 3, 1, effect);
+  assert.deepEqual(pixel(output, 3, 0, 0), [0, 0, 0, 255]);
+  assert.ok(pixel(output, 3, 1, 0)[0] > 120 && pixel(output, 3, 1, 0)[1] < 30 && pixel(output, 3, 1, 0)[2] < 30);
+  assert.deepEqual(pixel(output, 3, 2, 0), [255, 255, 255, 255]);
+});
+
 test('Median reduces an isolated visible outlier without changing alpha or transparent RGB', () => {
   const source = rgba(3, 3, (x, y) => {
     if (x === 1 && y === 1) return [255, 0, 255, 255];

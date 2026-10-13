@@ -15018,7 +15018,7 @@ export default function Home() {
             )}
             {filterEffects.type === 'gradient-map' && (
               <>
-                <p>Maps alpha-safe source luminance between two editable colours. The source asset remains unchanged; multi-stop gradients and blend-mode controls remain staged.</p>
+                <p>Maps alpha-safe source luminance between editable endpoint and interior colours. The source asset remains unchanged; blend-mode controls remain staged.</p>
                 <div className="select-row">
                   <label htmlFor="gradient-map-shadow">Shadow colour</label>
                   <input
@@ -15038,6 +15038,62 @@ export default function Home() {
                     value={filterEffects.gradientMap?.highlight ?? '#ffffff'}
                     onChange={(event) => setFilterEffects({ gradientMap: { ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }), highlight: event.target.value } })}
                   />
+                </div>
+                <div className="filter-subsection">
+                  <div className="select-row">
+                    <span>Interior colour stops</span>
+                    <button
+                      type="button"
+                      disabled={(filterEffects.gradientMap?.stops?.length ?? 0) >= MAX_GRADIENT_STOPS}
+                      onClick={() => {
+                        const stops = filterEffects.gradientMap?.stops ?? [];
+                        const used = new Set(stops.map((stop) => stop.position));
+                        const position = [25, 50, 75].find((candidate) => !used.has(candidate)) ?? Math.max(1, Math.min(99, 10 + stops.length * 13));
+                        setFilterEffects({ gradientMap: {
+                          ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                          stops: normalizeGradientStops([...stops, { position, color: '#808080' }]),
+                        } });
+                      }}
+                    >Add stop</button>
+                  </div>
+                  {(filterEffects.gradientMap?.stops ?? []).map((stop, stopIndex) => (
+                    <div className="select-row" key={`gradient-map-stop-${stopIndex}`}>
+                      <label htmlFor={`gradient-map-stop-${stopIndex}`}>Stop {stopIndex + 1}</label>
+                      <input
+                        id={`gradient-map-stop-${stopIndex}`}
+                        aria-label={`Gradient Map stop ${stopIndex + 1} position`}
+                        className="number-input"
+                        type="number"
+                        min={1}
+                        max={99}
+                        value={stop.position}
+                        onChange={(event) => {
+                          const position = Number(event.target.value);
+                          const stops = (filterEffects.gradientMap?.stops ?? []).map((item, index) => index === stopIndex ? { ...item, position } : item);
+                          setFilterEffects({ gradientMap: {
+                            ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                            stops: normalizeGradientStops(stops),
+                          } });
+                        }}
+                      />
+                      <input
+                        aria-label={`Gradient Map stop ${stopIndex + 1} colour`}
+                        type="color"
+                        value={stop.color}
+                        onChange={(event) => setFilterEffects({ gradientMap: {
+                          ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                          stops: (filterEffects.gradientMap?.stops ?? []).map((item, index) => index === stopIndex ? { ...item, color: event.target.value } : item),
+                        } })}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setFilterEffects({ gradientMap: {
+                          ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                          stops: (filterEffects.gradientMap?.stops ?? []).filter((_, index) => index !== stopIndex),
+                        } })}
+                      >Remove</button>
+                    </div>
+                  ))}
                 </div>
               </>
             )}

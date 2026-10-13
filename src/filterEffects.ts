@@ -8,6 +8,7 @@
  */
 
 import { deinterlacePixels, effectiveDeinterlaceSettings, validDeinterlaceSettings, type DeinterlaceSettings } from './deinterlace.ts';
+import { isGradientStops, normalizeGradientStops, type GradientStop } from './gradientStops.ts';
 
 export const FILTER_EFFECT_TYPES = [
   'none',
@@ -142,6 +143,7 @@ export type TreeSettings = {
 export type GradientMapSettings = {
   shadow: string;
   highlight: string;
+  stops?: GradientStop[];
 };
 
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
@@ -343,6 +345,7 @@ export function effectiveFilterEffects(
     };
   }
   if (type === 'gradient-map') {
+    const stops = normalizeGradientStops(source.gradientMap?.stops);
     normalized.gradientMap = {
       shadow: validHexColor(source.gradientMap?.shadow)
         ? source.gradientMap!.shadow.toLowerCase()
@@ -350,6 +353,7 @@ export function effectiveFilterEffects(
       highlight: validHexColor(source.gradientMap?.highlight)
         ? source.gradientMap!.highlight.toLowerCase()
         : DEFAULT_GRADIENT_MAP_SETTINGS.highlight,
+      ...(stops.length ? { stops } : {}),
     };
   }
   if (type === 'dust-scratches' || type === 'reduce-noise') {
@@ -420,7 +424,8 @@ function validTreeSettings(value: unknown): value is TreeSettings {
 function validGradientMapSettings(value: unknown): value is GradientMapSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const settings = value as Partial<GradientMapSettings>;
-  return validHexColor(settings.shadow) && validHexColor(settings.highlight);
+  return validHexColor(settings.shadow) && validHexColor(settings.highlight) &&
+    (settings.stops === undefined || isGradientStops(settings.stops));
 }
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
@@ -3020,14 +3025,29 @@ function applyGradientMap(
   strength: number,
 ): void {
   const settings = effect.gradientMap ?? DEFAULT_GRADIENT_MAP_SETTINGS;
-  const shadow = hexRgb(settings.shadow), highlight = hexRgb(settings.highlight);
+  const stops = [
+    { position: 0, rgb: hexRgb(settings.shadow) },
+    ...(settings.stops ?? []).map((stop) => ({ position: stop.position / 100, rgb: hexRgb(stop.color) })),
+    { position: 1, rgb: hexRgb(settings.highlight) },
+  ];
   for (let offset = 0; offset < source.length; offset += 4) {
     const alpha = source[offset + 3];
     output[offset + 3] = alpha;
     if (!alpha) continue;
     const luminance = (source[offset] * 0.2126 + source[offset + 1] * 0.7152 + source[offset + 2] * 0.0722) / 255;
+    let left = stops[0];
+    let right = stops[stops.length - 1];
+    for (let index = 1; index < stops.length; index += 1) {
+      if (luminance <= stops[index].position) {
+        right = stops[index];
+        left = stops[index - 1];
+        break;
+      }
+    }
+    const span = Math.max(0.0001, right.position - left.position);
+    const ratio = Math.max(0, Math.min(1, (luminance - left.position) / span));
     const mapped = [0, 1, 2].map((channel) =>
-      shadow[channel] + (highlight[channel] - shadow[channel]) * luminance,
+      left.rgb[channel] + (right.rgb[channel] - left.rgb[channel]) * ratio,
     );
     output[offset] = clampByte(source[offset] + (mapped[0] - source[offset]) * strength);
     output[offset + 1] = clampByte(source[offset + 1] + (mapped[1] - source[offset + 1]) * strength);
