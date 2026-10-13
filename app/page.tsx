@@ -1812,7 +1812,7 @@ export default function Home() {
     pendingMenuFocus = useRef<Record<MenuName, 'first' | 'last' | undefined>>(
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
-    smartObjectAction = useRef<'new' | 'replace'>('new');
+    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new');
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
     [name, setName] = useState('coastline-edit');
@@ -7141,7 +7141,11 @@ export default function Home() {
       if (layerFile.current) layerFile.current.value = '';
     }
   };
-  const importSmartObject = async (selected?: File, replace = false) => {
+  const importSmartObject = async (
+    selected?: File,
+    replace = false,
+    fitToArtboard = false,
+  ) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before importing a smart object');
       return;
@@ -7184,17 +7188,31 @@ export default function Home() {
           setNotice('Select a smart object before replacing its contents');
           return;
         }
-        if (
-          commit({
-            ...original,
-            layers: original.layers.map((layer) =>
-              layer.id === target.id
-                ? { ...layer, asset, sourceName }
-                : layer,
-            ),
-          })
-        )
-          setNotice('Smart object contents replaced; transform and edits preserved');
+        const replaced = {
+          ...original,
+          layers: original.layers.map((layer) =>
+            layer.id === target.id ? { ...layer, asset, sourceName } : layer,
+          ),
+        };
+        const next = fitToArtboard
+          ? replaced.activeArtboardId
+            ? fitLayerToArtboard(
+                replaced,
+                assets.current,
+                replaced.activeArtboardId,
+                target.id,
+                'cover',
+              )
+            : (() => {
+                throw new Error('Select an active artboard before fitting replacement contents');
+              })()
+          : replaced;
+        if (commit(next))
+          setNotice(
+            fitToArtboard
+              ? 'Smart object contents replaced and fitted to the active artboard'
+              : 'Smart object contents replaced; transform and edits preserved',
+          );
       } else if (
         addLayer({
           ...commonLayer(sourceName),
@@ -7225,8 +7243,12 @@ export default function Home() {
       if (smartObjectFile.current) smartObjectFile.current.value = '';
     }
   };
-  const chooseSmartObjectFile = (replace: boolean) => {
-    smartObjectAction.current = replace ? 'replace' : 'new';
+  const chooseSmartObjectFile = (replace: boolean, fitToArtboard = false) => {
+    smartObjectAction.current = replace
+      ? fitToArtboard
+        ? 'replace-fit'
+        : 'replace'
+      : 'new';
     smartObjectFile.current?.click();
   };
   const point = (
@@ -12175,7 +12197,9 @@ export default function Home() {
         onChange={(event) =>
           void importSmartObject(
             event.target.files?.[0],
-            smartObjectAction.current === 'replace',
+            smartObjectAction.current === 'replace' ||
+              smartObjectAction.current === 'replace-fit',
+            smartObjectAction.current === 'replace-fit',
           )
         }
       />
@@ -13037,6 +13061,18 @@ export default function Home() {
                 onClick={() => fitActiveLayerToArtboard('cover')}
               >
                 Fit active layer to artboard
+              </button>
+              <button
+                type="button"
+                data-testid="artboard-replace-fit"
+                disabled={
+                  !frame.active ||
+                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
+                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
+                }
+                onClick={() => chooseSmartObjectFile(true, true)}
+              >
+                Replace smart object and fit
               </button>
               <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
             </fieldset>

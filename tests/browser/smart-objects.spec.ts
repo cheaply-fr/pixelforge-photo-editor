@@ -2,7 +2,11 @@ import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 
 type Project = {
-  history: Array<{ layers: Array<{ id: string; kind: string; asset?: string; sourceName?: string; matrix: number[] }> }>;
+  history: Array<{
+    layers: Array<{ id: string; kind: string; asset?: string; sourceName?: string; matrix: number[] }>;
+    artboards?: Array<{ id: string; name: string; x: number; y: number; w: number; h: number; visible?: boolean; locked?: boolean; layerIds?: string[] }>;
+    activeArtboardId?: string;
+  }>;
   index: number;
   assets: Record<string, { url: string; w: number; h: number }>;
 };
@@ -96,4 +100,46 @@ test('menu commands expose bounded smart-object lifecycle', async ({ page }) => 
   await expect(page.getByRole('menuitem', { name: 'New Smart Object…', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Replace Contents…', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Rasterize', exact: true })).toBeVisible();
+});
+
+test('replaces a smart object and fits the new contents to the active artboard', async ({ page }) => {
+  const red = await fixture(page, [255, 0, 0]);
+  const blue = await fixture(page, [0, 0, 255]);
+  await add(page, 'red-source.png', red);
+  const saved = await project(page);
+  const current = saved.history[saved.index];
+  const target = current.layers.at(-1)!;
+  current.artboards = [{
+    id: 'hero', name: 'Hero', x: 100, y: 80, w: 320, h: 200,
+    visible: true, locked: false, layerIds: [target.id],
+  }];
+  current.activeArtboardId = 'hero';
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'artboard-replace.pixelforge',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(saved)),
+  });
+  await expect(page.getByText('Project opened with editable layers and history', { exact: true })).toBeVisible();
+  await page.getByTestId('artboard-replace-fit').click();
+  await page.getByTestId('smart-object-input').setInputFiles({
+    name: 'blue-source.png', mimeType: 'image/png', buffer: Buffer.from(blue, 'base64'),
+  });
+  await expect(page.getByText('Smart object contents replaced and fitted to the active artboard', { exact: true })).toBeVisible();
+  const replaced = await project(page);
+  const frame = replaced.history[replaced.index];
+  const layer = frame.layers.find((item) => item.id === target.id)!;
+  expect(layer.sourceName).toBe('blue-source.png');
+  expect(layer.matrix[0]).toBeCloseTo(200);
+  expect(layer.matrix[3]).toBeCloseTo(200);
+  expect(layer.matrix[4]).toBeCloseTo(60);
+  expect(layer.matrix[5]).toBeCloseTo(80);
+  expect(frame.artboards?.[0].layerIds).toContain(target.id);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const restored = await project(page);
+  const restoredMatrix = restored.history[restored.index].layers.find((item) => item.id === target.id)?.matrix;
+  expect(restoredMatrix?.[0]).toBeCloseTo(200);
+  expect(restoredMatrix?.[3]).toBeCloseTo(200);
+  expect(restoredMatrix?.[4]).toBeCloseTo(60);
+  expect(restoredMatrix?.[5]).toBeCloseTo(80);
 });
