@@ -419,6 +419,7 @@ import {
   type RectangularCropPlan,
   type SliceRect,
 } from '../src/cropTools';
+import { planPerspectiveWarp, warpPerspectiveRgba as warpLayerPerspectiveRgba } from '../src/perspectiveWarp';
 import {
   createArtboard,
   sanitizeArtboardLayerMembership,
@@ -564,6 +565,7 @@ type Command =
   | 'create-clipping-mask'
   | 'release-clipping-mask'
   | 'free-transform'
+  | 'perspective-warp'
   | 'quick-mask'
   | 'save-selection'
   | 'load-selection'
@@ -877,7 +879,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       command: 'free-transform',
     },
     { label: 'Transform', command: 'noop', disabled: true },
-    { label: 'Perspective Warp', command: 'noop', disabled: true },
+    { label: 'Perspective Warp…', command: 'perspective-warp' },
     { label: 'Puppet Warp', command: 'noop', disabled: true },
     { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
     { label: '', command: 'noop', separator: true },
@@ -3795,6 +3797,47 @@ export default function Home() {
       );
     } finally {
       setLayerTransforming(false);
+    }
+  };
+  const applyPerspectiveWarp = async () => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
+      setNotice('Select a raster or smart-object layer before using Perspective Warp');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the active layer before using Perspective Warp');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]);
+      const width = image.naturalWidth, height = image.naturalHeight;
+      const defaultQuad = `10,10;${Math.max(11, width - 10)},10;${Math.max(11, width - 10)},${Math.max(11, height - 10)};10,${Math.max(11, height - 10)}`;
+      const input = window.prompt('Perspective Warp target quad (clockwise x,y; x,y; x,y; x,y)', defaultQuad);
+      if (input === null) return;
+      const points = input.split(';').map((entry) => entry.split(',').map((value) => Number(value.trim())));
+      if (points.length !== 4 || points.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value)))) {
+        setNotice('Perspective Warp needs four numeric x,y points');
+        return;
+      }
+      const plan = planPerspectiveWarp(width, height, points.map(([x, y]) => ({ x, y })) as CropQuad);
+      const source = surface(width, height), sourceContext = source.getContext('2d')!;
+      sourceContext.drawImage(image, 0, 0);
+      const pixels = sourceContext.getImageData(0, 0, width, height).data;
+      const warped = warpLayerPerspectiveRgba(pixels, width, height, plan);
+      const output = surface(width, height), outputContext = output.getContext('2d')!;
+      const outputImage = outputContext.createImageData(width, height);
+      outputImage.data.set(warped);
+      outputContext.putImageData(outputImage, 0, 0);
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('Perspective Warp cancelled because the document changed');
+        return;
+      }
+      const asset = addAsset(assets.current, output);
+      if (editLayer({ asset })) setNotice('Perspective Warp applied locally; undo restores the source asset');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not apply Perspective Warp');
     }
   };
   const applySelectionRefinement = async (radius: number) => {
@@ -10564,6 +10607,7 @@ export default function Home() {
     else if (command === 'remove-background') return removeBackground();
     else if (command === 'cookie-cutter') return createCookieCutterMask();
     else if (command === 'free-transform') beginLayerTransform();
+    else if (command === 'perspective-warp') return applyPerspectiveWarp();
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
@@ -10986,6 +11030,8 @@ export default function Home() {
         return !frame.selection;
       case 'free-transform':
         return !layer || locked;
+      case 'perspective-warp':
+        return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'align-left':
       case 'align-center-horizontal':
       case 'align-right':

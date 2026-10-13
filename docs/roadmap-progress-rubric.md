@@ -122,6 +122,12 @@ amount/radius metadata, preserves alpha and transparent RGB, and has dedicated
 pure and desktop/mobile persistence coverage. It remains local evidence until
 the protected workflow publishes and verifies the candidate revision.
 
+The current geometry increment adds Edit → Perspective Warp for visible,
+unlocked raster and smart-object layers. Four validated convex target points
+produce a same-sized source-safe raster approximation; pure and desktop/mobile
+tests cover mapping, source retention, undo history and reload persistence.
+Mesh-aware warp semantics and the deployed/live release gates remain separate.
+
 The following local increment adds Filter → Stylize → Wind, a bounded
 directional source-sampling approximation with editable amount, radius and angle
 metadata. Its pure and desktop/mobile tests cover deterministic directional
