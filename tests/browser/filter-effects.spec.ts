@@ -1627,3 +1627,28 @@ test('Render Tree is editable, deterministic and preserves the source asset', as
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('tree');
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
+
+test('Emboss is an enabled nondestructive Stylize filter with editable direction', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Emboss…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Emboss (directional local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('emboss');
+  await expect(page.getByLabel('Light angle', { exact: true })).toHaveValue('0');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Light angle', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'emboss', angle: 1 });
+});
