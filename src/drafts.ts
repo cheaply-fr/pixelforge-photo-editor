@@ -143,6 +143,8 @@ export type Settings = {
   gradientMode?: 'linear' | 'radial';
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
+  /** Brush-family flow amount, from 1 to 100 percent. */
+  brushFlow?: number;
   /** Brush tip rotation in degrees. */
   angle?: number;
   /** Brush tip roundness (100 is circular). */
@@ -363,6 +365,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.brushSmoothing ?? 0, 0, 100] as [number, number, number],
     [candidate.brushScatter ?? 0, 0, 100] as [number, number, number],
     [candidate.brushTexture ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushFlow ?? 100, 1, 100] as [number, number, number],
   ];
   if (candidate.patternTileSize !== undefined) {
     try {

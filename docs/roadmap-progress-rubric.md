@@ -62,6 +62,11 @@ Pure coverage is in `tests/brush-texture.test.mjs`, browser persistence coverage
 is in `tests/browser/brush-texture.spec.ts`, and limitations are documented in
 `docs/brush-texture-contract.md`.
 
+Brush-family controls also include a persisted Flow amount that scales local
+dab opacity independently from overall Opacity. `tests/browser/brush-flow.spec.ts`
+covers the accessible control and project-file round-trip; the setting defaults
+to 100% for legacy drafts and is documented in `docs/brush-flow-contract.md`.
+
 The Gradient tool now exposes persisted Linear and Radial geometry. Radial
 mode uses the drag start as its centre and drag distance as its radius while
 retaining source-safe undoable commits. Desktop/mobile UI, pixel-change,

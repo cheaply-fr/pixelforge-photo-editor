@@ -1708,6 +1708,7 @@ export default function Home() {
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
+    [brushFlow, setBrushFlow] = useState(100),
     [gradientMode, setGradientMode] = useState<'linear' | 'radial'>('linear'),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
@@ -2021,6 +2022,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushTexture,
+    brushFlow,
     gradientMode,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -2075,6 +2077,7 @@ export default function Home() {
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
+    setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
@@ -2114,6 +2117,7 @@ export default function Home() {
     setBrushSmoothing,
     setBrushScatter,
     setBrushTexture,
+    setBrushFlow,
     setGradientMode,
     setBrushAngle,
     setBrushRoundness,
@@ -4445,6 +4449,7 @@ export default function Home() {
         brushSmoothing,
         brushScatter,
         brushTexture,
+        brushFlow,
         gradientMode,
         angle: brushAngle,
         roundness: brushRoundness,
@@ -4525,6 +4530,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushTexture,
+    brushFlow,
     gradientMode,
     brushAngle,
     brushRoundness,
@@ -7822,7 +7828,7 @@ export default function Home() {
             stampCanvasSegment(buffer, from, destination, {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
-              opacity: brushOpacity / 100,
+              opacity: (brushOpacity / 100) * (brushFlow / 100),
               pointerType: point.pointerType,
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
@@ -8360,7 +8366,7 @@ export default function Home() {
       stampCanvasSegment(g.buffer, from, destination, {
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
-        opacity: brushOpacity / 100,
+        opacity: (brushOpacity / 100) * (brushFlow / 100),
         pointerType: g.pointerType,
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
@@ -8955,7 +8961,7 @@ export default function Home() {
         stampCanvasSegment(g.buffer, from, destination, {
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
-          opacity: brushOpacity / 100,
+          opacity: (brushOpacity / 100) * (brushFlow / 100),
           pointerType: g.pointerType,
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
@@ -12512,6 +12518,14 @@ export default function Home() {
                             min={0}
                             max={100}
                             set={setBrushTexture}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Flow"
+                            value={brushFlow}
+                            min={1}
+                            max={100}
+                            set={setBrushFlow}
                             suffix="%"
                           />
                         </>
