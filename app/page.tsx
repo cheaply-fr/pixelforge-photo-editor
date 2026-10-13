@@ -221,6 +221,7 @@ import ActionsPanel from '../src/ActionsPanel';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
 import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
+import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
 import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
 import { purgeUndoHistory } from '../src/historyPurge';
 import {
@@ -489,6 +490,7 @@ type Command =
   | 'calculations'
   | 'define-brush-preset'
   | 'define-pattern'
+  | 'keyboard-shortcuts'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -930,7 +932,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
     { label: 'Color Settings…', command: 'noop', disabled: true },
-    { label: 'Keyboard Shortcuts…', command: 'noop', disabled: true },
+    { label: 'Keyboard Shortcuts…', command: 'keyboard-shortcuts' },
     { label: 'Menus…', command: 'noop', disabled: true },
     { label: 'Toolbar…', command: 'noop', disabled: true },
     { label: 'Reset adjustments', command: 'reset' },
@@ -1906,6 +1908,7 @@ export default function Home() {
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
+    [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
@@ -11076,6 +11079,7 @@ export default function Home() {
     else if (command === 'calculations') return calculateImage();
     else if (command === 'define-brush-preset') return defineBrushPreset();
     else if (command === 'define-pattern') return definePattern();
+    else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -11875,6 +11879,8 @@ export default function Home() {
         command: item.command,
         disabled: menuItemDisabled(item),
       })));
+  const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
+    .filter((item) => Boolean(item.shortcut));
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -12084,6 +12090,12 @@ export default function Home() {
             setCommandSearchOpen(false);
             void runCommand(command as Command);
           }}
+        />
+      )}
+      {keyboardShortcutsOpen && (
+        <KeyboardShortcutsDialog
+          items={keyboardShortcutItems}
+          close={() => setKeyboardShortcutsOpen(false)}
         />
       )}
       {purgeHistoryOpen && (
