@@ -130,6 +130,7 @@ import LayerTransformDialog, {
   type LayerTransformBounds,
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
+import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
@@ -488,6 +489,7 @@ type Command =
   | 'contract-selection'
   | 'border-selection'
   | 'smooth-selection'
+  | 'feather-selection'
   | 'similar-selection'
   | 'color-range'
   | 'focus-area'
@@ -970,6 +972,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Contract…', command: 'contract-selection' },
     { label: 'Border…', command: 'border-selection' },
     { label: 'Smooth…', command: 'smooth-selection' },
+    { label: 'Feather…', command: 'feather-selection' },
     { label: 'Similar', command: 'similar-selection' },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
@@ -1871,6 +1874,7 @@ export default function Home() {
   const [layerTransforming, setLayerTransforming] = useState(false);
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
+  const [selectionFeathering, setSelectionFeathering] = useState(false);
   const [colorRanging, setColorRanging] = useState(false);
   const [fillLayerDialog, setFillLayerDialog] = useState(false);
   const [focusAreaValue, setFocusAreaValue] = useState(false);
@@ -10054,6 +10058,9 @@ export default function Home() {
                 : 'smooth',
         );
       else setNotice('Create a selection before refining it');
+    } else if (command === 'feather-selection') {
+      if (current().selection) setSelectionFeathering(true);
+      else setNotice('Create a selection before feathering it');
     } else if (command === 'color-range') setColorRanging(true);
     else if (command === 'focus-area') setFocusAreaValue(true);
     else if (command === 'subject-selection') return applyAssistedSelection('subject');
@@ -10505,6 +10512,8 @@ export default function Home() {
       case 'smooth-selection':
       case 'similar-selection':
         return !frame.selection;
+      case 'feather-selection':
+        return !frame.selection;
       case 'stroke-selection':
         return !frame.selection || !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'hide-layer':
@@ -10743,6 +10752,15 @@ export default function Home() {
           mode={selectionRefineValue}
           close={() => setSelectionRefining(null)}
           apply={(radius) => void applySelectionRefinement(radius)}
+        />
+      )}
+      {selectionFeathering && (
+        <SelectionFeatherDialog
+          close={() => setSelectionFeathering(false)}
+          apply={(feather) => {
+            setSelectionFeathering(false);
+            setSelectionFeather(feather);
+          }}
         />
       )}
       {colorRanging && (

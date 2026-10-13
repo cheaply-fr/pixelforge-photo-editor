@@ -23,7 +23,7 @@ const drag = async (page: Page, start: [number, number], end: [number, number]) 
 
 type Project = {
   history: Array<{
-    selection?: { x: number; y: number; w: number; h: number; mask?: string };
+    selection?: { x: number; y: number; w: number; h: number; feather?: number; mask?: string };
   }>;
   index: number;
   assets: Record<string, { url: string; w: number; h: number }>;
@@ -127,6 +127,35 @@ test('Smooth selection softens alpha edges and survives project reload', async (
   await page.reload();
   const reloaded = await project(page);
   expect(await alphaCoverage(page, reloaded.assets[reloaded.history[reloaded.index].selection!.mask!])).toBe(coverage);
+});
+
+test('Feather menu edits selection alpha and survives reload', async ({ page }) => {
+  await selectTool(page, 'Select');
+  await drag(page, [0.25, 0.25], [0.55, 0.55]);
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Feather…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Feather Selection' })).toBeVisible();
+  await page.getByLabel('Selection feather radius (px)', { exact: true }).fill('18');
+  await page.getByRole('button', { name: 'Apply feather', exact: true }).click();
+  await expect(page.getByText('Selection feather set to 18 px', { exact: true })).toBeVisible();
+  let saved = await project(page);
+  expect(saved.history[saved.index].selection?.feather).toBe(18);
+  await page.reload();
+  saved = await project(page);
+  expect(saved.history[saved.index].selection?.feather).toBe(18);
+});
+
+test('Feather menu rejects invalid input without changing selection', async ({ page }) => {
+  await selectTool(page, 'Select');
+  await drag(page, [0.25, 0.25], [0.55, 0.55]);
+  const before = await project(page);
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Feather…', exact: true }).click();
+  await page.getByLabel('Selection feather radius (px)', { exact: true }).fill('1001');
+  await expect(page.getByRole('button', { name: 'Apply feather', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  const after = await project(page);
+  expect(after.history[after.index].selection).toEqual(before.history[before.index].selection);
 });
 
 test('Grow rejects invalid radius without mutating the active selection', async ({ page }) => {
