@@ -1677,6 +1677,34 @@ test('Unsharp Mask is an enabled nondestructive Sharpen filter with editable rad
   expect(layer.adjustments.filterEffects).toMatchObject({ type: 'unsharp-mask', radius: 7 });
 });
 
+test('Sharpen Edges is an enabled edge-weighted nondestructive Sharpen filter', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Sharpen Edges', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Sharpen Edges (edge-weighted nondestructive) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('sharpen-edges');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'sharpen-edges', radius: 7 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('sharpen-edges');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 test('Sharpen More is a distinct enabled nondestructive Sharpen filter', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

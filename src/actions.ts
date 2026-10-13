@@ -139,6 +139,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-gaussian-blur',
   'filter-unsharp-mask',
   'filter-sharpen-more',
+  'filter-sharpen-edges',
   'filter-motion-blur',
   'filter-radial-blur',
   'filter-spin-blur',

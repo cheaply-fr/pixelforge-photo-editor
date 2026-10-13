@@ -539,6 +539,7 @@ type Command =
   | 'filter-gaussian-blur'
   | 'filter-unsharp-mask'
   | 'filter-sharpen-more'
+  | 'filter-sharpen-edges'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
   | 'filter-smart-blur'
@@ -1037,7 +1038,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'sharpen-noise' },
-    { label: 'Sharpen Edges', command: 'sharpen-noise' },
+    { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
     { label: 'Sharpen More', command: 'filter-sharpen-more' },
     { label: 'Smart Sharpen…', command: 'sharpen-noise' },
     { label: 'Unsharp Mask…', command: 'filter-unsharp-mask' },
@@ -10105,6 +10106,8 @@ export default function Home() {
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-sharpen-more')
       chooseFilterEffect('sharpen-more', 'Sharpen More (two-pass nondestructive)');
+    else if (command === 'filter-sharpen-edges')
+      chooseFilterEffect('sharpen-edges', 'Sharpen Edges (edge-weighted nondestructive)');
     else if (command === 'filter-lens-blur')
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-iris-blur')
