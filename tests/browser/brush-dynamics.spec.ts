@@ -29,10 +29,13 @@ test('brush scatter is exposed for raster brush tools and persists safely', asyn
   const wetEdges = page.getByLabel('Wet edges', { exact: true });
   await wetEdges.fill('68');
   await expect(wetEdges).toHaveValue('68');
+  const buildUp = page.getByLabel('Build-up', { exact: true });
+  await buildUp.fill('57');
+  await expect(buildUp).toHaveValue('57');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   const pending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
   const project = await downloadedProject((await download.path())!);
-  expect(project.settings).toMatchObject({ brushScatter: 74, brushDual: 63, brushBristle: 51, brushWetEdges: 68, secondaryBrushPreset: 'round-soft' });
+  expect(project.settings).toMatchObject({ brushScatter: 74, brushDual: 63, brushBristle: 51, brushWetEdges: 68, brushBuildUp: 57, secondaryBrushPreset: 'round-soft' });
 });

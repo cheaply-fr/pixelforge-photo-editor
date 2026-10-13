@@ -5,6 +5,7 @@
  */
 import { bristleCoverage, normalizeBrushBristle } from './brushBristle.ts';
 import { wetEdgesOpacity } from './brushWetEdges.ts';
+import { buildUpOpacity } from './brushBuildUp.ts';
 
 export const BRUSH_MAX_SIZE = 10000;
 export const BRUSH_MAX_DIMENSION = 16000;
@@ -47,6 +48,8 @@ export type BrushStampSettings = BrushPressureSettings & {
   bristle?: number;
   /** Deterministic edge-weighted opacity amount. */
   wetEdges?: number;
+  /** Deterministic centre-weighted opacity amount. */
+  buildUp?: number;
 } & BrushTipSettings;
 export type ResolvedBrushStamp = {
   pressure: number;
@@ -272,8 +275,13 @@ export function radialStampMask(request: RadialStampRequest): RadialMask {
         stamp.radius,
         request.wetEdges ?? 0,
       );
+      const buildUp = buildUpOpacity(
+        Math.hypot(px - request.x, py - request.y),
+        stamp.radius,
+        request.buildUp ?? 0,
+      );
       if (coverage > 0 && filament > 0)
-        data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * filament * wetEdges * scale);
+        data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * filament * wetEdges * buildUp * scale);
     }
   }
   return { width, height, data, bounds, stamp };
