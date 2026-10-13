@@ -133,6 +133,17 @@ function gradientStopsParameter(step: ActionStep): unknown[] {
   }
 }
 
+function filterExtraParameters(step: ActionStep): Record<string, unknown> {
+  const value = step.parameters?.filterExtra;
+  if (typeof value !== 'string' || value.length > 4096) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLCanvasElement {
   const context = input.getContext('2d');
   if (!context) throw new Error('Canvas rendering is unavailable in this browser.');
@@ -233,7 +244,9 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
   };
   const filterType = filterTypes[step.command];
   if (filterType) {
+    const extra = filterExtraParameters(step);
     applyFilterEffects(output, {
+      ...extra,
       type: filterType,
       amount: numberParameter(step, 'amount', 70),
       radius: numberParameter(step, 'radius', 10),

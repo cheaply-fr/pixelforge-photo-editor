@@ -26,5 +26,18 @@ export function filterActionParameters(
     gradientHighlight: effect.gradientMap?.highlight ?? '#ffffff',
     gradientBlend: effect.gradientMap?.blend ?? 'normal',
     gradientStops: JSON.stringify(effect.gradientMap?.stops ?? []),
+    filterExtra: JSON.stringify({
+      ...(effect.radialMode ? { radialMode: effect.radialMode } : {}),
+      ...(effect.lensDirection ? { lensDirection: effect.lensDirection } : {}),
+      ...(effect.path ? { path: effect.path, pathCentered: effect.pathCentered, pathTaper: effect.pathTaper } : {}),
+      ...(effect.spinEllipse ? { spinEllipse: effect.spinEllipse } : {}),
+      ...(effect.fieldPoints ? { fieldPoints: effect.fieldPoints } : {}),
+      ...(effect.tiltShift ? { tiltShift: effect.tiltShift } : {}),
+      ...(effect.colorHalftone ? { colorHalftone: effect.colorHalftone } : {}),
+      ...(effect.mezzotint ? { mezzotint: effect.mezzotint } : {}),
+      ...(effect.fibers ? { fibers: effect.fibers } : {}),
+      ...(effect.tree ? { tree: effect.tree } : {}),
+      ...(effect.deinterlace ? { deinterlace: effect.deinterlace } : {}),
+    }),
   };
 }
