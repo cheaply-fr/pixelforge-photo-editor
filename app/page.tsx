@@ -311,6 +311,10 @@ import {
   BRUSH_BRISTLE_DEFAULT,
   bristleOpacity,
 } from '../src/brushBristle';
+import {
+  GRADIENT_DITHER_DEFAULT,
+  applyGradientDither,
+} from '../src/gradientDither';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
@@ -1726,6 +1730,7 @@ export default function Home() {
     [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
     [gradientMidpoint, setGradientMidpoint] = useState('none'),
+    [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -2044,6 +2049,7 @@ export default function Home() {
     gradientMode,
     gradientEnd,
     gradientMidpoint,
+    gradientDither,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2103,6 +2109,7 @@ export default function Home() {
     setGradientMode(s.gradientMode ?? 'linear');
     setGradientEnd(s.gradientEnd ?? 'transparent');
     setGradientMidpoint(s.gradientMidpoint ?? 'none');
+    setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2147,6 +2154,7 @@ export default function Home() {
     setGradientMode,
     setGradientEnd,
     setGradientMidpoint,
+    setGradientDither,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -4483,6 +4491,7 @@ export default function Home() {
         gradientMode,
         gradientEnd,
         gradientMidpoint,
+        gradientDither,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4568,6 +4577,7 @@ export default function Home() {
     gradientMode,
     gradientEnd,
     gradientMidpoint,
+    gradientDither,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -9262,6 +9272,11 @@ export default function Home() {
         }
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
+        if (gradientDither > 0) {
+          const imageData = context.getImageData(0, 0, buffer.width, buffer.height);
+          imageData.data.set(applyGradientDither(imageData.data, buffer.width, buffer.height, gradientDither));
+          context.putImageData(imageData, 0, 0);
+        }
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -12456,6 +12471,16 @@ export default function Home() {
                     <option value="background">Background colour</option>
                   </select>
                 </label>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Dither"
+                  value={gradientDither}
+                  min={0}
+                  max={100}
+                  set={setGradientDither}
+                  suffix="%"
+                />
               )}
               {tool !== 'magic-eraser' && (
                 <Slider

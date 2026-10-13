@@ -92,4 +92,6 @@ and a transparent midpoint on the authored linear axis. Full gradient stops,
 noise and dithering remain staged. The persisted Gradient end control can use
 either the transparent default or the current background colour, including for
 the reflected midpoint. An optional persisted authored midpoint colour now adds
-a deterministic third stop; arbitrary stop counts, noise and dithering remain staged.
+a deterministic third stop. A bounded deterministic Dither control is also
+persisted and tested for nontransparent gradient pixels; arbitrary stop counts,
+noise and gradient-map behaviour remain staged.
