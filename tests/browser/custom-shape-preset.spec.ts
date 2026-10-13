@@ -26,6 +26,11 @@ test('Edit > Define Custom Shape saves a local shape preset and reloads it', asy
   await selectTool(page, 'Shape');
   await expect(page.getByLabel('Saved shape preset', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Saved shape preset', { exact: true }).locator('option')).toContainText(['Badge shape']);
+  await page.getByLabel('Saved shape preset', { exact: true }).selectOption({ label: 'Badge shape (rectangle)' });
+  await expect(page.getByLabel('Drawing color')).toHaveValue('#ff5c35');
+  await page.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Shape preset “Badge shape” removed from this device');
+  await expect(page.getByLabel('Saved shape preset', { exact: true }).locator('option')).not.toContainText(['Badge shape']);
 });
 
 test('Edit > Define Custom Shape rejects an empty name without creating a preset', async ({ page }) => {

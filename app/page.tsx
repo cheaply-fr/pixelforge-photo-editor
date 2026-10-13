@@ -1864,6 +1864,7 @@ export default function Home() {
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
+    [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -2465,7 +2466,16 @@ export default function Home() {
   const applyCustomShapePreset = (preset: CustomShapePreset) => {
     setTool(preset.kind as Tool);
     setColor(preset.color);
+    setSelectedCustomShapePresetId(preset.id);
     setNotice(`Shape preset “${preset.label}” applied`);
+  };
+  const removeCustomShapePreset = () => {
+    if (!selectedCustomShapePresetId) return;
+    const preset = customShapePresets.find((item) => item.id === selectedCustomShapePresetId);
+    if (!preset) return;
+    setCustomShapePresets((currentPresets) => currentPresets.filter((item) => item.id !== selectedCustomShapePresetId));
+    setSelectedCustomShapePresetId('');
+    setNotice(`Shape preset “${preset.label}” removed from this device`);
   };
   const defineCustomShape = () => {
     const label = window.prompt('Name this custom shape', 'Custom shape');
@@ -13858,10 +13868,11 @@ export default function Home() {
                   <span>Saved shape preset</span>
                   <select
                     aria-label="Saved shape preset"
-                    defaultValue=""
+                    value={selectedCustomShapePresetId}
                     onChange={(event) => {
                       const preset = customShapePresets.find((item) => item.id === event.target.value);
                       if (preset) applyCustomShapePreset(preset);
+                      else setSelectedCustomShapePresetId('');
                     }}
                   >
                     <option value="">Choose saved preset</option>
@@ -13869,6 +13880,9 @@ export default function Home() {
                       <option key={preset.id} value={preset.id}>{preset.label} ({preset.kind})</option>
                     ))}
                   </select>
+                  <button type="button" className="secondary" disabled={!selectedCustomShapePresetId} onClick={removeCustomShapePreset}>
+                    Remove
+                  </button>
                 </label>
               )}
               {tool !== 'magic-eraser' && (
