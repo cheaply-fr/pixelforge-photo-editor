@@ -92,6 +92,22 @@ test('Dust & Scratches replaces only strong local outliers and preserves source 
   assert.equal(effectiveFilterEffects({ ...effect, threshold: 999 }).threshold, 255);
 });
 
+test('Despeckle applies the fixed local cleanup contract deterministically', () => {
+  const source = rgba(3, 3, (x, y) => {
+    if (x === 1 && y === 1) return [255, 0, 255, 255];
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    return [40, 80, 120, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'despeckle', amount: 100, radius: 1 };
+  const output = applyFilterEffectsPixels(source, 3, 3, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 3, 1, 1), [40, 80, 120, 255]);
+  assert.deepEqual(pixel(output, 3, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 3, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
 test('De-Interlace supports both field parity choices and interpolation', () => {
   const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
   const first = applyFilterEffectsPixels(source, 2, 5, {

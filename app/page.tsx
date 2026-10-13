@@ -710,6 +710,7 @@ type Command =
   | 'filter-gradient-map'
   | 'filter-median'
   | 'filter-dust-scratches'
+  | 'filter-despeckle'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1166,6 +1167,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Add Noise…', command: 'sharpen-noise' },
     { label: 'Median…', command: 'filter-median' },
     { label: 'Dust & Scratches…', command: 'filter-dust-scratches' },
+    { label: 'Despeckle', command: 'filter-despeckle' },
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
     { label: 'Crystallize…', command: 'filter-crystallize' },
@@ -4997,7 +4999,7 @@ export default function Home() {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -5030,6 +5032,8 @@ export default function Home() {
                     ? 2
                     : type === 'dust-scratches'
                     ? 2
+                    : type === 'despeckle'
+                    ? 1
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
@@ -11628,6 +11632,8 @@ export default function Home() {
       chooseFilterEffect('median', 'Median (local noise reduction)');
     else if (command === 'filter-dust-scratches')
       chooseFilterEffect('dust-scratches', 'Dust & Scratches (local outlier cleanup)');
+    else if (command === 'filter-despeckle')
+      chooseFilterEffect('despeckle', 'Despeckle (local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -14895,6 +14901,9 @@ export default function Home() {
             )}
             {filterEffects.type === 'dust-scratches' && (
               <p>Bounded local outlier cleanup. Pixels farther than the threshold from their visible neighbourhood median are blended toward that median; radius, threshold and amount remain editable.</p>
+            )}
+            {filterEffects.type === 'despeckle' && (
+              <p>Bounded one-pixel local despeckle approximation using a fixed visible-neighbour median. Amount remains editable; full texture-aware and edge-preserving Photoshop behaviour remains staged.</p>
             )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>

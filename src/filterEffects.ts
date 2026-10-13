@@ -65,6 +65,7 @@ export const FILTER_EFFECT_TYPES = [
   'gradient-map',
   'median',
   'dust-scratches',
+  'despeckle',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -3205,6 +3206,8 @@ export function applyFilterEffectsPixels(
     applyMedian(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'dust-scratches') {
     applyDustScratches(data, width, height, effect, output, strength);
+  } else if (effect.type === 'despeckle') {
+    applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {
