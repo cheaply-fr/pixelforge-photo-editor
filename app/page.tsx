@@ -15346,6 +15346,18 @@ export default function Home() {
                   />
                   Monochromatic
                 </label>
+                <label>
+                  Distribution
+                  <select
+                    className="text-input"
+                    aria-label="Add Noise distribution"
+                    value={filterEffects.noiseDistribution ?? 'uniform'}
+                    onChange={(event) => setFilterEffects({ noiseDistribution: event.target.value === 'gaussian' ? 'gaussian' : 'uniform' })}
+                  >
+                    <option value="uniform">Uniform</option>
+                    <option value="gaussian">Gaussian</option>
+                  </select>
+                </label>
               </>
             )}
             {filterEffects.type === 'flame' && (

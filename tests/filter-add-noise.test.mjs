@@ -40,9 +40,18 @@ test('Add Noise amount zero is identity and monochromatic channels share a delta
 });
 
 test('Add Noise normalization clamps seed and rejects malformed metadata', () => {
-  const normalized = effectiveFilterEffects({ type: 'add-noise', amount: 130, seed: -1, noiseMonochromatic: 'yes' });
+  const normalized = effectiveFilterEffects({ type: 'add-noise', amount: 130, seed: -1, noiseMonochromatic: 'yes', noiseDistribution: 'gaussian' });
   assert.equal(normalized.amount, 100);
   assert.equal(normalized.seed, 0xffffffff);
   assert.equal(normalized.noiseMonochromatic, false);
+  assert.equal(normalized.noiseDistribution, 'gaussian');
   assert.equal(validFilterEffects({ ...normalized, amount: -1 }), false);
+});
+
+test('Add Noise distribution changes the deterministic bounded result', () => {
+  const uniform = applyFilterEffectsPixels(source, 2, 2, { type: 'add-noise', amount: 35, seed: 42, noiseDistribution: 'uniform' });
+  const gaussian = applyFilterEffectsPixels(source, 2, 2, { type: 'add-noise', amount: 35, seed: 42, noiseDistribution: 'gaussian' });
+  assert.notDeepEqual(gaussian, uniform);
+  assert.deepEqual(gaussian.slice(12), source.slice(12));
+  assert.deepEqual(gaussian, applyFilterEffectsPixels(source, 2, 2, { type: 'add-noise', amount: 35, seed: 42, noiseDistribution: 'gaussian' }));
 });

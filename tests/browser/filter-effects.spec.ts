@@ -2104,8 +2104,10 @@ test('Add Noise is an enabled seeded nondestructive filter with monochromatic co
   await expect(page.getByText('Add Noise (seeded local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
   await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel('Add Noise distribution', { exact: true })).toHaveValue('uniform');
   await expect.poll(() => pixels(page)).not.toEqual(original);
   await page.getByLabel('Add Noise monochromatic', { exact: true }).check();
+  await page.getByLabel('Add Noise distribution', { exact: true }).selectOption('gaussian');
   const changed = await pixels(page);
   expect(changed).not.toEqual(original);
   expect((await pixel(page, 0, 0))[3]).toBe(0);
@@ -2113,10 +2115,11 @@ test('Add Noise is an enabled seeded nondestructive filter with monochromatic co
   const layer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(layer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
-  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'add-noise', noiseMonochromatic: true });
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'add-noise', noiseMonochromatic: true, noiseDistribution: 'gaussian' });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
   await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Add Noise distribution', { exact: true })).toHaveValue('gaussian');
   await expect.poll(() => pixels(page)).toEqual(changed);
 });

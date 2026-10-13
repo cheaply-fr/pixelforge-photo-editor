@@ -198,6 +198,8 @@ export type FilterEffects = {
   seed: number;
   /** Use one seeded value for all channels in the Add Noise effect. */
   noiseMonochromatic?: boolean;
+  /** Distribution used by Add Noise's deterministic sample generator. */
+  noiseDistribution?: 'uniform' | 'gaussian';
   /** Authored polyline in normalized layer coordinates, limited to 2–8 points. */
   path?: BlurPathPoint[];
   /** Omitted for legacy global radial Spin Blur records. */
@@ -275,6 +277,7 @@ export function effectiveFilterEffects(
   const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
   if (type === 'add-noise') {
     normalized.noiseMonochromatic = source.noiseMonochromatic === true;
+    normalized.noiseDistribution = source.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform';
   }
   if (type === 'radial-blur') {
     normalized.radialMode = source.radialMode === 'zoom' ? 'zoom' : 'spin';
@@ -459,6 +462,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
     (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
+    (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
@@ -3222,7 +3226,15 @@ function applyAddNoise(
       value ^= value >>> 16;
       value = Math.imul(value, 0x7feb352d) >>> 0;
       value ^= value >>> 15;
-      return (value / 0xffffffff) * 2 - 1;
+      const first = value / 0xffffffff;
+      if (effect.noiseDistribution !== 'gaussian') return first * 2 - 1;
+      let second = (value ^ 0xa5a5a5a5) >>> 0;
+      second ^= second >>> 16;
+      second = Math.imul(second, 0x7feb352d) >>> 0;
+      second ^= second >>> 15;
+      const u = Math.max(1e-6, first);
+      const v = Math.max(1e-6, second / 0xffffffff);
+      return Math.max(-1, Math.min(1, Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) / 2.5));
     };
     output[offset] = clampByte(source[offset] + sample(0) * amplitude);
     output[offset + 1] = clampByte(source[offset + 1] + sample(1) * amplitude);
