@@ -55,13 +55,18 @@ test('Polygon tool persists triangle and star variants in project settings', asy
   await expect(variant).toHaveValue('polygon');
   await variant.selectOption('star');
   await expect(variant).toHaveValue('star');
+  const sides = page.getByLabel('Polygon sides', { exact: true });
+  await sides.fill('7');
+  await expect(sides).toHaveValue('7');
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const project = await downloadedProject((await (await pending).path())!);
   expect(project.settings.polygonVariant).toBe('star');
+  expect(project.settings.polygonSides).toBe(7);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await selectTool(page, 'Polygon');
   await expect(page.getByLabel('Polygon variant', { exact: true })).toHaveValue('star');
+  await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('7');
 });

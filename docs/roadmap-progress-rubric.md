@@ -31,11 +31,11 @@ The repository contains broad partial implementations across all eight stages. T
 Progress percentages in status reports are estimates derived from this rubric and must identify the stage evidence that is still missing. They must never be increased solely because source files changed.
 
 The Polygon tool now persists a bounded parametric variant (`polygon`,
-`triangle`, or `star`) in local settings and project files. Rendering, boolean
-operations and reload preserve the editable variant and side count; the
-desktop/mobile acceptance suite covers control selection and project-file
-round-trip. Freeform custom path libraries and per-star inner-radius editing
-remain staged.
+`triangle`, or `star`) and a 3–32 side count in local settings and project
+files. Rendering, boolean operations and reload preserve the editable variant
+and side count; the desktop/mobile acceptance suite covers control selection
+and project-file round-trip. Freeform custom path libraries and per-star
+inner-radius editing remain staged.
 
 The bounded local Content-Aware Move slice is available through `Edit →
 Content-Aware Move…`. It requires an explicit selection, fills the vacated

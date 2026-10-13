@@ -152,6 +152,8 @@ export type Settings = {
   customShapePresets?: CustomShapePreset[];
   /** Parametric polygon variant used by the Polygon tool. */
   polygonVariant?: 'polygon' | 'triangle' | 'star';
+  /** Parametric polygon/star side count, bounded to the editable shape range. */
+  polygonSides?: number;
   /** Spacing between brush dabs as a percent of diameter. */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */

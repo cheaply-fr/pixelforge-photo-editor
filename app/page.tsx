@@ -1866,6 +1866,7 @@ export default function Home() {
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
     [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
+    [polygonSides, setPolygonSides] = useState(5),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -2210,6 +2211,7 @@ export default function Home() {
     customPatternPresets,
     customShapePresets,
     polygonVariant,
+    polygonSides,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -2279,6 +2281,7 @@ export default function Home() {
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setPolygonVariant(s.polygonVariant ?? 'polygon');
+    setPolygonSides(Math.max(3, Math.min(32, Math.round(s.polygonSides ?? 5))));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -2333,6 +2336,7 @@ export default function Home() {
     setCustomPatternPresets,
     setCustomShapePresets,
     setPolygonVariant,
+    setPolygonSides,
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
@@ -5129,6 +5133,7 @@ export default function Home() {
         customPatternPresets,
         customShapePresets,
         polygonVariant,
+        polygonSides,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -5224,6 +5229,7 @@ export default function Home() {
     customPatternPresets,
     customShapePresets,
     polygonVariant,
+    polygonSides,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -9533,7 +9539,7 @@ export default function Home() {
               height: Math.max(1, height),
               stroke: Math.max(1, size / 3),
               color,
-              ...(g.tool === 'polygon' ? { sides: 5, variant: polygonVariant } : { fill: false }),
+              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant } : { fill: false }),
               matrix: [
                 1,
                 0,
@@ -10179,7 +10185,7 @@ export default function Home() {
               stroke: Math.max(1, size / 3),
               color,
               fill: false,
-              ...(g.tool === 'polygon' ? { sides: 5, variant: polygonVariant } : {}),
+              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant } : {}),
               matrix,
             } as Layer),
       );
@@ -13904,6 +13910,16 @@ export default function Home() {
                     <option value="star">Star</option>
                   </select>
                 </label>
+              )}
+              {tool === 'polygon' && polygonVariant !== 'triangle' && (
+                <Slider
+                  label="Polygon sides"
+                  value={polygonSides}
+                  min={3}
+                  max={32}
+                  set={setPolygonSides}
+                  suffix=""
+                />
               )}
               {tool !== 'magic-eraser' && (
                 <Slider
