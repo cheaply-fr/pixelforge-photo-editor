@@ -145,6 +145,8 @@ export type Settings = {
   gradientEnd?: 'transparent' | 'background';
   /** Optional authored colour stop at the midpoint; `none` preserves the legacy two-stop gradient. */
   gradientMidpoint?: string;
+  /** Position of the authored midpoint stop, from 1 to 99 percent. */
+  gradientMidpointPosition?: number;
   /** Deterministic gradient dither amount, from 0 to 100. */
   gradientDither?: number;
   /** Deterministic brush texture amount, from 0 to 100. */
@@ -378,6 +380,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.brushDual ?? 0, 0, 100] as [number, number, number],
     [candidate.brushBristle ?? 0, 0, 100] as [number, number, number],
     [candidate.gradientDither ?? 0, 0, 100] as [number, number, number],
+    [candidate.gradientMidpointPosition ?? 50, 1, 99] as [number, number, number],
     [candidate.brushFlow ?? 100, 1, 100] as [number, number, number],
   ];
   if (candidate.patternTileSize !== undefined) {
