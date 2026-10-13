@@ -39,6 +39,10 @@ test('Convert for Smart Filters preserves filter pixels, source metadata and sta
     const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
     return Array.from(data.slice(0, 12));
   });
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Convert for Smart Filters', exact: true })).toBeEnabled();
+  await expect(page.getByRole('menuitem', { name: 'Clear Smart Filter Stack', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Convert for Smart Filters', exact: true })).toBeEnabled();
   await page.getByRole('menuitem', { name: 'Convert for Smart Filters', exact: true }).click();
