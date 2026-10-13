@@ -48,6 +48,7 @@ test('radial gradient has an editable mode, changes pixels, and persists', async
   const midpointPosition = page.getByLabel('Midpoint position', { exact: true });
   await midpointPosition.fill('64');
   await expect(midpointPosition).toHaveValue('64');
+  await page.getByLabel('Reverse gradient', { exact: true }).check();
   await page.getByRole('button', { name: 'File', exact: true }).click();
   const endpointPending = page.waitForEvent('download');
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
@@ -59,5 +60,6 @@ test('radial gradient has an editable mode, changes pixels, and persists', async
     gradientMidpoint: '#00ff00',
     gradientMidpointPosition: 64,
     gradientDither: 58,
+    gradientReverse: true,
   });
 });

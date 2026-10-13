@@ -1737,6 +1737,7 @@ export default function Home() {
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
     [gradientMidpoint, setGradientMidpoint] = useState('none'),
     [gradientMidpointPosition, setGradientMidpointPosition] = useState(50),
+    [gradientReverse, setGradientReverse] = useState(false),
     [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
@@ -2057,6 +2058,7 @@ export default function Home() {
     gradientEnd,
     gradientMidpoint,
     gradientMidpointPosition,
+    gradientReverse,
     gradientDither,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -2118,6 +2120,7 @@ export default function Home() {
     setGradientEnd(s.gradientEnd ?? 'transparent');
     setGradientMidpoint(s.gradientMidpoint ?? 'none');
     setGradientMidpointPosition(s.gradientMidpointPosition ?? 50);
+    setGradientReverse(s.gradientReverse ?? false);
     setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
@@ -2164,6 +2167,7 @@ export default function Home() {
     setGradientEnd,
     setGradientMidpoint,
     setGradientMidpointPosition,
+    setGradientReverse,
     setGradientDither,
     setBrushAngle,
     setBrushRoundness,
@@ -4571,6 +4575,7 @@ export default function Home() {
         gradientEnd,
         gradientMidpoint,
         gradientMidpointPosition,
+        gradientReverse,
         gradientDither,
         angle: brushAngle,
         roundness: brushRoundness,
@@ -4658,6 +4663,7 @@ export default function Home() {
     gradientEnd,
     gradientMidpoint,
     gradientMidpointPosition,
+    gradientReverse,
     gradientDither,
     brushAngle,
     brushRoundness,
@@ -9345,14 +9351,16 @@ export default function Home() {
         const midpointStop = gradientMidpoint === 'none'
           ? 0.5
           : Math.max(0.01, Math.min(0.99, gradientMidpointPosition / 100));
+        const startColor = gradientReverse ? endColor : color,
+          finalColor = gradientReverse ? color : endColor;
         if (gradientMode === 'reflected') {
           gradient.addColorStop(0, color);
           gradient.addColorStop(midpointStop, gradientMidpoint === 'none' ? endColor : gradientMidpoint);
           gradient.addColorStop(1, color);
         } else {
-          gradient.addColorStop(0, color);
+          gradient.addColorStop(0, startColor);
           if (gradientMidpoint !== 'none') gradient.addColorStop(midpointStop, gradientMidpoint);
-          gradient.addColorStop(1, endColor);
+          gradient.addColorStop(1, finalColor);
         }
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
@@ -12577,6 +12585,17 @@ export default function Home() {
                   set={setGradientDither}
                   suffix="%"
                 />
+              )}
+              {tool === 'gradient' && (
+                <label className="check-row">
+                  <input
+                    aria-label="Reverse gradient"
+                    type="checkbox"
+                    checked={gradientReverse}
+                    onChange={(event) => setGradientReverse(event.target.checked)}
+                  />
+                  Reverse gradient
+                </label>
               )}
               {tool !== 'magic-eraser' && (
                 <Slider

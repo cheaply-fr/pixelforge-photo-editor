@@ -147,6 +147,8 @@ export type Settings = {
   gradientMidpoint?: string;
   /** Position of the authored midpoint stop, from 1 to 99 percent. */
   gradientMidpointPosition?: number;
+  /** Swap gradient start and end colours for Linear and Radial modes. */
+  gradientReverse?: boolean;
   /** Deterministic gradient dither amount, from 0 to 100. */
   gradientDither?: number;
   /** Deterministic brush texture amount, from 0 to 100. */
@@ -394,6 +396,7 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
+  if (candidate.gradientReverse !== undefined && typeof candidate.gradientReverse !== 'boolean') return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
