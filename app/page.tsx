@@ -442,10 +442,12 @@ import {
 } from '../src/contentAwareCleanup';
 import {
   CONTENT_AWARE_MOVE_MAX_OFFSET,
+  CONTENT_AWARE_MOVE_MAX_OPERATIONS,
 } from '../src/contentAwareMove';
 import {
   CONTENT_AWARE_SCALE_MAX_PERCENT,
   CONTENT_AWARE_SCALE_MIN_PERCENT,
+  CONTENT_AWARE_SCALE_MAX_OPERATIONS,
 } from '../src/contentAwareScale';
 import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
@@ -4919,6 +4921,10 @@ export default function Home() {
       setNotice('Unlock this layer before using Content-Aware Move');
       return;
     }
+    if ((layer.contentAwareMoves?.length ?? 0) >= CONTENT_AWARE_MOVE_MAX_OPERATIONS) {
+      setNotice(`This layer has ${CONTENT_AWARE_MOVE_MAX_OPERATIONS} Content-Aware Move operations; export a copy before adding more`);
+      return;
+    }
     const dxText = window.prompt('Move selection horizontally in pixels', '24');
     if (dxText === null) return;
     const dyText = window.prompt('Move selection vertically in pixels', '0');
@@ -4982,6 +4988,10 @@ export default function Home() {
     }
     if (layerIsLocked(f, layer)) {
       setNotice('Unlock this layer before using Content-Aware Scale');
+      return;
+    }
+    if ((layer.contentAwareScales?.length ?? 0) >= CONTENT_AWARE_SCALE_MAX_OPERATIONS) {
+      setNotice(`This layer has ${CONTENT_AWARE_SCALE_MAX_OPERATIONS} Content-Aware Scale operations; export a copy before adding more`);
       return;
     }
     const horizontalText = window.prompt('Scale selection horizontally (%)', '120');
