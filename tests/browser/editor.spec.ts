@@ -1326,6 +1326,30 @@ test('Merge Layers disables non-contiguous multi-selection', async ({ page }) =>
   ).toBeDisabled();
 });
 
+test('Merge Layers merges a complete folder as one isolated unit', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+  const rows = page.getByRole('button', { name: /^Select layer / });
+  await expect(rows).toHaveCount(3);
+  await rows.nth(1).click();
+  await rows.nth(2).click({ modifiers: [additiveModifier] });
+  await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Merge Layers', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Merge Layers', exact: true }).click();
+  await expect(page.getByText('2 layers merged; undo restores the individual layers')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+});
+
 test('layer menu copy, paste, hide and flatten preserve an undoable project', async ({
   page,
 }) => {

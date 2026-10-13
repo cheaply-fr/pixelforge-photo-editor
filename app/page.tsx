@@ -5906,8 +5906,9 @@ export default function Home() {
   const mergeLayers = async () => {
     const f = current();
     const selectionIds = selectedIdsForFrame(f);
+    const activeLayer = f.layers.find((layer) => layer.id === f.active);
     const selectedPlan =
-      selectionIds.length >= 2 ? planSelectedLayerMerge(f) : undefined;
+      selectionIds.length >= 2 || Boolean(activeLayer?.groupId) ? planSelectedLayerMerge(f) : undefined;
     if (selectedPlan && !selectedPlan.ok) {
       setNotice(selectedLayerMergeReason(selectedPlan.reason));
       return;
@@ -5926,14 +5927,16 @@ export default function Home() {
     const selectedLayers = selectedIndices.map((layerIndex) => f.layers[layerIndex]);
     const active = selectedLayers[selectedLayers.length - 1];
     try {
-      // Render only the selected root-level range in stack order. Grouped
-      // selections are rejected by the planner because they need isolated
-      // folder merge semantics; ordinary folder rendering remains unchanged.
+      // Render only the selected range or complete folder in stack order.
+      // Folder members keep their isolated group surface during the merge.
+      const mergeGroupIds = new Set(selectedLayers.flatMap((layer) => layer.groupId ? [layer.groupId] : []));
       const image = await renderFrame(
         {
           ...f,
           layers: selectedLayers,
-          groups: [],
+          groups: mergeGroupIds.size === 1
+            ? (f.groups || []).filter((group) => mergeGroupIds.has(group.id))
+            : [],
           active: active.id,
         },
         assets.current,
@@ -5950,6 +5953,7 @@ export default function Home() {
         ...mergedFrame.layers[0],
         visible: true,
         locked: false,
+        ...(mergeGroupIds.size === 1 ? { groupId: [...mergeGroupIds][0] } : {}),
       };
       const next = selectedPlan?.ok
         ? applySelectedLayerMerge(f, selectedPlan, merged)
@@ -10954,7 +10958,7 @@ export default function Home() {
         return !planLayerArrange(frame, 'back').ok;
       case 'merge-layers': {
         const selected = selectedIdsForFrame(frame);
-        if (selected.length >= 2)
+        if (selected.length >= 2 || Boolean(layer?.groupId))
           return !planSelectedLayerMerge(frame).ok;
         return !planLayerMerge(frame).ok;
       }

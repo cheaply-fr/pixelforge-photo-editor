@@ -82,6 +82,27 @@ test('plans a contiguous multi-selection in canonical stack order', () => {
   });
 });
 
+test('expands a complete folder selection into an isolated merge unit', () => {
+  const value = frame({
+    layers: [
+      { id: 'bottom', name: 'Bottom', kind: 'raster', visible: true, locked: false },
+      { id: 'folder-a', name: 'Folder A', kind: 'raster', visible: true, locked: false, groupId: 'folder' },
+      { id: 'outside', name: 'Outside', kind: 'raster', visible: true, locked: false },
+      { id: 'folder-b', name: 'Folder B', kind: 'text', visible: true, locked: false, groupId: 'folder' },
+    ],
+    active: 'folder-b',
+    selectedLayerIds: ['folder-a'],
+    groups: [{ id: 'folder', name: 'Folder', visible: true, locked: false, opacity: 0.8, blend: 'multiply', collapsed: false }],
+  });
+  assert.deepEqual(planSelectedLayerMerge(value), {
+    ok: true,
+    firstIndex: 1,
+    lastIndex: 3,
+    selectedIndices: [1, 3],
+    selectedLayerIds: ['folder-a', 'folder-b'],
+  });
+});
+
 test('multi-selection planner guards insufficient, missing, non-contiguous, grouped, hidden and locked inputs', () => {
   assert.equal(planSelectedLayerMerge(frame()).reason, 'insufficient-selection');
   assert.equal(

@@ -57,13 +57,14 @@ semantics; missing folder metadata fails closed. See
 [`layer-arrange-contract.md`](./layer-arrange-contract.md).
 
 **Layer → Merge Layers** now combines either the active layer with the immediately
-lower visible, unlocked, ungrouped layer or a contiguous selected root-level
-range of at least two visible, unlocked, ungrouped layers. The selected range
-is rendered through the normal transform, blend, opacity, adjustment, style
-and mask pipeline into one frame-sized raster while unaffected and hidden
-layers remain intact. The operation is undoable and source-safe; grouped,
-hidden, locked, non-contiguous and insufficient selections remain guarded, and
-partial artboard membership is rejected before rendering. Planning and guard coverage live
+lower visible, unlocked, ungrouped layer, a contiguous selected root-level
+range, or a complete selected folder. Folder members are rendered through the
+isolated group surface and the replacement retains the folder identity, so
+folder opacity/blend is applied once. The selected range is rendered through the
+normal transform, blend, opacity, adjustment, style and mask pipeline into one
+frame-sized raster while unaffected and hidden layers remain intact. The
+operation is undoable and source-safe; mixed folder/root, hidden, locked,
+non-contiguous and insufficient selections remain guarded, and partial artboard membership is rejected before rendering. Planning and guard coverage live
 in [`tests/layer-merge.test.mjs`](../tests/layer-merge.test.mjs), with the
 desktop/mobile pixel, history and project round-trip gate defined in
 [`docs/layer-merge-contract.md`](./layer-merge-contract.md).
@@ -81,8 +82,8 @@ or the active folder and spaces their painted centers without baking pixels. A b
 nondestructive vector-mask slice is now active for visible raster, Smart
 Object, text, shape and path layers; see
 [`vector-mask-contract.md`](./vector-mask-contract.md). Merge
-Layers now consumes a contiguous selected range through the same bounded render
-pipeline; folder-aware selected merges remain staged.
+Layers now consumes a contiguous selected range or a complete folder through the
+same bounded render pipeline.
 
 The current release gate records the pure-test total in CI (the release-artifact check is run after `write-release.mjs`) and the existing full browser baseline plus focused acceptance for the account menu, multi-input batch export, accessibility/reduced motion, selection refinement, local conflict recovery, release status, vertical type, worker encoding and worker document rendering. A performance-mark acceptance slice now verifies local `pixelforge.render`, `pixelforge.paint`, `pixelforge.save` and `pixelforge.export` measures on desktop and mobile after real interactions; marks are diagnostic only and never transmit document data. Batch export covers successful ZIPs, mixed valid/invalid files, per-file failure reporting and Escape cancellation. Account acceptance covers anonymous local-only identity, stable avatar/sign-in routes, authenticated projects/profile/logout routes and outside-click/Escape recovery. Accessibility acceptance covers focus-visible rings and reduced motion on desktop and mobile. Conflict recovery covers strict revision gating and the Reload newer draft path without creating a new bookmark. Authenticated cloud conflicts now retain typed project identity and offer an explicit, confirmed Reload latest cloud copy path after a rejected generation update, alongside Save as new cloud project; see [`cloud-conflict-contract.md`](./cloud-conflict-contract.md). Release status covers version display, matching release/readiness identity, degraded mismatches and offline local-editing fallback, polling recovery and status-cache bypass. Worker encoding covers bounded tile planning, OffscreenCanvas capability detection and a safe Canvas2D fallback. The worker document-render slice covers referenced-asset reduction, cancellation, monotonic completed-layer progress, forged or malformed responses, exact dimensions, pixel round trips and fallback when worker capability is unavailable; its protocol and limitations are recorded in [`worker-render-contract.md`](./worker-render-contract.md). Progress is deliberately a layer-pass indicator rather than streamed pixels or tiled rendering. Every shipped tool increment must update this evidence and pass its focused desktop/mobile acceptance suite before merge.
 
