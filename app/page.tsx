@@ -229,6 +229,8 @@ import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
 import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
 import { findSpellingHints } from '../src/spellcheck';
+import ColorSettingsDialog from '../src/ColorSettingsDialog';
+import { normalizeColorProfile, type ColorProfile } from '../src/colorProfile';
 import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
 import { purgeUndoHistory } from '../src/historyPurge';
 import {
@@ -502,6 +504,7 @@ type Command =
   | 'toolbar-settings'
   | 'update-text-layers'
   | 'spellcheck'
+  | 'color-settings'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -942,7 +945,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Define Pattern…', command: 'define-pattern' },
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Color Settings…', command: 'noop', disabled: true },
+    { label: 'Color Settings…', command: 'color-settings' },
     { label: 'Keyboard Shortcuts…', command: 'keyboard-shortcuts' },
     { label: 'Menus…', command: 'noop', disabled: true },
     { label: 'Toolbar…', command: 'toolbar-settings' },
@@ -1933,6 +1936,7 @@ export default function Home() {
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
     [spellcheckOpen, setSpellcheckOpen] = useState(false),
+    [colorSettingsOpen, setColorSettingsOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
       try {
@@ -11106,6 +11110,7 @@ export default function Home() {
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'spellcheck') return setSpellcheckOpen(true);
+    else if (command === 'color-settings') return setColorSettingsOpen(true);
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -12181,6 +12186,17 @@ export default function Home() {
       )}
       {spellcheckOpen && (
         <SpellcheckDialog layers={spellcheckLayers} close={() => setSpellcheckOpen(false)} />
+      )}
+      {colorSettingsOpen && (
+        <ColorSettingsDialog
+          value={normalizeColorProfile(frame?.colorProfile)}
+          close={() => setColorSettingsOpen(false)}
+          apply={(profile: ColorProfile) => {
+            const next = { ...current(), colorProfile: profile };
+            setColorSettingsOpen(false);
+            if (commit(next)) setNotice(`Working color profile set to ${profile === 'srgb' ? 'sRGB' : 'Display P3'}`);
+          }}
+        />
       )}
       {purgeHistoryOpen && (
         <PurgeHistoryDialog

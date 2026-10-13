@@ -42,6 +42,7 @@ import {
   type ImageSizeMetadata,
   type ResampleMethod,
 } from './imageSize.ts';
+import { validColorProfile, type ColorProfile } from './colorProfile.ts';
 import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
@@ -380,6 +381,8 @@ export type Selection = {
 export type Frame = {
   w: number;
   h: number;
+  /** Optional working color-profile label; omitted legacy frames default to sRGB. */
+  colorProfile?: ColorProfile;
   /** Optional print-size metadata; omitted in legacy drafts and defaults to 72 ppi. */
   imageSize?: ImageSizeMetadata;
   layers: Layer[];
@@ -1225,6 +1228,8 @@ export function validateFrame(
   )
     return fail();
   if (value.imageSize !== undefined && !validImageSizeMetadata(value.imageSize))
+    return fail();
+  if (value.colorProfile !== undefined && !validColorProfile(value.colorProfile))
     return fail();
   const ids = new Set<string>();
   if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();
