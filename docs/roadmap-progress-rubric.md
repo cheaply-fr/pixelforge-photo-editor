@@ -139,3 +139,12 @@ directional source-sampling approximation with editable amount, radius and angle
 metadata. Its pure and desktop/mobile tests cover deterministic directional
 output, source safety, alpha preservation and reload persistence; CI and live
 deployment remain independent release gates.
+
+The current vector increment replaces the earlier Work Path bounds approximation
+with a resolved-alpha contour tracer. `Type → Create Work Path` now preserves
+irregular silhouettes, disconnected islands and holes as bounded editable
+compound contours with an even-odd fill rule, while leaving selection and source
+pixels unchanged. Pure coverage includes malformed input and contour topology;
+desktop/mobile acceptance verifies the command, export and reload round trip.
+The 710-test local suite, typecheck, lint and production build pass for this
+candidate; protected CI, deployment and live acceptance remain separate gates.
