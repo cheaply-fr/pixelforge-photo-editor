@@ -54,6 +54,7 @@ import {
   normalizeCustomPatternPresets,
   type CustomPatternPreset,
 } from './customPatternPresets.ts';
+import { normalizeCustomShapePresets, type CustomShapePreset } from './customShapePresets.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 import {
   createDraftBundle,
@@ -147,6 +148,8 @@ export type Settings = {
   customBrushPresets?: CustomBrushPreset[];
   /** User-authored local Pattern Stamp presets; source pixels never leave the device. */
   customPatternPresets?: CustomPatternPreset[];
+  /** User-authored local vector shape presets; geometry remains editable. */
+  customShapePresets?: CustomShapePreset[];
   /** Spacing between brush dabs as a percent of diameter. */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -371,6 +374,8 @@ function validSettings(settings: unknown): settings is Settings {
       normalizeCustomBrushPresets(candidate.customBrushPresets).length !== candidate.customBrushPresets.length) ||
     (candidate.customPatternPresets !== undefined &&
       normalizeCustomPatternPresets(candidate.customPatternPresets).length !== candidate.customPatternPresets.length) ||
+    (candidate.customShapePresets !== undefined &&
+      normalizeCustomShapePresets(candidate.customShapePresets).length !== candidate.customShapePresets.length) ||
     (candidate.patternId !== undefined &&
       !PATTERN_IDS.includes(candidate.patternId as PatternId)) ||
     (candidate.redEyeThreshold !== undefined &&

@@ -123,6 +123,7 @@ import {
   normalizeCustomPatternPresets,
   type CustomPatternPreset,
 } from '../src/customPatternPresets';
+import { createCustomShapePreset, normalizeCustomShapePresets, type CustomShapeKind, type CustomShapePreset } from '../src/customShapePresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
 import { MATTING_MODES, effectiveMatting } from '../src/matting';
 import { cookieCutterPath, COOKIE_CUTTER_SHAPES, type CookieCutterShape } from '../src/cookieCutter';
@@ -499,6 +500,7 @@ type Command =
   | 'calculations'
   | 'define-brush-preset'
   | 'define-pattern'
+  | 'define-custom-shape'
   | 'keyboard-shortcuts'
   | 'filter-gallery'
   | 'toolbar-settings'
@@ -943,6 +945,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Define Brush Preset…', command: 'define-brush-preset' },
     { label: 'Define Pattern…', command: 'define-pattern' },
+    { label: 'Define Custom Shape…', command: 'define-custom-shape' },
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
     { label: 'Color Settings…', command: 'color-settings' },
@@ -1860,6 +1863,7 @@ export default function Home() {
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
+    [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -2202,6 +2206,7 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    customShapePresets,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -2269,6 +2274,7 @@ export default function Home() {
     setBrushPreset(s.brushPreset ?? 'round-hard');
     setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
+    setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -2321,6 +2327,7 @@ export default function Home() {
     setBrushPreset,
     setCustomBrushPresets,
     setCustomPatternPresets,
+    setCustomShapePresets,
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
@@ -2453,6 +2460,34 @@ export default function Home() {
       setNotice(`Pattern preset “${trimmed}” saved on this device`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Pattern preset could not be saved');
+    }
+  };
+  const applyCustomShapePreset = (preset: CustomShapePreset) => {
+    setTool(preset.kind as Tool);
+    setColor(preset.color);
+    setNotice(`Shape preset “${preset.label}” applied`);
+  };
+  const defineCustomShape = () => {
+    const label = window.prompt('Name this custom shape', 'Custom shape');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Custom shape name cannot be empty');
+      return;
+    }
+    const currentKind = ['rectangle', 'ellipse', 'line', 'polygon'].includes(tool) ? tool as CustomShapeKind : undefined;
+    const chosen = currentKind ?? window.prompt('Shape kind (rectangle, ellipse, line or polygon)', 'rectangle');
+    if (!chosen || !['rectangle', 'ellipse', 'line', 'polygon'].includes(chosen)) {
+      setNotice('Choose a supported custom shape kind');
+      return;
+    }
+    try {
+      const preset = createCustomShapePreset({ label: trimmed, kind: chosen as CustomShapeKind, color });
+      setCustomShapePresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      applyCustomShapePreset(preset);
+      setNotice(`Shape preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Custom shape could not be saved');
     }
   };
   const resetColors = () => {
@@ -5078,6 +5113,7 @@ export default function Home() {
         brushPreset,
         customBrushPresets,
         customPatternPresets,
+        customShapePresets,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -5171,6 +5207,7 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    customShapePresets,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -11105,6 +11142,7 @@ export default function Home() {
     else if (command === 'calculations') return calculateImage();
     else if (command === 'define-brush-preset') return defineBrushPreset();
     else if (command === 'define-pattern') return definePattern();
+    else if (command === 'define-custom-shape') return defineCustomShape();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
@@ -13813,6 +13851,24 @@ export default function Home() {
                     onChange={(event) => setGradientReverse(event.target.checked)}
                   />
                   Reverse gradient
+                </label>
+              )}
+              {(tool === 'rectangle' || tool === 'ellipse' || tool === 'line' || tool === 'polygon') && customShapePresets.length > 0 && (
+                <label className="select-row">
+                  <span>Saved shape preset</span>
+                  <select
+                    aria-label="Saved shape preset"
+                    defaultValue=""
+                    onChange={(event) => {
+                      const preset = customShapePresets.find((item) => item.id === event.target.value);
+                      if (preset) applyCustomShapePreset(preset);
+                    }}
+                  >
+                    <option value="">Choose saved preset</option>
+                    {customShapePresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label} ({preset.kind})</option>
+                    ))}
+                  </select>
                 </label>
               )}
               {tool !== 'magic-eraser' && (
