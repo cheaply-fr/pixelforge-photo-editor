@@ -1701,6 +1701,7 @@ export default function Home() {
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
+    [gradientMode, setGradientMode] = useState<'linear' | 'radial'>('linear'),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -2012,6 +2013,7 @@ export default function Home() {
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
+    gradientMode,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2064,6 +2066,7 @@ export default function Home() {
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
+    setGradientMode(s.gradientMode ?? 'linear');
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2101,6 +2104,7 @@ export default function Home() {
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
+    setGradientMode,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -4430,6 +4434,7 @@ export default function Home() {
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
+        gradientMode,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4508,6 +4513,7 @@ export default function Home() {
     brushSpacing,
     brushSmoothing,
     brushScatter,
+    gradientMode,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -9166,12 +9172,21 @@ export default function Home() {
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
         const context = buffer.getContext('2d')!,
-          gradient = context.createLinearGradient(
-            g.start.x,
-            g.start.y,
-            local.x,
-            local.y,
-          );
+          gradient = gradientMode === 'radial'
+            ? context.createRadialGradient(
+              g.start.x,
+              g.start.y,
+              0,
+              g.start.x,
+              g.start.y,
+              Math.max(1, Math.hypot(local.x - g.start.x, local.y - g.start.y)),
+            )
+            : context.createLinearGradient(
+              g.start.x,
+              g.start.y,
+              local.x,
+              local.y,
+            );
         gradient.addColorStop(0, color);
         gradient.addColorStop(1, '#ffffff00');
         context.fillStyle = gradient;
@@ -12317,12 +12332,26 @@ export default function Home() {
             tool === 'art-history-brush' ||
             tool === 'selection-brush' ||
             tool === 'quick-selection' ||
+            tool === 'gradient' ||
             tool === 'rectangle' ||
             tool === 'ellipse' ||
             tool === 'line' ||
             tool === 'polygon') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
+              {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient type</span>
+                  <select
+                    aria-label="Gradient type"
+                    value={gradientMode}
+                    onChange={(event) => setGradientMode(event.target.value as 'linear' | 'radial')}
+                  >
+                    <option value="linear">Linear</option>
+                    <option value="radial">Radial</option>
+                  </select>
+                </label>
+              )}
               {tool !== 'magic-eraser' && (
                 <Slider
                   label="Size"

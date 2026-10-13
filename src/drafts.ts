@@ -139,6 +139,8 @@ export type Settings = {
   brushSmoothing?: number;
   /** Deterministic brush stamp scatter amount, from 0 to 100. */
   brushScatter?: number;
+  /** Gradient geometry for the Gradient tool. */
+  gradientMode?: 'linear' | 'radial';
   /** Brush tip rotation in degrees. */
   angle?: number;
   /** Brush tip roundness (100 is circular). */
@@ -366,6 +368,7 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
+  if (candidate.gradientMode !== undefined && !['linear', 'radial'].includes(candidate.gradientMode)) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;

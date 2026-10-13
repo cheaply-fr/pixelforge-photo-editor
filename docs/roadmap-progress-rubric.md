@@ -54,3 +54,10 @@ offset without global randomness; pure coverage is in
 `tests/brush-dynamics.test.mjs`, with desktop/mobile project-file coverage in
 `tests/browser/brush-dynamics.spec.ts`. Texture, dual-brush, bristle and
 wet-media dynamics remain staged.
+
+The Gradient tool now exposes persisted Linear and Radial geometry. Radial
+mode uses the drag start as its centre and drag distance as its radius while
+retaining source-safe undoable commits. Desktop/mobile UI, pixel-change,
+reload and project-file coverage is in
+`tests/browser/gradient-modes.spec.ts`; limitations are recorded in
+`docs/gradient-mode-contract.md`.
