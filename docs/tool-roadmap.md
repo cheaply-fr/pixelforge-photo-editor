@@ -268,3 +268,6 @@ The vector interoperability increment adds `Layer → Copy SVG` for path, rectan
 
 
 **Edit → Toggle Last State** is active as a repeatable switch between the current and immediately previous editable history frames, preserving the existing history stack and render cancellation contract.
+
+
+**Type → Paste Lorem Ipsum** is active as a local editable text-layer insertion with bounded box/font defaults, anonymous-draft persistence and desktop/mobile round-trip coverage. Provider fonts and full OpenType shaping remain staged.

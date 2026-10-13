@@ -543,6 +543,7 @@ type Command =
   | 'create-work-path'
   | 'text-mask-horizontal'
   | 'text-mask-vertical'
+  | 'paste-lorem'
   | 'select-all'
   | 'select-all-layers'
   | 'deselect-layers'
@@ -1026,7 +1027,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Language Options', command: 'noop', disabled: true },
     { label: 'Update All Text Layers', command: 'noop', disabled: true },
     { label: 'Manage Missing Fonts', command: 'noop', disabled: true },
-    { label: 'Paste Lorem Ipsum', command: 'noop', disabled: true },
+    { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
     { label: 'Load Default Type Styles', command: 'noop', disabled: true },
     { label: 'Save Default Type Styles', command: 'noop', disabled: true },
   ],
@@ -3221,6 +3222,29 @@ export default function Home() {
     const verticalInput = window.prompt('Vertical distortion (-100 to 100)', String(currentWarp.vertical));
     if (verticalInput === null) return;
     editLayer({ warp: normalizeTextWarp({ ...currentWarp, style, bend: Number(bendInput), vertical: Number(verticalInput) }) });
+  };
+  const pasteLoremIpsum = () => {
+    const f = current();
+    if (f.layers.length >= 32) {
+      setNotice('Layer limit reached; remove a layer before inserting text');
+      return;
+    }
+    const layer = addLayer({
+      ...commonLayer(`Lorem Ipsum ${f.layers.length}`),
+      kind: 'text',
+      text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n\nSed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
+      fontSize: Math.max(12, Math.min(96, fontSize)),
+      fontFamily: 'Arial',
+      bold: false,
+      color,
+      boxWidth: Math.max(240, Math.min(720, f.w - 128)),
+      textAlign: 'left',
+      lineHeight: 1.35,
+      letterSpacing: 0,
+      orientation: 'horizontal',
+      matrix: [1, 0, 0, 1, Math.min(64, Math.max(0, f.w - 240)), Math.min(96, Math.max(0, f.h - 96))],
+    });
+    if (layer) setNotice('Editable Lorem Ipsum text layer added');
   };
   const editGroup = (id: string, patch: Partial<Group>) => {
     if (quickMasking) {
@@ -10789,6 +10813,7 @@ export default function Home() {
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
     else if (command === 'text-warp') setTextWarp();
+    else if (command === 'paste-lorem') pasteLoremIpsum();
     else if (command === 'convert-to-shape') return convertTextToShape();
     else if (command === 'rasterize-type') {
       const layer = current().layers.find((item) => item.id === current().active);
@@ -11403,6 +11428,8 @@ export default function Home() {
       case 'text-orientation-vertical':
       case 'text-warp':
         return !layer || layer.kind !== 'text' || locked;
+      case 'paste-lorem':
+        return frame.layers.length >= 32;
       case 'convert-to-shape':
         return !layer || layer.kind !== 'text' || locked || !layer.visible;
       case 'rasterize-type':
