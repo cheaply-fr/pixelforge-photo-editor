@@ -54,6 +54,25 @@ test('local Path and Spin Blur commands record and round-trip through the action
   assert.deepEqual(parseActionSets(serializeActionSets([spin])), [spin]);
 });
 
+test('filter geometry parameters survive Action serialization without source data', () => {
+  const source = createActionSet('Geometry pass', 'geometry-action', now);
+  const action = appendActionStep(
+    source,
+    'filter-field-blur',
+    'Field Blur',
+    {
+      amount: 85,
+      filterExtra: JSON.stringify({ fieldPoints: [{ x: 0.25, y: 0.75, radius: 18 }] }),
+    },
+    'geometry-step',
+    now,
+  );
+  const parsed = parseActionSets(serializeActionSets([action]));
+  assert.deepEqual(parsed, [action]);
+  assert.equal(validActionSets(parsed), true);
+  assert.equal(JSON.stringify(parsed).includes('data:'), false);
+});
+
 test('Pointillize records as a replayable local pixelate command', async () => {
   const original = createActionSet('Stipple finish', 'pointillize-action', now);
   const action = appendActionStep(
