@@ -223,6 +223,7 @@ import { replaceTextLayers } from '../src/textReplace';
 import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
 import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
 import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGalleryDialog';
+import ToolbarSettingsDialog, { type ToolbarColumns } from '../src/ToolbarSettingsDialog';
 import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
 import { purgeUndoHistory } from '../src/historyPurge';
 import {
@@ -493,6 +494,7 @@ type Command =
   | 'define-pattern'
   | 'keyboard-shortcuts'
   | 'filter-gallery'
+  | 'toolbar-settings'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -936,7 +938,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Color Settings…', command: 'noop', disabled: true },
     { label: 'Keyboard Shortcuts…', command: 'keyboard-shortcuts' },
     { label: 'Menus…', command: 'noop', disabled: true },
-    { label: 'Toolbar…', command: 'noop', disabled: true },
+    { label: 'Toolbar…', command: 'toolbar-settings' },
     { label: 'Reset adjustments', command: 'reset' },
   ],
   Image: [
@@ -1912,6 +1914,14 @@ export default function Home() {
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
     [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
+    [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
+    [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => {
+      if (typeof window === 'undefined') return 'auto';
+      try {
+        const value = window.localStorage.getItem('pixelforge.toolbar-columns');
+        return value === '2' || value === '3' ? value : 'auto';
+      } catch { return 'auto'; }
+    }),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
@@ -11084,6 +11094,7 @@ export default function Home() {
     else if (command === 'define-pattern') return definePattern();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
+    else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -12119,6 +12130,18 @@ export default function Home() {
           }}
         />
       )}
+      {toolbarSettingsOpen && (
+        <ToolbarSettingsDialog
+          value={toolbarColumns}
+          close={() => setToolbarSettingsOpen(false)}
+          apply={(next) => {
+            setToolbarColumns(next);
+            setToolbarSettingsOpen(false);
+            try { window.localStorage.setItem('pixelforge.toolbar-columns', next); } catch { /* private mode */ }
+            setNotice(`Toolbar set to ${next === 'auto' ? 'automatic' : `${next} columns`}`);
+          }}
+        />
+      )}
       {purgeHistoryOpen && (
         <PurgeHistoryDialog
           close={() => setPurgeHistoryOpen(false)}
@@ -12316,6 +12339,7 @@ export default function Home() {
           className="toolbar"
           aria-label="Tools"
           data-testid="tool-palette"
+          data-toolbar-columns={toolbarColumns}
         >
           {TOOL_CATEGORIES.map((category) => {
             const compactTools = compactCategoryTools(category, tool, toolFamilyChoices);
