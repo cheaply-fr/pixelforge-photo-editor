@@ -709,6 +709,7 @@ type Command =
   | 'filter-wind'
   | 'filter-gradient-map'
   | 'filter-median'
+  | 'filter-dust-scratches'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1164,6 +1165,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Noise', command: 'noop', disabled: true },
     { label: 'Add Noise…', command: 'sharpen-noise' },
     { label: 'Median…', command: 'filter-median' },
+    { label: 'Dust & Scratches…', command: 'filter-dust-scratches' },
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
     { label: 'Crystallize…', command: 'filter-crystallize' },
@@ -4995,7 +4997,7 @@ export default function Home() {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -5025,6 +5027,8 @@ export default function Home() {
                     : type === 'gradient-map'
                     ? 1
                     : type === 'median'
+                    ? 2
+                    : type === 'dust-scratches'
                     ? 2
                     : type === 'lens-correction'
                       ? 64
@@ -11622,6 +11626,8 @@ export default function Home() {
       chooseFilterEffect('gradient-map', 'Gradient Map (local tonal mapping)');
     else if (command === 'filter-median')
       chooseFilterEffect('median', 'Median (local noise reduction)');
+    else if (command === 'filter-dust-scratches')
+      chooseFilterEffect('dust-scratches', 'Dust & Scratches (local outlier cleanup)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -14887,6 +14893,9 @@ export default function Home() {
             {filterEffects.type === 'median' && (
               <p>Bounded median neighbourhood noise reduction. Visible source pixels are sampled without pulling RGB from transparent neighbours; radius and amount remain editable.</p>
             )}
+            {filterEffects.type === 'dust-scratches' && (
+              <p>Bounded local outlier cleanup. Pixels farther than the threshold from their visible neighbourhood median are blended toward that median; radius, threshold and amount remain editable.</p>
+            )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
@@ -14914,6 +14923,15 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
+                {filterEffects.type === 'dust-scratches' && (
+                  <Slider
+                    label="Outlier threshold"
+                    value={filterEffects.threshold ?? 12}
+                    min={0}
+                    max={255}
+                    set={(value) => setFilterEffects({ threshold: value })}
+                  />
+                )}
                 {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && <Slider
                   label={
                     filterEffects.type === 'fibers'

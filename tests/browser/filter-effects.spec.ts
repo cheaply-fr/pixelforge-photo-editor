@@ -295,6 +295,34 @@ test('Median is a nondestructive noise filter with editable persistence', async 
   await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
 });
 
+test('Dust & Scratches removes strong local outliers with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Dust & Scratches…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('dust-scratches');
+  await expect(page.getByLabel('Radius', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Outlier threshold', { exact: true })).toHaveValue('12');
+  await page.getByLabel('Outlier threshold', { exact: true }).fill('10');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'dust-scratches', amount: 100, radius: 2, threshold: 10 });
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('dust-scratches');
+  await expect(page.getByLabel('Outlier threshold', { exact: true })).toHaveValue('10');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+});
+
 test('Gaussian Blur uses bounded tiled rendering and preserves the editable source', async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;

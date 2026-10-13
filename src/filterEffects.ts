@@ -64,6 +64,7 @@ export const FILTER_EFFECT_TYPES = [
   'ntsc-colors',
   'gradient-map',
   'median',
+  'dust-scratches',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -208,6 +209,8 @@ export type FilterEffects = {
   fibers?: FibersSettings;
   tree?: TreeSettings;
   gradientMap?: GradientMapSettings;
+  /** Threshold for the local Dust & Scratches outlier detector. */
+  threshold?: number;
   deinterlace?: DeinterlaceSettings;
 };
 
@@ -347,6 +350,9 @@ export function effectiveFilterEffects(
         : DEFAULT_GRADIENT_MAP_SETTINGS.highlight,
     };
   }
+  if (type === 'dust-scratches') {
+    normalized.threshold = finite(source.threshold) ? clamp(Math.round(source.threshold), 0, 255) : 12;
+  }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
@@ -431,6 +437,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
@@ -3056,6 +3063,43 @@ function applyMedian(
   }
 }
 
+/** Bounded Dust & Scratches approximation: replace only local tonal outliers. */
+function applyDustScratches(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const threshold = clamp(Math.round(effect.threshold ?? 12), 0, 255);
+  const samples: number[][] = [[], [], []];
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    const alpha = source[offset + 3];
+    if (alpha === 0) continue;
+    samples[0].length = 0; samples[1].length = 0; samples[2].length = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (source[sample + 3] === 0) continue;
+        samples[0].push(source[sample]); samples[1].push(source[sample + 1]); samples[2].push(source[sample + 2]);
+      }
+    const medians = samples.map((channel) => {
+      if (!channel.length) return 0;
+      channel.sort((a, b) => a - b);
+      return channel[Math.floor(channel.length / 2)];
+    });
+    const distance = Math.max(Math.abs(source[offset] - medians[0]), Math.abs(source[offset + 1] - medians[1]), Math.abs(source[offset + 2] - medians[2]));
+    if (distance <= threshold) continue;
+    const mix = clamp(strength, 0, 1);
+    output[offset] = clampByte(source[offset] + (medians[0] - source[offset]) * mix);
+    output[offset + 1] = clampByte(source[offset + 1] + (medians[1] - source[offset + 1]) * mix);
+    output[offset + 2] = clampByte(source[offset + 2] + (medians[2] - source[offset + 2]) * mix);
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -3159,6 +3203,8 @@ export function applyFilterEffectsPixels(
     applyGradientMap(data, effect, output, strength);
   } else if (effect.type === 'median') {
     applyMedian(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'dust-scratches') {
+    applyDustScratches(data, width, height, effect, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {
