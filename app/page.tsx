@@ -12854,6 +12854,7 @@ export default function Home() {
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'sharpen-more' ||
+                          filterEffects.type === 'sharpen-edges' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||
