@@ -62,6 +62,13 @@ Pure coverage is in `tests/brush-texture.test.mjs`, browser persistence coverage
 is in `tests/browser/brush-texture.spec.ts`, and limitations are documented in
 `docs/brush-texture-contract.md`.
 
+Brush-family controls now also include a persisted deterministic Dual brush
+amount. It applies a bounded secondary opacity weave to each local stamp while
+preserving the zero-value path and source-safe commit boundary. Pure coverage is
+in `tests/brush-dual.test.mjs`, with desktop/mobile project-file coverage in
+`tests/browser/brush-dynamics.spec.ts`; full secondary tip selection, bristle
+and wet-media simulation remain staged.
+
 Brush-family controls also include a persisted Flow amount that scales local
 dab opacity independently from overall Opacity. `tests/browser/brush-flow.spec.ts`
 covers the accessible control and project-file round-trip; the setting defaults

@@ -147,6 +147,8 @@ export type Settings = {
   gradientMidpoint?: string;
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
+  /** Deterministic secondary-brush modulation amount, from 0 to 100. */
+  brushDual?: number;
   /** Brush-family flow amount, from 1 to 100 percent. */
   brushFlow?: number;
   /** Brush tip rotation in degrees. */
@@ -369,6 +371,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.brushSmoothing ?? 0, 0, 100] as [number, number, number],
     [candidate.brushScatter ?? 0, 0, 100] as [number, number, number],
     [candidate.brushTexture ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushDual ?? 0, 0, 100] as [number, number, number],
     [candidate.brushFlow ?? 100, 1, 100] as [number, number, number],
   ];
   if (candidate.patternTileSize !== undefined) {
