@@ -46,6 +46,10 @@ import {
 } from './patternStamp.ts';
 import { isGradientStops, type GradientStop } from './gradientStops.ts';
 import { normalizeSecondaryBrushPreset } from './brushSecondary.ts';
+import {
+  normalizeCustomBrushPresets,
+  type CustomBrushPreset,
+} from './customBrushPresets.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 import {
   createDraftBundle,
@@ -135,6 +139,8 @@ export type Settings = {
   pressureOpacity?: boolean;
   /** Optional deterministic local Brush preset selected in the tool panel. */
   brushPreset?: BrushPresetId;
+  /** User-authored local brush presets; pixels and remote references are never stored. */
+  customBrushPresets?: CustomBrushPreset[];
   /** Spacing between brush dabs as a percent of diameter. */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -355,6 +361,8 @@ function validSettings(settings: unknown): settings is Settings {
     !validBrushPressureSettings(candidate) ||
     !validBrushTipSettings(candidate) ||
     (candidate.brushPreset !== undefined && !validBrushPresetId(candidate.brushPreset)) ||
+    (candidate.customBrushPresets !== undefined &&
+      normalizeCustomBrushPresets(candidate.customBrushPresets).length !== candidate.customBrushPresets.length) ||
     (candidate.patternId !== undefined &&
       !PATTERN_IDS.includes(candidate.patternId as PatternId)) ||
     (candidate.redEyeThreshold !== undefined &&

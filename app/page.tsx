@@ -112,6 +112,11 @@ import {
   type CalculationMode,
 } from '../src/applyImage';
 import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
+import {
+  createCustomBrushPreset,
+  normalizeCustomBrushPresets,
+  type CustomBrushPreset,
+} from '../src/customBrushPresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
 import { MATTING_MODES, effectiveMatting } from '../src/matting';
 import { cookieCutterPath, COOKIE_CUTTER_SHAPES, type CookieCutterShape } from '../src/cookieCutter';
@@ -477,6 +482,7 @@ type Command =
   | 'find-replace-text'
   | 'apply-image'
   | 'calculations'
+  | 'define-brush-preset'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -913,7 +919,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Puppet Warp', command: 'noop', disabled: true },
     { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Define Brush Preset…', command: 'noop', disabled: true },
+    { label: 'Define Brush Preset…', command: 'define-brush-preset' },
     { label: 'Define Pattern…', command: 'noop', disabled: true },
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
@@ -1830,6 +1836,7 @@ export default function Home() {
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
+    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -2157,6 +2164,7 @@ export default function Home() {
     pressureSize,
     pressureOpacity,
     brushPreset,
+    customBrushPresets,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -2222,6 +2230,7 @@ export default function Home() {
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
     setBrushPreset(s.brushPreset ?? 'round-hard');
+    setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -2272,6 +2281,7 @@ export default function Home() {
     setPressureSize,
     setPressureOpacity,
     setBrushPreset,
+    setCustomBrushPresets,
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
@@ -2325,6 +2335,57 @@ export default function Home() {
     setPressureSize(preset.pressureSize);
     setPressureOpacity(preset.pressureOpacity);
     setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const applyCustomBrushPreset = (preset: CustomBrushPreset) => {
+    setSize(preset.size);
+    setHardness(preset.hardness);
+    setBrushSpacing(preset.spacing);
+    setBrushAngle(preset.angle);
+    setBrushRoundness(preset.roundness);
+    setBrushFlipX(preset.flipX);
+    setBrushFlipY(preset.flipY);
+    setPressureSize(preset.pressureSize);
+    setPressureOpacity(preset.pressureOpacity);
+    setBrushSmoothing(preset.brushSmoothing);
+    setBrushScatter(preset.brushScatter);
+    setBrushTexture(preset.brushTexture);
+    setBrushDual(preset.brushDual);
+    setBrushBristle(preset.brushBristle);
+    setBrushFlow(preset.brushFlow);
+    setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const defineBrushPreset = () => {
+    const label = window.prompt('Name this brush preset', 'Custom brush');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Brush preset name cannot be empty');
+      return;
+    }
+    try {
+      const preset = createCustomBrushPreset(crypto.randomUUID(), trimmed, {
+        size,
+        hardness,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
+        pressureSize,
+        pressureOpacity,
+        brushSmoothing,
+        brushScatter,
+        brushTexture,
+        brushDual,
+        brushBristle,
+        brushFlow,
+      });
+      setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      applyCustomBrushPreset(preset);
+      setNotice(`Brush preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Brush preset could not be saved');
+    }
   };
   const resetColors = () => {
     setColor('#000000');
@@ -4947,6 +5008,7 @@ export default function Home() {
         pressureSize,
         pressureOpacity,
         brushPreset,
+        customBrushPresets,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -5038,6 +5100,7 @@ export default function Home() {
     pressureSize,
     pressureOpacity,
     brushPreset,
+    customBrushPresets,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -10970,6 +11033,7 @@ export default function Home() {
     else if (command === 'fade') return fadeLastEdit();
     else if (command === 'apply-image') return applyImage();
     else if (command === 'calculations') return calculateImage();
+    else if (command === 'define-brush-preset') return defineBrushPreset();
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -13632,22 +13696,44 @@ export default function Home() {
                 tool === 'quick-selection') && (
                 <>
                   {(tool === 'brush' || tool === 'pencil') && (
-                    <label className="select-row">
-                      <span>Brush preset</span>
-                      <select
-                        aria-label="Brush preset"
-                        value={brushPreset}
-                        onChange={(event) =>
-                          applyBrushPreset(event.target.value as BrushPresetId)
-                        }
-                      >
-                        {BRUSH_PRESETS.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
-                            {preset.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <>
+                      <label className="select-row">
+                        <span>Brush preset</span>
+                        <select
+                          aria-label="Brush preset"
+                          value={brushPreset}
+                          onChange={(event) =>
+                            applyBrushPreset(event.target.value as BrushPresetId)
+                          }
+                        >
+                          {BRUSH_PRESETS.map((preset) => (
+                            <option key={preset.id} value={preset.id}>
+                              {preset.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {customBrushPresets.length > 0 && (
+                        <label className="select-row">
+                          <span>Saved brush preset</span>
+                          <select
+                            aria-label="Saved brush preset"
+                            defaultValue=""
+                            onChange={(event) => {
+                              const preset = customBrushPresets.find((item) => item.id === event.target.value);
+                              if (preset) applyCustomBrushPreset(preset);
+                            }}
+                          >
+                            <option value="">Choose saved preset</option>
+                            {customBrushPresets.map((preset) => (
+                              <option key={preset.id} value={preset.id}>
+                                {preset.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                    </>
                   )}
                   {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
                     <label className="select-row">
