@@ -247,6 +247,7 @@ import {
   type ActionSet,
   type ActionStep,
 } from '../src/actions';
+import { filterActionParameters } from '../src/filterActionParameters';
 import {
   describeImportFormat,
   importFailureMessage,
@@ -2181,6 +2182,9 @@ export default function Home() {
             action,
             command,
             menuItem?.label || command,
+            command.startsWith('filter-')
+              ? filterActionParameters(filterEffects)
+              : undefined,
           );
         } catch {
           return action;

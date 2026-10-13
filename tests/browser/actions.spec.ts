@@ -220,6 +220,7 @@ test('applies an active nondestructive filter Action to a flattened batch', asyn
   await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
   await openActions(page);
   await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Parameterized filter', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Batch…', exact: true }).click();
   await page.getByTestId('batch-image-input').setInputFiles({
     name: 'batch-noise.png',
@@ -263,6 +264,31 @@ test('applies an enabled blur-family Action to a flattened batch', async ({ page
   const download = await pending;
   expect(download.suggestedFilename()).toMatch(/pixelforge-images-batch\.zip$/);
   expect(await download.failure()).toBeNull();
+});
+
+test('persists normalized filter controls in recorded Actions', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Parameterized filter');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  const parameters = await page.evaluate(() => {
+    const payload = JSON.parse(window.localStorage.getItem('pixelforge.actions.v1') || '{"actions":[]}');
+    const actions = payload.actions || [];
+    const action = actions[actions.length - 1];
+    const steps = action?.steps || [];
+    return steps[steps.length - 1]?.parameters;
+  });
+  expect(parameters).toMatchObject({
+    amount: expect.any(Number),
+    radius: expect.any(Number),
+    seed: expect.any(Number),
+    noiseMonochromatic: false,
+    noiseDistribution: 'uniform',
+  });
 });
 
 test('records and replays the Fibers Render command', async ({ page }) => {
