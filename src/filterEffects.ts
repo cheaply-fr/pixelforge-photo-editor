@@ -51,6 +51,7 @@ export const FILTER_EFFECT_TYPES = [
   'lens-flare',
   'flame',
   'find-edges',
+  'emboss',
   'deinterlace',
   'ntsc-colors',
 ] as const;
@@ -1846,6 +1847,44 @@ function applyFlame(
 }
 
 /**
+ * Apply a bounded directional Emboss approximation.
+ *
+ * A signed luminance gradient is converted to a neutral relief tone and
+ * blended over visible source pixels. Angle controls the light direction and
+ * amount controls relief strength; alpha and transparent RGB remain source
+ * owned, making the effect safe for nondestructive local drafts.
+ */
+function applyEmboss(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radians = (effect.angle * Math.PI) / 180;
+  const lightX = Math.cos(radians), lightY = Math.sin(radians);
+  const depth = Math.max(1, Math.min(8, Math.round(effect.radius / 8)));
+  const luminance = (x: number, y: number): number => {
+    const sx = clamp(Math.round(x), 0, width - 1), sy = clamp(Math.round(y), 0, height - 1);
+    const offset = (sy * width + sx) * 4;
+    return (source[offset] * 54 + source[offset + 1] * 183 + source[offset + 2] * 19) / 256;
+  };
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    const alpha = source[offset + 3];
+    if (!alpha) continue;
+    const forward = luminance(x + lightX * depth, y + lightY * depth);
+    const backward = luminance(x - lightX * depth, y - lightY * depth);
+    const relief = clamp(128 + (forward - backward) * 1.6, 0, 255);
+    output[offset] = clampByte(source[offset] * (1 - strength) + relief * strength);
+    output[offset + 1] = clampByte(source[offset + 1] * (1 - strength) + relief * strength);
+    output[offset + 2] = clampByte(source[offset + 2] * (1 - strength) + relief * strength);
+    output[offset + 3] = alpha;
+  }
+}
+
+/**
  * Apply a bounded seeded Tree approximation for Render → Tree.
  *
  * The renderer creates a small recursive branch graph and deterministic leaf
@@ -2759,6 +2798,8 @@ export function applyFilterEffectsPixels(
     applyFlame(data, width, height, effect, output, strength);
   } else if (effect.type === 'find-edges') {
     applyFindEdges(data, width, height, output, strength);
+  } else if (effect.type === 'emboss') {
+    applyEmboss(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
