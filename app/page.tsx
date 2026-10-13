@@ -312,6 +312,11 @@ import {
   bristleOpacity,
 } from '../src/brushBristle';
 import {
+  normalizeSecondaryBrushPreset,
+  secondaryBrushOpacity,
+  type SecondaryBrushPreset,
+} from '../src/brushSecondary';
+import {
   GRADIENT_DITHER_DEFAULT,
   applyGradientDither,
 } from '../src/gradientDither';
@@ -1240,6 +1245,7 @@ type StampCanvasOptions = {
   scatter?: number;
   texture?: number;
   dual?: number;
+  secondaryPreset?: SecondaryBrushPreset;
   bristle?: number;
   angle?: number;
   roundness?: number;
@@ -1318,8 +1324,39 @@ const stampCanvas = (
     sourceX,
     sourceY,
   });
-  if (result.changed) context.putImageData(image, left, top);
-  return result.changed;
+  let changed = result.changed;
+  const secondary = options.secondaryPreset && options.secondaryPreset !== 'none'
+    ? brushPresetById(options.secondaryPreset)
+    : undefined;
+  const secondaryOpacity = secondaryBrushOpacity(options.dual);
+  if (secondary && secondaryOpacity > 0) {
+    const secondaryResult = applyRadialStamp(image.data, {
+      width,
+      height,
+      x: options.x - left,
+      y: options.y - top,
+      size: secondary.size,
+      hardness: secondary.hardness,
+      opacity: texturedOpacity * secondaryOpacity,
+      pointerType: options.pointerType,
+      pressure: options.pressure,
+      pressureSize: secondary.pressureSize,
+      pressureOpacity: secondary.pressureOpacity,
+      spacing: secondary.spacing,
+      angle: secondary.angle,
+      roundness: secondary.roundness,
+      flipX: secondary.flipX,
+      flipY: secondary.flipY,
+      mode: options.mode,
+      color: options.color,
+      source,
+      sourceX,
+      sourceY,
+    });
+    changed = secondaryResult.changed || changed;
+  }
+  if (changed) context.putImageData(image, left, top);
+  return changed;
 };
 
 /** Stamp a line at bounded intervals so fast pointer moves remain continuous. */
@@ -1747,6 +1784,7 @@ export default function Home() {
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
     [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
+    [secondaryBrushPreset, setSecondaryBrushPreset] = useState<SecondaryBrushPreset>('none'),
     [brushFlow, setBrushFlow] = useState(100),
     [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
@@ -2070,6 +2108,7 @@ export default function Home() {
     brushTexture,
     brushDual,
     brushBristle,
+    secondaryBrushPreset,
     brushFlow,
     gradientMode,
     gradientEnd,
@@ -2134,6 +2173,7 @@ export default function Home() {
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
     setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
+    setSecondaryBrushPreset(normalizeSecondaryBrushPreset(s.secondaryBrushPreset));
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
     setGradientEnd(s.gradientEnd ?? 'transparent');
@@ -2183,6 +2223,7 @@ export default function Home() {
     setBrushTexture,
     setBrushDual,
     setBrushBristle,
+    setSecondaryBrushPreset,
     setBrushFlow,
     setGradientMode,
     setGradientEnd,
@@ -4656,6 +4697,7 @@ export default function Home() {
         brushTexture,
         brushDual,
         brushBristle,
+        secondaryBrushPreset,
         brushFlow,
         gradientMode,
         gradientEnd,
@@ -4746,6 +4788,7 @@ export default function Home() {
     brushTexture,
     brushDual,
     brushBristle,
+    secondaryBrushPreset,
     brushFlow,
     gradientMode,
     gradientEnd,
@@ -8060,6 +8103,7 @@ export default function Home() {
               scatter: brushScatter,
               texture: brushTexture,
               dual: brushDual,
+              secondaryPreset: secondaryBrushPreset,
               bristle: brushBristle,
               angle: brushAngle,
               roundness: tool === 'pencil' ? 100 : brushRoundness,
@@ -8600,6 +8644,7 @@ export default function Home() {
         scatter: brushScatter,
         texture: brushTexture,
         dual: brushDual,
+        secondaryPreset: secondaryBrushPreset,
         bristle: brushBristle,
         angle: brushAngle,
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
@@ -9197,6 +9242,7 @@ export default function Home() {
           scatter: brushScatter,
           texture: brushTexture,
           dual: brushDual,
+          secondaryPreset: secondaryBrushPreset,
           bristle: brushBristle,
           angle: brushAngle,
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
@@ -12808,6 +12854,23 @@ export default function Home() {
                       >
                         {BRUSH_PRESETS.map((preset) => (
                           <option key={preset.id} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+                    <label className="select-row">
+                      <span>Secondary brush tip</span>
+                      <select
+                        aria-label="Secondary brush tip"
+                        value={secondaryBrushPreset}
+                        onChange={(event) => setSecondaryBrushPreset(normalizeSecondaryBrushPreset(event.target.value))}
+                      >
+                        <option value="none">None</option>
+                        {BRUSH_PRESETS.map((preset) => (
+                          <option key={`secondary-${preset.id}`} value={preset.id}>
                             {preset.label}
                           </option>
                         ))}

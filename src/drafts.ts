@@ -45,6 +45,7 @@ import {
   type PatternId,
 } from './patternStamp.ts';
 import { isGradientStops, type GradientStop } from './gradientStops.ts';
+import { normalizeSecondaryBrushPreset } from './brushSecondary.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 import {
   createDraftBundle,
@@ -160,6 +161,8 @@ export type Settings = {
   brushTexture?: number;
   /** Deterministic secondary-brush modulation amount, from 0 to 100. */
   brushDual?: number;
+  /** Optional second brush tip used with the Dual brush amount. */
+  secondaryBrushPreset?: 'none' | BrushPresetId;
   /** Deterministic bristle-like modulation amount, from 0 to 100. */
   brushBristle?: number;
   /** Brush-family flow amount, from 1 to 100 percent. */
@@ -404,6 +407,7 @@ function validSettings(settings: unknown): settings is Settings {
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
   if (candidate.gradientReverse !== undefined && typeof candidate.gradientReverse !== 'boolean') return false;
   if (candidate.gradientStops !== undefined && !isGradientStops(candidate.gradientStops)) return false;
+  if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;

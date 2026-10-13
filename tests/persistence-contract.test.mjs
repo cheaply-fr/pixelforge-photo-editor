@@ -173,6 +173,7 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
         { position: 24, color: '#123456' },
         { position: 76, color: '#abcdef' },
       ],
+      secondaryBrushPreset: 'round-soft',
     },
   });
   assert.equal(radial.settings.gradientMode, 'radial');
@@ -186,6 +187,7 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
     { position: 24, color: '#123456' },
     { position: 76, color: '#abcdef' },
   ]);
+  assert.equal(radial.settings.secondaryBrushPreset, 'round-soft');
   assert.throws(
     () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'diamond' } }),
     /Saved document is not supported/,
@@ -216,6 +218,10 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
   );
   assert.throws(
     () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientStops: [{ position: 80, color: '#ffffff' }, { position: 20, color: '#000000' }] } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, secondaryBrushPreset: 'missing' } }),
     /Saved document is not supported/,
   );
 });
