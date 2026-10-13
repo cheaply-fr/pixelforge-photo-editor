@@ -163,3 +163,10 @@ the immutable source asset. Pure pixel/validation coverage and desktop/mobile
 acceptance cover representative output, persistence and undo. The local suite
 now passes 713/713 tests; protected CI, deployment and live acceptance remain
 separate gates.
+
+The next filter increment adds `Filter → Convert for Smart Filters` and
+`Clear Smart Filter Stack`. Existing local filter effects can now be retained
+as an ordered stack of up to eight nondestructive entries, rendered before a
+later effect while preserving source pixels and project identity. Pure stack
+validation and desktop/mobile representative-pixel/reload coverage are present;
+the candidate is still awaiting protected CI, deployment and live acceptance.

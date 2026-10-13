@@ -68,6 +68,7 @@ import {
   validFilterEffects,
   type FilterEffects,
 } from './filterEffects.ts';
+import { effectiveSmartFilters, validSmartFilters } from './smartFilters.ts';
 import {
   applyTiledNeighborhoodEffect,
   isTiledNeighborhoodBlur,
@@ -226,6 +227,8 @@ type Common = {
   contentAwareFills?: ContentAwareFill[];
   /** Optional nondestructive known-matte colour decontamination. */
   matting?: MattingSettings;
+  /** Optional bounded ordered nondestructive filter stack. */
+  smartFilters?: FilterEffects[];
   /** Optional source-to-base relationship for a nondestructive clipping mask. */
   clippingTo?: string;
 };
@@ -1284,6 +1287,7 @@ export function validateFrame(
       !validAdjustments(layer.adjustments) ||
       (layer.styles !== undefined && !validLayerStyles(layer.styles)) ||
       (layer.matting !== undefined && (!isRasterContentLayer(layer) || !validMattingSettings(layer.matting))) ||
+      (layer.smartFilters !== undefined && (!isRasterContentLayer(layer) || !validSmartFilters(layer.smartFilters))) ||
       (layer.clippingTo !== undefined &&
         typeof layer.clippingTo !== 'string') ||
       (layer.groupId !== undefined &&
@@ -2178,6 +2182,15 @@ export async function renderFrame(
       ));
       mattedContext.putImageData(imageData, 0, 0);
       rasterSource = matted;
+    }
+    if (isRasterContentLayer(layer) && rasterSource && layer.smartFilters?.length) {
+      const asset = assets[layer.asset],
+        stacked = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        stackedContext = stacked.getContext('2d')!;
+      stackedContext.drawImage(rasterSource, 0, 0);
+      for (const effect of effectiveSmartFilters(layer.smartFilters))
+        applyFilterEffects(stacked, effect);
+      rasterSource = stacked;
     }
     if (isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
       const asset = assets[layer.asset];

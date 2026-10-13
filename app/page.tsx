@@ -401,9 +401,11 @@ import {
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
+  isNeutralFilterEffects,
   neutralFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
+import { appendSmartFilter } from '../src/smartFilters';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -650,6 +652,8 @@ type Command =
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
+  | 'convert-smart-filters'
+  | 'clear-smart-filters'
   | 'zoom-in'
   | 'zoom-out'
   | 'fit'
@@ -1057,7 +1061,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Warm', command: 'filter-warm' },
     { label: 'Cool', command: 'filter-cool' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Convert for Smart Filters', command: 'noop', disabled: true },
+    { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
     { label: 'Neural Filters…', command: 'noop', disabled: true },
     { label: 'Filter Gallery…', command: 'noop', disabled: true },
     { label: 'Camera Raw Filter…', command: 'noop', disabled: true },
@@ -1128,6 +1132,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
     { label: '', command: 'noop', separator: true },
     { label: 'Clear local filter effect', command: 'filter-clear-effect' },
+    { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
   ],
   View: [
     { label: 'Zoom in', shortcut: '+', command: 'zoom-in' },
@@ -4662,6 +4667,39 @@ export default function Home() {
           ? 'Local filter effect cleared'
           : `${label} applied; remains editable in Filter effects`,
       );
+  };
+  const convertForSmartFilters = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object')) {
+      setNotice('Select a raster or smart-object layer before converting for Smart Filters');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the layer before converting for Smart Filters');
+      return;
+    }
+    const effect = effectiveFilterEffects(layer.adjustments.filterEffects);
+    if (isNeutralFilterEffects(effect)) {
+      setNotice('Choose a local filter effect before converting for Smart Filters');
+      return;
+    }
+    try {
+      const stack = appendSmartFilter(layer.smartFilters, effect);
+      if (editLayer({
+        smartFilters: stack,
+        adjustments: {
+          ...layer.adjustments,
+          filterEffects: { ...neutralFilterEffects },
+        },
+      })) setNotice(`Smart Filter stack now contains ${stack.length} effect${stack.length === 1 ? '' : 's'}; source pixels remain editable`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not convert the filter');
+    }
+  };
+  const clearSmartFilters = () => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (editLayer({ smartFilters: [] }))
+      setNotice(`Smart Filter stack cleared${layer?.smartFilters?.length ? '; undo restores it' : ''}`);
   };
   const chooseFilter = (filter: string, label: string) => {
     if (adjust({ filter }))
@@ -10784,6 +10822,8 @@ export default function Home() {
     else if (command === 'auto-color') return autoCorrect('color');
     else if (command === 'filter-clear-effect')
       chooseFilterEffect('none', 'Filter effect');
+    else if (command === 'convert-smart-filters') return convertForSmartFilters();
+    else if (command === 'clear-smart-filters') return clearSmartFilters();
     else if (command === 'filter-average')
       chooseFilterEffect('average-blur', 'Average Blur');
     else if (command === 'filter-blur-more')
@@ -11157,6 +11197,12 @@ export default function Home() {
       case 'filter-zigzag':
       case 'filter-clear-effect':
         return !layer || locked || !layer.visible;
+      case 'convert-smart-filters':
+        return !layer || locked || !layer.visible ||
+          (layer.kind !== 'raster' && layer.kind !== 'smart-object') ||
+          isNeutralFilterEffects(layer.adjustments.filterEffects);
+      case 'clear-smart-filters':
+        return !layer || !layer.smartFilters?.length;
       case 'quick-mask':
         return !frame;
       case 'save-selection':

@@ -251,3 +251,11 @@ transparent RGB and immutable source assets. Pure pixel/validation tests and
 desktop/mobile menu, undo and project round-trip acceptance are included;
 semantic hair matting, background inference and advanced defringe remain
 staged.
+
+The Smart Filter increment adds `Filter → Convert for Smart Filters` and
+`Clear Smart Filter Stack`. A validated ordered stack of up to eight existing
+local filter effects renders nondestructively before later effects, retains
+source assets and persists through undo, export and reload. Pure order/limit
+tests and desktop/mobile representative-pixel acceptance are included;
+provider-backed, linked-source and full Photoshop filter-graph semantics remain
+staged.
