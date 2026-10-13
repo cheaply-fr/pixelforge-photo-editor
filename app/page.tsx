@@ -538,6 +538,7 @@ type Command =
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
   | 'filter-unsharp-mask'
+  | 'filter-sharpen-more'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
   | 'filter-smart-blur'
@@ -1037,7 +1038,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'sharpen-noise' },
     { label: 'Sharpen Edges', command: 'sharpen-noise' },
-    { label: 'Sharpen More', command: 'sharpen-noise' },
+    { label: 'Sharpen More', command: 'filter-sharpen-more' },
     { label: 'Smart Sharpen…', command: 'sharpen-noise' },
     { label: 'Unsharp Mask…', command: 'filter-unsharp-mask' },
     { label: 'Stylize', command: 'noop', disabled: true },
@@ -10102,6 +10103,8 @@ export default function Home() {
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
     else if (command === 'filter-unsharp-mask')
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
+    else if (command === 'filter-sharpen-more')
+      chooseFilterEffect('sharpen-more', 'Sharpen More (two-pass nondestructive)');
     else if (command === 'filter-lens-blur')
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-iris-blur')
@@ -12726,6 +12729,9 @@ export default function Home() {
             {filterEffects.type === 'unsharp-mask' && (
               <p>Unsharp Mask adds a bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; threshold, halo suppression and channel-specific controls remain planned.</p>
             )}
+            {filterEffects.type === 'sharpen-more' && (
+              <p>Sharpen More applies two bounded unsharp passes for a stronger distinct result. Amount and radius stay editable; edge-aware halo suppression remains planned.</p>
+            )}
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
             )}
@@ -12844,6 +12850,7 @@ export default function Home() {
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
                           filterEffects.type === 'unsharp-mask' ||
+                          filterEffects.type === 'sharpen-more' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||

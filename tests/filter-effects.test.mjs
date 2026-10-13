@@ -127,6 +127,34 @@ test('Unsharp Mask is deterministic, source-safe and preserves alpha/transparent
   })), true);
 });
 
+test('Sharpen More is a distinct deterministic two-pass effect with source-safe alpha', () => {
+  const source = rgba(9, 1, (x) => {
+    if (x === 0) return [17, 23, 29, 0];
+    return [x < 4 ? 24 : 232, 80, 120, x === 8 ? 128 : 255];
+  });
+  const original = source.slice();
+  const onePass = applyFilterEffectsPixels(source, 9, 1, {
+    type: 'unsharp-mask', amount: 70, radius: 3,
+  });
+  const output = applyFilterEffectsPixels(source, 9, 1, {
+    type: 'sharpen-more', amount: 70, radius: 3,
+  });
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.notDeepEqual(output, onePass);
+  assert.ok(Math.abs(output[4] - source[4]) >= Math.abs(onePass[4] - source[4]));
+  assert.equal(output[3], 0);
+  assert.deepEqual(Array.from(output.slice(0, 3)), [17, 23, 29]);
+  for (let offset = 3; offset < source.length; offset += 4)
+    assert.equal(output[offset + 3], source[offset + 3]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 1, {
+    type: 'sharpen-more', amount: 70, radius: 3,
+  }));
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    type: 'sharpen-more', amount: 120, radius: 99,
+  })), true);
+});
+
 test('linear shear interpolates fractional shifts and clamps image edges', () => {
   const source = rgba(9, 5, (x) => [x * 20, 0, 0, 255]);
   const output = applyFilterEffectsPixels(source, 9, 5, {
