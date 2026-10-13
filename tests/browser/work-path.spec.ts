@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 
-type SavedLayer = { kind: string; path?: { closed?: boolean; nodes?: unknown[] } };
+type SavedLayer = { kind: string; path?: { closed?: boolean; nodes?: unknown[]; contours?: { nodes?: unknown[]; closed?: boolean }[] } };
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
 });
 
-test('Create Work Path converts a selection bounds into an editable path and reloads on desktop/mobile', async ({ page }) => {
+test('Create Work Path traces the selection silhouette into an editable path and reloads on desktop/mobile', async ({ page }) => {
   await selectTool(page, 'Select');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
@@ -26,7 +26,7 @@ test('Create Work Path converts a selection bounds into an editable path and rel
   const command = page.getByRole('menuitem', { name: 'Create Work Path', exact: true });
   await expect(command).toBeEnabled();
   await command.click();
-  await expect(page.getByText('Work Path created from the selection bounds; edit its anchors with Direct Selection', { exact: true })).toBeVisible();
+  await expect(page.getByText('Work Path traced from 1 selection contour; edit its anchors with Direct Selection', { exact: true })).toBeVisible();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
@@ -34,6 +34,8 @@ test('Create Work Path converts a selection bounds into an editable path and rel
   const pathLayer = (project.history[project.index].layers as SavedLayer[]).find((layer) => layer.kind === 'path');
   expect(pathLayer?.path?.closed).toBe(true);
   expect(pathLayer?.path?.nodes).toHaveLength(4);
+  expect(pathLayer?.path?.contours).toHaveLength(1);
+  expect(pathLayer?.path?.contours?.[0]?.closed).toBe(true);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   const restoredDownload = page.waitForEvent('download');

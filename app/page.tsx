@@ -244,6 +244,7 @@ import {
   type PathBooleanOperation,
 } from '../src/pathBooleans';
 import { pathContours, transformPath } from '../src/paths';
+import { traceAlphaContours } from '../src/alphaContours';
 import { shapePoints } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
@@ -5392,32 +5393,45 @@ export default function Home() {
     }
     return false;
   };
-  const createWorkPathFromSelection = () => {
+  const createWorkPathFromSelection = async () => {
     const f = current(), selection = f.selection;
     if (!selection) {
       setNotice('Create a selection before making a work path');
       return;
     }
-    const left = Math.max(0, Math.min(f.w - 1, Math.floor(selection.x)));
-    const top = Math.max(0, Math.min(f.h - 1, Math.floor(selection.y)));
-    const right = Math.max(left + 1, Math.min(f.w, Math.ceil(selection.x + selection.w)));
-    const bottom = Math.max(top + 1, Math.min(f.h, Math.ceil(selection.y + selection.h)));
+    let rendered: HTMLCanvasElement;
+    try {
+      rendered = await renderSelection(selection, f.w, f.h, assets.current);
+    } catch {
+      setNotice('The selection mask could not be rendered into a work path');
+      return;
+    }
+    if (current() !== f) {
+      setNotice('Work Path cancelled because the document changed');
+      return;
+    }
+    const pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data;
+    const alpha = new Uint8ClampedArray(f.w * f.h);
+    for (let index = 0; index < alpha.length; index += 1) alpha[index] = pixels[index * 4 + 3];
+    const traced = traceAlphaContours(alpha, f.w, f.h);
+    if (!traced.contours.length) {
+      setNotice('The selection has no visible pixels for a work path');
+      return;
+    }
+    const first = traced.contours[0];
     const path: PathModel = {
-      nodes: [
-        { x: left, y: top },
-        { x: right, y: top },
-        { x: right, y: bottom },
-        { x: left, y: bottom },
-      ],
+      nodes: first.nodes,
       closed: true,
       fill: false,
       stroke: true,
       strokeWidth: 1,
       fillColor: color,
       strokeColor: color,
+      contours: traced.contours,
+      fillRule: 'evenodd',
     };
     if (addLayer({ ...commonLayer(`Work Path ${f.layers.length}`), kind: 'path', path }))
-      setNotice('Work Path created from the selection bounds; edit its anchors with Direct Selection');
+      setNotice(`Work Path traced from ${traced.contours.length} selection contour${traced.contours.length === 1 ? '' : 's'}; edit its anchors with Direct Selection`);
   };
   const groupActiveLayer = () => {
     const f = current(),
