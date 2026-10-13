@@ -2574,6 +2574,7 @@ export default function Home() {
     setBrushScatter(preset.brushScatter);
     setBrushTexture(preset.brushTexture);
     setBrushDual(preset.brushDual);
+    setSecondaryBrushPreset(preset.secondaryBrushPreset);
     setBrushBristle(preset.brushBristle);
     setBrushWetEdges(preset.brushWetEdges);
     setBrushBuildUp(preset.brushBuildUp);
@@ -2603,6 +2604,7 @@ export default function Home() {
         brushScatter,
         brushTexture,
         brushDual,
+        secondaryBrushPreset,
         brushBristle,
         brushWetEdges,
         brushBuildUp,
@@ -5502,10 +5504,10 @@ export default function Home() {
         brushScatter,
         brushTexture,
         brushDual,
+        secondaryBrushPreset,
         brushBristle,
         brushWetEdges,
         brushBuildUp,
-        secondaryBrushPreset,
         brushFlow,
         gradientMode,
         gradientEnd,

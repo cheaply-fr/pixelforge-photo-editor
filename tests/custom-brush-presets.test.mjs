@@ -20,6 +20,7 @@ const values = {
   brushScatter: 4,
   brushTexture: 6,
   brushDual: 0,
+  secondaryBrushPreset: 'none',
   brushBristle: 0,
   brushWetEdges: 0,
   brushBuildUp: 0,

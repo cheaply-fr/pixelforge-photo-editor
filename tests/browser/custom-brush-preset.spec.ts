@@ -11,6 +11,9 @@ test('Edit > Define Brush Preset saves settings in an anonymous project and relo
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await selectTool(page, 'Brush');
   const buildUp = page.getByLabel('Build-up', { exact: true });
+  const secondary = page.getByLabel('Secondary brush tip', { exact: true });
+  await secondary.selectOption('round-soft');
+  await expect(secondary).toHaveValue('round-soft');
   const wetEdges = page.getByLabel('Wet edges', { exact: true });
   await wetEdges.fill('48');
   await expect(wetEdges).toHaveValue('48');
@@ -28,6 +31,7 @@ test('Edit > Define Brush Preset saves settings in an anonymous project and relo
   expect(presets).toHaveLength(1);
   expect(presets?.[0]?.label).toBe('Studio ink');
   expect(presets?.[0]?.size).toBeGreaterThan(0);
+  expect(presets?.[0]?.secondaryBrushPreset).toBe('round-soft');
   expect(presets?.[0]?.brushWetEdges).toBe(48);
   expect(presets?.[0]?.brushBuildUp).toBe(64);
   await page.reload();
