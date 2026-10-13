@@ -52,7 +52,21 @@ test('arrange planner guards empty, missing, duplicate, grouped and locked selec
   assert.equal(planLayerArrange(frame({ selectedLayerIds: ['middle', 'middle'] }), 'front').reason, 'duplicate-selection');
   assert.equal(planLayerArrange(frame({ selectedLayerIds: ['middle'], layers: frame().layers.map((layer) => layer.id === 'middle' ? { ...layer, groupId: 'folder' } : layer) }), 'front').reason, 'grouped-selection');
   assert.equal(planLayerArrange(frame({ selectedLayerIds: ['middle'], layers: frame().layers.map((layer) => layer.id === 'middle' ? { ...layer, locked: true } : layer) }), 'front').reason, 'locked-selection');
-  assert.equal(layerArrangeReason('grouped-selection').includes('Ungroup'), true);
+  assert.equal(layerArrangeReason('grouped-selection').includes('missing'), true);
+});
+
+test('folder members move as one atomic block and retain member order', () => {
+  const source = frame({
+    groups: [{ id: 'folder', name: 'Folder', visible: true, locked: false, opacity: 1, blend: 'normal', collapsed: false }],
+    layers: ids.map((id) => ({ id, name: id, locked: false, groupId: ['middle', 'upper'].includes(id) ? 'folder' : undefined })),
+    active: 'middle',
+    selectedLayerIds: ['middle'],
+  });
+  const plan = planLayerArrange(source, 'front');
+  assert.equal(plan.ok, true);
+  if (plan.ok) assert.deepEqual(plan.selectedLayerIds, ['middle', 'upper']);
+  assert.deepEqual(applyLayerArrange(source, 'front').layers.map((layer) => layer.id), ['bottom', 'top', 'middle', 'upper']);
+  assert.deepEqual(applyLayerArrange(source, 'backward').layers.map((layer) => layer.id), ['middle', 'upper', 'bottom', 'top']);
 });
 
 test('boundaries are explicit no-ops and preserve the exact frame reference', () => {

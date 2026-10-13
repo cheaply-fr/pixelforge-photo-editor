@@ -45,9 +45,9 @@ function selectedStack(frame: Frame, ids: readonly string[]) {
 }
 
 /**
- * Build a side-effect-free arrange plan. Folder members are deliberately
- * guarded until a folder-aware arrange contract can move a complete isolated
- * group without changing its blend/opacity semantics.
+ * Build a side-effect-free arrange plan. Selecting one member of a folder
+ * expands to the complete folder block, so its isolated blend/opacity surface
+ * moves atomically without interleaving unrelated layers.
  */
 export function planLayerArrange(
   frame: Frame,
@@ -67,11 +67,19 @@ export function planLayerArrange(
       selectedLayerIds: ids,
     };
   const selected = stack.map((entry) => frame.layers[entry.index]);
-  if (selected.some((layer) => Boolean(layer.groupId)))
-    return { ok: false, mode, reason: 'grouped-selection', selectedLayerIds: ids };
-  if (selected.some((layer) => layer.locked))
-    return { ok: false, mode, reason: 'locked-selection', selectedLayerIds: ids };
-  const selectedIndices = stack.map((entry) => entry.index);
+  const groupIds = new Set(selected.flatMap((layer) => layer.groupId ? [layer.groupId] : []));
+  const expandedIds = new Set(ids);
+  for (const groupId of groupIds) {
+    const group = frame.groups?.find((item) => item.id === groupId);
+    if (!group) return { ok: false, mode, reason: 'grouped-selection', selectedLayerIds: ids };
+    if (group.locked) return { ok: false, mode, reason: 'locked-selection', selectedLayerIds: ids };
+    for (const layer of frame.layers) if (layer.groupId === groupId) expandedIds.add(layer.id);
+  }
+  const expandedStack = selectedStack(frame, [...expandedIds]);
+  const expanded = expandedStack.map((entry) => frame.layers[entry.index]);
+  if (expanded.some((layer) => layer.locked))
+    return { ok: false, mode, reason: 'locked-selection', selectedLayerIds: [...expandedIds] };
+  const selectedIndices = expandedStack.map((entry) => entry.index);
   const selectedSet = new Set(selectedIndices);
   const canMoveForward = selectedIndices.some(
     (index) => index + 1 < frame.layers.length && !selectedSet.has(index + 1),
@@ -88,11 +96,11 @@ export function planLayerArrange(
           ? !canMoveBackward
           : !canMoveBackward;
   if (atBoundary)
-    return { ok: false, mode, reason: 'boundary', selectedLayerIds: ids };
+    return { ok: false, mode, reason: 'boundary', selectedLayerIds: expanded.map((layer) => layer.id) };
   return {
     ok: true,
     mode,
-    selectedLayerIds: selected.map((layer) => layer.id),
+    selectedLayerIds: expanded.map((layer) => layer.id),
     selectedIndices,
   };
 }
@@ -140,7 +148,7 @@ export function layerArrangeReason(reason: LayerArrangeReason): string {
     case 'duplicate-selection':
       return 'The layer selection contains duplicate IDs';
     case 'grouped-selection':
-      return 'Ungroup selected layers before arranging; folder-aware arrange is staged';
+      return 'The selected folder is missing from the document';
     case 'locked-selection':
       return 'Unlock all selected layers before arranging';
     case 'boundary':
