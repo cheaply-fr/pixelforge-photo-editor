@@ -26,9 +26,16 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 
 ## Current baseline
 
-The repository contains broad partial implementations across all eight stages. The locally verified custom-shape increment raises the aggregate pure suite to **741 passing tests** and adds **4/4 focused desktop/mobile browser checks** for save, empty input, portable-project export and reload discovery. Protected run `38386650794` completed successfully for `7495c1b4…`, including its production deploy. Independent live checks then matched that SHA in `/release.json` and `/api/readyz.json`; DNS resolves through `photoeditor-cheaply.web.app` to `199.36.158.100`, TLS verifies for `photoeditor.cheaply.fr`, the editor reports `v0.1.0 · Server online · 7495c1b4…`, and the export dialog confirmed a downloaded 102,221-byte JPEG with metadata privacy disclosure. PR #136 is open and currently carries the newer branch head `3b0e757…`; its checks and deployment are pending, so the custom-shape increment is not yet production evidence. Newer local work remains separate from the deployed baseline until the protected workflow completes.
+The repository contains broad partial implementations across all eight stages. The locally verified custom-shape increment raises the aggregate pure suite to **741 passing tests** and adds **4/4 focused desktop/mobile browser checks** for save, empty input, portable-project export and reload discovery. Protected run `38386650794` completed successfully for `7495c1b4…`, including its production deploy. Independent live checks then matched that SHA in `/release.json` and `/api/readyz.json`; DNS resolves through `photoeditor-cheaply.web.app` to `199.36.158.100`, TLS verifies for `photoeditor.cheaply.fr`, the editor reports `v0.1.0 · Server online · 7495c1b4…`, and the export dialog confirmed a downloaded 102,221-byte JPEG with metadata privacy disclosure. PR #136 is open and currently carries the newer branch head `0fcb45b…`; its checks and deployment are pending, so the custom-shape increment is not yet production evidence. Newer local work remains separate from the deployed baseline until the protected workflow completes.
 
 Progress percentages in status reports are estimates derived from this rubric and must identify the stage evidence that is still missing. They must never be increased solely because source files changed.
+
+The Polygon tool now persists a bounded parametric variant (`polygon`,
+`triangle`, or `star`) in local settings and project files. Rendering, boolean
+operations and reload preserve the editable variant and side count; the
+desktop/mobile acceptance suite covers control selection and project-file
+round-trip. Freeform custom path libraries and per-star inner-radius editing
+remain staged.
 
 The bounded local Content-Aware Move slice is available through `Edit →
 Content-Aware Move…`. It requires an explicit selection, fills the vacated

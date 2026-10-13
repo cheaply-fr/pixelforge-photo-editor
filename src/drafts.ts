@@ -150,6 +150,8 @@ export type Settings = {
   customPatternPresets?: CustomPatternPreset[];
   /** User-authored local vector shape presets; geometry remains editable. */
   customShapePresets?: CustomShapePreset[];
+  /** Parametric polygon variant used by the Polygon tool. */
+  polygonVariant?: 'polygon' | 'triangle' | 'star';
   /** Spacing between brush dabs as a percent of diameter. */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */

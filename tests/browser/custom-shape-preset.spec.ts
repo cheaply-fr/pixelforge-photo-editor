@@ -46,3 +46,22 @@ test('Edit > Define Custom Shape rejects an empty name without creating a preset
   const project = await downloadedProject((await (await pending).path())!);
   expect(project.settings.customShapePresets ?? []).toHaveLength(0);
 });
+
+test('Polygon tool persists triangle and star variants in project settings', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await selectTool(page, 'Polygon');
+  const variant = page.getByLabel('Polygon variant', { exact: true });
+  await expect(variant).toHaveValue('polygon');
+  await variant.selectOption('star');
+  await expect(variant).toHaveValue('star');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const project = await downloadedProject((await (await pending).path())!);
+  expect(project.settings.polygonVariant).toBe('star');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await selectTool(page, 'Polygon');
+  await expect(page.getByLabel('Polygon variant', { exact: true })).toHaveValue('star');
+});

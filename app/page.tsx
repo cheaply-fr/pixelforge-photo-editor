@@ -281,7 +281,7 @@ import {
 import { pathContours, transformPath } from '../src/paths';
 import { pathToSvg } from '../src/svgExport';
 import { traceAlphaContours } from '../src/alphaContours';
-import { shapePoints } from '../src/vectorShapes';
+import { shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -1865,6 +1865,7 @@ export default function Home() {
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
+    [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -2208,6 +2209,7 @@ export default function Home() {
     customBrushPresets,
     customPatternPresets,
     customShapePresets,
+    polygonVariant,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -2276,6 +2278,7 @@ export default function Home() {
     setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
+    setPolygonVariant(s.polygonVariant ?? 'polygon');
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -2329,6 +2332,7 @@ export default function Home() {
     setCustomBrushPresets,
     setCustomPatternPresets,
     setCustomShapePresets,
+    setPolygonVariant,
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
@@ -5124,6 +5128,7 @@ export default function Home() {
         customBrushPresets,
         customPatternPresets,
         customShapePresets,
+        polygonVariant,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -5218,6 +5223,7 @@ export default function Home() {
     customBrushPresets,
     customPatternPresets,
     customShapePresets,
+    polygonVariant,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -9527,7 +9533,7 @@ export default function Home() {
               height: Math.max(1, height),
               stroke: Math.max(1, size / 3),
               color,
-              ...(g.tool === 'polygon' ? { sides: 5 } : { fill: false }),
+              ...(g.tool === 'polygon' ? { sides: 5, variant: polygonVariant } : { fill: false }),
               matrix: [
                 1,
                 0,
@@ -10173,7 +10179,7 @@ export default function Home() {
               stroke: Math.max(1, size / 3),
               color,
               fill: false,
-              ...(g.tool === 'polygon' ? { sides: 5 } : {}),
+              ...(g.tool === 'polygon' ? { sides: 5, variant: polygonVariant } : {}),
               matrix,
             } as Layer),
       );
@@ -13883,6 +13889,20 @@ export default function Home() {
                   <button type="button" className="secondary" disabled={!selectedCustomShapePresetId} onClick={removeCustomShapePreset}>
                     Remove
                   </button>
+                </label>
+              )}
+              {tool === 'polygon' && (
+                <label className="select-row">
+                  <span>Polygon variant</span>
+                  <select
+                    aria-label="Polygon variant"
+                    value={polygonVariant}
+                    onChange={(event) => setPolygonVariant(event.target.value as ParametricShapeVariant)}
+                  >
+                    <option value="polygon">Polygon</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="star">Star</option>
+                  </select>
                 </label>
               )}
               {tool !== 'magic-eraser' && (
