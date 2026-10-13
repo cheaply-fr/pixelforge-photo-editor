@@ -1,8 +1,9 @@
-import type { ToolbarColumns } from './ToolbarSettingsDialog';
+import type { ToolbarColumns, ToolbarDensity } from './ToolbarSettingsDialog';
 
 export type ToolbarPreferences = {
   version: number;
   columns: ToolbarColumns;
+  density: ToolbarDensity;
   hiddenCategories: string[];
   categoryOrder: string[];
   toolOrder: Record<string, string[]>;
@@ -14,6 +15,7 @@ export function defaultToolbarPreferences(categoryIds: readonly string[]): Toolb
   return {
     version: TOOLBAR_PREFERENCES_VERSION,
     columns: 'auto',
+    density: 'compact',
     hiddenCategories: [],
     categoryOrder: [...categoryIds],
     toolOrder: {},
@@ -63,6 +65,7 @@ export function normalizeToolbarPreferences(
   return {
     version: TOOLBAR_PREFERENCES_VERSION,
     columns: candidate.columns === '2' || candidate.columns === '3' ? candidate.columns : defaults.columns,
+    density: candidate.density === 'comfortable' ? 'comfortable' : defaults.density,
     hiddenCategories,
     categoryOrder,
     toolOrder,

@@ -13,11 +13,13 @@ const tools = {
 test('toolbar preferences migrate unknown and duplicate IDs without changing canonical order', () => {
   assert.deepEqual(normalizeToolbarPreferences({
     columns: '3',
+    density: 'comfortable',
     hiddenCategories: ['measure', 'measure', 'missing', 'navigation'],
     categoryOrder: ['paint', 'paint', 'missing'],
   }, ids, tools), {
     version: 1,
     columns: '3',
+    density: 'comfortable',
     hiddenCategories: ['measure'],
     categoryOrder: ['paint', 'navigation', 'measure', 'draw'],
     toolOrder: { navigation: ['move', 'hand'], measure: ['eyedropper', 'ruler'], paint: ['brush', 'fill'], draw: ['pen', 'text'] },
@@ -35,11 +37,11 @@ test('toolbar preferences never allow all categories to be hidden', () => {
 test('malformed toolbar preferences fail closed to defaults', () => {
   assert.deepEqual(normalizeToolbarPreferences(null, ids, tools), {
     version: 1,
-    columns: 'auto', hiddenCategories: [], categoryOrder: ids, toolOrder: {},
+    columns: 'auto', density: 'compact', hiddenCategories: [], categoryOrder: ids, toolOrder: {},
   });
   assert.deepEqual(normalizeToolbarPreferences({ columns: '9' }, ids, tools).columns, 'auto');
   assert.deepEqual(normalizeToolbarPreferences({ version: 99 }, ids, tools), {
-    version: 1, columns: 'auto', hiddenCategories: [], categoryOrder: ids, toolOrder: {},
+    version: 1, columns: 'auto', density: 'compact', hiddenCategories: [], categoryOrder: ids, toolOrder: {},
   });
 });
 

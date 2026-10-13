@@ -2,20 +2,23 @@ import { useEffect, useRef, useState } from 'react';
 import type { ToolCategory } from './toolPalette';
 
 export type ToolbarColumns = 'auto' | '2' | '3';
+export type ToolbarDensity = 'compact' | 'comfortable';
 
 const displayToolLabel = (id: string) => id.split('-').map((part) => part[0]?.toUpperCase() + part.slice(1)).join(' ');
 
-export default function ToolbarSettingsDialog({ value, categories, hiddenCategories, categoryOrder, toolOrder, close, apply }: {
+export default function ToolbarSettingsDialog({ value, density, categories, hiddenCategories, categoryOrder, toolOrder, close, apply }: {
   value: ToolbarColumns;
+  density: ToolbarDensity;
   categories: readonly ToolCategory[];
   hiddenCategories: readonly string[];
   categoryOrder: readonly string[];
   toolOrder: Readonly<Record<string, readonly string[]>>;
   close: () => void;
-  apply: (value: { columns: ToolbarColumns; hiddenCategories: string[]; categoryOrder: string[]; toolOrder: Record<string, string[]> }) => void;
+  apply: (value: { columns: ToolbarColumns; density: ToolbarDensity; hiddenCategories: string[]; categoryOrder: string[]; toolOrder: Record<string, string[]> }) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [columns, setColumns] = useState<ToolbarColumns>(value);
+  const [toolbarDensity, setToolbarDensity] = useState<ToolbarDensity>(density);
   const [hidden, setHidden] = useState(() => new Set(hiddenCategories));
   const [order, setOrder] = useState(() => {
     const known = new Set(categories.map((category) => category.id));
@@ -51,7 +54,7 @@ export default function ToolbarSettingsDialog({ value, categories, hiddenCategor
   });
   return (
     <dialog ref={dialog} className="editor-dialog toolbar-settings-dialog" aria-labelledby="toolbar-settings-title" onCancel={close}>
-      <form onSubmit={(event) => { event.preventDefault(); apply({ columns, hiddenCategories: [...hidden], categoryOrder: order, toolOrder: toolOrders }); }}>
+      <form onSubmit={(event) => { event.preventDefault(); apply({ columns, density: toolbarDensity, hiddenCategories: [...hidden], categoryOrder: order, toolOrder: toolOrders }); }}>
         <h2 id="toolbar-settings-title">Toolbar</h2>
         <p>Choose a compact palette width. Auto uses two columns at normal widths and three columns on wide editor viewports; mobile layouts stay touch-sized.</p>
         <label className="select-row">
@@ -60,6 +63,13 @@ export default function ToolbarSettingsDialog({ value, categories, hiddenCategor
             <option value="auto">Auto</option>
             <option value="2">Two columns</option>
             <option value="3">Three columns</option>
+          </select>
+        </label>
+        <label className="select-row">
+          <span>Category spacing</span>
+          <select aria-label="Category spacing" value={toolbarDensity} onChange={(event) => setToolbarDensity(event.target.value as ToolbarDensity)}>
+            <option value="compact">Compact</option>
+            <option value="comfortable">Comfortable</option>
           </select>
         </label>
         <fieldset className="toolbar-category-settings">

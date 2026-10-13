@@ -22,6 +22,22 @@ test('Toolbar settings persist a two or three column preference without empty sl
   await expect(page.getByTestId('tool-palette')).toHaveAttribute('data-toolbar-columns', '3');
 });
 
+test('Toolbar settings persist compact or comfortable category spacing', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Toolbar…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Toolbar' });
+  await expect(dialog.getByLabel('Category spacing')).toHaveValue('compact');
+  await dialog.getByLabel('Category spacing').selectOption('comfortable');
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  const palette = page.getByTestId('tool-palette');
+  await expect(palette).toHaveAttribute('data-toolbar-density', 'comfortable');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('tool-palette')).toHaveAttribute('data-toolbar-density', 'comfortable');
+});
+
 test('Toolbar settings hide unused categories and preserve the compact palette after reload', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');

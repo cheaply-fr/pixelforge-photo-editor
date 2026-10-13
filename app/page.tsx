@@ -227,7 +227,7 @@ import { replaceTextLayers } from '../src/textReplace';
 import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
 import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
 import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGalleryDialog';
-import ToolbarSettingsDialog, { type ToolbarColumns } from '../src/ToolbarSettingsDialog';
+import ToolbarSettingsDialog, { type ToolbarColumns, type ToolbarDensity } from '../src/ToolbarSettingsDialog';
 import { normalizeToolbarPreferences, TOOLBAR_PREFERENCES_VERSION } from '../src/toolbarPreferences';
 import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
@@ -1845,6 +1845,7 @@ function readToolbarPreferences() {
     const rawOrder = window.localStorage.getItem('pixelforge.toolbar-category-order');
     return normalizeToolbarPreferences({
       columns: window.localStorage.getItem('pixelforge.toolbar-columns'),
+      density: window.localStorage.getItem('pixelforge.toolbar-density'),
       hiddenCategories: rawHidden ? JSON.parse(rawHidden) : [],
       categoryOrder: rawOrder ? JSON.parse(rawOrder) : categoryIds,
     }, categoryIds, categoryTools);
@@ -2064,6 +2065,7 @@ export default function Home() {
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
     [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
     [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
+    [toolbarDensity, setToolbarDensity] = useState<ToolbarDensity>(() => initialToolbarPreferences.density),
     [hiddenToolCategories, setHiddenToolCategories] = useState<string[]>(() => initialToolbarPreferences.hiddenCategories),
     [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
     [toolbarToolOrder, setToolbarToolOrder] = useState<Record<string, string[]>>(() => initialToolbarPreferences.toolOrder),
@@ -12710,25 +12712,29 @@ export default function Home() {
       {toolbarSettingsOpen && (
         <ToolbarSettingsDialog
           value={toolbarColumns}
+          density={toolbarDensity}
           categories={TOOL_CATEGORIES}
           hiddenCategories={hiddenToolCategories}
           categoryOrder={toolbarCategoryOrder}
           toolOrder={toolbarToolOrder}
           close={() => setToolbarSettingsOpen(false)}
-          apply={({ columns, hiddenCategories, categoryOrder, toolOrder }) => {
+          apply={({ columns, density, hiddenCategories, categoryOrder, toolOrder }) => {
             const nextHidden = hiddenCategories.filter((id) => id !== 'navigation');
             setToolbarColumns(columns);
+            setToolbarDensity(density);
             setHiddenToolCategories(nextHidden);
             setToolbarCategoryOrder(categoryOrder);
             setToolbarToolOrder(toolOrder);
             setToolbarSettingsOpen(false);
             try {
               window.localStorage.setItem('pixelforge.toolbar-columns', columns);
+              window.localStorage.setItem('pixelforge.toolbar-density', density);
               window.localStorage.setItem('pixelforge.toolbar-hidden-categories', JSON.stringify(nextHidden));
               window.localStorage.setItem('pixelforge.toolbar-category-order', JSON.stringify(categoryOrder));
               window.localStorage.setItem('pixelforge.toolbar-preferences', JSON.stringify({
                 version: TOOLBAR_PREFERENCES_VERSION,
                 columns,
+                density,
                 hiddenCategories: nextHidden,
                 categoryOrder,
                 toolOrder,
@@ -12973,6 +12979,7 @@ export default function Home() {
           aria-label="Tools"
           data-testid="tool-palette"
           data-toolbar-columns={toolbarColumns}
+          data-toolbar-density={toolbarDensity}
         >
           {TOOL_CATEGORIES
             .filter((category) => !hiddenToolCategories.includes(category.id))
