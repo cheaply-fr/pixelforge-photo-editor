@@ -16,6 +16,7 @@ export const FILTER_EFFECT_TYPES = [
   'box-blur',
   'gaussian-blur',
   'unsharp-mask',
+  'sharpen-more',
   'lens-blur',
   'iris-blur',
   'smart-blur',
@@ -2658,6 +2659,26 @@ function applyUnsharpMask(
 }
 
 /**
+ * Apply Photoshop-style Sharpen More as two bounded unsharp passes.
+ *
+ * This is intentionally a distinct effect type rather than an alias for
+ * Unsharp Mask: repeated high-frequency contributions produce a different,
+ * deterministic result while retaining the same source-safe alpha contract.
+ */
+function applySharpenMore(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const intermediate = new Uint8ClampedArray(source);
+  applyUnsharpMask(source, width, height, radius, intermediate, amount);
+  applyUnsharpMask(intermediate, width, height, radius, output, amount);
+}
+
+/**
  * Apply a bounded Tilt-Shift focal-band blur.
  *
  * `centerX`/`centerY` locate the middle of the focus line and `angle` rotates
@@ -2728,6 +2749,8 @@ export function applyFilterEffectsPixels(
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'unsharp-mask') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
+  } else if (effect.type === 'sharpen-more') {
+    applySharpenMore(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-blur') {
     applySmartBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'surface-blur') {

@@ -1676,3 +1676,27 @@ test('Unsharp Mask is an enabled nondestructive Sharpen filter with editable rad
   expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
   expect(layer.adjustments.filterEffects).toMatchObject({ type: 'unsharp-mask', radius: 7 });
 });
+
+test('Sharpen More is a distinct enabled nondestructive Sharpen filter', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Sharpen More', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Sharpen More (two-pass nondestructive) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('sharpen-more');
+  await expect(page.getByText('Sharpen More applies two bounded unsharp passes for a stronger distinct result. Amount and radius stay editable; edge-aware halo suppression remains planned.', { exact: true })).toBeVisible();
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+  expect((await pixels(page))).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'sharpen-more', radius: 7 });
+});
