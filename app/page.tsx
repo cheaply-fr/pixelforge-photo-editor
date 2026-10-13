@@ -104,6 +104,7 @@ import {
   type SelectionPart,
   type TextAlign,
   type Assets,
+  FONTS,
 } from '../src/document';
 import {
   applyImagePixels,
@@ -224,6 +225,8 @@ import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearc
 import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
 import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGalleryDialog';
 import ToolbarSettingsDialog, { type ToolbarColumns } from '../src/ToolbarSettingsDialog';
+import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
+import { updateAllTextLayers } from '../src/textBatch';
 import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
 import { purgeUndoHistory } from '../src/historyPurge';
 import {
@@ -495,6 +498,7 @@ type Command =
   | 'keyboard-shortcuts'
   | 'filter-gallery'
   | 'toolbar-settings'
+  | 'update-text-layers'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -1060,7 +1064,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Warp Text…', command: 'text-warp' },
     { label: 'Font Preview Size', command: 'noop', disabled: true },
     { label: 'Language Options', command: 'noop', disabled: true },
-    { label: 'Update All Text Layers', command: 'noop', disabled: true },
+    { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'noop', disabled: true },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
     { label: 'Load Default Type Styles', command: 'noop', disabled: true },
@@ -1924,6 +1928,7 @@ export default function Home() {
     }),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
+    [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
       try {
@@ -11095,6 +11100,7 @@ export default function Home() {
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
+    else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -11547,6 +11553,8 @@ export default function Home() {
         return !frame;
       case 'find-replace-text':
         return !frame.layers.some((candidate) => candidate.kind === 'text');
+      case 'update-text-layers':
+        return !frame.layers.some((candidate) => candidate.kind === 'text');
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
@@ -11903,6 +11911,7 @@ export default function Home() {
     first,
     second,
   }));
+  const textLayers = (frame?.layers ?? []).filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text');
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -12139,6 +12148,23 @@ export default function Home() {
             setToolbarSettingsOpen(false);
             try { window.localStorage.setItem('pixelforge.toolbar-columns', next); } catch { /* private mode */ }
             setNotice(`Toolbar set to ${next === 'auto' ? 'automatic' : `${next} columns`}`);
+          }}
+        />
+      )}
+      {updateTextLayersOpen && (
+        <UpdateTextLayersDialog
+          initialFont={textLayers[0]?.fontFamily && FONTS.includes(textLayers[0].fontFamily as (typeof FONTS)[number]) ? textLayers[0].fontFamily as (typeof FONTS)[number] : 'Arial'}
+          initialSize={textLayers[0]?.fontSize ?? fontSize}
+          count={textLayers.length}
+          close={() => setUpdateTextLayersOpen(false)}
+          apply={(font, size) => {
+            const result = updateAllTextLayers(current(), { fontFamily: font, fontSize: size });
+            setUpdateTextLayersOpen(false);
+            if (!result.updated) {
+              setNotice('No editable text layers found');
+            } else if (commit(result.frame)) {
+              setNotice(`Updated ${result.updated} editable text layer${result.updated === 1 ? '' : 's'}; undo restores the previous styles`);
+            }
           }}
         />
       )}
