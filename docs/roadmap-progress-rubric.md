@@ -121,3 +121,9 @@ visible pixels toward a bounded four-neighbour average, retains editable
 amount/radius metadata, preserves alpha and transparent RGB, and has dedicated
 pure and desktop/mobile persistence coverage. It remains local evidence until
 the protected workflow publishes and verifies the candidate revision.
+
+The following local increment adds Filter → Stylize → Wind, a bounded
+directional source-sampling approximation with editable amount, radius and angle
+metadata. Its pure and desktop/mobile tests cover deterministic directional
+output, source safety, alpha preservation and reload persistence; CI and live
+deployment remain independent release gates.

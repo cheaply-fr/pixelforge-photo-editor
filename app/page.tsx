@@ -639,6 +639,7 @@ type Command =
   | 'filter-emboss'
   | 'filter-solarize'
   | 'filter-diffuse'
+  | 'filter-wind'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1113,6 +1114,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Emboss…', command: 'filter-emboss' },
     { label: 'Solarize…', command: 'filter-solarize' },
     { label: 'Diffuse…', command: 'filter-diffuse' },
+    { label: 'Wind…', command: 'filter-wind' },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
@@ -10667,6 +10669,8 @@ export default function Home() {
       chooseFilterEffect('solarize', 'Solarize (local approximation)');
     else if (command === 'filter-diffuse')
       chooseFilterEffect('diffuse', 'Diffuse (local approximation)');
+    else if (command === 'filter-wind')
+      chooseFilterEffect('wind', 'Wind (directional local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -10952,6 +10956,7 @@ export default function Home() {
       case 'filter-ntsc-colors':
       case 'filter-solarize':
       case 'filter-diffuse':
+      case 'filter-wind':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
@@ -13689,9 +13694,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss') && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss' || filterEffects.type === 'wind') && (
                   <Slider
-                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : 'Wave angle'}
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : filterEffects.type === 'wind' ? 'Wind angle' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}

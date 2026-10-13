@@ -1282,3 +1282,19 @@ test('Diffuse blends bounded neighbours without mutating source or alpha', () =>
   assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 2, value));
   assert.deepEqual(applyFilterEffectsPixels(source, 3, 2, { ...value, amount: 0 }), source);
 });
+
+test('Wind uses deterministic directional source samples and preserves alpha', () => {
+  const source = new Uint8ClampedArray([
+    10, 20, 30, 255, 80, 40, 20, 255, 180, 50, 10, 255,
+    20, 60, 90, 255, 100, 100, 100, 255, 220, 120, 40, 0,
+  ]);
+  const before = new Uint8ClampedArray(source);
+  const value = { type: 'wind', amount: 100, radius: 2, angle: 0 };
+  assert.equal(validFilterEffects(effectiveFilterEffects(value)), true);
+  const output = applyFilterEffectsPixels(source, 3, 2, value);
+  assert.deepEqual(source, before);
+  assert.equal(output[23], 0);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 2, value));
+  assert.deepEqual(applyFilterEffectsPixels(source, 3, 2, { ...value, amount: 0 }), source);
+});

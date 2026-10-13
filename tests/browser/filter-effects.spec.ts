@@ -90,6 +90,34 @@ test('Diffuse is an enabled nondestructive Stylize filter with editable persiste
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
+test('Wind is an enabled nondestructive Stylize filter with editable angle persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Wind…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('wind');
+  await expect(page.getByLabel('Wind angle', { exact: true })).toHaveValue('0');
+  await page.getByLabel('Wind angle', { exact: true }).fill('35');
+  await page.getByLabel('Wind angle', { exact: true }).press('Enter');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'wind', angle: 35 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('wind');
+  await expect(page.getByLabel('Wind angle', { exact: true })).toHaveValue('35');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 async function importPixels(page: Page) {
   const encoded = await page.evaluate(() => {
     const canvas = document.createElement('canvas');

@@ -59,6 +59,7 @@ export const FILTER_EFFECT_TYPES = [
   'emboss',
   'solarize',
   'diffuse',
+  'wind',
   'deinterlace',
   'ntsc-colors',
 ] as const;
@@ -1651,6 +1652,43 @@ function applyDiffuse(
   }
 }
 
+/** Apply a bounded directional streak using immutable source samples. */
+function applyWind(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const distance = Math.max(1, Math.min(64, Math.round(effect.radius)));
+  const radians = (effect.angle * Math.PI) / 180;
+  const dx = Math.cos(radians), dy = Math.sin(radians);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (alpha === 0) continue;
+      const total = [0, 0, 0];
+      for (let step = 1; step <= distance; step += 1) {
+        const sampleX = Math.max(0, Math.min(width - 1, Math.round(x - dx * step)));
+        const sampleY = Math.max(0, Math.min(height - 1, Math.round(y - dy * step)));
+        const sampleOffset = (sampleY * width + sampleX) * 4;
+        total[0] += source[sampleOffset];
+        total[1] += source[sampleOffset + 1];
+        total[2] += source[sampleOffset + 2];
+      }
+      for (let channel = 0; channel < 3; channel += 1) {
+        const average = total[channel] / distance;
+        output[offset + channel] = clampByte(
+          source[offset + channel] + (average - source[offset + channel]) * strength,
+        );
+      }
+      output[offset + 3] = alpha;
+    }
+  }
+}
+
 /**
  * Apply a bounded seeded monochrome-grain approximation of Photoshop
  * Mezzotint. The source is converted to luminance and compared with a
@@ -3001,6 +3039,8 @@ export function applyFilterEffectsPixels(
     applySolarize(data, output, effect.amount);
   } else if (effect.type === 'diffuse') {
     applyDiffuse(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'wind') {
+    applyWind(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
