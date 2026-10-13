@@ -120,11 +120,15 @@ test('content-aware mask references survive draft validation and malformed asset
         kind: 'raster',
         asset: assetId,
         contentAwareFills: [fill({ mask: maskId })],
+        contentAwareMoves: [{ version: 1, mask: maskId, dx: 1, dy: 0, radius: 2, opacity: 1 }],
+        contentAwareScales: [{ version: 1, mask: maskId, scaleX: 1.2, scaleY: 0.9, radius: 2, opacity: 1 }],
       }],
     }],
   };
   const reopened = validateDraft(JSON.parse(JSON.stringify(prepareDraftForStorage(document))));
   assert.deepEqual(reopened.history[0].layers[0].contentAwareFills, [fill({ mask: maskId })]);
+  assert.deepEqual(reopened.history[0].layers[0].contentAwareMoves, document.history[0].layers[0].contentAwareMoves);
+  assert.deepEqual(reopened.history[0].layers[0].contentAwareScales, document.history[0].layers[0].contentAwareScales);
   assert.throws(() => validateDraft({
     ...document,
     assets: { [assetId]: document.assets[assetId] },
