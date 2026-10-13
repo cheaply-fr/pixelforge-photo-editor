@@ -262,3 +262,6 @@ staged.
 
 
 The vector interoperability increment adds `Layer → Copy SVG` for path, rectangle, ellipse and polygon layers. It serializes transformed geometry through the existing path model, preserves fill/stroke/even-odd metadata, writes to the browser clipboard without mutating the draft, and rejects unsupported raster/text sources. Pure serialization and desktop/mobile clipboard tests are included; font embedding, styles and Photoshop document graphs remain staged.
+
+
+**Edit → Fade…** is active as a bounded post-operation raster opacity blend with source-safe history and desktop/mobile round-trip coverage. Vector, locked, mismatched and adjustment-only states remain staged behind the contract in [`fade-contract.md`](./fade-contract.md).

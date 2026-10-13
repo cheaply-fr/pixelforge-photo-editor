@@ -191,6 +191,7 @@ import {
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
+import { applyFadePixels } from '../src/fade';
 import { createBackgroundMask } from '../src/backgroundRemoval';
 import {
   applyMaskRefinementPixels,
@@ -459,6 +460,7 @@ type MenuName =
   | 'Plugins';
 type Command =
   | 'noop'
+  | 'fade'
   | 'actions'
   | 'patch-tool'
   | 'mixer-brush-tool'
@@ -853,8 +855,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     {
       label: 'Fade…',
       shortcut: 'Ctrl+Shift+F',
-      command: 'noop',
-      disabled: true,
+      command: 'fade',
     },
     { label: '', command: 'noop', separator: true },
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
@@ -5794,6 +5795,66 @@ export default function Home() {
           : `${copies.length} layers duplicated`,
       );
   };
+  const fadeLastEdit = async () => {
+    if (index.current <= 0) {
+      setNotice('Fade is available immediately after an undoable raster edit');
+      return;
+    }
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    const previous = history.current[index.current - 1];
+    const previousLayer = previous?.layers.find((item) => item.id === f.active);
+    if (
+      !layer ||
+      layer.kind !== 'raster' ||
+      !layer.asset ||
+      !previousLayer ||
+      previousLayer.kind !== 'raster' ||
+      !previousLayer.asset
+    ) {
+      setNotice('Fade currently supports the active raster layer after a raster edit');
+      return;
+    }
+    const amountText = window.prompt('Fade opacity (0–100%)', '50');
+    if (amountText === null) return;
+    const amount = Number(amountText);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
+      setNotice('Fade opacity must be between 0 and 100%');
+      return;
+    }
+    try {
+      const [previousImage, currentImage] = await Promise.all([
+        decodeAsset(assets.current[previousLayer.asset]),
+        decodeAsset(assets.current[layer.asset]),
+      ]);
+      if (
+        previousImage.naturalWidth !== currentImage.naturalWidth ||
+        previousImage.naturalHeight !== currentImage.naturalHeight
+      )
+        throw new Error('Fade requires matching raster dimensions');
+      const previousSurface = surface(previousImage.naturalWidth, previousImage.naturalHeight);
+      const currentSurface = surface(currentImage.naturalWidth, currentImage.naturalHeight);
+      previousSurface.getContext('2d')!.drawImage(previousImage, 0, 0);
+      currentSurface.getContext('2d')!.drawImage(currentImage, 0, 0);
+      const previousPixels = previousSurface.getContext('2d')!.getImageData(0, 0, previousSurface.width, previousSurface.height);
+      const currentPixels = currentSurface.getContext('2d')!.getImageData(0, 0, currentSurface.width, currentSurface.height);
+      currentPixels.data.set(applyFadePixels(previousPixels.data, currentPixels.data, amount));
+      const output = surface(currentSurface.width, currentSurface.height);
+      output.getContext('2d')!.putImageData(currentPixels, 0, 0);
+      if (current() !== f) {
+        setNotice('Document changed while Fade was preparing; nothing was overwritten');
+        return;
+      }
+      const asset = addAsset(assets.current, output);
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item),
+      }))
+        setNotice(`Fade applied at ${Math.round(amount)}%; undo restores the original edit`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Fade could not be applied');
+    }
+  };
   const copyLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -10642,6 +10703,7 @@ export default function Home() {
     else if (command === 'png') download('png');
     else if (command === 'jpg') download('jpeg');
     else if (command === 'webp') download('webp');
+    else if (command === 'fade') return fadeLastEdit();
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'copy-layer') copyLayer();
@@ -11061,6 +11123,20 @@ export default function Home() {
         return !canUndo || quickMasking;
       case 'redo':
         return !canRedo || quickMasking;
+      case 'fade': {
+        const previous = index.current > 0 ? history.current[index.current - 1] : undefined;
+        const previousLayer = previous?.layers.find((item) => item.id === layer?.id);
+        return Boolean(
+          quickMasking ||
+          index.current <= 0 ||
+          !layer ||
+          layer.kind !== 'raster' ||
+          !layer.asset ||
+          !previousLayer ||
+          previousLayer.kind !== 'raster' ||
+          !previousLayer.asset,
+        );
+      }
       case 'copy-layer':
         return !layer;
       case 'copy-svg':
