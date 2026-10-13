@@ -10,6 +10,9 @@ test('Edit > Define Brush Preset saves settings in an anonymous project and relo
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await selectTool(page, 'Brush');
+  const buildUp = page.getByLabel('Build-up', { exact: true });
+  await buildUp.fill('64');
+  await expect(buildUp).toHaveValue('64');
   page.once('dialog', (dialog) => dialog.accept('Studio ink'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Define Brush Preset…', exact: true }).click();
@@ -22,6 +25,7 @@ test('Edit > Define Brush Preset saves settings in an anonymous project and relo
   expect(presets).toHaveLength(1);
   expect(presets?.[0]?.label).toBe('Studio ink');
   expect(presets?.[0]?.size).toBeGreaterThan(0);
+  expect(presets?.[0]?.brushBuildUp).toBe(64);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await selectTool(page, 'Brush');

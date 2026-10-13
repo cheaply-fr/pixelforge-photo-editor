@@ -89,6 +89,8 @@ preserving the zero-value path and source-safe commit boundary. Pure coverage is
 in `tests/brush-bristle.test.mjs`, with the same desktop/mobile project-file
 acceptance; full wet-media simulation remains staged; bounded wet colour pickup and physical bristle filament coverage is active.
 
+Custom brush presets now retain the bounded Build-up value alongside the existing tip dynamics; legacy presets default it to zero during normalization.
+
 Brush-family controls now also include a persisted deterministic Build-up amount. It preserves centre coverage while applying a bounded centre-weighted opacity falloff to the outer deposit. Pure coverage is in `tests/brush-build-up.test.mjs`, desktop/mobile project-file coverage is included in `tests/browser/brush-dynamics.spec.ts`, and the approximation plus wet-media limitation are recorded in `docs/brush-build-up-contract.md`.
 
 Brush-family controls also include a persisted Flow amount that scales local

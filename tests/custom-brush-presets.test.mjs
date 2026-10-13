@@ -21,6 +21,7 @@ const values = {
   brushTexture: 6,
   brushDual: 0,
   brushBristle: 0,
+  brushBuildUp: 0,
   brushFlow: 90,
 };
 

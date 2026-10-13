@@ -2575,6 +2575,7 @@ export default function Home() {
     setBrushTexture(preset.brushTexture);
     setBrushDual(preset.brushDual);
     setBrushBristle(preset.brushBristle);
+    setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
     setNotice(`Brush preset “${preset.label}” applied`);
   };
@@ -2602,6 +2603,7 @@ export default function Home() {
         brushTexture,
         brushDual,
         brushBristle,
+        brushBuildUp,
         brushFlow,
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
