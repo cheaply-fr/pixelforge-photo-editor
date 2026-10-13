@@ -2125,3 +2125,12 @@ test('Add Noise is an enabled seeded nondestructive filter with monochromatic co
   await expect(page.getByLabel('Add Noise seed', { exact: true })).toHaveValue('42');
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
+
+test('active filter commands fail closed for a locked layer', async ({ page }) => {
+  await importPixels(page);
+  await page.getByLabel('Lock layer', { exact: true }).check();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Add Noise…', exact: true })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Gaussian Blur…', exact: true })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Liquify…', exact: true })).toBeDisabled();
+});
