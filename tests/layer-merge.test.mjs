@@ -56,8 +56,8 @@ test('rejects missing, bottom and locked or hidden layer states', () => {
   );
 });
 
-test('guard reasons are user-facing and identify the staged boundary', () => {
-  assert.match(layerMergeReason('grouped-layers'), /isolated folder compositing/);
+test('guard reasons are user-facing and identify the supported folder boundary', () => {
+  assert.match(layerMergeReason('grouped-layers'), /complete visible, unlocked folder/);
   assert.match(layerMergeReason('no-lower-layer'), /above another layer/);
 });
 

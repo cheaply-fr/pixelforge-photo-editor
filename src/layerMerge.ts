@@ -1,9 +1,9 @@
 import type { Frame, Layer } from './document.ts';
 
 /**
- * The first Merge Layers contract handles an adjacent pair of ungrouped
- * layers. Folder members are supported through the multi-selection planner,
- * which expands a complete folder into one isolated merge unit.
+ * The single-layer compatibility planner handles an adjacent pair of
+ * ungrouped layers. The command-level multi-selection planner below also
+ * supports a complete visible, unlocked folder as one isolated merge unit.
  */
 export type LayerMergePlan =
   | {
@@ -147,7 +147,7 @@ export function applySelectedLayerMerge(
   };
 }
 
-/** Plan the only merge shape currently safe without a folder merge contract. */
+/** Plan the legacy adjacent-pair shape used by callers without a selection. */
 export function planLayerMerge(frame: Frame): LayerMergePlan {
   const activeIndex = frame.layers.findIndex((layer) => layer.id === frame.active);
   if (activeIndex < 0) return { ok: false, reason: 'missing-active' };
@@ -178,7 +178,7 @@ export function layerMergeReason(reason: Exclude<LayerMergePlan, { ok: true }>['
     case 'active-layer-locked':
       return 'Unlock the active layer before merging';
     case 'grouped-layers':
-      return 'Ungroup layers before merging; isolated folder compositing is active, but grouped merge is staged';
+      return 'Select the complete visible, unlocked folder to merge it as one isolated unit';
   }
 }
 
@@ -194,7 +194,7 @@ export function selectedLayerMergeReason(
     case 'non-contiguous-selection':
       return 'Selected layers must be contiguous in the layer stack';
     case 'grouped-layers':
-      return 'Ungroup selected layers before merging; grouped merge is staged';
+      return 'Select every visible, unlocked layer in one folder to merge its isolated composite';
     case 'hidden-layer':
       return 'Show all selected layers before merging';
     case 'locked-layer':
