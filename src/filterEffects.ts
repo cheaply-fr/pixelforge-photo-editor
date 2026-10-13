@@ -144,6 +144,7 @@ export type GradientMapSettings = {
   shadow: string;
   highlight: string;
   stops?: GradientStop[];
+  blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
 };
 
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
@@ -354,6 +355,9 @@ export function effectiveFilterEffects(
         ? source.gradientMap!.highlight.toLowerCase()
         : DEFAULT_GRADIENT_MAP_SETTINGS.highlight,
       ...(stops.length ? { stops } : {}),
+      blend: source.gradientMap?.blend === 'multiply' || source.gradientMap?.blend === 'screen' || source.gradientMap?.blend === 'overlay'
+        ? source.gradientMap.blend
+        : 'normal',
     };
   }
   if (type === 'dust-scratches' || type === 'reduce-noise') {
@@ -425,7 +429,8 @@ function validGradientMapSettings(value: unknown): value is GradientMapSettings 
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const settings = value as Partial<GradientMapSettings>;
   return validHexColor(settings.shadow) && validHexColor(settings.highlight) &&
-    (settings.stops === undefined || isGradientStops(settings.stops));
+    (settings.stops === undefined || isGradientStops(settings.stops)) &&
+    (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
 }
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
@@ -3049,9 +3054,22 @@ function applyGradientMap(
     const mapped = [0, 1, 2].map((channel) =>
       left.rgb[channel] + (right.rgb[channel] - left.rgb[channel]) * ratio,
     );
-    output[offset] = clampByte(source[offset] + (mapped[0] - source[offset]) * strength);
-    output[offset + 1] = clampByte(source[offset + 1] + (mapped[1] - source[offset + 1]) * strength);
-    output[offset + 2] = clampByte(source[offset + 2] + (mapped[2] - source[offset + 2]) * strength);
+    const blend = settings.blend ?? 'normal';
+    const composited = mapped.map((value, channel) => {
+      const base = source[offset + channel] / 255;
+      const layer = value / 255;
+      const result = blend === 'multiply'
+        ? base * layer
+        : blend === 'screen'
+          ? 1 - (1 - base) * (1 - layer)
+          : blend === 'overlay'
+            ? base < 0.5 ? 2 * base * layer : 1 - 2 * (1 - base) * (1 - layer)
+            : layer;
+      return result * 255;
+    });
+    output[offset] = clampByte(source[offset] + (composited[0] - source[offset]) * strength);
+    output[offset + 1] = clampByte(source[offset + 1] + (composited[1] - source[offset + 1]) * strength);
+    output[offset + 2] = clampByte(source[offset + 2] + (composited[2] - source[offset + 2]) * strength);
   }
 }
 

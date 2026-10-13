@@ -97,6 +97,24 @@ test('Gradient Map validates and interpolates ordered interior stops', () => {
   assert.deepEqual(pixel(output, 3, 2, 0), [255, 255, 255, 255]);
 });
 
+test('Gradient Map blend modes are bounded, deterministic, and source-safe', () => {
+  const source = rgba(2, 1, (x) => x === 0 ? [64, 128, 192, 255] : [200, 100, 20, 0]);
+  for (const blend of ['normal', 'multiply', 'screen', 'overlay']) {
+    const effect = effectiveFilterEffects({
+      type: 'gradient-map', amount: 100, radius: 1,
+      gradientMap: { shadow: '#202020', highlight: '#e0e0e0', blend },
+    });
+    const output = applyFilterEffectsPixels(source, 2, 1, effect);
+    assert.equal(validFilterEffects(effect), true);
+    assert.deepEqual(pixel(output, 2, 1, 0), [200, 100, 20, 0]);
+    assert.deepEqual(output, applyFilterEffectsPixels(source, 2, 1, effect));
+  }
+  assert.equal(validFilterEffects({
+    ...effectiveFilterEffects({ type: 'gradient-map', amount: 100, radius: 1 }),
+    gradientMap: { shadow: '#000000', highlight: '#ffffff', blend: 'hard-light' },
+  }), false);
+});
+
 test('Median reduces an isolated visible outlier without changing alpha or transparent RGB', () => {
   const source = rgba(3, 3, (x, y) => {
     if (x === 1 && y === 1) return [255, 0, 255, 255];

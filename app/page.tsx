@@ -15018,7 +15018,7 @@ export default function Home() {
             )}
             {filterEffects.type === 'gradient-map' && (
               <>
-                <p>Maps alpha-safe source luminance between editable endpoint and interior colours. The source asset remains unchanged; blend-mode controls remain staged.</p>
+                <p>Maps alpha-safe source luminance between editable endpoint and interior colours. The source asset remains unchanged.</p>
                 <div className="select-row">
                   <label htmlFor="gradient-map-shadow">Shadow colour</label>
                   <input
@@ -15039,6 +15039,23 @@ export default function Home() {
                     onChange={(event) => setFilterEffects({ gradientMap: { ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }), highlight: event.target.value } })}
                   />
                 </div>
+                <label>
+                  Gradient Map blend mode
+                  <select
+                    className="text-input"
+                    aria-label="Gradient Map blend mode"
+                    value={filterEffects.gradientMap?.blend ?? 'normal'}
+                    onChange={(event) => setFilterEffects({ gradientMap: {
+                      ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                      blend: event.target.value === 'multiply' || event.target.value === 'screen' || event.target.value === 'overlay' ? event.target.value : 'normal',
+                    } })}
+                  >
+                    <option value="normal">Normal</option>
+                    <option value="multiply">Multiply</option>
+                    <option value="screen">Screen</option>
+                    <option value="overlay">Overlay</option>
+                  </select>
+                </label>
                 <div className="filter-subsection">
                   <div className="select-row">
                     <span>Interior colour stops</span>

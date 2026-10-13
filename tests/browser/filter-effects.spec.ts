@@ -291,6 +291,7 @@ test('Gradient Map keeps editable endpoints, source assets and project pixels ac
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gradient-map');
   await page.getByLabel('Gradient Map shadow colour', { exact: true }).fill('#001122');
   await page.getByLabel('Gradient Map highlight colour', { exact: true }).fill('#ffeedd');
+  await page.getByLabel('Gradient Map blend mode', { exact: true }).selectOption('overlay');
   await page.getByRole('button', { name: 'Add stop', exact: true }).click();
   await expect(page.getByLabel('Gradient Map stop 1 position', { exact: true })).toHaveValue('25');
   await page.getByLabel('Gradient Map stop 1 colour', { exact: true }).fill('#ff0000');
@@ -301,13 +302,14 @@ test('Gradient Map keeps editable endpoints, source assets and project pixels ac
   expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
   expect(layer.adjustments.filterEffects).toMatchObject({
     type: 'gradient-map',
-    gradientMap: { shadow: '#001122', highlight: '#ffeedd', stops: [{ position: 25, color: '#ff0000' }] },
+    gradientMap: { shadow: '#001122', highlight: '#ffeedd', blend: 'overlay', stops: [{ position: 25, color: '#ff0000' }] },
   });
   const changed = await pixel(page, 4, 2);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Gradient Map shadow colour', { exact: true })).toHaveValue('#001122');
   await expect(page.getByLabel('Gradient Map highlight colour', { exact: true })).toHaveValue('#ffeedd');
+  await expect(page.getByLabel('Gradient Map blend mode', { exact: true })).toHaveValue('overlay');
   await expect(page.getByLabel('Gradient Map stop 1 position', { exact: true })).toHaveValue('25');
   await expect(page.getByLabel('Gradient Map stop 1 colour', { exact: true })).toHaveValue('#ff0000');
   await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
