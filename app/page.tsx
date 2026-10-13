@@ -113,6 +113,7 @@ import {
   type CalculationMode,
 } from '../src/applyImage';
 import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
+import { normalizeTextPathBinding } from '../src/textOnPath';
 import {
   createCustomBrushPreset,
   normalizeCustomBrushPresets,
@@ -608,6 +609,7 @@ type Command =
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
   | 'text-warp'
+  | 'text-on-path'
   | 'convert-to-shape'
   | 'rasterize-type'
   | 'create-work-path'
@@ -1102,6 +1104,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Convert to Shape', command: 'convert-to-shape' },
     { label: 'Rasterize Type Layer', command: 'rasterize-type' },
     { label: 'Warp Text…', command: 'text-warp' },
+    { label: 'Text on Path…', command: 'text-on-path' },
     { label: 'Font Preview Size', command: 'noop', disabled: true },
     { label: 'Language Options', command: 'noop', disabled: true },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
@@ -3661,6 +3664,36 @@ export default function Home() {
     const verticalInput = window.prompt('Vertical distortion (-100 to 100)', String(currentWarp.vertical));
     if (verticalInput === null) return;
     editLayer({ warp: normalizeTextWarp({ ...currentWarp, style, bend: Number(bendInput), vertical: Number(verticalInput) }) });
+  };
+  const setTextOnPath = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before attaching text to a path');
+      return;
+    }
+    const paths = f.layers.filter((item): item is Extract<Layer, { kind: 'path' }> => item.kind === 'path');
+    if (!paths.length) {
+      setNotice('Create a Pen path layer before attaching text to a path');
+      return;
+    }
+    const defaultPath = layer.textPath?.pathLayerId || paths[0].id;
+    const pathId = window.prompt(`Path layer ID (${paths.map((item) => `${item.id}: ${item.name}`).join(', ')})`, defaultPath);
+    if (pathId === null) return;
+    const path = paths.find((item) => item.id === pathId.trim());
+    if (!path) {
+      setNotice('Text path layer ID was not found');
+      return;
+    }
+    const offsetInput = window.prompt('Path offset in pixels', String(layer.textPath?.offset ?? 0));
+    if (offsetInput === null) return;
+    const reverse = window.confirm('Reverse text direction along the path?');
+    const binding = normalizeTextPathBinding({ pathLayerId: path.id, offset: Number(offsetInput), reverse });
+    if (!binding) {
+      setNotice('Text path settings are invalid');
+      return;
+    }
+    editLayer({ textPath: binding });
+    setNotice('Text attached to editable path');
   };
   const pasteLoremIpsum = () => {
     const f = current();
@@ -11557,6 +11590,7 @@ export default function Home() {
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
     else if (command === 'text-warp') setTextWarp();
+    else if (command === 'text-on-path') setTextOnPath();
     else if (command === 'paste-lorem') pasteLoremIpsum();
     else if (command === 'convert-to-shape') return convertTextToShape();
     else if (command === 'rasterize-type') {
@@ -12205,6 +12239,8 @@ export default function Home() {
       case 'text-orientation-vertical':
       case 'text-warp':
         return !layer || layer.kind !== 'text' || locked;
+      case 'text-on-path':
+        return !layer || layer.kind !== 'text' || locked || !frame.layers.some((candidate) => candidate.kind === 'path');
       case 'paste-lorem':
         return frame.layers.length >= 32;
       case 'convert-to-shape':

@@ -44,6 +44,7 @@ import {
 } from './imageSize.ts';
 import { validColorProfile, type ColorProfile } from './colorProfile.ts';
 import { pathContours, validatePath, type PathModel } from './paths.ts';
+import { normalizeTextPathBinding, layoutTextOnPath, mapTextPathPoints, flattenTextPath, type TextPathBinding } from './textOnPath.ts';
 import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
@@ -265,6 +266,8 @@ export type Layer = Common &
         orientation: TextOrientation;
         /** Optional editable Photoshop-style warp metadata. */
         warp?: TextWarp;
+        /** Optional editable attachment to a vector path layer. */
+        textPath?: TextPathBinding;
       }
     | {
         kind: 'rectangle';
@@ -1071,6 +1074,7 @@ export function alignedTextOffset(
 export function drawTextLayer(
   context: CanvasRenderingContext2D,
   layer: Extract<Layer, { kind: 'text' }>,
+  path?: { points: readonly { x: number; y: number }[]; offset: number; reverse: boolean },
 ): void {
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     align = layer.textAlign ?? 'left',
@@ -1078,6 +1082,21 @@ export function drawTextLayer(
     spacing = layer.letterSpacing ?? 0,
     orientation = layer.orientation ?? 'horizontal',
     warp = normalizeTextWarp(layer.warp);
+  if (path && orientation === 'horizontal') {
+    const placements = layoutTextOnPath(context, layer.text, path.points, {
+      offset: path.offset,
+      reverse: path.reverse,
+      letterSpacing: spacing,
+    });
+    for (const placement of placements) {
+      context.save();
+      context.translate(placement.x, placement.y);
+      context.rotate(placement.rotation);
+      context.fillText(placement.glyph, -context.measureText(placement.glyph).width / 2, 0);
+      context.restore();
+    }
+    return;
+  }
   if (orientation === 'vertical') {
     const columnAdvance = Math.max(1, layer.fontSize * lineHeight);
     for (const [columnIndex, line] of layer.text.split('\n').entries()) {
@@ -1210,6 +1229,9 @@ export function effectiveTextLayer<T extends Layer>(
     letterSpacing: value.letterSpacing ?? 0,
     orientation: value.orientation ?? 'horizontal',
     warp: normalizeTextWarp(value.warp),
+    ...(normalizeTextPathBinding(value.textPath)
+      ? { textPath: normalizeTextPathBinding(value.textPath) }
+      : {}),
   } as T;
 }
 export function validateFrame(
@@ -1411,7 +1433,8 @@ export function validateFrame(
         !TEXT_ORIENTATIONS.includes(
           (layer.orientation ?? 'horizontal') as TextOrientation,
         ) ||
-        (layer.warp !== undefined && !isTextWarp(layer.warp))
+        (layer.warp !== undefined && !isTextWarp(layer.warp)) ||
+        (layer.textPath !== undefined && !normalizeTextPathBinding(layer.textPath))
       )
         return fail();
     } else if (
@@ -1451,6 +1474,13 @@ export function validateFrame(
   }
   // Relationships are stack-sensitive and therefore need a cross-layer pass
   // after every layer has been structurally validated.
+  for (const textLayer of value.layers.filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text')) {
+    const binding = normalizeTextPathBinding(textLayer.textPath);
+    if (binding) {
+      const pathLayer = value.layers.find((candidate) => candidate.id === binding.pathLayerId);
+      if (!pathLayer || pathLayer.kind !== 'path') return fail();
+    }
+  }
   if (
     value.layers.some(
       (layer) =>
@@ -2496,7 +2526,16 @@ export async function renderFrame(
       context.fillStyle = layer.color;
       context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
       context.textBaseline = 'top';
-      drawTextLayer(context, layer);
+      const binding = normalizeTextPathBinding(layer.textPath),
+        pathLayer = binding
+          ? frame.layers.find((candidate): candidate is Extract<Layer, { kind: 'path' }> => candidate.id === binding.pathLayerId && candidate.kind === 'path')
+          : undefined,
+        pathPoints = pathLayer && binding
+          ? mapTextPathPoints(flattenTextPath(pathLayer.path), pathLayer.matrix, layer.matrix)
+          : undefined;
+      drawTextLayer(context, layer, pathPoints && binding
+        ? { points: pathPoints, offset: binding.offset, reverse: binding.reverse }
+        : undefined);
     }
     if (layer.kind === 'rectangle') {
       context.fillStyle = layer.color;

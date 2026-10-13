@@ -183,3 +183,62 @@ test('Warp Text stays editable, changes the raster, and persists across reload',
   const reloaded = await project(page), reloadedText = reloaded.history[reloaded.index].layers.find((layer) => layer.kind === 'text');
   expect(reloadedText).toMatchObject({ warp: { style: 'arc', bend: 65, vertical: 20 } });
 });
+
+test('Text on Path stays editable, follows a vector path, and survives reload', async ({ page }) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await selectTool(page, 'Pen');
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  for (const [x, y] of [[0.2, 0.3], [0.75, 0.3], [0.45, 0.3], [0.2, 0.3]])
+    await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
+  await expect(page.locator('footer')).toContainText('Editable path layer added');
+  const before = await project(page);
+  const path = before.history[before.index].layers.find((layer) => layer.kind === 'path') as { id: string };
+  const imported = structuredClone(before) as typeof before;
+  const frame = imported.history[imported.index] as { layers: Array<Record<string, unknown>>; active: string };
+  const textId = '8f8f8f8f-8f8f-4f8f-8f8f-8f8f8f8f8f8f';
+  const textLayer = { ...frame.layers[0] };
+  delete textLayer.asset;
+  delete textLayer.fillColor;
+  Object.assign(textLayer, {
+    id: textId,
+    name: 'Path Text',
+    kind: 'text',
+    text: 'PATH',
+    color: '#00ff00',
+    fontSize: 48,
+    fontFamily: 'Arial',
+    bold: false,
+    boxWidth: 300,
+    textAlign: 'left',
+    lineHeight: 1.2,
+    letterSpacing: 0,
+    orientation: 'horizontal',
+    textPath: { pathLayerId: path.id, offset: 0, reverse: false },
+  });
+  frame.layers.push(textLayer);
+  frame.active = textId;
+  await page.getByTestId('project-input').setInputFiles({
+    name: 'text-on-path.pixelforge', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported)),
+  });
+  await expect(page.getByLabel('Edit layer text', { exact: true })).toHaveValue('PATH');
+  const prompts = [path.id, '0'];
+  page.on('dialog', async (dialog) => {
+    if (dialog.type() === 'confirm') await dialog.accept();
+    else await dialog.accept(prompts.shift()!);
+  });
+  await page.getByRole('button', { name: 'Type', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Text on Path…', exact: true }).click();
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  await saved(page);
+  const attached = await project(page);
+  const text = attached.history[attached.index].layers.find((layer) => layer.kind === 'text');
+  expect(text).toMatchObject({ text: 'PATH', textPath: { pathLayerId: path.id, offset: 0, reverse: true } });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const reloaded = await project(page);
+  expect(reloaded.history[reloaded.index].layers.find((layer) => layer.kind === 'text')).toMatchObject({
+    textPath: { pathLayerId: path.id, offset: 0, reverse: true },
+  });
+});
