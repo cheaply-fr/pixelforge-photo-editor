@@ -124,6 +124,7 @@ import {
   type CustomPatternPreset,
 } from '../src/customPatternPresets';
 import { createCustomShapePreset, normalizeCustomShapePresets, type CustomShapeKind, type CustomShapePreset } from '../src/customShapePresets';
+import { createCustomPathPreset, normalizeCustomPathPresets, type CustomPathPreset } from '../src/customPathPresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
 import { MATTING_MODES, effectiveMatting } from '../src/matting';
 import { cookieCutterPath, COOKIE_CUTTER_SHAPES, type CookieCutterShape } from '../src/cookieCutter';
@@ -501,6 +502,7 @@ type Command =
   | 'define-brush-preset'
   | 'define-pattern'
   | 'define-custom-shape'
+  | 'define-custom-path'
   | 'keyboard-shortcuts'
   | 'filter-gallery'
   | 'toolbar-settings'
@@ -946,6 +948,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Define Brush Preset…', command: 'define-brush-preset' },
     { label: 'Define Pattern…', command: 'define-pattern' },
     { label: 'Define Custom Shape…', command: 'define-custom-shape' },
+    { label: 'Define Custom Path…', command: 'define-custom-path' },
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
     { label: 'Color Settings…', command: 'color-settings' },
@@ -1864,7 +1867,9 @@ export default function Home() {
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
+    [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
     [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
+    [selectedCustomPathPresetId, setSelectedCustomPathPresetId] = useState(''),
     [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
     [polygonSides, setPolygonSides] = useState(5),
     [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
@@ -2211,6 +2216,7 @@ export default function Home() {
     customBrushPresets,
     customPatternPresets,
     customShapePresets,
+    customPathPresets,
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
@@ -2282,6 +2288,8 @@ export default function Home() {
     setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
+    setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
+    setSelectedCustomPathPresetId('');
     setPolygonVariant(s.polygonVariant ?? 'polygon');
     setPolygonSides(Math.max(3, Math.min(32, Math.round(s.polygonSides ?? 5))));
     setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
@@ -2338,6 +2346,8 @@ export default function Home() {
     setCustomBrushPresets,
     setCustomPatternPresets,
     setCustomShapePresets,
+    setCustomPathPresets,
+    setSelectedCustomPathPresetId,
     setPolygonVariant,
     setPolygonSides,
     setPolygonInnerRadius,
@@ -2522,6 +2532,46 @@ export default function Home() {
       setNotice(`Shape preset “${trimmed}” saved on this device`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Custom shape could not be saved');
+    }
+  };
+  const removeCustomPathPreset = () => {
+    if (!selectedCustomPathPresetId) return;
+    const preset = customPathPresets.find((item) => item.id === selectedCustomPathPresetId);
+    if (!preset) return;
+    setCustomPathPresets((currentPresets) => currentPresets.filter((item) => item.id !== selectedCustomPathPresetId));
+    setSelectedCustomPathPresetId('');
+    setNotice(`Path preset “${preset.label}” removed from this device`);
+  };
+  const applyCustomPathPreset = (preset: CustomPathPreset) => {
+    const source = validatePath(preset.path);
+    const added = addLayer({ ...commonLayer(preset.label), kind: 'path', path: source });
+    if (added) {
+      setActiveTool('direct-select');
+      setSelectedCustomPathPresetId(preset.id);
+      setNotice(`Path preset “${preset.label}” applied as an editable path layer`);
+    }
+  };
+  const defineCustomPath = () => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'path') {
+      setNotice('Select an editable path layer before defining a custom path');
+      return;
+    }
+    const label = window.prompt('Name this custom path', layer.name || 'Custom path');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Custom path name cannot be empty');
+      return;
+    }
+    try {
+      const preset = createCustomPathPreset({ label: trimmed, path: layer.path });
+      setCustomPathPresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      setSelectedCustomPathPresetId(preset.id);
+      setNotice(`Path preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Custom path could not be saved');
     }
   };
   const resetColors = () => {
@@ -5148,6 +5198,7 @@ export default function Home() {
         customBrushPresets,
         customPatternPresets,
         customShapePresets,
+        customPathPresets,
         polygonVariant,
         polygonSides,
         polygonInnerRadius,
@@ -5245,6 +5296,7 @@ export default function Home() {
     customBrushPresets,
     customPatternPresets,
     customShapePresets,
+    customPathPresets,
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
@@ -11183,6 +11235,7 @@ export default function Home() {
     else if (command === 'define-brush-preset') return defineBrushPreset();
     else if (command === 'define-pattern') return definePattern();
     else if (command === 'define-custom-shape') return defineCustomShape();
+    else if (command === 'define-custom-path') return defineCustomPath();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
@@ -13749,7 +13802,11 @@ export default function Home() {
             tool === 'rectangle' ||
             tool === 'ellipse' ||
             tool === 'line' ||
-            tool === 'polygon') && (
+            tool === 'polygon' ||
+            tool === 'pen' ||
+            tool === 'freeform-pen' ||
+            tool === 'curvature-pen' ||
+            tool === 'direct-select') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
               {tool === 'gradient' && (
@@ -13911,6 +13968,28 @@ export default function Home() {
                     ))}
                   </select>
                   <button type="button" className="secondary" disabled={!selectedCustomShapePresetId} onClick={removeCustomShapePreset}>
+                    Remove
+                  </button>
+                </label>
+              )}
+              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && customPathPresets.length > 0 && (
+                <label className="select-row">
+                  <span>Saved path preset</span>
+                  <select
+                    aria-label="Saved path preset"
+                    value={selectedCustomPathPresetId}
+                    onChange={(event) => {
+                      const preset = customPathPresets.find((item) => item.id === event.target.value);
+                      if (preset) applyCustomPathPreset(preset);
+                      else setSelectedCustomPathPresetId('');
+                    }}
+                  >
+                    <option value="">Choose saved preset</option>
+                    {customPathPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={removeCustomPathPreset}>
                     Remove
                   </button>
                 </label>

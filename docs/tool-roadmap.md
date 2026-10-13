@@ -269,5 +269,14 @@ The vector interoperability increment adds `Layer → Copy SVG` for path, rectan
 
 **Edit → Toggle Last State** is active as a repeatable switch between the current and immediately previous editable history frames, preserving the existing history stack and render cancellation contract.
 
+**Edit → Define Custom Path…** is active for the Pen family. A selected editable
+path can be saved as a bounded local preset; the Pen and Direct Selection
+options can apply or remove presets, creating a second editable path layer
+without copying source pixels or remote references. Presets validate anchors,
+Bezier handles, compound contours, appearance and fill rules, and survive
+project export/reload. Pure validation plus desktop/mobile acceptance cover
+round-trip geometry and application; synchronized path libraries and richer
+path styling remain staged.
+
 
 **Type → Paste Lorem Ipsum** is active as a local editable text-layer insertion with bounded box/font defaults, anonymous-draft persistence and desktop/mobile round-trip coverage. **Edit → Search** now opens a local command palette and honors Ctrl/Cmd+F, **Edit → Purge Undo History…** explicitly compacts retained snapshots while preserving the current editable frame, and **Edit → Find and Replace Text…** performs deterministic, reversible replacement across editable text layers with case and whole-word controls. **Image → Apply Image…** performs a local source-over composite into an unlocked raster target with optional selection clipping, explicit opacity, and one undoable commit; see [`text-replace-contract.md`](./text-replace-contract.md), [`history-purge-contract.md`](./history-purge-contract.md), and [`apply-image-contract.md`](./apply-image-contract.md). Provider fonts and full OpenType shaping remain staged.

@@ -55,6 +55,7 @@ import {
   type CustomPatternPreset,
 } from './customPatternPresets.ts';
 import { normalizeCustomShapePresets, type CustomShapePreset } from './customShapePresets.ts';
+import { normalizeCustomPathPresets, type CustomPathPreset } from './customPathPresets.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 import {
   createDraftBundle,
@@ -150,6 +151,8 @@ export type Settings = {
   customPatternPresets?: CustomPatternPreset[];
   /** User-authored local vector shape presets; geometry remains editable. */
   customShapePresets?: CustomShapePreset[];
+  /** User-authored local editable Pen paths; source pixels never leave the device. */
+  customPathPresets?: CustomPathPreset[];
   /** Parametric polygon variant used by the Polygon tool. */
   polygonVariant?: 'polygon' | 'triangle' | 'star';
   /** Parametric polygon/star side count, bounded to the editable shape range. */
@@ -382,6 +385,8 @@ function validSettings(settings: unknown): settings is Settings {
       normalizeCustomPatternPresets(candidate.customPatternPresets).length !== candidate.customPatternPresets.length) ||
     (candidate.customShapePresets !== undefined &&
       normalizeCustomShapePresets(candidate.customShapePresets).length !== candidate.customShapePresets.length) ||
+    (candidate.customPathPresets !== undefined &&
+      normalizeCustomPathPresets(candidate.customPathPresets).length !== candidate.customPathPresets.length) ||
     (candidate.patternId !== undefined &&
       !PATTERN_IDS.includes(candidate.patternId as PatternId)) ||
     (candidate.redEyeThreshold !== undefined &&
