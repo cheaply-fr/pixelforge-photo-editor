@@ -151,6 +151,10 @@ test('multi-selection planner guards insufficient, missing, non-contiguous, grou
     'locked-layer',
   );
   assert.match(selectedLayerMergeReason('non-contiguous-selection'), /contiguous/);
+  assert.match(
+    selectedLayerMergeReason('grouped-layers'),
+    /every visible, unlocked layer in one folder/,
+  );
 });
 
 test('applies a selected merge without mutating unrelated layers, groups or artboards', () => {
