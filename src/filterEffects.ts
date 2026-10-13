@@ -49,6 +49,7 @@ export const FILTER_EFFECT_TYPES = [
   'zigzag',
   'lens-flare',
   'flame',
+  'find-edges',
   'deinterlace',
   'ntsc-colors',
 ] as const;
@@ -672,6 +673,44 @@ function applySurfaceBlur(
       output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
       output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
       output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
+    }
+  }
+}
+
+/**
+ * Bounded Sobel edge extraction for Stylize → Find Edges.
+ * The source buffer remains immutable, alpha and transparent RGB padding stay
+ * byte-for-byte stable, and the effect stores only its amount metadata.
+ */
+function applyFindEdges(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const lumaAt = (x: number, y: number) => {
+    const sx = Math.max(0, Math.min(width - 1, x));
+    const sy = Math.max(0, Math.min(height - 1, y));
+    const offset = (sy * width + sx) * 4;
+    return source[offset] * 0.2126 + source[offset + 1] * 0.7152 + source[offset + 2] * 0.0722;
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      const gx =
+        -lumaAt(x - 1, y - 1) + lumaAt(x + 1, y - 1) -
+        2 * lumaAt(x - 1, y) + 2 * lumaAt(x + 1, y) -
+        lumaAt(x - 1, y + 1) + lumaAt(x + 1, y + 1);
+      const gy =
+        -lumaAt(x - 1, y - 1) - 2 * lumaAt(x, y - 1) - lumaAt(x + 1, y - 1) +
+        lumaAt(x - 1, y + 1) + 2 * lumaAt(x, y + 1) + lumaAt(x + 1, y + 1);
+      const edge = clampByte(Math.hypot(gx, gy) / 4);
+      output[destination] = clampByte(source[destination] * (1 - strength) + edge * strength);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + edge * strength);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + edge * strength);
     }
   }
 }
@@ -2611,6 +2650,8 @@ export function applyFilterEffectsPixels(
     applyDifferenceClouds(data, width, height, effect, output, strength);
   } else if (effect.type === 'flame') {
     applyFlame(data, width, height, effect, output, strength);
+  } else if (effect.type === 'find-edges') {
+    applyFindEdges(data, width, height, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
