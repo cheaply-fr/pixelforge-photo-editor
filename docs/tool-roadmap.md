@@ -144,6 +144,8 @@ The current retouching increment adds bounded, nondestructive Spot Healing over 
 
 **Content-Aware Move now stores a nondestructive `contentAwareMoves` entry plus an immutable layer-local selection-mask asset instead of replacing the source raster.** Rendering replays the local fill-and-translate operation through the normal source-safe pipeline, and desktop/mobile acceptance verifies source-asset identity, mask retention and reload persistence. It remains a deterministic local approximation without semantic object inference.
 
+**Content-Aware Scale now follows the same nondestructive contract:** bounded independent percentages are stored in `contentAwareScales` with an immutable layer-local mask, source asset identity is retained, and desktop/mobile reload tests verify the editable metadata. Semantic subject preservation and Adobe algorithm parity remain out of scope.
+
 The Render increment now adds **Filter → Render → Picture Frame…**. It uses a
 bounded seeded inner-frame renderer with editable width, amount and seed,
 preserves source alpha and transparent RGB padding, and stores no generated

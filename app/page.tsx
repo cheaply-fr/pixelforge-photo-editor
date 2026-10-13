@@ -446,7 +446,6 @@ import {
 import {
   CONTENT_AWARE_SCALE_MAX_PERCENT,
   CONTENT_AWARE_SCALE_MIN_PERCENT,
-  scaleContentAwareSelection,
 } from '../src/contentAwareScale';
 import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
@@ -5006,28 +5005,24 @@ export default function Home() {
         setNotice('The selection does not intersect the active raster layer');
         return;
       }
-      const source = surface(width, height),
-        sourceContext = source.getContext('2d');
-      if (!sourceContext) throw new Error('Content-Aware Scale canvas is unavailable');
-      sourceContext.drawImage(image, 0, 0);
-      const imageData = sourceContext.getImageData(0, 0, width, height),
-        scaled = scaleContentAwareSelection(imageData.data, width, height, mask, {
-          version: 1,
-          scaleX: scaleX / 100,
-          scaleY: scaleY / 100,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
-        });
-      imageData.data.set(scaled);
-      sourceContext.putImageData(imageData, 0, 0);
       if (current() !== f || current().active !== layer.id) {
         setNotice('The document changed while Content-Aware Scale was prepared');
         return;
       }
-      const asset = addAsset(assets.current, source);
+      const maskAsset = alphaMaskAsset(width, height, mask),
+        scale = {
+          version: 1 as const,
+          mask: maskAsset,
+          scaleX: scaleX / 100,
+          scaleY: scaleY / 100,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        };
       if (commit({
         ...f,
-        layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item),
+        layers: f.layers.map((item) => item.id === layer.id
+          ? { ...item, contentAwareScales: [...(item.contentAwareScales ?? []), scale] }
+          : item),
       })) setNotice('Content-Aware Scale applied locally; undo restores the original pixels');
     } catch {
       setNotice('Content-Aware Scale could not be applied');

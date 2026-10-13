@@ -3,9 +3,12 @@ import { applyContentAwareFill, type ContentAwareFill } from './contentAwareClea
 export const CONTENT_AWARE_SCALE_VERSION = 1 as const;
 export const CONTENT_AWARE_SCALE_MIN_PERCENT = 25;
 export const CONTENT_AWARE_SCALE_MAX_PERCENT = 400;
+export const CONTENT_AWARE_SCALE_MAX_OPERATIONS = 16;
 
 export type ContentAwareScale = {
   version: typeof CONTENT_AWARE_SCALE_VERSION;
+  /** Optional layer-local selection mask asset for persisted operations. */
+  mask?: string;
   scaleX: number;
   scaleY: number;
   radius: number;
@@ -19,6 +22,11 @@ export function validContentAwareScale(value: unknown): value is ContentAwareSca
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Partial<ContentAwareScale>;
   const radius = candidate.radius;
+  if (
+    candidate.mask !== undefined &&
+    (typeof candidate.mask !== 'string' || !/^[a-z\d-]{1,160}$/i.test(candidate.mask))
+  )
+    return false;
   return candidate.version === CONTENT_AWARE_SCALE_VERSION &&
     finite(candidate.scaleX) && candidate.scaleX >= CONTENT_AWARE_SCALE_MIN_PERCENT / 100 && candidate.scaleX <= CONTENT_AWARE_SCALE_MAX_PERCENT / 100 &&
     finite(candidate.scaleY) && candidate.scaleY >= CONTENT_AWARE_SCALE_MIN_PERCENT / 100 && candidate.scaleY <= CONTENT_AWARE_SCALE_MAX_PERCENT / 100 &&

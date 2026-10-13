@@ -6,6 +6,8 @@ const pixel = (r, g, b, a = 255) => [r, g, b, a];
 
 test('content-aware scale validates bounded independent axes', () => {
   assert.equal(validContentAwareScale({ version: 1, scaleX: 1.2, scaleY: 0.8, radius: 12, opacity: 0.75 }), true);
+  assert.equal(validContentAwareScale({ version: 1, mask: 'mask-asset', scaleX: 1.2, scaleY: 0.8, radius: 12, opacity: 0.75 }), true);
+  assert.equal(validContentAwareScale({ version: 1, mask: 'bad value', scaleX: 1.2, scaleY: 0.8, radius: 12, opacity: 0.75 }), false);
   assert.equal(validContentAwareScale({ version: 1, scaleX: 0.2, scaleY: 1, radius: 12, opacity: 1 }), false);
   assert.equal(validContentAwareScale({ version: 1, scaleX: 4.1, scaleY: 1, radius: 12, opacity: 1 }), false);
   assert.equal(validContentAwareScale({ version: 1, scaleX: 1, scaleY: 1, radius: 0, opacity: 1 }), false);

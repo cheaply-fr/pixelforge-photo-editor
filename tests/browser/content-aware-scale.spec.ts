@@ -14,7 +14,7 @@ const project = async (page: Page) => {
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
   return (await downloadedProject((await download.path())!)) as unknown as {
-    history: Array<{ active: string; layers: Array<{ id: string; asset: string }>; selection?: unknown }>;
+    history: Array<{ active: string; layers: Array<{ id: string; asset: string; contentAwareScales?: Array<{ mask?: string; scaleX: number; scaleY: number }> }>; selection?: unknown }>;
     index: number;
   };
 };
@@ -43,10 +43,13 @@ test('Content-Aware Scale transforms an explicit selection and survives reload',
   const afterFrame = after.history[after.index];
   const afterAsset = afterFrame.layers.find((layer) => layer.id === afterFrame.active)!.asset;
   expect(after.index).toBeGreaterThan(before.index);
-  expect(afterAsset).not.toBe(beforeAsset);
+  expect(afterAsset).toBe(beforeAsset);
+  expect(afterFrame.layers.find((layer) => layer.id === afterFrame.active)!.contentAwareScales).toHaveLength(1);
   expect(afterFrame.selection).toBeTruthy();
   await page.reload();
   const reloaded = await project(page);
-  expect(reloaded.history[reloaded.index].layers.find((layer) => layer.id === reloaded.history[reloaded.index].active)!.asset).toBe(afterAsset);
+  const restoredLayer = reloaded.history[reloaded.index].layers.find((layer) => layer.id === reloaded.history[reloaded.index].active)!;
+  expect(restoredLayer.asset).toBe(afterAsset);
+  expect(restoredLayer.contentAwareScales).toHaveLength(1);
 });
 
