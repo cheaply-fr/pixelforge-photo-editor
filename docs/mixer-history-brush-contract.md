@@ -25,7 +25,7 @@ stroke is committed as one undo step and is safe to cancel by switching tools.
 
 `src/mixerHistoryBrush.ts` exposes pure byte-array helpers with strict canvas,
 point and setting bounds. The implementation intentionally does not claim
-Photoshop's bristle simulation, wet-media buildup across dabs, Art History
+Photoshop's bristle simulation, full wet-media buildup across dabs, Art History
 stylisation, PSD history metadata, linked cloud sources or adjustment-brush
 semantics. Advanced dynamics can be added behind a separate contract without
 changing the source-retention guarantees here.

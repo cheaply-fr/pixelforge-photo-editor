@@ -54,6 +54,39 @@ test('Mixer Brush blends an immutable source with deterministic alpha handling',
   assert.deepEqual(Array.from(output.slice(0, 4)), [20, 40, 220, 255]);
 });
 
+test('Mixer Brush wet media deterministically picks up destination colour when load leaves capacity', () => {
+  const source = pixels(5, 5, [220, 40, 20, 255]);
+  const destination = pixels(5, 5, [20, 40, 220, 255]);
+  const dry = applyMixerBrushPixels(destination, source, 5, 5, [{ x: 2, y: 2 }], {
+    ...DEFAULT_MIXER_BRUSH,
+    size: 3,
+    hardness: 100,
+    flow: 100,
+    wet: 0,
+    load: 50,
+    mix: 100,
+  });
+  const wet = applyMixerBrushPixels(destination, source, 5, 5, [{ x: 2, y: 2 }], {
+    ...DEFAULT_MIXER_BRUSH,
+    size: 3,
+    hardness: 100,
+    flow: 100,
+    wet: 100,
+    load: 50,
+    mix: 100,
+  });
+  assert.notDeepEqual(Array.from(wet.slice(48, 52)), Array.from(dry.slice(48, 52)));
+  assert.deepEqual(Array.from(wet.slice(48, 52)), Array.from(applyMixerBrushPixels(destination, source, 5, 5, [{ x: 2, y: 2 }], {
+    ...DEFAULT_MIXER_BRUSH,
+    size: 3,
+    hardness: 100,
+    flow: 100,
+    wet: 100,
+    load: 50,
+    mix: 100,
+  }).slice(48, 52)));
+});
+
 test('History Brush restores a prior raster through a soft alpha mask', () => {
   const source = pixels(5, 5, [10, 220, 20, 255]);
   const destination = pixels(5, 5, [220, 20, 30, 255]);
