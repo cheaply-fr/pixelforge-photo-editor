@@ -380,6 +380,11 @@ import {
   moveContentAwareSelection,
 } from '../src/contentAwareMove';
 import {
+  CONTENT_AWARE_SCALE_MAX_PERCENT,
+  CONTENT_AWARE_SCALE_MIN_PERCENT,
+  scaleContentAwareSelection,
+} from '../src/contentAwareScale';
+import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_FIBERS_SETTINGS,
   DEFAULT_MEZZOTINT_SETTINGS,
@@ -448,6 +453,7 @@ type Command =
   | 'set-history-source'
   | 'content-aware-fill'
   | 'content-aware-move'
+  | 'content-aware-scale'
   | 'resize'
   | 'canvas-size'
   | 'trim'
@@ -858,7 +864,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Transform', command: 'noop', disabled: true },
     { label: 'Perspective Warp', command: 'noop', disabled: true },
     { label: 'Puppet Warp', command: 'noop', disabled: true },
-    { label: 'Content-Aware Scale', command: 'noop', disabled: true },
+    { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
     { label: '', command: 'noop', separator: true },
     { label: 'Define Brush Preset…', command: 'noop', disabled: true },
     { label: 'Define Pattern…', command: 'noop', disabled: true },
@@ -4233,6 +4239,69 @@ export default function Home() {
       })) setNotice('Content-Aware Move applied locally; undo restores the original pixels');
     } catch {
       setNotice('Content-Aware Move could not be applied');
+    }
+  };
+  const applyContentAwareScale = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Content-Aware Scale');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Content-Aware Scale');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Content-Aware Scale');
+      return;
+    }
+    const horizontalText = window.prompt('Scale selection horizontally (%)', '120');
+    if (horizontalText === null) return;
+    const verticalText = window.prompt('Scale selection vertically (%)', horizontalText);
+    if (verticalText === null) return;
+    const scaleX = Number(horizontalText),
+      scaleY = Number(verticalText);
+    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) ||
+      scaleX < CONTENT_AWARE_SCALE_MIN_PERCENT || scaleX > CONTENT_AWARE_SCALE_MAX_PERCENT ||
+      scaleY < CONTENT_AWARE_SCALE_MIN_PERCENT || scaleY > CONTENT_AWARE_SCALE_MAX_PERCENT) {
+      setNotice(`Content-Aware Scale values must be between ${CONTENT_AWARE_SCALE_MIN_PERCENT}% and ${CONTENT_AWARE_SCALE_MAX_PERCENT}%`);
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, width, height);
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      const source = surface(width, height),
+        sourceContext = source.getContext('2d');
+      if (!sourceContext) throw new Error('Content-Aware Scale canvas is unavailable');
+      sourceContext.drawImage(image, 0, 0);
+      const imageData = sourceContext.getImageData(0, 0, width, height),
+        scaled = scaleContentAwareSelection(imageData.data, width, height, mask, {
+          version: 1,
+          scaleX: scaleX / 100,
+          scaleY: scaleY / 100,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        });
+      imageData.data.set(scaled);
+      sourceContext.putImageData(imageData, 0, 0);
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Content-Aware Scale was prepared');
+        return;
+      }
+      const asset = addAsset(assets.current, source);
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item),
+      })) setNotice('Content-Aware Scale applied locally; undo restores the original pixels');
+    } catch {
+      setNotice('Content-Aware Scale could not be applied');
     }
   };
   const adjust = (patch: Partial<Adjustments>) => {
@@ -10240,6 +10309,8 @@ export default function Home() {
       await applyContentAwareFill();
     } else if (command === 'content-aware-move') {
       await applyContentAwareMove();
+    } else if (command === 'content-aware-scale') {
+      await applyContentAwareScale();
     } else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
@@ -10628,6 +10699,8 @@ export default function Home() {
       case 'patch-tool':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'content-aware-fill':
+      case 'content-aware-move':
+      case 'content-aware-scale':
         return (
           !layer ||
           layer.kind !== 'raster' ||
