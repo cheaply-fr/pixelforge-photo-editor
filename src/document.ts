@@ -243,6 +243,8 @@ export type Layer = Common &
         asset: string;
         /** Original file label retained for replace-contents UX. */
         sourceName?: string;
+        /** Optional local link identity shared by smart-object instances. */
+        linkId?: string;
       }
     | {
         /** A source-free, nondestructive correction applied to the composite below this layer. */
@@ -1348,6 +1350,8 @@ export function validateFrame(
       if (layer.kind === 'smart-object' && Object.hasOwn(layer, 'fillColor'))
         return fail();
       if (layer.kind === 'smart-object' && layer.sourceName !== undefined && !short(layer.sourceName, 160))
+        return fail();
+      if (layer.kind === 'smart-object' && layer.linkId !== undefined && !validId(layer.linkId))
         return fail();
       if (layer.kind === 'raster' && layer.fillColor !== undefined && (typeof layer.fillColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.fillColor)))
         return fail();

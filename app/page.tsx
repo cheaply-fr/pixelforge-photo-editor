@@ -572,6 +572,7 @@ type Command =
   | 'new-adjustment-layer'
   | 'new-smart-object'
   | 'replace-smart-object'
+  | 'link-smart-objects'
   | 'rasterize-layer'
   | 'matting'
   | 'duplicate-layer'
@@ -1054,6 +1055,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Release Clipping Mask', command: 'release-clipping-mask' },
     { label: 'New Smart Object…', command: 'new-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
+    { label: 'Link Smart Object Contents', command: 'link-smart-objects' },
     { label: 'Rasterize', command: 'rasterize-layer' },
     { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
@@ -7353,10 +7355,14 @@ export default function Home() {
           setNotice('Select a smart object before replacing its contents');
           return;
         }
+        const linkedId = target.linkId;
         const replaced = {
           ...original,
           layers: original.layers.map((layer) =>
-            layer.id === target.id ? { ...layer, asset, sourceName } : layer,
+            layer.kind === 'smart-object' &&
+            (layer.id === target.id || (linkedId !== undefined && layer.linkId === linkedId))
+              ? { ...layer, asset, sourceName }
+              : layer,
           ),
         };
         const next = fitToArtboard
@@ -7375,8 +7381,12 @@ export default function Home() {
         if (commit(next))
           setNotice(
             fitToArtboard
-              ? 'Smart object contents replaced and fitted to the active artboard'
-              : 'Smart object contents replaced; transform and edits preserved',
+              ? linkedId
+                ? 'Linked smart-object contents replaced and fitted to the active artboard'
+                : 'Smart object contents replaced and fitted to the active artboard'
+              : linkedId
+                ? 'Linked smart-object contents replaced; transforms preserved'
+                : 'Smart object contents replaced; transform and edits preserved',
           );
       } else if (
         addLayer({
@@ -7415,6 +7425,39 @@ export default function Home() {
         : 'replace'
       : 'new';
     smartObjectFile.current?.click();
+  };
+  const linkSmartObjectContents = () => {
+    const original = current();
+    const selected = selectedLayersForFrame(original);
+    const smartObjects = selected.filter(
+      (layer): layer is Extract<Layer, { kind: 'smart-object' }> =>
+        layer.kind === 'smart-object',
+    );
+    if (smartObjects.length < 2) {
+      setNotice('Select at least two smart-object layers to link their contents');
+      return;
+    }
+    const source = original.layers.find((layer) => layer.id === original.active);
+    const sourceObject = source?.kind === 'smart-object' ? source : smartObjects[0];
+    const linkId = crypto.randomUUID();
+    const ids = new Set(smartObjects.map((layer) => layer.id));
+    const next = {
+      ...original,
+      layers: original.layers.map((layer) =>
+        ids.has(layer.id) && layer.kind === 'smart-object'
+          ? {
+              ...layer,
+              asset: sourceObject.asset,
+              sourceName: sourceObject.sourceName,
+              linkId,
+            }
+          : layer,
+      ),
+    };
+    if (commit(next))
+      setNotice(
+        `Linked ${smartObjects.length} smart-object layers; replacing one updates all linked contents`,
+      );
   };
   const point = (
     e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
@@ -11526,6 +11569,7 @@ export default function Home() {
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
+    else if (command === 'link-smart-objects') return linkSmartObjectContents();
     else if (command === 'rasterize-layer') return rasterize();
     else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
@@ -12000,6 +12044,11 @@ export default function Home() {
             return !candidate || layerIsLocked(frame, candidate);
           }) ||
           frame.layers.length + selectedIdsForFrame(frame).length > 32
+        );
+      case 'link-smart-objects':
+        return (
+          selectedLayersForFrame(frame).filter((candidate) => candidate.kind === 'smart-object').length < 2 ||
+          selectedLayersForFrame(frame).some((candidate) => layerIsLocked(frame, candidate))
         );
       case 'rename-layer':
         return !layer || locked;

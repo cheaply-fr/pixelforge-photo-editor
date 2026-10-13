@@ -1,9 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 
+const additiveModifier: 'Meta' | 'Control' =
+  process.platform === 'darwin' ? 'Meta' : 'Control';
+
 type Project = {
   history: Array<{
-    layers: Array<{ id: string; kind: string; asset?: string; sourceName?: string; matrix: number[] }>;
+    layers: Array<{ id: string; kind: string; asset?: string; sourceName?: string; linkId?: string; matrix: number[] }>;
     artboards?: Array<{ id: string; name: string; x: number; y: number; w: number; h: number; visible?: boolean; locked?: boolean; layerIds?: string[] }>;
     activeArtboardId?: string;
   }>;
@@ -100,6 +103,42 @@ test('menu commands expose bounded smart-object lifecycle', async ({ page }) => 
   await expect(page.getByRole('menuitem', { name: 'New Smart Object…', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Replace Contents…', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Rasterize', exact: true })).toBeVisible();
+});
+
+test('links selected smart-object contents and propagates replacement while preserving transforms', async ({ page }) => {
+  const red = await fixture(page, [255, 0, 0]);
+  const blue = await fixture(page, [0, 0, 255]);
+  await add(page, 'red-source.png', red);
+  await add(page, 'blue-source.png', blue);
+  const rows = page.getByRole('button', { name: /^Select layer / });
+  await expect(rows).toHaveCount(3);
+  await rows.nth(0).click();
+  await rows.nth(1).click({ modifiers: [additiveModifier] });
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Link Smart Object Contents', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Link Smart Object Contents', exact: true }).click();
+  await expect(page.getByText(/Linked 2 smart-object layers/)).toBeVisible();
+  let out = await project(page);
+  let frame = out.history[out.index];
+  const linked = frame.layers.filter((layer) => layer.kind === 'smart-object');
+  expect(linked).toHaveLength(2);
+  expect(linked[0].linkId).toBeTruthy();
+  expect(linked[1].linkId).toBe(linked[0].linkId);
+  expect(linked[0].asset).toBe(linked[1].asset);
+  const transforms = linked.map((layer) => layer.matrix);
+  await page.getByRole('button', { name: 'Replace contents', exact: true }).click();
+  await page.getByTestId('smart-object-input').setInputFiles({ name: 'green-source.png', mimeType: 'image/png', buffer: Buffer.from(await fixture(page, [0, 255, 0]), 'base64') });
+  await expect(page.getByText(/Linked smart-object contents replaced/)).toBeVisible();
+  out = await project(page);
+  frame = out.history[out.index];
+  const replaced = frame.layers.filter((layer) => layer.kind === 'smart-object');
+  expect(new Set(replaced.map((layer) => layer.asset)).size).toBe(1);
+  expect(replaced.map((layer) => layer.matrix)).toEqual(transforms);
+  expect(replaced.every((layer) => layer.sourceName === 'green-source.png')).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  out = await project(page);
+  expect(out.history[out.index].layers.filter((layer) => layer.kind === 'smart-object').every((layer) => layer.linkId === replaced[0].linkId)).toBe(true);
 });
 
 test('replaces a smart object and fits the new contents to the active artboard', async ({ page }) => {
