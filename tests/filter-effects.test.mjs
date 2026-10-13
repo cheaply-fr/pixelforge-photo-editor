@@ -1265,3 +1265,20 @@ test('Solarize is deterministic, amount-blended, and alpha-safe', () => {
   assert.deepEqual(output, applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 100, radius: 0 }));
   assert.deepEqual(applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 0, radius: 0 }), source);
 });
+
+test('Diffuse blends bounded neighbours without mutating source or alpha', () => {
+  const source = new Uint8ClampedArray([
+    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 0,
+    0, 0, 0, 255, 255, 255, 255, 255, 0, 20, 40, 128,
+  ]);
+  const before = new Uint8ClampedArray(source);
+  const value = { type: 'diffuse', amount: 100, radius: 1 };
+  assert.equal(validFilterEffects(effectiveFilterEffects(value)), true);
+  const output = applyFilterEffectsPixels(source, 3, 2, value);
+  assert.deepEqual(source, before);
+  assert.equal(output[3], 255);
+  assert.equal(output[23], 128);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 2, value));
+  assert.deepEqual(applyFilterEffectsPixels(source, 3, 2, { ...value, amount: 0 }), source);
+});

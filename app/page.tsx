@@ -638,6 +638,7 @@ type Command =
   | 'filter-find-edges'
   | 'filter-emboss'
   | 'filter-solarize'
+  | 'filter-diffuse'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1111,6 +1112,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Find Edges…', command: 'filter-find-edges' },
     { label: 'Emboss…', command: 'filter-emboss' },
     { label: 'Solarize…', command: 'filter-solarize' },
+    { label: 'Diffuse…', command: 'filter-diffuse' },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
@@ -10663,6 +10665,8 @@ export default function Home() {
       chooseFilterEffect('emboss', 'Emboss (directional local approximation)');
     else if (command === 'filter-solarize')
       chooseFilterEffect('solarize', 'Solarize (local approximation)');
+    else if (command === 'filter-diffuse')
+      chooseFilterEffect('diffuse', 'Diffuse (local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -10947,6 +10951,7 @@ export default function Home() {
       case 'filter-deinterlace':
       case 'filter-ntsc-colors':
       case 'filter-solarize':
+      case 'filter-diffuse':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':

@@ -115,3 +115,9 @@ softness; it writes the normal persisted selection mask and explicitly does not
 claim semantic object recognition. Pure coverage, desktop/mobile acceptance,
 typecheck, lint and production-build evidence are present on the roadmap branch;
 protected CI and the deployed/live candidate remain separate gates.
+
+The next local filter increment adds Filter → Stylize → Diffuse. It blends
+visible pixels toward a bounded four-neighbour average, retains editable
+amount/radius metadata, preserves alpha and transparent RGB, and has dedicated
+pure and desktop/mobile persistence coverage. It remains local evidence until
+the protected workflow publishes and verifies the candidate revision.

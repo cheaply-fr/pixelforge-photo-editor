@@ -58,6 +58,7 @@ export const FILTER_EFFECT_TYPES = [
   'find-edges',
   'emboss',
   'solarize',
+  'diffuse',
   'deinterlace',
   'ntsc-colors',
 ] as const;
@@ -1615,6 +1616,41 @@ function applySolarize(
   }
 }
 
+/** Apply a bounded four-neighbour diffusion approximation without mutating source. */
+function applyDiffuse(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const offsetDistance = Math.max(1, Math.min(64, Math.round(radius)));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (alpha === 0) continue;
+      const samples = [
+        [Math.max(0, x - offsetDistance), y],
+        [Math.min(width - 1, x + offsetDistance), y],
+        [x, Math.max(0, y - offsetDistance)],
+        [x, Math.min(height - 1, y + offsetDistance)],
+      ];
+      for (let channel = 0; channel < 3; channel += 1) {
+        let total = 0;
+        for (const [sampleX, sampleY] of samples)
+          total += source[(sampleY * width + sampleX) * 4 + channel];
+        const average = total / samples.length;
+        output[offset + channel] = clampByte(
+          source[offset + channel] + (average - source[offset + channel]) * strength,
+        );
+      }
+      output[offset + 3] = alpha;
+    }
+  }
+}
+
 /**
  * Apply a bounded seeded monochrome-grain approximation of Photoshop
  * Mezzotint. The source is converted to luminance and compared with a
@@ -2963,6 +2999,8 @@ export function applyFilterEffectsPixels(
     applyEmboss(data, width, height, effect, output, strength);
   } else if (effect.type === 'solarize') {
     applySolarize(data, output, effect.amount);
+  } else if (effect.type === 'diffuse') {
+    applyDiffuse(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {

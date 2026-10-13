@@ -66,6 +66,30 @@ test('Solarize is an enabled nondestructive Stylize filter with editable persist
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
+test('Diffuse is an enabled nondestructive Stylize filter with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Diffuse…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('diffuse');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'diffuse', amount: 70 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('diffuse');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 async function importPixels(page: Page) {
   const encoded = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
