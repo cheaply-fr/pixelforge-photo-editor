@@ -47,13 +47,14 @@ export function useDocument(onError: (message: string) => void) {
     [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
   const [tiledProgress, setTiledProgress] = useState<TiledNeighborhoodProgress | null>(null);
+  const [tiledCacheBudget] = useState(() => detectTileCacheBudget());
   const renderSequence = useRef(0),
     renderAbort = useRef<AbortController | null>(null),
     documentRevision = useRef(0),
     // Keep a device-aware in-memory session cache for repeat renders of the
     // same document revision. Keys include the revision, so edits cannot
     // reuse stale pixels; the byte cap keeps anonymous mobile drafts bounded.
-    tiledCache = useRef(new TileCache<Uint8ClampedArray>(detectTileCacheBudget()));
+    tiledCache = useRef(new TileCache<Uint8ClampedArray>(tiledCacheBudget));
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };
@@ -307,6 +308,7 @@ export function useDocument(onError: (message: string) => void) {
     renderProgress,
     tiledTelemetry,
     tiledProgress,
+    tiledCacheBudget,
     paint,
     commit,
     install,

@@ -1929,6 +1929,7 @@ export default function Home() {
       renderProgress,
       tiledTelemetry,
       tiledProgress,
+      tiledCacheBudget,
       commit,
       install,
       select,
@@ -16015,6 +16016,7 @@ export default function Home() {
           data-tiled-destination-bytes={tiledTelemetry?.destinationBytes ?? 0}
           data-tiled-completed={tiledProgress?.completed ?? 0}
           data-tiled-total={tiledProgress?.total ?? 0}
+          data-tiled-cache-budget={tiledCacheBudget}
           aria-live="polite"
         >
           {doc.rendering
