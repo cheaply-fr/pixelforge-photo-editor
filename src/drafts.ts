@@ -189,6 +189,8 @@ export type Settings = {
   secondaryBrushPreset?: 'none' | BrushPresetId;
   /** Deterministic bristle-like modulation amount, from 0 to 100. */
   brushBristle?: number;
+  /** Deterministic wet-edge opacity amount, from 0 to 100. */
+  brushWetEdges?: number;
   /** Brush-family flow amount, from 1 to 100 percent. */
   brushFlow?: number;
   /** Brush tip rotation in degrees. */
@@ -421,6 +423,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.brushTexture ?? 0, 0, 100] as [number, number, number],
     [candidate.brushDual ?? 0, 0, 100] as [number, number, number],
     [candidate.brushBristle ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushWetEdges ?? 0, 0, 100] as [number, number, number],
     [candidate.gradientDither ?? 0, 0, 100] as [number, number, number],
     [candidate.gradientNoise ?? 0, 0, 100] as [number, number, number],
     [candidate.gradientMidpointPosition ?? 50, 1, 99] as [number, number, number],

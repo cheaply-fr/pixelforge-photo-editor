@@ -373,6 +373,9 @@ import {
   bristleOpacity,
 } from '../src/brushBristle';
 import {
+  BRUSH_WET_EDGES_DEFAULT,
+} from '../src/brushWetEdges';
+import {
   normalizeSecondaryBrushPreset,
   secondaryBrushOpacity,
   type SecondaryBrushPreset,
@@ -1377,6 +1380,7 @@ type StampCanvasOptions = {
   dual?: number;
   secondaryPreset?: SecondaryBrushPreset;
   bristle?: number;
+  wetEdges?: number;
   angle?: number;
   roundness?: number;
   flipX?: boolean;
@@ -1444,6 +1448,7 @@ const stampCanvas = (
     pressureSize: options.pressureSize,
     pressureOpacity: options.pressureOpacity,
     bristle: options.bristle,
+    wetEdges: options.wetEdges,
     spacing: options.spacing,
     angle: options.angle,
     roundness: options.roundness,
@@ -1474,6 +1479,7 @@ const stampCanvas = (
       pressureSize: secondary.pressureSize,
       pressureOpacity: secondary.pressureOpacity,
       bristle: options.bristle,
+      wetEdges: options.wetEdges,
       spacing: secondary.spacing,
       angle: secondary.angle,
       roundness: secondary.roundness,
@@ -2002,6 +2008,7 @@ export default function Home() {
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
     [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
+    [brushWetEdges, setBrushWetEdges] = useState(BRUSH_WET_EDGES_DEFAULT),
     [secondaryBrushPreset, setSecondaryBrushPreset] = useState<SecondaryBrushPreset>('none'),
     [brushFlow, setBrushFlow] = useState(100),
     [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
@@ -2361,6 +2368,7 @@ export default function Home() {
     brushTexture,
     brushDual,
     brushBristle,
+    brushWetEdges,
     secondaryBrushPreset,
     brushFlow,
     gradientMode,
@@ -2434,6 +2442,7 @@ export default function Home() {
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
     setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
+    setBrushWetEdges(s.brushWetEdges ?? BRUSH_WET_EDGES_DEFAULT);
     setSecondaryBrushPreset(normalizeSecondaryBrushPreset(s.secondaryBrushPreset));
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
@@ -2492,6 +2501,7 @@ export default function Home() {
     setBrushTexture,
     setBrushDual,
     setBrushBristle,
+    setBrushWetEdges,
     setSecondaryBrushPreset,
     setBrushFlow,
     setGradientMode,
@@ -5479,6 +5489,7 @@ export default function Home() {
         brushTexture,
         brushDual,
         brushBristle,
+        brushWetEdges,
         secondaryBrushPreset,
         brushFlow,
         gradientMode,
@@ -5577,6 +5588,7 @@ export default function Home() {
     brushTexture,
     brushDual,
     brushBristle,
+    brushWetEdges,
     secondaryBrushPreset,
     brushFlow,
     gradientMode,
@@ -9386,6 +9398,7 @@ export default function Home() {
               dual: brushDual,
               secondaryPreset: secondaryBrushPreset,
               bristle: brushBristle,
+              wetEdges: brushWetEdges,
               angle: brushAngle,
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
@@ -9927,6 +9940,7 @@ export default function Home() {
         dual: brushDual,
         secondaryPreset: secondaryBrushPreset,
         bristle: brushBristle,
+        wetEdges: brushWetEdges,
         angle: brushAngle,
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
@@ -10525,6 +10539,7 @@ export default function Home() {
           dual: brushDual,
           secondaryPreset: secondaryBrushPreset,
           bristle: brushBristle,
+          wetEdges: brushWetEdges,
           angle: brushAngle,
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
@@ -14789,6 +14804,14 @@ export default function Home() {
                             suffix="%"
                           />
                           <Slider
+                            label="Wet edges"
+                            value={brushWetEdges}
+                            min={0}
+                            max={100}
+                            set={setBrushWetEdges}
+                            suffix="%"
+                          />
+                          <Slider
                             label="Flow"
                             value={brushFlow}
                             min={1}
@@ -14835,8 +14858,9 @@ export default function Home() {
                       <p className="adjust-note">
                         Tip settings apply to future local dabs. Advanced
                         Dual brush and Bristle are deterministic local opacity
-                        dynamics; full physical tip simulation and wet-media
-                        buildup remain staged. Scatter is a deterministic local
+                        dynamics; Wet edges is a deterministic local edge
+                        opacity approximation, while full physical tip
+                        simulation and wet-media buildup remain staged. Scatter is a deterministic local
                         stamp offset.
                       </p>
                     </>

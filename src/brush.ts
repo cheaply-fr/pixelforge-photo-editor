@@ -4,6 +4,7 @@
  * clipping, alpha compositing and clone masks can be tested without a DOM.
  */
 import { bristleCoverage, normalizeBrushBristle } from './brushBristle.ts';
+import { wetEdgesOpacity } from './brushWetEdges.ts';
 
 export const BRUSH_MAX_SIZE = 10000;
 export const BRUSH_MAX_DIMENSION = 16000;
@@ -44,6 +45,8 @@ export type BrushStampSettings = BrushPressureSettings & {
   pointerType?: BrushPointerType;
   /** Deterministic physical-filament coverage amount. */
   bristle?: number;
+  /** Deterministic edge-weighted opacity amount. */
+  wetEdges?: number;
 } & BrushTipSettings;
 export type ResolvedBrushStamp = {
   pressure: number;
@@ -264,8 +267,13 @@ export function radialStampMask(request: RadialStampRequest): RadialMask {
         stamp.radius,
         request.bristle ?? 0,
       );
+      const wetEdges = wetEdgesOpacity(
+        Math.hypot(px - request.x, py - request.y),
+        stamp.radius,
+        request.wetEdges ?? 0,
+      );
       if (coverage > 0 && filament > 0)
-        data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * filament * scale);
+        data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * filament * wetEdges * scale);
     }
   }
   return { width, height, data, bounds, stamp };
