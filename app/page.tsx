@@ -228,6 +228,7 @@ import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { skySelectionMask, subjectSelectionMask } from '../src/assistedSelection';
+import { objectSelectionMask } from '../src/objectSelection';
 import { similarColorMask } from '../src/similarSelection';
 import {
   canvasPointFromClient,
@@ -548,6 +549,7 @@ type Command =
   | 'focus-area'
   | 'subject-selection'
   | 'sky-selection'
+  | 'object-selection'
   | 'select-and-mask'
   | 'mask-selection'
   | 'remove-background'
@@ -1023,6 +1025,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Focus Area…', command: 'focus-area' },
     { label: 'Subject', command: 'subject-selection' },
     { label: 'Sky', command: 'sky-selection' },
+    { label: 'Object Selection…', command: 'object-selection' },
     { label: 'Select and Mask…', command: 'select-and-mask' },
     { label: 'Modify', command: 'noop', disabled: true },
     { label: 'Grow…', command: 'grow-selection' },
@@ -3544,6 +3547,43 @@ export default function Home() {
     } catch {
       if (isCurrentSelectionOperation(f, frameIndex, workToken))
         setNotice(`Could not create a ${kind === 'subject' ? 'Subject' : 'Sky'} selection`);
+    }
+  };
+  const applyObjectSelection = async () => {
+    const f = current(), frameIndex = index.current,
+      workToken = ++selectionWorkToken.current,
+      operation = selectionOperation, sourceAssets = assets.current;
+    const point = window.prompt(
+      'Object Selection point (canvas pixels, x,y)',
+      `${Math.round(f.w / 2)},${Math.round(f.h / 2)}`,
+    );
+    if (point === null) return;
+    const [xText, yText] = point.split(',').map((value) => value.trim());
+    const x = Number(xText), y = Number(yText);
+    const tolerance = Number(window.prompt('Object Selection colour tolerance (0-255)', '32') ?? '32');
+    const softness = Number(window.prompt('Object Selection edge softness (0-255)', '8') ?? '8');
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(tolerance) || !Number.isFinite(softness)) {
+      setNotice('Object Selection values must be numeric');
+      return;
+    }
+    try {
+      const rendered = await renderFrame(f, sourceAssets),
+        pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+        alpha = objectSelectionMask(pixels, { width: f.w, height: f.h, x, y, tolerance, softness }),
+        mask = surface(f.w, f.h), image = mask.getContext('2d')!.createImageData(f.w, f.h);
+      for (let pixel = 0; pixel < alpha.length; pixel += 1) {
+        const offset = pixel * 4;
+        image.data[offset] = 255;
+        image.data[offset + 1] = 255;
+        image.data[offset + 2] = 255;
+        image.data[offset + 3] = alpha[pixel];
+      }
+      mask.getContext('2d')!.putImageData(image, 0, 0);
+      const selection: Selection = { shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h, feather: 0, inverted: false };
+      const candidate = await composeSelectionCandidate(f, selection, mask, operation, sourceAssets);
+      publishSelectionCandidate(f, frameIndex, workToken, candidate, 'Object Selection created (local connected-colour proxy)');
+    } catch {
+      if (isCurrentSelectionOperation(f, frameIndex, workToken)) setNotice('Could not create an Object Selection');
     }
   };
   const applySelectAndMask = async (smoothRadius: number, feather: number) => {
@@ -10511,6 +10551,7 @@ export default function Home() {
     else if (command === 'focus-area') setFocusAreaValue(true);
     else if (command === 'subject-selection') return applyAssistedSelection('subject');
     else if (command === 'sky-selection') return applyAssistedSelection('sky');
+    else if (command === 'object-selection') return applyObjectSelection();
     else if (command === 'select-and-mask') {
       if (current().selection) setSelectAndMaskValue(true);
       else setNotice('Create a selection before opening Select and Mask');
