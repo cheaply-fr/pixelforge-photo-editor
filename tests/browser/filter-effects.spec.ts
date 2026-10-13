@@ -10,6 +10,19 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
 });
 
+test('Filter menu repeats the last nondestructive effect and stays disabled before first use', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Last Filter', exact: true })).toBeDisabled();
+  await page.getByRole('menuitem', { name: 'Gaussian Blur…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Last Filter', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Last Filter', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
+});
+
 test('Find Edges is an enabled nondestructive Stylize filter with source-safe persistence', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

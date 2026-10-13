@@ -721,6 +721,7 @@ type Command =
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
+  | 'last-filter'
   | 'convert-smart-filters'
   | 'clear-smart-filters'
   | 'zoom-in'
@@ -1133,6 +1134,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Warm', command: 'filter-warm' },
     { label: 'Cool', command: 'filter-cool' },
     { label: '', command: 'noop', separator: true },
+    { label: 'Last Filter', command: 'last-filter' },
     { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
     { label: 'Neural Filters…', command: 'noop', disabled: true },
     { label: 'Filter Gallery…', command: 'filter-gallery' },
@@ -1999,6 +2001,7 @@ export default function Home() {
     [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
     [toolbarToolOrder, setToolbarToolOrder] = useState<Record<string, string[]>>(() => initialToolbarPreferences.toolOrder),
     [toolShortcutBindings, setToolShortcutBindings] = useState<Record<string, string>>(() => initialToolShortcutPreferences.bindings),
+    [lastFilterType, setLastFilterType] = useState<FilterEffectType>(),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
@@ -5010,6 +5013,7 @@ export default function Home() {
     patch: Partial<Adjustments['photoAdjustments']>,
   ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
+    if (type !== 'none') setLastFilterType(type);
     if (
       adjust({
         filterEffects:
@@ -11601,6 +11605,12 @@ export default function Home() {
     else if (command === 'auto-color') return autoCorrect('color');
     else if (command === 'filter-clear-effect')
       chooseFilterEffect('none', 'Filter effect');
+    else if (command === 'last-filter') {
+      if (lastFilterType) {
+        const label = lastFilterType.split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join(' ');
+        chooseFilterEffect(lastFilterType, `Last Filter: ${label}`);
+      } else setNotice('Choose a filter before using Last Filter');
+    }
     else if (command === 'convert-smart-filters') return convertForSmartFilters();
     else if (command === 'clear-smart-filters') return clearSmartFilters();
     else if (command === 'filter-average')
@@ -11827,6 +11837,8 @@ export default function Home() {
     const layer = frame.layers.find((item) => item.id === frame.active);
     const locked = layer ? layerIsLocked(frame, layer) : true;
     switch (item.command) {
+      case 'last-filter':
+        return !lastFilterType || !layer || locked || !layer.visible;
       case 'undo':
         return !canUndo || quickMasking;
       case 'redo':
