@@ -20,6 +20,7 @@ import {
   toggleLayerSelection,
 } from './layerSelection';
 import { TileCache } from './tilePlan';
+import { detectTileCacheBudget } from './tileCachePolicy';
 
 export type RenderProgress = {
   completed: number;
@@ -49,10 +50,10 @@ export function useDocument(onError: (message: string) => void) {
   const renderSequence = useRef(0),
     renderAbort = useRef<AbortController | null>(null),
     documentRevision = useRef(0),
-    // Keep a small in-memory session cache for repeat renders of the same
-    // document revision. Keys include the revision, so edits cannot reuse
-    // stale pixels; the byte cap keeps anonymous mobile drafts bounded.
-    tiledCache = useRef(new TileCache<Uint8ClampedArray>(8 * 1024 * 1024));
+    // Keep a device-aware in-memory session cache for repeat renders of the
+    // same document revision. Keys include the revision, so edits cannot
+    // reuse stale pixels; the byte cap keeps anonymous mobile drafts bounded.
+    tiledCache = useRef(new TileCache<Uint8ClampedArray>(detectTileCacheBudget()));
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };

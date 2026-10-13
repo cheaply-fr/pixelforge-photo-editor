@@ -26,7 +26,7 @@ project API:
 | Referenced history PNG data | approximately 32 MiB before old frames are trimmed; 64 MiB current-frame ceiling | Keep local history from growing without limit |
 | Portable `.pixelforge` project | 64 MiB of encoded assets | Keep downloads and IndexedDB writes manageable |
 | Private cloud project | 16 MiB per document, 30 projects and 256 MiB per library | Preserve the existing Marketplace API quota |
-| Tiled effect session cache | 8 MiB process-local LRU | Reuse repeat renders without persisting pixels or allowing unbounded mobile memory |
+| Tiled effect session cache | Device-aware 2–16 MiB process-local LRU (mobile capped at 4 MiB) | Reuse repeat renders without persisting pixels or allowing unbounded mobile memory |
 
 These are protection limits, not a promise that every device can edit at the
 maximum. A 16 MP RGBA surface is approximately 64 MiB before Canvas backing

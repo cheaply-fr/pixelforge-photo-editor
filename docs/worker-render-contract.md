@@ -201,13 +201,12 @@ The document path now carries one validated `tiled-telemetry` message for each
 eligible local-effect layer. It reports only effect kind, layer-local dimensions,
 tile count/size, destination bytes, peak tile working bytes, cache bytes and
 bounded cache counters; it never includes pixels, asset URLs or user content.
-The committed editor currently uses the adapter without a retained `TileCache`,
-The editor now keeps one 8 MiB byte-bounded cache for the active in-memory
-document session. Cache keys include the document revision and effect, so edits
-cannot reuse stale pixels; older entries are evicted by the LRU policy. The
-cache is process-local, contains no URLs or cloud data, and is discarded with
-the editor session. Device-specific cache sizing and physical-device memory
-gates remain staged.
+The editor now keeps a device-aware 2–16 MiB byte-bounded cache for the active
+in-memory document session, capped at 4 MiB on mobile. Cache keys include the
+document revision and effect, so edits cannot reuse stale pixels; older entries
+are evicted by the LRU policy. The cache is process-local, contains no URLs or
+cloud data, and is discarded with the editor session. Sizing uses only coarse
+local browser hints; those hints are not retained or transmitted.
 The worker validates this envelope before invoking the UI callback, drops
 telemetry from superseded request IDs, and publishes it before the owned image
 result. The editor exposes the latest values as render-status data attributes
