@@ -12212,6 +12212,7 @@ export default function Home() {
       case 'filter-sharpen-more':
       case 'filter-sharpen-edges':
       case 'filter-smart-sharpen':
+      case 'filter-motion-blur':
       case 'filter-field-blur':
       case 'filter-box-blur':
       case 'filter-gaussian-blur':
@@ -12221,6 +12222,7 @@ export default function Home() {
       case 'filter-surface-blur':
       case 'filter-shape-blur':
       case 'filter-tilt-shift':
+      case 'filter-radial-blur':
       case 'filter-spin-blur':
       case 'filter-path-blur':
       case 'filter-mosaic':
@@ -12230,6 +12232,9 @@ export default function Home() {
       case 'filter-color-halftone':
       case 'filter-mezzotint':
       case 'filter-pointillize':
+      case 'filter-tree':
+      case 'filter-clouds':
+      case 'filter-lens-flare':
       case 'filter-picture-frame':
       case 'filter-fibers':
       case 'filter-difference-clouds':
@@ -12244,9 +12249,13 @@ export default function Home() {
       case 'filter-solarize':
       case 'filter-diffuse':
       case 'filter-wind':
+      case 'filter-gradient-map':
+      case 'filter-find-edges':
+      case 'filter-emboss':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
+      case 'filter-pinch':
       case 'filter-polar-coordinates':
       case 'filter-liquify':
       case 'filter-spherize':
