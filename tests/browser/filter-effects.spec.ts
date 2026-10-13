@@ -918,6 +918,27 @@ test('Radial Blur is a nondestructive spin effect with editable centre', async (
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
 });
 
+test('Radial Blur Zoom mode is editable, source-safe and survives project reload', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Radial Blur…', exact: true }).click();
+  await page.getByLabel('Radial mode', { exact: true }).selectOption('zoom');
+  await page.getByLabel('Angular sweep', { exact: true }).fill('52');
+  await expect(page.getByText(/Radial Blur with editable Spin or Zoom sampling/)).toBeVisible();
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'radial-blur', radialMode: 'zoom', radius: 52 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('radial-blur');
+  await expect(page.getByLabel('Radial mode', { exact: true })).toHaveValue('zoom');
+});
+
 test('Path Blur and Spin Blur are bounded gallery effects with source-safe round trips', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

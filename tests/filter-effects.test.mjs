@@ -638,6 +638,26 @@ test('radial blur preserves constant colour and excludes hidden transparent colo
   }
 });
 
+test('radial blur zoom mode samples along the centre ray and remains source-safe', () => {
+  const source = rgba(17, 9, (x, y) => {
+    if (x === 0 && y === 0) return [231, 17, 83, 0];
+    return [(x * 29 + y * 7) % 256, (x * 13 + y * 19) % 256, (x * 5 + y * 23) % 256, 255];
+  });
+  const original = source.slice();
+  const spin = applyFilterEffectsPixels(source, 17, 9, {
+    type: 'radial-blur', amount: 100, radius: 48, centerX: 0.5, centerY: 0.5,
+  });
+  const zoom = applyFilterEffectsPixels(source, 17, 9, {
+    type: 'radial-blur', radialMode: 'zoom', amount: 100, radius: 48, centerX: 0.5, centerY: 0.5,
+  });
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(zoom, spin);
+  assert.equal(pixel(zoom, 17, 0, 0)[3], 0);
+  assert.deepEqual(pixel(zoom, 17, 0, 0).slice(0, 3), [231, 17, 83]);
+  assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'radial-blur', radialMode: 'zoom' })), true);
+  assert.equal(effectiveFilterEffects({ type: 'radial-blur' }).radialMode, 'spin');
+});
+
 test('radial blur identity controls and tiny canvases always return a fresh safe buffer', () => {
   const source = new Uint8ClampedArray([12, 34, 56, 127]);
   for (const effect of [

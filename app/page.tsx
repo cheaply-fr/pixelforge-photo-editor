@@ -14669,6 +14669,9 @@ export default function Home() {
             {filterEffects.type === 'spin-blur' && (
               <p>Local fixed-sample polar Spin Blur approximation. The editable centre and angular sweep are bounded; path geometry, depth and bokeh reconstruction remain planned.</p>
             )}
+            {filterEffects.type === 'radial-blur' && (
+              <p>Local Radial Blur with editable Spin or Zoom sampling. The centre and bounded sweep remain nondestructive; depth maps and bokeh reconstruction remain planned.</p>
+            )}
             {filterEffects.type === 'path-blur' && (
               <p>Local Path Blur approximation. The editable motion path and per-point speed stay in project metadata; path strobe and flash controls remain planned.</p>
             )}
@@ -15061,6 +15064,19 @@ export default function Home() {
                 )}
                 {(filterEffects.type === 'radial-blur' || filterEffects.type === 'spin-blur') && (
                   <>
+                    {filterEffects.type === 'radial-blur' && (
+                      <label>
+                        Radial mode
+                        <select
+                          aria-label="Radial mode"
+                          value={filterEffects.radialMode ?? 'spin'}
+                          onChange={(event) => setFilterEffects({ radialMode: event.target.value === 'zoom' ? 'zoom' : 'spin' })}
+                        >
+                          <option value="spin">Spin</option>
+                          <option value="zoom">Zoom</option>
+                        </select>
+                      </label>
+                    )}
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center X' : 'Blur center X'}
                       value={Math.round(filterEffects.centerX * 100)}

@@ -160,6 +160,8 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
 
 export type FilterEffects = {
   type: FilterEffectType;
+  /** Radial Blur sampling direction; legacy records default to spin. */
+  radialMode?: 'spin' | 'zoom';
   /** Legacy lens corrections default to inward source sampling. */
   lensDirection?: 'inward' | 'outward';
   /** Strength as a percentage. */
@@ -238,6 +240,9 @@ export function effectiveFilterEffects(
     ? Math.trunc(source.seed) >>> 0
     : neutralFilterEffects.seed;
   const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
+  if (type === 'radial-blur') {
+    normalized.radialMode = source.radialMode === 'zoom' ? 'zoom' : 'spin';
+  }
   if (type === 'lens-correction') {
     normalized.lensDirection = source.lensDirection === 'outward' ? 'outward' : 'inward';
   }
@@ -377,6 +382,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
   const effect = value as Partial<FilterEffects>;
   return (
     FILTER_EFFECT_TYPES.includes(effect.type as FilterEffectType) &&
+    (effect.radialMode === undefined || effect.radialMode === 'spin' || effect.radialMode === 'zoom') &&
     (effect.lensDirection === undefined || effect.lensDirection === 'inward' || effect.lensDirection === 'outward') &&
     (effect.path === undefined || validBlurPath(effect.path)) &&
     (effect.spinEllipse === undefined || validSpinEllipse(effect.spinEllipse)) &&
@@ -1158,6 +1164,62 @@ function applyRadialBlur(
       output[destination + 2] = clampByte(
         source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix,
       );
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
+/**
+ * Apply the zoom variant of Radial Blur. Samples move along the ray through
+ * the editable centre rather than around a polar ring. The bounded radial
+ * spread keeps transparent edges source-safe and remains fully nondestructive.
+ */
+function applyZoomRadialBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  centerX: number,
+  centerY: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
+  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
+  const sampleCount = 8;
+  const spread = bounded / 64 * 0.65;
+  const mix = clamp(strength, 0, 1);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      const dx = x - centerPixelX;
+      const dy = y - centerPixelY;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 0.5) continue;
+      const sums = [0, 0, 0];
+      let weight = 0;
+      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
+        const scale = 1 + (spread * sampleIndex) / sampleCount;
+        const sample = sourcePixel(
+          source,
+          width,
+          height,
+          centerPixelX + dx * scale,
+          centerPixelY + dy * scale,
+        );
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        sums[0] += sample[0] * alpha;
+        sums[1] += sample[1] * alpha;
+        sums[2] += sample[2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
       output[destination + 3] = source[destination + 3];
     }
   }
@@ -2954,15 +3016,8 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'motion-blur') {
     applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
   } else if (effect.type === 'radial-blur') {
-    applyRadialBlur(
-      data,
-      width,
-      height,
-      effect.radius,
-      effect.centerX,
-      effect.centerY,
-      output,
-      strength,
+    (effect.radialMode === 'zoom' ? applyZoomRadialBlur : applyRadialBlur)(
+      data, width, height, effect.radius, effect.centerX, effect.centerY, output, strength,
     );
   } else if (effect.type === 'spin-blur') {
     applySpinBlur(
