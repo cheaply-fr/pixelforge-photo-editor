@@ -5,6 +5,7 @@ const {
   TILE_CACHE_DEFAULT_BYTES,
   TILE_CACHE_MAX_BYTES,
   TILE_CACHE_MIN_BYTES,
+  detectTileCacheBudget,
   tileCacheBudgetForDevice,
 } = await import('../src/tileCachePolicy.ts');
 
@@ -31,4 +32,15 @@ test('mobile devices stay capped even when browser hints are generous', () => {
 test('unknown or invalid hints use the safe default', () => {
   assert.equal(tileCacheBudgetForDevice(), TILE_CACHE_DEFAULT_BYTES);
   assert.equal(tileCacheBudgetForDevice({ deviceMemory: Number.NaN, hardwareConcurrency: 0 }), TILE_CACHE_DEFAULT_BYTES);
+});
+
+test('server-side detection avoids touching browser globals and uses the default budget', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  try {
+    Object.defineProperty(globalThis, 'navigator', { value: undefined, configurable: true });
+    assert.equal(detectTileCacheBudget(), TILE_CACHE_DEFAULT_BYTES);
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
+    else delete globalThis.navigator;
+  }
 });
