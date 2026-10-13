@@ -81,9 +81,12 @@ test('Keyboard Shortcuts can reset all custom bindings before applying', async (
   await page.getByRole('menuitem', { name: 'Keyboard Shortcuts…', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Keyboard Shortcuts' });
   const brush = dialog.getByLabel('Brush custom shortcut', { exact: true });
+  const zoom = dialog.getByLabel('Zoom in custom command shortcut', { exact: true });
   await brush.fill('9');
+  await zoom.fill('shift+9');
   await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
   await expect(brush).toHaveValue('');
+  await expect(zoom).toHaveValue('');
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await page.keyboard.press('9');
   await expect(page.getByRole('button', { name: 'Brush tool', exact: true })).not.toHaveAttribute('aria-pressed', 'true');
