@@ -14,7 +14,7 @@ export default function ToolbarSettingsDialog({ value, density, categories, hidd
   categoryOrder: readonly string[];
   toolOrder: Readonly<Record<string, readonly string[]>>;
   close: () => void;
-  apply: (value: { columns: ToolbarColumns; density: ToolbarDensity; hiddenCategories: string[]; categoryOrder: string[]; toolOrder: Record<string, string[]> }) => void;
+  apply: (value: { columns: ToolbarColumns; density: ToolbarDensity; hiddenCategories: string[]; categoryOrder: string[]; toolOrder: Record<string, string[]>; resetFamilies: boolean }) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [columns, setColumns] = useState<ToolbarColumns>(value);
@@ -28,6 +28,7 @@ export default function ToolbarSettingsDialog({ value, density, categories, hidd
   const [toolOrders, setToolOrders] = useState<Record<string, string[]>>(() => Object.fromEntries(
     categories.map((category) => [category.id, [...(toolOrder[category.id] ?? category.tools)]]),
   ));
+  const [resetFamilies, setResetFamilies] = useState(false);
   useEffect(() => { dialog.current?.showModal(); }, []);
   const toggleCategory = (id: string) => setHidden((current) => {
     const next = new Set(current);
@@ -58,10 +59,11 @@ export default function ToolbarSettingsDialog({ value, density, categories, hidd
     setHidden(new Set());
     setOrder(categories.map((category) => category.id));
     setToolOrders(Object.fromEntries(categories.map((category) => [category.id, [...category.tools]])));
+    setResetFamilies(true);
   };
   return (
     <dialog ref={dialog} className="editor-dialog toolbar-settings-dialog" aria-labelledby="toolbar-settings-title" onCancel={close}>
-      <form onSubmit={(event) => { event.preventDefault(); apply({ columns, density: toolbarDensity, hiddenCategories: [...hidden], categoryOrder: order, toolOrder: toolOrders }); }}>
+      <form onSubmit={(event) => { event.preventDefault(); apply({ columns, density: toolbarDensity, hiddenCategories: [...hidden], categoryOrder: order, toolOrder: toolOrders, resetFamilies }); }}>
         <h2 id="toolbar-settings-title">Toolbar</h2>
         <p>Choose a compact palette width. Auto uses two columns at normal widths and three columns on wide editor viewports; mobile layouts stay touch-sized.</p>
         <label className="select-row">

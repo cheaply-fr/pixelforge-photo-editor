@@ -12808,7 +12808,7 @@ export default function Home() {
           categoryOrder={toolbarCategoryOrder}
           toolOrder={toolbarToolOrder}
           close={() => setToolbarSettingsOpen(false)}
-          apply={({ columns, density, hiddenCategories, categoryOrder, toolOrder }) => {
+          apply={({ columns, density, hiddenCategories, categoryOrder, toolOrder, resetFamilies }) => {
             const nextHidden = hiddenCategories.filter((id) => id !== 'navigation');
             setToolbarColumns(columns);
             setToolbarDensity(density);
@@ -12816,11 +12816,16 @@ export default function Home() {
             setToolbarCategoryOrder(categoryOrder);
             setToolbarToolOrder(toolOrder);
             setToolbarSettingsOpen(false);
+            if (resetFamilies) {
+              setToolFamilyChoices({});
+              setActiveTool('select');
+            }
             try {
               window.localStorage.setItem('pixelforge.toolbar-columns', columns);
               window.localStorage.setItem('pixelforge.toolbar-density', density);
               window.localStorage.setItem('pixelforge.toolbar-hidden-categories', JSON.stringify(nextHidden));
               window.localStorage.setItem('pixelforge.toolbar-category-order', JSON.stringify(categoryOrder));
+              if (resetFamilies) window.localStorage.removeItem(TOOL_FAMILY_CHOICES_STORAGE_KEY);
               window.localStorage.setItem('pixelforge.toolbar-preferences', JSON.stringify({
                 version: TOOLBAR_PREFERENCES_VERSION,
                 columns,
