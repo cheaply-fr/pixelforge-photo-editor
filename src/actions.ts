@@ -151,6 +151,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-mezzotint',
   'filter-pointillize',
   'filter-picture-frame',
+  'filter-tree',
   'filter-clouds',
   'filter-fibers',
   'filter-difference-clouds',

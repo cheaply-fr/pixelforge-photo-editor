@@ -34,6 +34,7 @@ export const FILTER_EFFECT_TYPES = [
   'mezzotint',
   'pointillize',
   'picture-frame',
+  'tree',
   'clouds',
   'fibers',
   'difference-clouds',
@@ -117,6 +118,12 @@ export type FibersSettings = {
   variance: number;
 };
 
+/** Bounded geometry controls for the deterministic local Tree approximation. */
+export type TreeSettings = {
+  branches: number;
+  leafiness: number;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -135,6 +142,11 @@ export const DEFAULT_MEZZOTINT_SETTINGS: MezzotintSettings = {
 
 export const DEFAULT_FIBERS_SETTINGS: FibersSettings = {
   variance: 50,
+};
+
+export const DEFAULT_TREE_SETTINGS: TreeSettings = {
+  branches: 5,
+  leafiness: 55,
 };
 
 export type FilterEffects = {
@@ -170,6 +182,7 @@ export type FilterEffects = {
   mezzotint?: MezzotintSettings;
   /** Editable warp geometry for the seeded Fibers Render effect. */
   fibers?: FibersSettings;
+  tree?: TreeSettings;
   deinterlace?: DeinterlaceSettings;
 };
 
@@ -282,6 +295,13 @@ export function effectiveFilterEffects(
       variance: finite(variance) ? clamp(Math.round(variance), 1, 64) : DEFAULT_FIBERS_SETTINGS.variance,
     };
   }
+  if (type === 'tree') {
+    const settings = source.tree;
+    normalized.tree = {
+      branches: finite(settings?.branches) ? clamp(Math.round(settings.branches), 2, 8) : DEFAULT_TREE_SETTINGS.branches,
+      leafiness: finite(settings?.leafiness) ? clamp(Math.round(settings.leafiness), 0, 100) : DEFAULT_TREE_SETTINGS.leafiness,
+    };
+  }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
@@ -336,6 +356,12 @@ function validFibersSettings(value: unknown): value is FibersSettings {
   const settings = value as Partial<FibersSettings>;
   return finite(settings.variance) && Number.isInteger(settings.variance) && settings.variance >= 1 && settings.variance <= 64;
 }
+function validTreeSettings(value: unknown): value is TreeSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<TreeSettings>;
+  return finite(settings.branches) && Number.isInteger(settings.branches) && settings.branches >= 2 && settings.branches <= 8 &&
+    finite(settings.leafiness) && Number.isInteger(settings.leafiness) && settings.leafiness >= 0 && settings.leafiness <= 100;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -352,6 +378,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.colorHalftone === undefined || validColorHalftoneSettings(effect.colorHalftone)) &&
     (effect.mezzotint === undefined || validMezzotintSettings(effect.mezzotint)) &&
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
+    (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
@@ -1819,6 +1846,84 @@ function applyFlame(
 }
 
 /**
+ * Apply a bounded seeded Tree approximation for Render → Tree.
+ *
+ * The renderer creates a small recursive branch graph and deterministic leaf
+ * disks directly over visible pixels. It keeps the canvas, alpha channel and
+ * transparent RGB padding unchanged; branch count, leafiness and seed are
+ * persisted so a local draft replays exactly without generated assets.
+ */
+function applyTree(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const settings = effect.tree ?? DEFAULT_TREE_SETTINGS;
+  const branchCount = Math.max(2, Math.min(8, Math.round(settings.branches)));
+  const leafiness = clamp(settings.leafiness, 0, 100) / 100;
+  const seed = effect.seed >>> 0;
+  const random = (key: number): number => {
+    let value = (Math.imul(key | 0, 374761393) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const segments: Array<{ x1: number; y1: number; x2: number; y2: number; width: number }> = [];
+  const leaves: Array<{ x: number; y: number; radius: number }> = [];
+  const baseX = clamp(effect.centerX, 0, 1) * (width - 1);
+  const baseY = clamp(effect.centerY, 0.2, 0.98) * (height - 1);
+  const unit = Math.max(2, Math.min(width, height) * 0.16);
+  const maxDepth = 4;
+  const grow = (x: number, y: number, length: number, angle: number, depth: number, key: number): void => {
+    const endX = x + Math.cos(angle) * length;
+    const endY = y + Math.sin(angle) * length;
+    segments.push({ x1: x, y1: y, x2: endX, y2: endY, width: Math.max(1, length * 0.12) });
+    if (depth >= maxDepth) {
+      if (random(key + 11) <= leafiness) leaves.push({ x: endX, y: endY, radius: Math.max(1, length * 0.22) });
+      return;
+    }
+    const children = depth === 0 ? branchCount : 2;
+    for (let index = 0; index < children; index += 1) {
+      const spread = depth === 0 ? 1.35 : 1.05;
+      const offset = (index - (children - 1) / 2) * (spread / Math.max(1, children - 1));
+      const jitter = (random(key + index * 17) - 0.5) * 0.28;
+      grow(endX, endY, length * (0.58 + random(key + index * 23) * 0.12), angle + offset + jitter, depth + 1, key * 31 + index + 1);
+    }
+  };
+  grow(baseX, baseY, unit, -Math.PI / 2, 0, 1);
+  const drawCircle = (cx: number, cy: number, radius: number, colour: [number, number, number, number]): void => {
+    const left = Math.max(0, Math.floor(cx - radius));
+    const right = Math.min(width - 1, Math.ceil(cx + radius));
+    const top = Math.max(0, Math.floor(cy - radius));
+    const bottom = Math.min(height - 1, Math.ceil(cy + radius));
+    const radiusSquared = radius * radius;
+    for (let y = top; y <= bottom; y += 1) for (let x = left; x <= right; x += 1) {
+      if ((x - cx) ** 2 + (y - cy) ** 2 > radiusSquared) continue;
+      const offset = (y * width + x) * 4;
+      if (source[offset + 3]) blendPixel(output, offset, colour, strength * 0.8);
+    }
+  };
+  for (const segment of segments) {
+    const minX = Math.max(0, Math.floor(Math.min(segment.x1, segment.x2) - segment.width));
+    const maxX = Math.min(width - 1, Math.ceil(Math.max(segment.x1, segment.x2) + segment.width));
+    const minY = Math.max(0, Math.floor(Math.min(segment.y1, segment.y2) - segment.width));
+    const maxY = Math.min(height - 1, Math.ceil(Math.max(segment.y1, segment.y2) + segment.width));
+    const dx = segment.x2 - segment.x1, dy = segment.y2 - segment.y1;
+    const lengthSquared = Math.max(1, dx * dx + dy * dy);
+    for (let y = minY; y <= maxY; y += 1) for (let x = minX; x <= maxX; x += 1) {
+      const t = clamp(((x - segment.x1) * dx + (y - segment.y1) * dy) / lengthSquared, 0, 1);
+      const nearX = segment.x1 + t * dx, nearY = segment.y1 + t * dy;
+      if ((x - nearX) ** 2 + (y - nearY) ** 2 > segment.width ** 2) continue;
+      const offset = (y * width + x) * 4;
+      if (source[offset + 3]) blendPixel(output, offset, [72, 42, 22, source[offset + 3]], strength * 0.75);
+    }
+  }
+  for (const leaf of leaves) drawCircle(leaf.x, leaf.y, leaf.radius, [42, 150, 62, 255]);
+}
+
+/**
  * Apply a bounded seeded Fibers approximation.
  *
  * Photoshop Fibers creates a foreground/background filament field. PixelForge
@@ -2644,6 +2749,8 @@ export function applyFilterEffectsPixels(
     applyPointillize(data, width, height, effect, output);
   } else if (effect.type === 'picture-frame') {
     applyPictureFrame(data, width, height, effect, output, strength);
+  } else if (effect.type === 'tree') {
+    applyTree(data, width, height, effect, output, strength);
   } else if (effect.type === 'clouds') {
     applyClouds(data, width, height, effect, output, strength);
   } else if (effect.type === 'difference-clouds') {

@@ -1597,3 +1597,33 @@ test('Fibers exposes seeded filament controls and round-trips nondestructively',
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() => pixels(page)).toEqual(original);
 });
+
+test('Render Tree is editable, deterministic and preserves the source asset', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Tree…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Tree (seeded local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('tree');
+  await expect(page.getByLabel('Branch count', { exact: true })).toHaveValue('5');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Tree seed', { exact: true }).fill('29');
+  await page.getByLabel('Leafiness', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'tree', seed: 29, tree: { branches: 5 } });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('tree');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});

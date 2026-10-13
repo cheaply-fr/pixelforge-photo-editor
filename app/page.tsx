@@ -556,6 +556,7 @@ type Command =
   | 'filter-mezzotint'
   | 'filter-pointillize'
   | 'filter-picture-frame'
+  | 'filter-tree'
   | 'filter-clouds'
   | 'filter-fibers'
   | 'filter-difference-clouds'
@@ -1026,6 +1027,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Pointillize…', command: 'filter-pointillize' },
     { label: 'Render', command: 'noop', disabled: true },
     { label: 'Picture Frame…', command: 'filter-picture-frame' },
+    { label: 'Tree…', command: 'filter-tree' },
     { label: 'Clouds', command: 'filter-clouds' },
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'filter-fibers' },
@@ -10135,6 +10137,8 @@ export default function Home() {
       chooseFilterEffect('picture-frame', 'Picture Frame (local approximation)');
     else if (command === 'filter-fibers')
       chooseFilterEffect('fibers', 'Fibers (local approximation)');
+    else if (command === 'filter-tree')
+      chooseFilterEffect('tree', 'Tree (seeded local approximation)');
     else if (command === 'filter-clouds')
       chooseFilterEffect('clouds', 'Clouds (seeded local approximation)');
     else if (command === 'filter-difference-clouds')
@@ -12751,6 +12755,9 @@ export default function Home() {
             {filterEffects.type === 'mezzotint' && (
               <p>Bounded seeded monochrome grain approximation. Grain mode, cell size, amount and seed remain editable; Photoshop&apos;s exact stochastic screen and print controls remain planned.</p>
             )}
+            {filterEffects.type === 'tree' && (
+              <p>Bounded seeded recursive branch and leaf approximation. Branch count, leafiness, origin and seed remain editable; Photoshop&apos;s exact botanical generator and foreground/background controls remain planned.</p>
+            )}
             {filterEffects.type === 'clouds' && (
               <p>Seeded multi-octave value-noise overlay. Scale, amount and seed remain editable; Photoshop foreground/background cloud synthesis and turbulence controls remain planned.</p>
             )}
@@ -12818,6 +12825,7 @@ export default function Home() {
                     filterEffects.type === 'color-halftone' ||
                     filterEffects.type === 'mezzotint' ||
                     filterEffects.type === 'clouds' ||
+                    filterEffects.type === 'tree' ||
                     filterEffects.type === 'pointillize'
                       ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
                       : filterEffects.type === 'box-blur' ||
@@ -13245,7 +13253,10 @@ export default function Home() {
                     />
                   </label>
                 )}
-                {filterEffects.type === 'clouds' && (
+                {filterEffects.type === 'tree' && (
+              <p>Bounded seeded recursive branch and leaf approximation. Branch count, leafiness, origin and seed remain editable; Photoshop&apos;s exact botanical generator and foreground/background controls remain planned.</p>
+            )}
+            {filterEffects.type === 'clouds' && (
                   <label className="slider">
                     <span>
                       <b>Cloud seed (0–4294967295)</b>
@@ -13327,6 +13338,15 @@ export default function Home() {
                         }}
                       />
                     </label>
+                  </>
+                )}
+                {filterEffects.type === 'tree' && (
+                  <>
+                    <Slider label="Tree origin X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
+                    <Slider label="Tree origin Y" value={Math.round(filterEffects.centerY * 100)} min={20} max={98} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
+                    <Slider label="Branch count" value={filterEffects.tree?.branches ?? 5} min={2} max={8} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), branches: value } })} />
+                    <Slider label="Leafiness" value={filterEffects.tree?.leafiness ?? 55} min={0} max={100} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), leafiness: value } })} suffix="%" />
+                    <label className="slider"><span><b>Tree seed (0–4294967295)</b><output>{filterEffects.seed}</output></span><input className="text-input tree-seed-input" aria-label="Tree seed" type="number" min={0} max={0xffffffff} step={1} value={filterEffects.seed} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) setFilterEffects({ seed: value }); }} /></label>
                   </>
                 )}
                 {filterEffects.type === 'fibers' && (
