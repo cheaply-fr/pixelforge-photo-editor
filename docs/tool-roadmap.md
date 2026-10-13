@@ -265,3 +265,6 @@ The vector interoperability increment adds `Layer → Copy SVG` for path, rectan
 
 
 **Edit → Fade…** is active as a bounded post-operation raster opacity blend with source-safe history and desktop/mobile round-trip coverage. Vector, locked, mismatched and adjustment-only states remain staged behind the contract in [`fade-contract.md`](./fade-contract.md).
+
+
+**Edit → Toggle Last State** is active as a repeatable switch between the current and immediately previous editable history frames, preserving the existing history stack and render cancellation contract.

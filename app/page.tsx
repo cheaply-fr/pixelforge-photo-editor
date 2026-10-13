@@ -488,6 +488,7 @@ type Command =
   | 'webp'
   | 'undo'
   | 'redo'
+  | 'toggle-last-state'
   | 'copy-layer'
   | 'copy-merged'
   | 'cut-layer'
@@ -848,8 +849,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     {
       label: 'Toggle Last State',
       shortcut: 'Ctrl+Alt+Z',
-      command: 'undo',
-      disabled: true,
+      command: 'toggle-last-state',
     },
     { label: '', command: 'noop', separator: true },
     {
@@ -10706,6 +10706,11 @@ export default function Home() {
     else if (command === 'fade') return fadeLastEdit();
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
+    else if (command === 'toggle-last-state') {
+      if (index.current > 0) travel(-1);
+      else if (index.current < history.current.length - 1) travel(1);
+      setNotice('Toggled the last editable state; repeat to switch back');
+    }
     else if (command === 'copy-layer') copyLayer();
     else if (command === 'copy-svg') return copySvg();
     else if (command === 'copy-merged') return copyMerged();
@@ -11123,6 +11128,8 @@ export default function Home() {
         return !canUndo || quickMasking;
       case 'redo':
         return !canRedo || quickMasking;
+      case 'toggle-last-state':
+        return quickMasking || (!canUndo && !canRedo);
       case 'fade': {
         const previous = index.current > 0 ? history.current[index.current - 1] : undefined;
         const previousLayer = previous?.layers.find((item) => item.id === layer?.id);
