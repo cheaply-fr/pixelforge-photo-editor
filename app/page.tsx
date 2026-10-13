@@ -1040,7 +1040,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'filter-sharpen' },
-    { label: 'Sharpen Edges', command: 'filter-sharpen-edges' }
+    { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
     { label: 'Sharpen More', command: 'filter-sharpen-more' },
     { label: 'Smart Sharpen…', command: 'filter-smart-sharpen' },
     { label: 'Unsharp Mask…', command: 'filter-unsharp-mask' },

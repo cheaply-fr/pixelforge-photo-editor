@@ -19,7 +19,7 @@ export const FILTER_EFFECT_TYPES = [
   'unsharp-mask',
   'sharpen-more',
   'sharpen-edges',
-  'smart-sharpen'
+  'smart-sharpen',
   'lens-blur',
   'iris-blur',
   'smart-blur',
