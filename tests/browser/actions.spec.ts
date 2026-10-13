@@ -298,6 +298,7 @@ test('persists Gradient Map colors in recorded Actions', async ({ page }) => {
   await page.getByRole('button', { name: 'Close action recipes' }).click();
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Gradient Map…', exact: true }).click();
+  await page.getByRole('button', { name: 'Add stop', exact: true }).click();
   await openActions(page);
   await page.getByRole('button', { name: 'Stop recording' }).click();
   await expect(page.getByText('Parameterized gradient map', { exact: true })).toBeVisible();
@@ -313,6 +314,7 @@ test('persists Gradient Map colors in recorded Actions', async ({ page }) => {
     gradientHighlight: '#ffffff',
     gradientBlend: 'normal',
   });
+  expect(parameters.gradientStops).toContain('"position":25');
 });
 
 test('records and replays the Fibers Render command', async ({ page }) => {

@@ -122,6 +122,17 @@ function numberParameter(step: ActionStep, name: string, fallback: number): numb
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function gradientStopsParameter(step: ActionStep): unknown[] {
+  const value = step.parameters?.gradientStops;
+  if (typeof value !== 'string' || value.length > 2048) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.slice(0, 6) : [];
+  } catch {
+    return [];
+  }
+}
+
 function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLCanvasElement {
   const context = input.getContext('2d');
   if (!context) throw new Error('Canvas rendering is unavailable in this browser.');
@@ -236,6 +247,7 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
       gradientMap: {
         shadow: typeof step.parameters?.gradientShadow === 'string' ? step.parameters.gradientShadow : '#000000',
         highlight: typeof step.parameters?.gradientHighlight === 'string' ? step.parameters.gradientHighlight : '#ffffff',
+        stops: gradientStopsParameter(step) as Array<{ position: number; color: string }>,
         blend: step.parameters?.gradientBlend === 'multiply' || step.parameters?.gradientBlend === 'screen' || step.parameters?.gradientBlend === 'overlay'
           ? step.parameters.gradientBlend
           : 'normal',

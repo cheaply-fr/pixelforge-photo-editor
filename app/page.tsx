@@ -5127,8 +5127,27 @@ export default function Home() {
     adjust({ curves: { ...curves, [channel]: points } });
   const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
-  const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) =>
-    adjust({ filterEffects: { ...filterEffects, ...patch } });
+  const updateRecordedFilterParameters = (effects: Adjustments['filterEffects']) => {
+    const id = recordingActionRef.current;
+    if (!id || replayingActionRef.current) return;
+    setActions((currentActions) => currentActions.map((action) => {
+      if (action.id !== id) return action;
+      const last = action.steps[action.steps.length - 1];
+      if (!last || !last.command.startsWith('filter-')) return action;
+      const steps = action.steps.slice();
+      steps[steps.length - 1] = {
+        ...last,
+        parameters: filterActionParameters(effects),
+      };
+      return { ...action, steps, updatedAt: new Date().toISOString() };
+    }));
+  };
+  const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) => {
+    const next = { ...filterEffects, ...patch };
+    const changed = adjust({ filterEffects: next });
+    if (changed) updateRecordedFilterParameters(next);
+    return changed;
+  };
   const setPhotoAdjustments = (
     patch: Partial<Adjustments['photoAdjustments']>,
   ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });

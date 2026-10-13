@@ -25,5 +25,6 @@ export function filterActionParameters(
     gradientShadow: effect.gradientMap?.shadow ?? '#000000',
     gradientHighlight: effect.gradientMap?.highlight ?? '#ffffff',
     gradientBlend: effect.gradientMap?.blend ?? 'normal',
+    gradientStops: JSON.stringify(effect.gradientMap?.stops ?? []),
   };
 }
