@@ -137,6 +137,8 @@ export type Settings = {
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
   brushSmoothing?: number;
+  /** Deterministic brush stamp scatter amount, from 0 to 100. */
+  brushScatter?: number;
   /** Brush tip rotation in degrees. */
   angle?: number;
   /** Brush tip roundness (100 is circular). */
@@ -355,6 +357,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.tonalExposure ?? 50, 1, 100] as [number, number, number],
     [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],
     [candidate.brushSmoothing ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushScatter ?? 0, 0, 100] as [number, number, number],
   ];
   if (candidate.patternTileSize !== undefined) {
     try {

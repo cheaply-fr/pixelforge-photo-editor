@@ -47,3 +47,10 @@ deterministic and source-safe, with pure coverage in
 `tests/brush-smoothing.test.mjs`; details and limitations are recorded in
 `docs/brush-smoothing-contract.md`. This remains local evidence until the
 protected workflow and live candidate verification pass.
+
+Brush-family controls now also include a persisted, bounded deterministic
+Scatter amount. `src/brushDynamics.ts` derives a replay-stable bounded stamp
+offset without global randomness; pure coverage is in
+`tests/brush-dynamics.test.mjs`, with desktop/mobile project-file coverage in
+`tests/browser/brush-dynamics.spec.ts`. Texture, dual-brush, bristle and
+wet-media dynamics remain staged.

@@ -295,6 +295,10 @@ import {
   BRUSH_SMOOTHING_DEFAULT,
   stabilizeBrushPoint,
 } from '../src/brushSmoothing';
+import {
+  BRUSH_SCATTER_DEFAULT,
+  scatterBrushPoint,
+} from '../src/brushDynamics';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
@@ -1196,6 +1200,7 @@ type StampCanvasOptions = {
   pressureSize?: boolean;
   pressureOpacity?: boolean;
   spacing?: number;
+  scatter?: number;
   angle?: number;
   roundness?: number;
   flipX?: boolean;
@@ -1308,6 +1313,7 @@ const stampCanvasSegment = (
     const t = step / steps,
       x = from.x + (to.x - from.x) * t,
       y = from.y + (to.y - from.y) * t,
+      scattered = scatterBrushPoint({ x, y }, resolved.size, options.scatter ?? 0),
       sourceX = options.sourceAnchor
         ? options.sourceAnchor.x +
           (x - (options.destinationAnchor?.x ?? from.x))
@@ -1319,8 +1325,8 @@ const stampCanvasSegment = (
     changed =
       stampCanvas(target, {
         ...options,
-        x,
-        y,
+        x: scattered.x,
+        y: scattered.y,
         sourceX,
         sourceY,
       }) || changed;
@@ -1694,6 +1700,7 @@ export default function Home() {
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
+    [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -2004,6 +2011,7 @@ export default function Home() {
     brushPreset,
     spacing: brushSpacing,
     brushSmoothing,
+    brushScatter,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2055,6 +2063,7 @@ export default function Home() {
     setBrushPreset(s.brushPreset ?? 'round-hard');
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
+    setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2091,6 +2100,7 @@ export default function Home() {
     setBrushPreset,
     setBrushSpacing,
     setBrushSmoothing,
+    setBrushScatter,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -4418,6 +4428,8 @@ export default function Home() {
         pressureOpacity,
         brushPreset,
         spacing: brushSpacing,
+        brushSmoothing,
+        brushScatter,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4494,6 +4506,8 @@ export default function Home() {
     pressureOpacity,
     brushPreset,
     brushSpacing,
+    brushSmoothing,
+    brushScatter,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -7796,6 +7810,7 @@ export default function Home() {
               pressureSize: tool !== 'pencil' && pressureSize,
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
               spacing: brushSpacing,
+              scatter: brushScatter,
               angle: brushAngle,
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
@@ -8332,6 +8347,7 @@ export default function Home() {
         pressureSize: g.tool !== 'pencil' && pressureSize,
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
         spacing: brushSpacing,
+        scatter: brushScatter,
         angle: brushAngle,
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
@@ -8925,6 +8941,7 @@ export default function Home() {
           pressureSize: g.tool !== 'pencil' && pressureSize,
           pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
           spacing: brushSpacing,
+          scatter: brushScatter,
           angle: brushAngle,
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
@@ -12428,14 +12445,24 @@ export default function Home() {
                         suffix="%"
                       />
                       {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
-                        <Slider
-                          label="Smoothing"
-                          value={brushSmoothing}
-                          min={0}
-                          max={100}
-                          set={setBrushSmoothing}
-                          suffix="%"
-                        />
+                        <>
+                          <Slider
+                            label="Smoothing"
+                            value={brushSmoothing}
+                            min={0}
+                            max={100}
+                            set={setBrushSmoothing}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Scatter"
+                            value={brushScatter}
+                            min={0}
+                            max={100}
+                            set={setBrushScatter}
+                            suffix="%"
+                          />
+                        </>
                       )}
                       <Slider
                         label="Angle"
@@ -12473,8 +12500,8 @@ export default function Home() {
                       </label>
                       <p className="adjust-note">
                         Tip settings apply to future local dabs. Advanced
-                        scattering, texture, dual-brush and wet-media dynamics
-                        remain staged for a later bounded renderer increment.
+                        Texture, dual-brush and wet-media dynamics remain staged;
+                        Scatter is a deterministic local stamp offset.
                       </p>
                     </>
                   )}
