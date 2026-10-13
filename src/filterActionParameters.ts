@@ -22,5 +22,8 @@ export function filterActionParameters(
     threshold: effect.threshold ?? 25,
     noiseMonochromatic: effect.noiseMonochromatic === true,
     noiseDistribution: effect.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform',
+    gradientShadow: effect.gradientMap?.shadow ?? '#000000',
+    gradientHighlight: effect.gradientMap?.highlight ?? '#ffffff',
+    gradientBlend: effect.gradientMap?.blend ?? 'normal',
   };
 }

@@ -10,7 +10,8 @@ test('filter Action parameters capture normalized editable controls without sour
   }), {
     amount: 42, radius: 7, angle: -12, centerX: 0.2, centerY: 0.8,
     seed: 4294967295, threshold: 25, noiseMonochromatic: true,
-    noiseDistribution: 'gaussian',
+    noiseDistribution: 'gaussian', gradientShadow: '#000000',
+    gradientHighlight: '#ffffff', gradientBlend: 'normal',
   });
 });
 
@@ -18,10 +19,22 @@ test('filter Action parameters fail closed to bounded defaults', () => {
   assert.deepEqual(filterActionParameters({ type: 'gaussian-blur', amount: Infinity, radius: -5, seed: -2 }), {
     amount: 0, radius: 0, angle: 0, centerX: 0.5, centerY: 0.5,
     seed: 4294967294, threshold: 25, noiseMonochromatic: false, noiseDistribution: 'uniform',
+    gradientShadow: '#000000', gradientHighlight: '#ffffff', gradientBlend: 'normal',
   });
 });
 
 test('filter Action parameters retain effect-specific thresholds', () => {
   assert.equal(filterActionParameters({ type: 'dust-scratches', threshold: 9 }).threshold, 9);
   assert.equal(filterActionParameters({ type: 'reduce-noise', threshold: 999 }).threshold, 255);
+});
+
+test('filter Action parameters retain bounded Gradient Map appearance', () => {
+  assert.deepEqual(filterActionParameters({
+    type: 'gradient-map',
+    gradientMap: { shadow: '#123456', highlight: '#fedcba', blend: 'screen' },
+  }), {
+    amount: 0, radius: 0, angle: 0, centerX: 0.5, centerY: 0.5,
+    seed: 0, threshold: 25, noiseMonochromatic: false, noiseDistribution: 'uniform',
+    gradientShadow: '#123456', gradientHighlight: '#fedcba', gradientBlend: 'screen',
+  });
 });

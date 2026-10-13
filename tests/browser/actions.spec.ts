@@ -291,6 +291,30 @@ test('persists normalized filter controls in recorded Actions', async ({ page })
   });
 });
 
+test('persists Gradient Map colors in recorded Actions', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Parameterized gradient map');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Gradient Map…', exact: true }).click();
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Parameterized gradient map', { exact: true })).toBeVisible();
+  const parameters = await page.evaluate(() => {
+    const payload = JSON.parse(window.localStorage.getItem('pixelforge.actions.v1') || '{"actions":[]}');
+    const actions = payload.actions || [];
+    const action = actions[actions.length - 1];
+    const steps = action?.steps || [];
+    return steps[steps.length - 1]?.parameters;
+  });
+  expect(parameters).toMatchObject({
+    gradientShadow: '#000000',
+    gradientHighlight: '#ffffff',
+    gradientBlend: 'normal',
+  });
+});
+
 test('records and replays the Fibers Render command', async ({ page }) => {
   await openActions(page);
   await page.getByLabel('Recipe name').fill('Fibers filament finish');

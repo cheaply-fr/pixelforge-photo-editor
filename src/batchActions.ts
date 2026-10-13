@@ -233,6 +233,13 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
       threshold: numberParameter(step, 'threshold', 25),
       noiseMonochromatic: step.parameters?.noiseMonochromatic === true,
       noiseDistribution: step.parameters?.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform',
+      gradientMap: {
+        shadow: typeof step.parameters?.gradientShadow === 'string' ? step.parameters.gradientShadow : '#000000',
+        highlight: typeof step.parameters?.gradientHighlight === 'string' ? step.parameters.gradientHighlight : '#ffffff',
+        blend: step.parameters?.gradientBlend === 'multiply' || step.parameters?.gradientBlend === 'screen' || step.parameters?.gradientBlend === 'overlay'
+          ? step.parameters.gradientBlend
+          : 'normal',
+      },
     });
     return output;
   }

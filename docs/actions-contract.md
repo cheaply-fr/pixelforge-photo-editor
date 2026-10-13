@@ -29,8 +29,9 @@ when it is replayed.
 Edit → Action recipes opens the recorder. Starting a recipe creates an empty
 record, and successful command dispatches append immutable steps until the
 user stops recording. Filter steps also capture normalized editable amount,
-radius, angle, centre, seed and effect-specific controls (including noise
-distribution/monochrome and cleanup thresholds) as scalar metadata; no source
+radius, angle, centre, seed and effect-specific controls (including Gradient
+Map colours/blend, noise distribution/monochrome and cleanup thresholds) as
+scalar metadata; no source
 pixels or generated output is captured. Replay runs steps in order through the existing editor
 command dispatcher, preserving the usual undo/history and source-asset
 contracts. Replay stops at the first rejected step and reports its index and a
