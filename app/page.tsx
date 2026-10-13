@@ -16017,6 +16017,9 @@ export default function Home() {
           data-tiled-completed={tiledProgress?.completed ?? 0}
           data-tiled-total={tiledProgress?.total ?? 0}
           data-tiled-cache-budget={tiledCacheBudget}
+          data-tiled-cache-hits={tiledTelemetry?.cacheStats?.hits ?? 0}
+          data-tiled-cache-misses={tiledTelemetry?.cacheStats?.misses ?? 0}
+          data-tiled-cache-evictions={tiledTelemetry?.cacheStats?.evictions ?? 0}
           aria-live="polite"
         >
           {doc.rendering
