@@ -157,6 +157,15 @@ test('draft storage preparation rejects malformed revisions and cloud links', ()
   );
 });
 
+test('gradient geometry persists and rejects unknown modes', () => {
+  const radial = validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'radial' } });
+  assert.equal(radial.settings.gradientMode, 'radial');
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'diamond' } }),
+    /Saved document is not supported/,
+  );
+});
+
 test('cloud session and project response validators reject malformed or oversized data', () => {
   assert.deepEqual(validateCloudSession({ authenticated: false }), {
     authenticated: false,
