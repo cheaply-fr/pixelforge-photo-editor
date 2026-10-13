@@ -279,3 +279,6 @@ path styling remain staged.
 
 
 **Type → Paste Lorem Ipsum** is active as a local editable text-layer insertion with bounded box/font defaults, anonymous-draft persistence and desktop/mobile round-trip coverage. **Edit → Search** now opens a local command palette and honors Ctrl/Cmd+F, **Edit → Purge Undo History…** explicitly compacts retained snapshots while preserving the current editable frame, and **Edit → Find and Replace Text…** performs deterministic, reversible replacement across editable text layers with case and whole-word controls. **Image → Apply Image…** performs a local source-over composite into an unlocked raster target with optional selection clipping, explicit opacity, and one undoable commit; see [`text-replace-contract.md`](./text-replace-contract.md), [`history-purge-contract.md`](./history-purge-contract.md), and [`apply-image-contract.md`](./apply-image-contract.md). Provider fonts and full OpenType shaping remain staged.
+
+
+Interaction preference note: custom tool bindings accept a bare alphanumeric key or a validated Shift/Ctrl/Alt/Cmd chord, normalize collisions deterministically, and persist through reload; menu-command rebinding remains staged.
