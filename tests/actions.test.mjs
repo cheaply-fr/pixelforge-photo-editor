@@ -115,6 +115,22 @@ test('active noise and cleanup filters are replayable without aliases', async ()
   assert.deepEqual(seen, commands);
 });
 
+test('plain Blur is an allow-listed replayable filter command', async () => {
+  const action = appendActionStep(
+    createActionSet('Blur', 'blur-action', now),
+    'filter-blur',
+    'Blur',
+    { amount: 70, radius: 6 },
+    'blur-step',
+    now,
+  );
+  const seen = [];
+  const result = await replayActionSet(action, async (step) => seen.push(step.command));
+  assert.equal(result.completed, 1);
+  assert.deepEqual(seen, ['filter-blur']);
+  assert.deepEqual(parseActionSets(serializeActionSets([action])), [action]);
+});
+
 test('recipes support deterministic rename and step removal without mutating history', () => {
   const source = appendActionStep(
     appendActionStep(createActionSet('Recipe', 'action-3', now), 'flip-h', 'Flip horizontal', undefined, 'step-a', now),

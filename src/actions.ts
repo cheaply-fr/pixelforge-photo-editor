@@ -138,6 +138,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-box-blur',
   'filter-gaussian-blur',
   'filter-average',
+  'filter-blur',
   'filter-blur-more',
   'filter-lens-blur',
   'filter-iris-blur',
