@@ -75,6 +75,27 @@ test('Pointillize records as a replayable local pixelate command', async () => {
   assert.deepEqual(seen, ['filter-pointillize']);
 });
 
+test('active noise and cleanup filters are replayable without aliases', async () => {
+  const commands = [
+    'filter-add-noise',
+    'filter-median',
+    'filter-dust-scratches',
+    'filter-despeckle',
+    'filter-reduce-noise',
+    'filter-gradient-map',
+    'filter-lens-correction',
+    'filter-liquify',
+  ];
+  const source = createActionSet('Noise and cleanup', 'noise-action', now);
+  let action = source;
+  for (const [index, command] of commands.entries())
+    action = appendActionStep(action, command, command, undefined, `step-${index}`, now);
+  const seen = [];
+  const result = await replayActionSet(action, async (step) => seen.push(step.command));
+  assert.equal(result.completed, commands.length);
+  assert.deepEqual(seen, commands);
+});
+
 test('recipes support deterministic rename and step removal without mutating history', () => {
   const source = appendActionStep(
     appendActionStep(createActionSet('Recipe', 'action-3', now), 'flip-h', 'Flip horizontal', undefined, 'step-a', now),

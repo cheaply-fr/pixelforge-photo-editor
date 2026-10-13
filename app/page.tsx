@@ -12207,6 +12207,11 @@ export default function Home() {
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'filter-average':
       case 'filter-blur-more':
+      case 'filter-sharpen':
+      case 'filter-unsharp-mask':
+      case 'filter-sharpen-more':
+      case 'filter-sharpen-edges':
+      case 'filter-smart-sharpen':
       case 'filter-field-blur':
       case 'filter-box-blur':
       case 'filter-gaussian-blur':
@@ -12231,6 +12236,11 @@ export default function Home() {
       case 'filter-flame':
       case 'filter-deinterlace':
       case 'filter-ntsc-colors':
+      case 'filter-median':
+      case 'filter-dust-scratches':
+      case 'filter-despeckle':
+      case 'filter-reduce-noise':
+      case 'filter-add-noise':
       case 'filter-solarize':
       case 'filter-diffuse':
       case 'filter-wind':

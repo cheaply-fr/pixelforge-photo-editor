@@ -226,6 +226,12 @@ remain unchanged; pure and desktop/mobile persistence coverage is included.
 The implementation is an explicitly bounded approximation and remains local
 evidence until protected CI, deployment and live acceptance pass.
 
+The follow-up action-system increment adds the active noise, cleanup, gradient
+map, lens-correction and Liquify filter commands to the deterministic Action
+replay allowlist. Pure replay coverage verifies every command remains
+allow-listed and completes in order; this closes a batch-workflow data-model
+gap without implying that Action execution has passed production gates.
+
 The follow-up noise increment adds `Filter → Noise → Dust & Scratches…`: a bounded thresholded local-median cleanup with editable radius, threshold and amount. Pure and desktop/mobile round-trip tests cover outlier replacement, transparent-RGB safety and source retention; protected CI and live deployment remain separate gates.
 
 The noise family now also includes `Filter → Noise → Despeckle`, a fixed-radius local cleanup command with deterministic source-safe rendering and desktop/mobile persistence coverage. This bounded approximation does not claim Photoshop's texture-aware detector.
