@@ -157,11 +157,19 @@ test('draft storage preparation rejects malformed revisions and cloud links', ()
   );
 });
 
-test('gradient geometry persists and rejects unknown modes', () => {
-  const radial = validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'radial' } });
+test('gradient geometry and endpoint persist and reject unknown values', () => {
+  const radial = validateDraft({
+    ...baseDraft(),
+    settings: { ...settings, gradientMode: 'radial', gradientEnd: 'background' },
+  });
   assert.equal(radial.settings.gradientMode, 'radial');
+  assert.equal(radial.settings.gradientEnd, 'background');
   assert.throws(
     () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'diamond' } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientEnd: 'opaque' } }),
     /Saved document is not supported/,
   );
 });

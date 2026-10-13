@@ -76,4 +76,6 @@ reload and project-file coverage is in
 
 Gradient geometry now also includes Reflected mode, with colour at both ends
 and a transparent midpoint on the authored linear axis. Full gradient stops,
-noise and dithering remain staged.
+noise and dithering remain staged. The persisted Gradient end control can use
+either the transparent default or the current background colour, including for
+the reflected midpoint; full gradient stops, noise and dithering remain staged.

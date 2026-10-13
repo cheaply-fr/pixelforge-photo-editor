@@ -141,6 +141,8 @@ export type Settings = {
   brushScatter?: number;
   /** Gradient geometry for the Gradient tool. */
   gradientMode?: 'linear' | 'radial' | 'reflected';
+  /** Gradient endpoint behaviour. */
+  gradientEnd?: 'transparent' | 'background';
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
   /** Brush-family flow amount, from 1 to 100 percent. */
@@ -375,6 +377,7 @@ function validSettings(settings: unknown): settings is Settings {
     }
   }
   if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected'].includes(candidate.gradientMode)) return false;
+  if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;

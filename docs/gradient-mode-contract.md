@@ -1,13 +1,14 @@
 # Gradient mode contract
 
-The Gradient tool supports persisted **Linear**, **Radial** and **Reflected** geometry. All three
-use the active foreground colour fading to transparent, preserve the original
-raster asset until one undoable pointer-up commit, and remain local to the
-browser. Radial mode uses the drag start as its centre and the drag distance as
-its bounded radius; linear mode retains the existing start-to-end direction;
-reflected mode puts colour at both ends with transparency at the midpoint.
+The Gradient tool supports persisted **Linear**, **Radial** and **Reflected** geometry. The
+**Gradient end** setting can keep the default transparent endpoint or use the current
+background colour. All three modes preserve the original raster asset until one
+undoable pointer-up commit and remain local to the browser. Radial mode uses the
+drag start as its centre and the drag distance as its bounded radius; linear mode
+retains the existing start-to-end direction; reflected mode puts the foreground
+colour at both ends and uses the selected endpoint colour at the midpoint.
 
-The mode is validated in project settings, defaults to Linear for older drafts,
-and is covered by desktop/mobile UI, pixel-change, reload and portable-project
-round-trip tests. This contract does not claim Photoshop's full gradient-stop,
-noise, dithering, or gradient-map feature set.
+The mode and endpoint are validated in project settings, default to Linear and
+transparent for older drafts, and are covered by desktop/mobile UI, pixel-change,
+reload and portable-project round-trip tests. This contract does not claim
+Photoshop's full gradient-stop, noise, dithering, or gradient-map feature set.

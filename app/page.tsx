@@ -1710,6 +1710,7 @@ export default function Home() {
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushFlow, setBrushFlow] = useState(100),
     [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
+    [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -2024,6 +2025,7 @@ export default function Home() {
     brushTexture,
     brushFlow,
     gradientMode,
+    gradientEnd,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2079,6 +2081,7 @@ export default function Home() {
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
+    setGradientEnd(s.gradientEnd ?? 'transparent');
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2119,6 +2122,7 @@ export default function Home() {
     setBrushTexture,
     setBrushFlow,
     setGradientMode,
+    setGradientEnd,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -4451,6 +4455,7 @@ export default function Home() {
         brushTexture,
         brushFlow,
         gradientMode,
+        gradientEnd,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4532,6 +4537,7 @@ export default function Home() {
     brushTexture,
     brushFlow,
     gradientMode,
+    gradientEnd,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -9208,13 +9214,14 @@ export default function Home() {
               local.x,
               local.y,
             );
+        const endColor = gradientEnd === 'background' ? backgroundColor : '#ffffff00';
         if (gradientMode === 'reflected') {
           gradient.addColorStop(0, color);
-          gradient.addColorStop(0.5, '#ffffff00');
+          gradient.addColorStop(0.5, endColor);
           gradient.addColorStop(1, color);
         } else {
           gradient.addColorStop(0, color);
-          gradient.addColorStop(1, '#ffffff00');
+          gradient.addColorStop(1, endColor);
         }
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
@@ -12377,6 +12384,19 @@ export default function Home() {
                     <option value="linear">Linear</option>
                     <option value="radial">Radial</option>
                     <option value="reflected">Reflected</option>
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient end</span>
+                  <select
+                    aria-label="Gradient end"
+                    value={gradientEnd}
+                    onChange={(event) => setGradientEnd(event.target.value as 'transparent' | 'background')}
+                  >
+                    <option value="transparent">Transparent</option>
+                    <option value="background">Background colour</option>
                   </select>
                 </label>
               )}
