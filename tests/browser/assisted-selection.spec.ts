@@ -1,4 +1,5 @@
 import { downloadedProject } from './project-file';
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
@@ -51,3 +52,26 @@ for (const kind of ['Subject', 'Sky'] as const) {
     );
   });
 }
+
+test('Select and Mask smooths and feathers an existing selection through reload', async ({ page }) => {
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  await selectTool(page, 'Select');
+  await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.getByText('Rectangular selection created', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Select and Mask…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Select and Mask' })).toBeVisible();
+  await page.getByLabel('Select and Mask edge smoothing (px)', { exact: true }).fill('3');
+  await page.getByLabel('Select and Mask feather (px)', { exact: true }).fill('8');
+  await page.getByRole('button', { name: 'Apply Select and Mask', exact: true }).click();
+  await expect(page.getByText('Select and Mask applied (smooth 3 px, feather 8 px)', { exact: true })).toBeVisible();
+  let saved = await project(page);
+  expect(saved.history[saved.index].selection?.mask).toBeTruthy();
+  await page.reload();
+  saved = await project(page);
+  expect(saved.history[saved.index].selection?.mask).toBeTruthy();
+});

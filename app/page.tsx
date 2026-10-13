@@ -130,6 +130,7 @@ import LayerTransformDialog, {
   type LayerTransformBounds,
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
+import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
@@ -492,6 +493,7 @@ type Command =
   | 'focus-area'
   | 'subject-selection'
   | 'sky-selection'
+  | 'select-and-mask'
   | 'mask-selection'
   | 'remove-background'
   | 'invert-layer-mask'
@@ -955,7 +957,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Focus Area…', command: 'focus-area' },
     { label: 'Subject', command: 'subject-selection' },
     { label: 'Sky', command: 'sky-selection' },
-    { label: 'Select and Mask…', command: 'noop', disabled: true },
+    { label: 'Select and Mask…', command: 'select-and-mask' },
     { label: 'Modify', command: 'noop', disabled: true },
     { label: 'Grow…', command: 'grow-selection' },
     { label: 'Contract…', command: 'contract-selection' },
@@ -1863,6 +1865,7 @@ export default function Home() {
   const [colorRanging, setColorRanging] = useState(false);
   const [fillLayerDialog, setFillLayerDialog] = useState(false);
   const [focusAreaValue, setFocusAreaValue] = useState(false);
+  const [selectAndMaskValue, setSelectAndMaskValue] = useState(false);
   const [focusAreaThreshold, setFocusAreaThreshold] = useState(32);
   const [focusAreaSoftness, setFocusAreaSoftness] = useState(24);
   const [quickMasking, setQuickMasking] = useState(false),
@@ -3350,6 +3353,49 @@ export default function Home() {
     } catch {
       if (isCurrentSelectionOperation(f, frameIndex, workToken))
         setNotice(`Could not create a ${kind === 'subject' ? 'Subject' : 'Sky'} selection`);
+    }
+  };
+  const applySelectAndMask = async (smoothRadius: number, feather: number) => {
+    const f = current(), frameIndex = index.current, before = f.selection,
+      workToken = ++selectionWorkToken.current;
+    setSelectAndMaskValue(false);
+    if (!before) {
+      setNotice('Create a selection before opening Select and Mask');
+      return;
+    }
+    try {
+      const rendered = await renderSelection(before, f.w, f.h, assets.current),
+        context = rendered.getContext('2d');
+      if (!context) throw new Error('Select and Mask renderer is unavailable');
+      const pixels = context.getImageData(0, 0, f.w, f.h).data,
+        alpha = new Uint8ClampedArray(f.w * f.h);
+      for (let pixel = 0; pixel < alpha.length; pixel += 1)
+        alpha[pixel] = pixels[pixel * 4 + 3];
+      const refined = refineSelectionAlpha(alpha, f.w, f.h, 'smooth', smoothRadius),
+        mask = surface(f.w, f.h),
+        maskContext = mask.getContext('2d');
+      if (!maskContext) throw new Error('Select and Mask surface is unavailable');
+      const output = maskContext.createImageData(f.w, f.h);
+      for (let pixel = 0; pixel < refined.length; pixel += 1) {
+        const offset = pixel * 4;
+        output.data[offset] = 255;
+        output.data[offset + 1] = 255;
+        output.data[offset + 2] = 255;
+        output.data[offset + 3] = refined[pixel];
+      }
+      maskContext.putImageData(output, 0, 0);
+      if (!isCurrentSelectionOperation(f, frameIndex, workToken)) return;
+      const maskId = addAsset(assets.current, mask);
+      if (commit({
+        ...f,
+        selection: {
+          shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h,
+          feather, inverted: false, mask: maskId,
+        },
+      })) setNotice(`Select and Mask applied (smooth ${smoothRadius} px, feather ${feather} px)`);
+    } catch (error) {
+      if (isCurrentSelectionOperation(f, frameIndex, workToken))
+        setNotice(error instanceof Error ? error.message : 'Select and Mask failed');
     }
   };
   const applySimilarSelection = async () => {
@@ -10003,6 +10049,10 @@ export default function Home() {
     else if (command === 'focus-area') setFocusAreaValue(true);
     else if (command === 'subject-selection') return applyAssistedSelection('subject');
     else if (command === 'sky-selection') return applyAssistedSelection('sky');
+    else if (command === 'select-and-mask') {
+      if (current().selection) setSelectAndMaskValue(true);
+      else setNotice('Create a selection before opening Select and Mask');
+    }
     else if (command === 'mask-selection') return createMaskFromSelection();
     else if (command === 'remove-background') return removeBackground();
     else if (command === 'free-transform') beginLayerTransform();
@@ -10693,6 +10743,12 @@ export default function Home() {
           initialSoftness={focusAreaSoftness}
           close={() => setFocusAreaValue(false)}
           apply={(threshold, softness) => void applyFocusArea(threshold, softness)}
+        />
+      )}
+      {selectAndMaskValue && (
+        <SelectAndMaskDialog
+          close={() => setSelectAndMaskValue(false)}
+          apply={(smoothRadius, feather) => void applySelectAndMask(smoothRadius, feather)}
         />
       )}
       {exporting && (
