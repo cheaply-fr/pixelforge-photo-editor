@@ -138,7 +138,14 @@ test('links selected smart-object contents and propagates replacement while pres
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   out = await project(page);
-  expect(out.history[out.index].layers.filter((layer) => layer.kind === 'smart-object').every((layer) => layer.linkId === replaced[0].linkId)).toBe(true);
+  const restoredLinked = out.history[out.index].layers.filter((layer) => layer.kind === 'smart-object');
+  expect(restoredLinked.every((layer) => layer.linkId === replaced[0].linkId)).toBe(true);
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Unlink Smart Object Contents', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Unlink Smart Object Contents', exact: true }).click();
+  await expect(page.getByText('Unlinked 2 smart-object layers', { exact: true })).toBeVisible();
+  out = await project(page);
+  expect(out.history[out.index].layers.filter((layer) => layer.kind === 'smart-object').every((layer) => !layer.linkId)).toBe(true);
 });
 
 test('replaces a smart object and fits the new contents to the active artboard', async ({ page }) => {

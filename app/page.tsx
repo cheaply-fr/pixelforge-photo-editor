@@ -573,6 +573,7 @@ type Command =
   | 'new-smart-object'
   | 'replace-smart-object'
   | 'link-smart-objects'
+  | 'unlink-smart-objects'
   | 'rasterize-layer'
   | 'matting'
   | 'duplicate-layer'
@@ -1056,6 +1057,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'New Smart Object…', command: 'new-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
     { label: 'Link Smart Object Contents', command: 'link-smart-objects' },
+    { label: 'Unlink Smart Object Contents', command: 'unlink-smart-objects' },
     { label: 'Rasterize', command: 'rasterize-layer' },
     { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
@@ -7459,6 +7461,31 @@ export default function Home() {
         `Linked ${smartObjects.length} smart-object layers; replacing one updates all linked contents`,
       );
   };
+  const unlinkSmartObjectContents = () => {
+    const original = current();
+    const selected = selectedLayersForFrame(original);
+    const linked = selected.filter(
+      (layer): layer is Layer & { kind: 'smart-object'; linkId: string } =>
+        layer.kind === 'smart-object' && layer.linkId !== undefined,
+    );
+    if (!linked.length) {
+      setNotice('Select a linked smart-object layer to unlink');
+      return;
+    }
+    const ids = new Set(linked.map((layer) => layer.id));
+    const next = {
+      ...original,
+      layers: original.layers.map((layer) =>
+        ids.has(layer.id) && layer.kind === 'smart-object'
+          ? (() => {
+              const { linkId: _linkId, ...unlinked } = layer;
+              return unlinked;
+            })()
+          : layer,
+      ),
+    };
+    if (commit(next)) setNotice(`Unlinked ${linked.length} smart-object layer${linked.length === 1 ? '' : 's'}`);
+  };
   const point = (
     e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
   ) => {
@@ -11570,6 +11597,7 @@ export default function Home() {
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
     else if (command === 'link-smart-objects') return linkSmartObjectContents();
+    else if (command === 'unlink-smart-objects') return unlinkSmartObjectContents();
     else if (command === 'rasterize-layer') return rasterize();
     else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
@@ -12049,6 +12077,10 @@ export default function Home() {
         return (
           selectedLayersForFrame(frame).filter((candidate) => candidate.kind === 'smart-object').length < 2 ||
           selectedLayersForFrame(frame).some((candidate) => layerIsLocked(frame, candidate))
+        );
+      case 'unlink-smart-objects':
+        return !selectedLayersForFrame(frame).some(
+          (candidate) => candidate.kind === 'smart-object' && candidate.linkId !== undefined,
         );
       case 'rename-layer':
         return !layer || locked;
