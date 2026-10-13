@@ -106,3 +106,12 @@ persisted and tested for nontransparent gradient pixels, with a configurable
 independent opaque-pixel variation while preserving alpha and transparent RGB;
 a persisted Reverse control swaps Linear/Radial start
 and end colours while preserving Reflected symmetry.
+
+The current local increment adds two independently tested capabilities. Filter
+→ Stylize → Solarize is a bounded channel-wise nondestructive approximation with
+editable amount metadata and transparent-RGB safety. Select → Object Selection…
+is a click-seeded connected-colour proxy with bounded tolerance and edge
+softness; it writes the normal persisted selection mask and explicitly does not
+claim semantic object recognition. Pure coverage, desktop/mobile acceptance,
+typecheck, lint and production-build evidence are present on the roadmap branch;
+protected CI and the deployed/live candidate remain separate gates.
