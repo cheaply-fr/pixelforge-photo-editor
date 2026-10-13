@@ -263,8 +263,8 @@ the compact palette remains free of duplicate family slots.
 
 The same toolbar settings now persist category ordering with keyboard-accessible
 up/down controls and a Reset defaults action. Desktop/mobile tests verify
-reordered categories and safe reset survive the editor session; arbitrary shortcut
-rebinding remains future work.
+reordered categories and safe reset survive the editor session; shortcut
+rebinding is covered by the Keyboard Shortcuts contract below.
 
 Toolbar local-storage values now pass through a versioned normalization
 contract that removes unknown and duplicate category IDs, completes newly added
