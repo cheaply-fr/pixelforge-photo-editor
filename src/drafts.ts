@@ -44,6 +44,7 @@ import {
   normalizePatternTileSize,
   type PatternId,
 } from './patternStamp.ts';
+import { isGradientStops, type GradientStop } from './gradientStops.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 import {
   createDraftBundle,
@@ -151,6 +152,8 @@ export type Settings = {
   gradientReverse?: boolean;
   /** Deterministic gradient dither amount, from 0 to 100. */
   gradientDither?: number;
+  /** Ordered authored interior gradient stops; endpoints remain controlled by the tool colours. */
+  gradientStops?: GradientStop[];
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
   /** Deterministic secondary-brush modulation amount, from 0 to 100. */
@@ -397,6 +400,7 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
   if (candidate.gradientReverse !== undefined && typeof candidate.gradientReverse !== 'boolean') return false;
+  if (candidate.gradientStops !== undefined && !isGradientStops(candidate.gradientStops)) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;

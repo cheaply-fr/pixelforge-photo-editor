@@ -16,5 +16,10 @@ reload and portable-project round-trip tests. Midpoint colours are bounded
 six-digit RGB values and default to disabled for older drafts; its position is
 bounded from 1% to 99% and defaults to 50%. Dither is a
 bounded deterministic RGB variation applied only to nontransparent pixels and
-defaults to zero. Reverse defaults to false for older drafts. This contract does not claim Photoshop's full gradient-stop,
-noise, dithering, or gradient-map feature set.
+defaults to zero. Reverse defaults to false for older drafts. Up to six ordered
+interior colour stops are supported for Linear and Radial modes, bounded to
+1%-99%, validated for strict ordering, persisted in local/project drafts, and
+committed as one undoable raster operation. The legacy midpoint control remains
+the fallback when no authored stop list exists; Reflected mode remains symmetric
+and uses its legacy midpoint behaviour. This contract does not claim Photoshop's
+full gradient noise or gradient-map feature set.

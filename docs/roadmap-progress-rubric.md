@@ -95,12 +95,13 @@ reload and project-file coverage is in
 `docs/gradient-mode-contract.md`.
 
 Gradient geometry now also includes Reflected mode, with colour at both ends
-and a transparent midpoint on the authored linear axis. Full gradient stops,
-noise and dithering remain staged. The persisted Gradient end control can use
+and a transparent midpoint on the authored linear axis. Up to six ordered
+interior gradient stops are now authored for Linear and Radial modes; the legacy
+midpoint control remains the fallback when no stop list is present. Noise and
+gradient-map behaviour remain staged. The persisted Gradient end control can use
 either the transparent default or the current background colour, including for
 the reflected midpoint. An optional persisted authored midpoint colour now adds
 a deterministic third stop. A bounded deterministic Dither control is also
 persisted and tested for nontransparent gradient pixels, with a configurable
-1%-99% midpoint position; arbitrary stop counts, noise and gradient-map
-behaviour remain staged. A persisted Reverse control swaps Linear/Radial start
+1%-99% midpoint position; a persisted Reverse control swaps Linear/Radial start
 and end colours while preserving Reflected symmetry.

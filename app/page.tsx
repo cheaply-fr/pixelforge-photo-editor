@@ -315,6 +315,11 @@ import {
   GRADIENT_DITHER_DEFAULT,
   applyGradientDither,
 } from '../src/gradientDither';
+import {
+  MAX_GRADIENT_STOPS,
+  normalizeGradientStops,
+  type GradientStop,
+} from '../src/gradientStops';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
@@ -1739,6 +1744,7 @@ export default function Home() {
     [gradientMidpointPosition, setGradientMidpointPosition] = useState(50),
     [gradientReverse, setGradientReverse] = useState(false),
     [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
+    [gradientStops, setGradientStops] = useState<GradientStop[]>([]),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -2060,6 +2066,7 @@ export default function Home() {
     gradientMidpointPosition,
     gradientReverse,
     gradientDither,
+    gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2122,6 +2129,7 @@ export default function Home() {
     setGradientMidpointPosition(s.gradientMidpointPosition ?? 50);
     setGradientReverse(s.gradientReverse ?? false);
     setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
+    setGradientStops(normalizeGradientStops(s.gradientStops));
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2169,6 +2177,7 @@ export default function Home() {
     setGradientMidpointPosition,
     setGradientReverse,
     setGradientDither,
+    setGradientStops,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -4577,6 +4586,7 @@ export default function Home() {
         gradientMidpointPosition,
         gradientReverse,
         gradientDither,
+        gradientStops,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4665,6 +4675,7 @@ export default function Home() {
     gradientMidpointPosition,
     gradientReverse,
     gradientDither,
+    gradientStops,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -9359,7 +9370,12 @@ export default function Home() {
           gradient.addColorStop(1, color);
         } else {
           gradient.addColorStop(0, startColor);
-          if (gradientMidpoint !== 'none') gradient.addColorStop(midpointStop, gradientMidpoint);
+          const authoredStops = normalizeGradientStops(gradientStops);
+          if (authoredStops.length > 0) {
+            for (const stop of authoredStops) gradient.addColorStop(stop.position / 100, stop.color);
+          } else if (gradientMidpoint !== 'none') {
+            gradient.addColorStop(midpointStop, gradientMidpoint);
+          }
           gradient.addColorStop(1, finalColor);
         }
         context.fillStyle = gradient;
@@ -12562,6 +12578,59 @@ export default function Home() {
                   set={setGradientMidpointPosition}
                   suffix="%"
                 />
+              )}
+              {tool === 'gradient' && gradientMode !== 'reflected' && (
+                <div className="gradient-stops" aria-label="Gradient colour stops">
+                  <div className="select-row">
+                    <span>Additional stops</span>
+                    <button
+                      type="button"
+                      disabled={gradientStops.length >= MAX_GRADIENT_STOPS}
+                      onClick={() => {
+                        const used = new Set(gradientStops.map((stop) => stop.position));
+                        const position = [25, 50, 75].find((candidate) => !used.has(candidate)) ??
+                          Math.max(1, Math.min(99, 10 + gradientStops.length * 13));
+                        setGradientStops(normalizeGradientStops([
+                          ...gradientStops,
+                          { position, color: '#ffffff' },
+                        ]));
+                        setGradientMidpoint('none');
+                      }}
+                    >
+                      Add stop
+                    </button>
+                  </div>
+                  {gradientStops.map((stop, stopIndex) => (
+                    <div className="select-row" key={`${stop.position}-${stopIndex}`}>
+                      <input
+                        aria-label={`Gradient stop ${stopIndex + 1} position`}
+                        type="number"
+                        min={1}
+                        max={99}
+                        value={stop.position}
+                        onChange={(event) => {
+                          const position = Math.max(1, Math.min(99, Math.round(Number(event.target.value) || 1)));
+                          const next = gradientStops.map((item, index) => index === stopIndex ? { ...item, position } : item);
+                          setGradientStops(normalizeGradientStops(next));
+                        }}
+                      />
+                      <input
+                        aria-label={`Gradient stop ${stopIndex + 1} colour`}
+                        type="color"
+                        value={stop.color}
+                        onChange={(event) => setGradientStops(gradientStops.map((item, index) =>
+                          index === stopIndex ? { ...item, color: event.target.value } : item))}
+                      />
+                      <button
+                        type="button"
+                        aria-label={`Remove gradient stop ${stopIndex + 1}`}
+                        onClick={() => setGradientStops(gradientStops.filter((_, index) => index !== stopIndex))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
               {tool === 'gradient' && (
                 <label className="select-row">

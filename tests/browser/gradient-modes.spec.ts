@@ -63,3 +63,36 @@ test('radial gradient has an editable mode, changes pixels, and persists', async
     gradientReverse: true,
   });
 });
+
+test('linear gradient supports multiple ordered colour stops and round-trip persistence', async ({ page }) => {
+  await page.getByRole('button', { name: 'Gradient tool', exact: true }).click();
+  await page.getByRole('button', { name: 'Add stop', exact: true }).click();
+  await page.getByRole('button', { name: 'Add stop', exact: true }).click();
+  const firstPosition = page.getByLabel('Gradient stop 1 position', { exact: true });
+  const secondPosition = page.getByLabel('Gradient stop 2 position', { exact: true });
+  await firstPosition.fill('22');
+  await secondPosition.fill('78');
+  await page.getByLabel('Gradient stop 1 colour', { exact: true }).fill('#ff0000');
+  await page.getByLabel('Gradient stop 2 colour', { exact: true }).fill('#0000ff');
+  const canvas = page.getByTestId('editor-canvas');
+  const before = await canvas.screenshot();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + 10, box.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 10, box.y + 10, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator('footer')).toContainText('Gradient applied; undo restores the original pixels');
+  expect(await canvas.screenshot()).not.toEqual(before);
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const download = await pending;
+  const project = await downloadedProject((await download.path())!);
+  expect(project.settings.gradientStops).toEqual([
+    { position: 22, color: '#ff0000' },
+    { position: 78, color: '#0000ff' },
+  ]);
+  await page.reload();
+  await expect(page.getByLabel('Gradient stop 1 position', { exact: true })).toHaveValue('22');
+  await expect(page.getByLabel('Gradient stop 2 position', { exact: true })).toHaveValue('78');
+});
