@@ -140,7 +140,7 @@ export type Settings = {
   /** Deterministic brush stamp scatter amount, from 0 to 100. */
   brushScatter?: number;
   /** Gradient geometry for the Gradient tool. */
-  gradientMode?: 'linear' | 'radial';
+  gradientMode?: 'linear' | 'radial' | 'reflected';
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
   /** Brush-family flow amount, from 1 to 100 percent. */
@@ -374,7 +374,7 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
-  if (candidate.gradientMode !== undefined && !['linear', 'radial'].includes(candidate.gradientMode)) return false;
+  if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected'].includes(candidate.gradientMode)) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;

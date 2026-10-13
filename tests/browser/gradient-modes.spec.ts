@@ -33,4 +33,6 @@ test('radial gradient has an editable mode, changes pixels, and persists', async
   expect(project.settings).toMatchObject({ gradientMode: 'radial' });
   await page.reload();
   await expect(page.getByLabel('Gradient type', { exact: true })).toHaveValue('radial');
+  await mode.selectOption('reflected');
+  await expect(mode).toHaveValue('reflected');
 });

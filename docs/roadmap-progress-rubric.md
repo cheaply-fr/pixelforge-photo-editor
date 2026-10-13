@@ -73,3 +73,7 @@ retaining source-safe undoable commits. Desktop/mobile UI, pixel-change,
 reload and project-file coverage is in
 `tests/browser/gradient-modes.spec.ts`; limitations are recorded in
 `docs/gradient-mode-contract.md`.
+
+Gradient geometry now also includes Reflected mode, with colour at both ends
+and a transparent midpoint on the authored linear axis. Full gradient stops,
+noise and dithering remain staged.

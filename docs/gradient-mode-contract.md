@@ -1,10 +1,11 @@
 # Gradient mode contract
 
-The Gradient tool supports persisted **Linear** and **Radial** geometry. Both
+The Gradient tool supports persisted **Linear**, **Radial** and **Reflected** geometry. All three
 use the active foreground colour fading to transparent, preserve the original
 raster asset until one undoable pointer-up commit, and remain local to the
 browser. Radial mode uses the drag start as its centre and the drag distance as
-its bounded radius; linear mode retains the existing start-to-end direction.
+its bounded radius; linear mode retains the existing start-to-end direction;
+reflected mode puts colour at both ends with transparency at the midpoint.
 
 The mode is validated in project settings, defaults to Linear for older drafts,
 and is covered by desktop/mobile UI, pixel-change, reload and portable-project

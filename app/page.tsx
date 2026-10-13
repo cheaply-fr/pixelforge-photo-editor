@@ -1709,7 +1709,7 @@ export default function Home() {
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushFlow, setBrushFlow] = useState(100),
-    [gradientMode, setGradientMode] = useState<'linear' | 'radial'>('linear'),
+    [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -9208,8 +9208,14 @@ export default function Home() {
               local.x,
               local.y,
             );
-        gradient.addColorStop(0, color);
-        gradient.addColorStop(1, '#ffffff00');
+        if (gradientMode === 'reflected') {
+          gradient.addColorStop(0, color);
+          gradient.addColorStop(0.5, '#ffffff00');
+          gradient.addColorStop(1, color);
+        } else {
+          gradient.addColorStop(0, color);
+          gradient.addColorStop(1, '#ffffff00');
+        }
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
         const asset = addAsset(assets.current, buffer);
@@ -12366,10 +12372,11 @@ export default function Home() {
                   <select
                     aria-label="Gradient type"
                     value={gradientMode}
-                    onChange={(event) => setGradientMode(event.target.value as 'linear' | 'radial')}
+                    onChange={(event) => setGradientMode(event.target.value as 'linear' | 'radial' | 'reflected')}
                   >
                     <option value="linear">Linear</option>
                     <option value="radial">Radial</option>
+                    <option value="reflected">Reflected</option>
                   </select>
                 </label>
               )}
