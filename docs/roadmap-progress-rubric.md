@@ -30,6 +30,13 @@ The repository contains broad partial implementations across all eight stages. T
 
 Progress percentages in status reports are estimates derived from this rubric and must identify the stage evidence that is still missing. They must never be increased solely because source files changed.
 
+The bounded local Content-Aware Move slice is available through `Edit →
+Content-Aware Move…`. It requires an explicit selection, fills the vacated
+region from deterministic local context, translates the selected pixels and
+commits a new undoable asset; semantic object removal and generative inference
+remain outside this contract. Pure and desktop/mobile acceptance are recorded
+in `docs/content-aware-move-contract.md`.
+
 ## Latest local increment
 
 The inspector now exposes a History timeline backed by the existing bounded

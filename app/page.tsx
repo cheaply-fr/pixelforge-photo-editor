@@ -367,6 +367,10 @@ import {
   type ContentAwareFill,
 } from '../src/contentAwareCleanup';
 import {
+  CONTENT_AWARE_MOVE_MAX_OFFSET,
+  moveContentAwareSelection,
+} from '../src/contentAwareMove';
+import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_FIBERS_SETTINGS,
   DEFAULT_MEZZOTINT_SETTINGS,
@@ -434,6 +438,7 @@ type Command =
   | 'art-history-brush-tool'
   | 'set-history-source'
   | 'content-aware-fill'
+  | 'content-aware-move'
   | 'resize'
   | 'canvas-size'
   | 'trim'
@@ -829,6 +834,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Set History Brush Source', command: 'set-history-source' },
     { label: 'Stroke…', command: 'stroke-selection' },
     { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
+    { label: 'Content-Aware Move…', command: 'content-aware-move' },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
     { label: 'Generative Fill…', command: 'noop', disabled: true },
     { label: 'Generate Image…', command: 'noop', disabled: true },
@@ -4137,6 +4143,75 @@ export default function Home() {
         );
     } catch {
       setNotice('Content-Aware Fill could not be applied');
+    }
+  };
+  const applyContentAwareMove = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Content-Aware Move');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Content-Aware Move');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Content-Aware Move');
+      return;
+    }
+    const dxText = window.prompt('Move selection horizontally in pixels', '24');
+    if (dxText === null) return;
+    const dyText = window.prompt('Move selection vertically in pixels', '0');
+    if (dyText === null) return;
+    const dx = Number(dxText),
+      dy = Number(dyText);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) ||
+      Math.abs(dx) > CONTENT_AWARE_MOVE_MAX_OFFSET || Math.abs(dy) > CONTENT_AWARE_MOVE_MAX_OFFSET) {
+      setNotice(`Content-Aware Move offsets must be within ±${CONTENT_AWARE_MOVE_MAX_OFFSET} pixels`);
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(
+          f.selection,
+          f,
+          layer,
+          assets.current,
+          width,
+          height,
+        );
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      const source = surface(width, height),
+        sourceContext = source.getContext('2d');
+      if (!sourceContext) throw new Error('Content-Aware Move canvas is unavailable');
+      sourceContext.drawImage(image, 0, 0);
+      const imageData = sourceContext.getImageData(0, 0, width, height),
+        moved = moveContentAwareSelection(imageData.data, width, height, mask, {
+          version: 1,
+          dx,
+          dy,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        });
+      imageData.data.set(moved);
+      sourceContext.putImageData(imageData, 0, 0);
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Content-Aware Move was prepared');
+        return;
+      }
+      const asset = addAsset(assets.current, source);
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item),
+      })) setNotice('Content-Aware Move applied locally; undo restores the original pixels');
+    } catch {
+      setNotice('Content-Aware Move could not be applied');
     }
   };
   const adjust = (patch: Partial<Adjustments>) => {
@@ -10127,6 +10202,8 @@ export default function Home() {
       setNotice(`History Brush source set to snapshot ${index.current + 1}`);
     } else if (command === 'content-aware-fill') {
       await applyContentAwareFill();
+    } else if (command === 'content-aware-move') {
+      await applyContentAwareMove();
     } else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
