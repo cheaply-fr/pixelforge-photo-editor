@@ -62,6 +62,7 @@ export const FILTER_EFFECT_TYPES = [
   'wind',
   'deinterlace',
   'ntsc-colors',
+  'gradient-map',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -133,6 +134,12 @@ export type TreeSettings = {
   leafiness: number;
 };
 
+/** Editable endpoints for the bounded local Gradient Map approximation. */
+export type GradientMapSettings = {
+  shadow: string;
+  highlight: string;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -156,6 +163,11 @@ export const DEFAULT_FIBERS_SETTINGS: FibersSettings = {
 export const DEFAULT_TREE_SETTINGS: TreeSettings = {
   branches: 5,
   leafiness: 55,
+};
+
+export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
+  shadow: '#000000',
+  highlight: '#ffffff',
 };
 
 export type FilterEffects = {
@@ -194,6 +206,7 @@ export type FilterEffects = {
   /** Editable warp geometry for the seeded Fibers Render effect. */
   fibers?: FibersSettings;
   tree?: TreeSettings;
+  gradientMap?: GradientMapSettings;
   deinterlace?: DeinterlaceSettings;
 };
 
@@ -212,6 +225,13 @@ const finite = (value: unknown): value is number =>
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 const clampByte = (value: number) => clamp(Math.round(value), 0, 255);
+const validHexColor = (value: unknown): value is string =>
+  typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+const hexRgb = (value: string): [number, number, number] => [
+  Number.parseInt(value.slice(1, 3), 16),
+  Number.parseInt(value.slice(3, 5), 16),
+  Number.parseInt(value.slice(5, 7), 16),
+];
 
 /** Normalize a partial metadata record at every persistence/render boundary. */
 export function effectiveFilterEffects(
@@ -316,6 +336,16 @@ export function effectiveFilterEffects(
       leafiness: finite(settings?.leafiness) ? clamp(Math.round(settings.leafiness), 0, 100) : DEFAULT_TREE_SETTINGS.leafiness,
     };
   }
+  if (type === 'gradient-map') {
+    normalized.gradientMap = {
+      shadow: validHexColor(source.gradientMap?.shadow)
+        ? source.gradientMap!.shadow.toLowerCase()
+        : DEFAULT_GRADIENT_MAP_SETTINGS.shadow,
+      highlight: validHexColor(source.gradientMap?.highlight)
+        ? source.gradientMap!.highlight.toLowerCase()
+        : DEFAULT_GRADIENT_MAP_SETTINGS.highlight,
+    };
+  }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
@@ -376,6 +406,11 @@ function validTreeSettings(value: unknown): value is TreeSettings {
   return finite(settings.branches) && Number.isInteger(settings.branches) && settings.branches >= 2 && settings.branches <= 8 &&
     finite(settings.leafiness) && Number.isInteger(settings.leafiness) && settings.leafiness >= 0 && settings.leafiness <= 100;
 }
+function validGradientMapSettings(value: unknown): value is GradientMapSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<GradientMapSettings>;
+  return validHexColor(settings.shadow) && validHexColor(settings.highlight);
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -394,6 +429,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.mezzotint === undefined || validMezzotintSettings(effect.mezzotint)) &&
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
+    (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
@@ -2959,6 +2995,29 @@ function applyTiltShift(
   });
 }
 
+/** Map source luminance between two editable colours without changing alpha. */
+function applyGradientMap(
+  source: Uint8ClampedArray,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const settings = effect.gradientMap ?? DEFAULT_GRADIENT_MAP_SETTINGS;
+  const shadow = hexRgb(settings.shadow), highlight = hexRgb(settings.highlight);
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const alpha = source[offset + 3];
+    output[offset + 3] = alpha;
+    if (!alpha) continue;
+    const luminance = (source[offset] * 0.2126 + source[offset + 1] * 0.7152 + source[offset + 2] * 0.0722) / 255;
+    const mapped = [0, 1, 2].map((channel) =>
+      shadow[channel] + (highlight[channel] - shadow[channel]) * luminance,
+    );
+    output[offset] = clampByte(source[offset] + (mapped[0] - source[offset]) * strength);
+    output[offset + 1] = clampByte(source[offset + 1] + (mapped[1] - source[offset + 1]) * strength);
+    output[offset + 2] = clampByte(source[offset + 2] + (mapped[2] - source[offset + 2]) * strength);
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -3058,6 +3117,8 @@ export function applyFilterEffectsPixels(
     applyColorHalftone(data, width, height, effect, output, strength);
   } else if (effect.type === 'ntsc-colors') {
     applyNtscColors(data, output, strength);
+  } else if (effect.type === 'gradient-map') {
+    applyGradientMap(data, effect, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {

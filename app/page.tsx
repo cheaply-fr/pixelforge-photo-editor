@@ -707,6 +707,7 @@ type Command =
   | 'filter-solarize'
   | 'filter-diffuse'
   | 'filter-wind'
+  | 'filter-gradient-map'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1188,6 +1189,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Solarize…', command: 'filter-solarize' },
     { label: 'Diffuse…', command: 'filter-diffuse' },
     { label: 'Wind…', command: 'filter-wind' },
+    { label: 'Gradient Map…', command: 'filter-gradient-map' },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
@@ -4987,6 +4989,9 @@ export default function Home() {
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
+                ...(type === 'gradient-map' ? {
+                  gradientMap: { shadow: '#000000', highlight: '#ffffff' },
+                } : {}),
                 amount:
                   type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges'
                     ? 100
@@ -5015,6 +5020,8 @@ export default function Home() {
                     ? 10
                     : type === 'clouds'
                       ? 16
+                    : type === 'gradient-map'
+                    ? 1
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
@@ -11607,6 +11614,8 @@ export default function Home() {
       chooseFilterEffect('diffuse', 'Diffuse (local approximation)');
     else if (command === 'filter-wind')
       chooseFilterEffect('wind', 'Wind (directional local approximation)');
+    else if (command === 'filter-gradient-map')
+      chooseFilterEffect('gradient-map', 'Gradient Map (local tonal mapping)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -14844,6 +14853,31 @@ export default function Home() {
             {filterEffects.type === 'ntsc-colors' && (
               <p>Reduces oversaturated colors while keeping brightness and transparency. Local television-color approximation; not a broadcast compliance check.</p>
             )}
+            {filterEffects.type === 'gradient-map' && (
+              <>
+                <p>Maps alpha-safe source luminance between two editable colours. The source asset remains unchanged; multi-stop gradients and blend-mode controls remain staged.</p>
+                <div className="select-row">
+                  <label htmlFor="gradient-map-shadow">Shadow colour</label>
+                  <input
+                    id="gradient-map-shadow"
+                    aria-label="Gradient Map shadow colour"
+                    type="color"
+                    value={filterEffects.gradientMap?.shadow ?? '#000000'}
+                    onChange={(event) => setFilterEffects({ gradientMap: { ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }), shadow: event.target.value } })}
+                  />
+                </div>
+                <div className="select-row">
+                  <label htmlFor="gradient-map-highlight">Highlight colour</label>
+                  <input
+                    id="gradient-map-highlight"
+                    aria-label="Gradient Map highlight colour"
+                    type="color"
+                    value={filterEffects.gradientMap?.highlight ?? '#ffffff'}
+                    onChange={(event) => setFilterEffects({ gradientMap: { ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }), highlight: event.target.value } })}
+                  />
+                </div>
+              </>
+            )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
@@ -14871,7 +14905,7 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'

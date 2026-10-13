@@ -36,6 +36,29 @@ test('linear shear follows the signed inverse map and retains the centre row', (
   assert.deepEqual(source, original);
 });
 
+test('Gradient Map interpolates editable endpoints while preserving alpha and source bytes', () => {
+  const source = rgba(3, 1, (x) => x === 0 ? [0, 20, 40, 255] : x === 1 ? [128, 128, 128, 255] : [255, 240, 220, 0]);
+  const original = source.slice();
+  const effect = {
+    type: 'gradient-map', amount: 100, radius: 1,
+    gradientMap: { shadow: '#0000ff', highlight: '#ff0000' },
+  };
+  const output = applyFilterEffectsPixels(source, 3, 1, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 3, 0, 0), [17, 0, 238, 255]);
+  assert.ok(pixel(output, 3, 1, 0)[0] > 120);
+  assert.equal(pixel(output, 3, 2, 0)[3], 0);
+  assert.deepEqual(pixel(output, 3, 2, 0).slice(0, 3), [255, 240, 220]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 1, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    ...effect, gradientMap: { shadow: 'bad', highlight: '#ffffff' },
+  })), true);
+  assert.equal(validFilterEffects({
+    ...effectiveFilterEffects(effect), gradientMap: { shadow: 'bad', highlight: '#ffffff' },
+  }), false);
+});
+
 test('De-Interlace supports both field parity choices and interpolation', () => {
   const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
   const first = applyFilterEffectsPixels(source, 2, 5, {

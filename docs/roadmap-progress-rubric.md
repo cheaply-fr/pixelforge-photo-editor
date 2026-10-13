@@ -172,6 +172,13 @@ acceptance cover representative output, persistence and undo. The local suite
 now passes 747/747 tests; protected CI, deployment and live acceptance remain
 separate gates.
 
+The next filter increment adds `Filter → Stylize → Gradient Map…`. It maps
+source luminance between editable shadow/highlight colours as nondestructive
+metadata, preserving source assets, alpha and transparent RGB. Pure coverage
+and desktop/mobile pixel, source-retention, reload and portable-project tests
+are present in the local candidate; multi-stop gradient libraries, LUT parity
+and protected CI/deployment/live acceptance remain separate gates.
+
 The next filter increment adds `Filter → Convert for Smart Filters` and
 `Clear Smart Filter Stack`. Existing local filter effects can now be retained
 as an ordered stack of up to eight nondestructive entries, rendered before a

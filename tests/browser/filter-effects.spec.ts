@@ -240,6 +240,36 @@ test('linear Shear retains source assets, supports undo and round-trips editable
   await expect.poll(() => pixel(page, 4, 0)).toEqual(original);
 });
 
+test('Gradient Map keeps editable endpoints, source assets and project pixels across reload', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Gradient Map…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gradient-map');
+  await page.getByLabel('Gradient Map shadow colour', { exact: true }).fill('#001122');
+  await page.getByLabel('Gradient Map highlight colour', { exact: true }).fill('#ffeedd');
+  await expect.poll(() => pixel(page, 4, 2)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({
+    type: 'gradient-map',
+    gradientMap: { shadow: '#001122', highlight: '#ffeedd' },
+  });
+  const changed = await pixel(page, 4, 2);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Gradient Map shadow colour', { exact: true })).toHaveValue('#001122');
+  await expect(page.getByLabel('Gradient Map highlight colour', { exact: true })).toHaveValue('#ffeedd');
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
+});
+
 test('Gaussian Blur uses bounded tiled rendering and preserves the editable source', async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;
