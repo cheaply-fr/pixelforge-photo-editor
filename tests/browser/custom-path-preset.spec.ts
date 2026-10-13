@@ -30,6 +30,8 @@ test('Define Custom Path saves geometry, reloads it, and applies an editable cop
   await expect(page.getByLabel('Saved path preset', { exact: true })).toBeVisible();
   await page.getByLabel('Saved path preset', { exact: true }).selectOption({ label: 'Saved triangle' });
   await expect(page.locator('footer')).toContainText('Path preset “Saved triangle” applied as an editable path layer');
+  await page.getByLabel('Saved path preset', { exact: true }).locator('..').getByRole('button', { name: 'Update', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Path preset “Saved triangle” updated on this device');
   const applied = await (async () => {
     const next = page.waitForEvent('download');
     await page.getByRole('button', { name: 'File', exact: true }).click();

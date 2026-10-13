@@ -503,6 +503,7 @@ type Command =
   | 'define-pattern'
   | 'define-custom-shape'
   | 'define-custom-path'
+  | 'update-custom-path'
   | 'keyboard-shortcuts'
   | 'filter-gallery'
   | 'toolbar-settings'
@@ -949,6 +950,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Define Pattern…', command: 'define-pattern' },
     { label: 'Define Custom Shape…', command: 'define-custom-shape' },
     { label: 'Define Custom Path…', command: 'define-custom-path' },
+    { label: 'Update Custom Path Preset', command: 'update-custom-path' },
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
     { label: 'Color Settings…', command: 'color-settings' },
@@ -2572,6 +2574,27 @@ export default function Home() {
       setNotice(`Path preset “${trimmed}” saved on this device`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Custom path could not be saved');
+    }
+  };
+  const updateCustomPathPreset = () => {
+    if (!selectedCustomPathPresetId) {
+      setNotice('Choose a saved path preset before updating it');
+      return;
+    }
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    const existing = customPathPresets.find((item) => item.id === selectedCustomPathPresetId);
+    if (!layer || layer.kind !== 'path' || !existing) {
+      setNotice('Select an editable path layer and saved preset before updating it');
+      return;
+    }
+    try {
+      const path = validatePath(layer.path);
+      setCustomPathPresets((currentPresets) => currentPresets.map((item) =>
+        item.id === existing.id ? { ...item, path } : item));
+      setNotice(`Path preset “${existing.label}” updated on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Custom path preset could not be updated');
     }
   };
   const resetColors = () => {
@@ -11236,6 +11259,7 @@ export default function Home() {
     else if (command === 'define-pattern') return definePattern();
     else if (command === 'define-custom-shape') return defineCustomShape();
     else if (command === 'define-custom-path') return defineCustomPath();
+    else if (command === 'update-custom-path') return updateCustomPathPreset();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
@@ -11873,6 +11897,10 @@ export default function Home() {
         return !frame.selection;
       case 'create-work-path':
         return !frame.selection || frame.layers.length >= 32;
+      case 'define-custom-path':
+        return !layer || layer.kind !== 'path' || locked;
+      case 'update-custom-path':
+        return !layer || layer.kind !== 'path' || locked || !selectedCustomPathPresetId;
       case 'free-transform':
         return !layer || locked;
       case 'perspective-warp':
@@ -13991,6 +14019,9 @@ export default function Home() {
                   </select>
                   <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={removeCustomPathPreset}>
                     Remove
+                  </button>
+                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={updateCustomPathPreset}>
+                    Update
                   </button>
                 </label>
               )}
