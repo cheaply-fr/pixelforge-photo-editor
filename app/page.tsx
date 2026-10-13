@@ -203,6 +203,7 @@ import { type ExportFormat } from '../src/export';
 import ActionsPanel from '../src/ActionsPanel';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
+import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
 import {
   MAX_ACTION_SETS,
   appendActionStep,
@@ -462,6 +463,7 @@ type MenuName =
   | 'Plugins';
 type Command =
   | 'noop'
+  | 'search-commands'
   | 'find-replace-text'
   | 'fade'
   | 'actions'
@@ -868,7 +870,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Search', shortcut: 'Ctrl+F', command: 'noop', disabled: true },
+    { label: 'Search', shortcut: 'Ctrl+F', command: 'search-commands' },
     { label: 'Check Spelling…', command: 'noop', disabled: true },
     { label: 'Find and Replace Text…', command: 'find-replace-text' },
     { label: '', command: 'noop', separator: true },
@@ -1877,6 +1879,7 @@ export default function Home() {
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
+    [commandSearchOpen, setCommandSearchOpen] = useState(false),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
@@ -10403,6 +10406,12 @@ export default function Home() {
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
       if (!ready || cloudBusy || document.querySelector('dialog[open]')) return;
+      if (command && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setActiveMenu(null);
+        setCommandSearchOpen(true);
+        return;
+      }
       if (
         e.key === 'Escape' &&
         (gesture.current?.tool === 'polygonal-lasso' ||
@@ -10703,6 +10712,10 @@ export default function Home() {
   });
   const runCommand = async (command: Command) => {
     if (command === 'noop') return;
+    if (command === 'search-commands') {
+      setCommandSearchOpen(true);
+      return;
+    }
     if (command === 'actions') {
       setActionsOpen(true);
       return;
@@ -11544,6 +11557,16 @@ export default function Home() {
     setToolFlyout(flyout);
     setToolFlyoutAnchor(event.currentTarget);
   };
+  const commandSearchItems: CommandSearchItem[] = (Object.entries(MENU_DEFS) as [MenuName, MenuItem[]][])
+    .flatMap(([menu, items]) => items
+      .filter((item) => !item.separator && item.command !== 'search-commands')
+      .map((item) => ({
+        label: item.label,
+        menu,
+        shortcut: item.shortcut,
+        command: item.command,
+        disabled: menuItemDisabled(item),
+      })));
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -11743,6 +11766,16 @@ export default function Home() {
         <TextReplaceDialog
           close={() => setTextReplaceOpen(false)}
           apply={replaceText}
+        />
+      )}
+      {commandSearchOpen && (
+        <CommandSearchDialog
+          items={commandSearchItems}
+          close={() => setCommandSearchOpen(false)}
+          run={(command) => {
+            setCommandSearchOpen(false);
+            void runCommand(command as Command);
+          }}
         />
       )}
       {batchExporting && (

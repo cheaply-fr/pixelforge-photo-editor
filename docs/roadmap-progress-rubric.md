@@ -186,3 +186,10 @@ immutability and no-op handling; desktop/mobile acceptance covers the menu,
 dialog, replacement notice and project-file round trip. The candidate remains
 local evidence until protected CI, deployment and independent live acceptance
 pass for its SHA.
+
+The command-discoverability increment adds `Edit → Search` and Ctrl/Cmd+F. The
+palette derives results from the live menu inventory and reuses command guards,
+so disabled roadmap entries remain visibly disabled and command execution still
+passes through the normal history and privacy boundaries. Desktop/mobile
+acceptance covers filtering and running a transform command; this remains local
+evidence until protected CI, deployment and live acceptance pass.
