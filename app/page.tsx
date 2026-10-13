@@ -463,6 +463,7 @@ import { planPerspectiveWarp, warpPerspectiveRgba as warpLayerPerspectiveRgba } 
 import {
   createArtboard,
   sanitizeArtboardLayerMembership,
+  setArtboardVisibility,
 } from '../src/artboards';
 import { sliceAtPoint } from '../src/slices';
 import {
@@ -3050,6 +3051,22 @@ export default function Home() {
     if (f.activeArtboardId !== id) {
       commit({ ...f, activeArtboardId: id });
       setNotice(`Active artboard: ${f.artboards.find((item) => item.id === id)?.name || id}`);
+    }
+  };
+  const updateArtboardVisibility = (id: string, visible: boolean) => {
+    const f = current();
+    if (!f.artboards) return;
+    try {
+      const artboards = setArtboardVisibility(f.artboards, id, visible);
+      const active = f.activeArtboardId === id && !visible
+        ? artboards.find((item) => item.visible)?.id
+        : f.activeArtboardId;
+      if (commit({ ...f, artboards, activeArtboardId: active })) {
+        void paint(current());
+        setNotice(`${artboards.find((item) => item.id === id)?.name || id} ${visible ? 'shown' : 'hidden'}`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not update artboard visibility');
     }
   };
   const appendMeasurement = (annotation: MeasurementAnnotation) => {
@@ -12971,6 +12988,19 @@ export default function Home() {
                   ))}
                 </select>
               </label>
+              <div className="artboard-visibility-list" aria-label="Artboard visibility">
+                {frame.artboards.map((item) => (
+                  <label key={item.id} className="artboard-visibility-option">
+                    <input
+                      type="checkbox"
+                      aria-label={`Show ${item.name} artboard`}
+                      checked={item.visible}
+                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
+                    />
+                    <span>{item.name}</span>
+                  </label>
+                ))}
+              </div>
               <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
             </fieldset>
           ) : null}
@@ -13261,7 +13291,7 @@ export default function Home() {
                 preserveAspectRatio="none"
                 aria-label="Artboard viewports"
               >
-                {frame.artboards.map((artboard) => (
+                {frame.artboards.filter((artboard) => artboard.visible).map((artboard) => (
                   <g
                     key={artboard.id}
                     className={artboard.id === frame.activeArtboardId ? 'artboard-active' : 'artboard-inactive'}

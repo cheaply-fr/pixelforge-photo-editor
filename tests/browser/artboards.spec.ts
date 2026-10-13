@@ -147,3 +147,27 @@ test('active named artboard renders and exports at viewport dimensions', async (
   const roundTrip = await downloadProject(page);
   expect(roundTrip.history[roundTrip.index].artboards?.[0]).toMatchObject({ id: 'hero', w: 320, h: 200 });
 });
+
+test('artboard visibility controls hide overlays, move the active target and persist on desktop and mobile', async ({ page }) => {
+  const project = await downloadProject(page);
+  const frame = project.history[project.index];
+  frame.artboards = [
+    { id: 'hero', name: 'Hero', x: 0, y: 0, w: 640, h: 480, visible: true, locked: false },
+    { id: 'social', name: 'Social', x: 660, y: 0, w: 120, h: 120, visible: true, locked: false },
+  ];
+  frame.activeArtboardId = 'hero';
+  await uploadProject(page, project);
+  await expect(page.getByLabel('Show Hero artboard')).toBeChecked();
+  await page.getByLabel('Show Hero artboard').uncheck();
+  await expect(page.locator('.canvas-wrap')).toHaveAttribute('data-active-artboard', 'social');
+  await expect(page.locator('.artboard-overlay g')).toHaveCount(1);
+  await expect(page.getByText('Hero hidden', { exact: true })).toBeVisible();
+  const savedProject = await downloadProject(page);
+  expect(savedProject.history[savedProject.index].artboards).toEqual([
+    expect.objectContaining({ id: 'hero', visible: false }),
+    expect.objectContaining({ id: 'social', visible: true }),
+  ]);
+  await page.reload();
+  await expect(page.getByLabel('Show Hero artboard')).not.toBeChecked();
+  await expect(page.locator('.artboard-overlay g')).toHaveCount(1);
+});

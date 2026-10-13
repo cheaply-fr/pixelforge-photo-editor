@@ -7,6 +7,7 @@ import {
   createArtboard,
   effectiveArtboards,
   sanitizeArtboardLayerMembership,
+  setArtboardVisibility,
   transformArtboard,
   validArtboard,
   validArtboards,
@@ -99,4 +100,16 @@ test('destructive layer operations sanitize membership without mutating history'
     sanitizeArtboardLayerMembership([{ ...item, layerIds: [] }], []).at(0)?.layerIds,
     [],
   );
+});
+
+test('artboard visibility updates immutably and keeps one export target visible', () => {
+  const source = [
+    { ...item, id: 'hero', visible: true },
+    { ...item, id: 'social', visible: true, x: 400 },
+  ];
+  const hidden = setArtboardVisibility(source, 'hero', false);
+  assert.deepEqual(hidden.map((artboard) => artboard.visible), [false, true]);
+  assert.equal(source[0].visible, true);
+  assert.throws(() => setArtboardVisibility(hidden, 'social', false), /at least one/i);
+  assert.throws(() => setArtboardVisibility(source, 'missing', false), /does not exist/i);
 });
