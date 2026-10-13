@@ -246,3 +246,7 @@ Toolbar local-storage values now pass through a versioned normalization
 contract that removes unknown and duplicate category IDs, completes newly added
 categories, validates column values, and prevents hiding every category. Pure
 migration tests cover malformed and collision cases.
+
+The normalized values are also stored in a versioned toolbar-preferences
+envelope, while the earlier individual keys remain readable for migration.
+Unsupported envelope versions fail closed to the canonical defaults.

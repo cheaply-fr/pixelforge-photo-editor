@@ -10,6 +10,7 @@ test('toolbar preferences migrate unknown and duplicate IDs without changing can
     hiddenCategories: ['measure', 'measure', 'missing', 'navigation'],
     categoryOrder: ['paint', 'paint', 'missing'],
   }, ids), {
+    version: 1,
     columns: '3',
     hiddenCategories: ['measure'],
     categoryOrder: ['paint', 'navigation', 'measure', 'draw'],
@@ -25,7 +26,11 @@ test('toolbar preferences never allow all categories to be hidden', () => {
 
 test('malformed toolbar preferences fail closed to defaults', () => {
   assert.deepEqual(normalizeToolbarPreferences(null, ids), {
+    version: 1,
     columns: 'auto', hiddenCategories: [], categoryOrder: ids,
   });
   assert.deepEqual(normalizeToolbarPreferences({ columns: '9' }, ids).columns, 'auto');
+  assert.deepEqual(normalizeToolbarPreferences({ version: 99 }, ids), {
+    version: 1, columns: 'auto', hiddenCategories: [], categoryOrder: ids,
+  });
 });

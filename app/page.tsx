@@ -227,7 +227,7 @@ import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearc
 import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
 import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGalleryDialog';
 import ToolbarSettingsDialog, { type ToolbarColumns } from '../src/ToolbarSettingsDialog';
-import { normalizeToolbarPreferences } from '../src/toolbarPreferences';
+import { normalizeToolbarPreferences, TOOLBAR_PREFERENCES_VERSION } from '../src/toolbarPreferences';
 import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
 import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
@@ -1809,6 +1809,12 @@ function readToolbarPreferences() {
   const categoryIds = TOOL_CATEGORIES.map((category) => category.id);
   if (typeof window === 'undefined') return normalizeToolbarPreferences(undefined, categoryIds);
   try {
+    const envelope = window.localStorage.getItem('pixelforge.toolbar-preferences');
+    if (envelope) {
+      const parsed = JSON.parse(envelope);
+      if (parsed?.version === TOOLBAR_PREFERENCES_VERSION)
+        return normalizeToolbarPreferences(parsed, categoryIds);
+    }
     const rawHidden = window.localStorage.getItem('pixelforge.toolbar-hidden-categories');
     const rawOrder = window.localStorage.getItem('pixelforge.toolbar-category-order');
     return normalizeToolbarPreferences({
@@ -12440,6 +12446,12 @@ export default function Home() {
               window.localStorage.setItem('pixelforge.toolbar-columns', columns);
               window.localStorage.setItem('pixelforge.toolbar-hidden-categories', JSON.stringify(nextHidden));
               window.localStorage.setItem('pixelforge.toolbar-category-order', JSON.stringify(categoryOrder));
+              window.localStorage.setItem('pixelforge.toolbar-preferences', JSON.stringify({
+                version: TOOLBAR_PREFERENCES_VERSION,
+                columns,
+                hiddenCategories: nextHidden,
+                categoryOrder,
+              }));
             } catch { /* private mode */ }
             const activeCategory = categoryForTool(tool);
             if (activeCategory && nextHidden.includes(activeCategory)) {

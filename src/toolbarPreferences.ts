@@ -1,6 +1,7 @@
 import type { ToolbarColumns } from './ToolbarSettingsDialog';
 
 export type ToolbarPreferences = {
+  version: number;
   columns: ToolbarColumns;
   hiddenCategories: string[];
   categoryOrder: string[];
@@ -9,7 +10,7 @@ export type ToolbarPreferences = {
 export const TOOLBAR_PREFERENCES_VERSION = 1;
 
 export function defaultToolbarPreferences(categoryIds: readonly string[]): ToolbarPreferences {
-  return { columns: 'auto', hiddenCategories: [], categoryOrder: [...categoryIds] };
+  return { version: TOOLBAR_PREFERENCES_VERSION, columns: 'auto', hiddenCategories: [], categoryOrder: [...categoryIds] };
 }
 
 /**
@@ -24,6 +25,7 @@ export function normalizeToolbarPreferences(
   const defaults = defaultToolbarPreferences(categoryIds);
   if (!value || typeof value !== 'object') return defaults;
   const candidate = value as Partial<ToolbarPreferences>;
+  if (candidate.version !== undefined && candidate.version !== TOOLBAR_PREFERENCES_VERSION) return defaults;
   const allowed = new Set(categoryIds);
   const unique = (items: unknown): string[] => {
     if (!Array.isArray(items)) return [];
@@ -40,6 +42,7 @@ export function normalizeToolbarPreferences(
     ? hidden.slice(0, Math.max(0, categoryIds.length - 2))
     : hidden;
   return {
+    version: TOOLBAR_PREFERENCES_VERSION,
     columns: candidate.columns === '2' || candidate.columns === '3' ? candidate.columns : defaults.columns,
     hiddenCategories,
     categoryOrder,
