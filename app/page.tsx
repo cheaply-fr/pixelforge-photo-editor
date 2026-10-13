@@ -338,6 +338,11 @@ import {
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
 import { normalizeLastFilterType } from '../src/lastFilter';
+import {
+  normalizeToolFamilyChoices,
+  serializeToolFamilyChoices,
+  TOOL_FAMILY_CHOICES_STORAGE_KEY,
+} from '../src/toolFamilyChoices';
 import { removeRedEye } from '../src/redEye';
 import {
   BRUSH_SMOOTHING_DEFAULT,
@@ -1846,6 +1851,16 @@ function readToolShortcutPreferences() {
   }
 }
 
+function readToolFamilyChoices() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(TOOL_FAMILY_CHOICES_STORAGE_KEY);
+    return normalizeToolFamilyChoices(raw ? JSON.parse(raw) : undefined);
+  } catch {
+    return {};
+  }
+}
+
 function readLastFilterType(): FilterEffectType | undefined {
   if (typeof window === 'undefined') return undefined;
   try {
@@ -1904,8 +1919,12 @@ export default function Home() {
   useEffect(() => {
     revisionRef.current = revision;
   }, [revision]);
+  const initialToolbarPreferences = readToolbarPreferences();
+  const initialToolShortcutPreferences = readToolShortcutPreferences();
+  const initialToolFamilyChoices = readToolFamilyChoices();
+  const initialLastFilterType = readLastFilterType();
   const [tool, setActiveTool] = useState<Tool>('move'),
-    [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>({}),
+    [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>(() => initialToolFamilyChoices as Record<string, Tool>),
     [toolFlyout, setToolFlyout] = useState<string | null>(null),
     [toolFlyoutAnchor, setToolFlyoutAnchor] =
       useState<HTMLButtonElement | null>(null),
@@ -1987,9 +2006,17 @@ export default function Home() {
     setActiveTool(next);
     const family = flyoutForTool(next);
     if (family)
-      setToolFamilyChoices((current) =>
-        current[family] === next ? current : { ...current, [family]: next },
-      );
+      setToolFamilyChoices((current) => {
+        if (current[family] === next) return current;
+        const updated = { ...current, [family]: next };
+        try {
+          window.localStorage.setItem(
+            TOOL_FAMILY_CHOICES_STORAGE_KEY,
+            serializeToolFamilyChoices(updated),
+          );
+        } catch { /* private mode */ }
+        return updated;
+      });
   }, []);
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
@@ -1999,9 +2026,6 @@ export default function Home() {
   } | null>(null);
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
-  const initialToolbarPreferences = readToolbarPreferences();
-  const initialToolShortcutPreferences = readToolShortcutPreferences();
-  const initialLastFilterType = readLastFilterType();
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),

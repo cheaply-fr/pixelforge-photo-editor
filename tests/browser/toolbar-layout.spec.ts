@@ -288,6 +288,21 @@ test('family slots remember the last chosen subtool after switching tools', asyn
   await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
 });
 
+test('family subtool choice survives a reload through the local preference envelope', async ({ page }) => {
+  await openEditor(page);
+  const lasso = page.getByRole('button', { name: 'Lasso tool', exact: true });
+  await lasso.focus();
+  await page.keyboard.press('ArrowDown');
+  await page
+    .locator('[role="menu"]:visible')
+    .getByRole('menuitem', { name: 'Magnetic Lasso', exact: true })
+    .click();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
+});
+
 test('categories stack in one column while their tools keep the responsive grid', async ({
   page,
 }) => {
