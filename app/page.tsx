@@ -201,6 +201,8 @@ import {
 } from '../src/maskRefinement';
 import { type ExportFormat } from '../src/export';
 import ActionsPanel from '../src/ActionsPanel';
+import TextReplaceDialog from '../src/TextReplaceDialog';
+import { replaceTextLayers } from '../src/textReplace';
 import {
   MAX_ACTION_SETS,
   appendActionStep,
@@ -460,6 +462,7 @@ type MenuName =
   | 'Plugins';
 type Command =
   | 'noop'
+  | 'find-replace-text'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -867,7 +870,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Search', shortcut: 'Ctrl+F', command: 'noop', disabled: true },
     { label: 'Check Spelling…', command: 'noop', disabled: true },
-    { label: 'Find and Replace Text…', command: 'noop', disabled: true },
+    { label: 'Find and Replace Text…', command: 'find-replace-text' },
     { label: '', command: 'noop', separator: true },
     { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
     { label: 'Action recipes…', command: 'actions' },
@@ -1874,6 +1877,7 @@ export default function Home() {
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
+    [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
       try {
@@ -3245,6 +3249,30 @@ export default function Home() {
       matrix: [1, 0, 0, 1, Math.min(64, Math.max(0, f.w - 240)), Math.min(96, Math.max(0, f.h - 96))],
     });
     if (layer) setNotice('Editable Lorem Ipsum text layer added');
+  };
+  const replaceText = (
+    find: string,
+    replacement: string,
+    matchCase: boolean,
+    wholeWord: boolean,
+  ) => {
+    const f = current();
+    const result = replaceTextLayers(f, {
+      find,
+      replace: replacement,
+      matchCase,
+      wholeWord,
+    });
+    setTextReplaceOpen(false);
+    if (!result.replacements) {
+      setNotice(`No editable text matched “${find}”`);
+      return;
+    }
+    if (commit(result.frame)) {
+      setNotice(
+        `Replaced ${result.replacements} match${result.replacements === 1 ? '' : 'es'} across ${result.layersChanged} text layer${result.layersChanged === 1 ? '' : 's'}`,
+      );
+    }
   };
   const editGroup = (id: string, patch: Partial<Group>) => {
     if (quickMasking) {
@@ -10729,6 +10757,7 @@ export default function Home() {
     else if (command === 'jpg') download('jpeg');
     else if (command === 'webp') download('webp');
     else if (command === 'fade') return fadeLastEdit();
+    else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'toggle-last-state') {
@@ -11176,6 +11205,8 @@ export default function Home() {
         return !layer || !['path', 'rectangle', 'ellipse', 'polygon'].includes(layer.kind);
       case 'copy-merged':
         return !frame;
+      case 'find-replace-text':
+        return !frame.layers.some((candidate) => candidate.kind === 'text');
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
@@ -11706,6 +11737,12 @@ export default function Home() {
             setFileInfoOpen(false);
             setNotice('File info saved to the local project');
           }}
+        />
+      )}
+      {textReplaceOpen && (
+        <TextReplaceDialog
+          close={() => setTextReplaceOpen(false)}
+          apply={replaceText}
         />
       )}
       {batchExporting && (
