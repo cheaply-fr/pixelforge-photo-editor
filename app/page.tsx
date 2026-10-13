@@ -299,6 +299,10 @@ import {
   BRUSH_SCATTER_DEFAULT,
   scatterBrushPoint,
 } from '../src/brushDynamics';
+import {
+  BRUSH_TEXTURE_DEFAULT,
+  brushTextureOpacity,
+} from '../src/brushTexture';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
@@ -1201,6 +1205,7 @@ type StampCanvasOptions = {
   pressureOpacity?: boolean;
   spacing?: number;
   scatter?: number;
+  texture?: number;
   angle?: number;
   roundness?: number;
   flipX?: boolean;
@@ -1217,7 +1222,8 @@ const stampCanvas = (
   target: HTMLCanvasElement,
   options: StampCanvasOptions,
 ) => {
-  const resolved = resolveBrushStamp(options),
+  const texturedOpacity = options.opacity * brushTextureOpacity(options.x, options.y, options.texture ?? 0),
+    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity }),
     radius = resolved.radius,
     left = Math.max(0, Math.floor(options.x - radius)),
     top = Math.max(0, Math.floor(options.y - radius)),
@@ -1259,7 +1265,7 @@ const stampCanvas = (
     y: options.y - top,
     size: options.size,
     hardness: options.hardness,
-    opacity: options.opacity,
+    opacity: texturedOpacity,
     pointerType: options.pointerType,
     pressure: options.pressure,
     pressureSize: options.pressureSize,
@@ -1701,6 +1707,7 @@ export default function Home() {
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
+    [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [gradientMode, setGradientMode] = useState<'linear' | 'radial'>('linear'),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
@@ -2013,6 +2020,7 @@ export default function Home() {
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushTexture,
     gradientMode,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -2066,6 +2074,7 @@ export default function Home() {
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
+    setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setGradientMode(s.gradientMode ?? 'linear');
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
@@ -2104,6 +2113,7 @@ export default function Home() {
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
+    setBrushTexture,
     setGradientMode,
     setBrushAngle,
     setBrushRoundness,
@@ -4434,6 +4444,7 @@ export default function Home() {
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
+        brushTexture,
         gradientMode,
         angle: brushAngle,
         roundness: brushRoundness,
@@ -4513,6 +4524,7 @@ export default function Home() {
     brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushTexture,
     gradientMode,
     brushAngle,
     brushRoundness,
@@ -7817,6 +7829,7 @@ export default function Home() {
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
               spacing: brushSpacing,
               scatter: brushScatter,
+              texture: brushTexture,
               angle: brushAngle,
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
@@ -8354,6 +8367,7 @@ export default function Home() {
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
         spacing: brushSpacing,
         scatter: brushScatter,
+        texture: brushTexture,
         angle: brushAngle,
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
@@ -8948,6 +8962,7 @@ export default function Home() {
           pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
           spacing: brushSpacing,
           scatter: brushScatter,
+          texture: brushTexture,
           angle: brushAngle,
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
@@ -12489,6 +12504,14 @@ export default function Home() {
                             min={0}
                             max={100}
                             set={setBrushScatter}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Texture"
+                            value={brushTexture}
+                            min={0}
+                            max={100}
+                            set={setBrushTexture}
                             suffix="%"
                           />
                         </>

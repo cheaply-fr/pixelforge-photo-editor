@@ -55,6 +55,13 @@ offset without global randomness; pure coverage is in
 `tests/browser/brush-dynamics.spec.ts`. Texture, dual-brush, bristle and
 wet-media dynamics remain staged.
 
+Brush-family controls now also include a persisted deterministic Texture
+amount. It modulates each local stamp's opacity with a bounded position-derived
+factor while preserving the zero-value path and source-safe commit boundary.
+Pure coverage is in `tests/brush-texture.test.mjs`, browser persistence coverage
+is in `tests/browser/brush-texture.spec.ts`, and limitations are documented in
+`docs/brush-texture-contract.md`.
+
 The Gradient tool now exposes persisted Linear and Radial geometry. Radial
 mode uses the drag start as its centre and drag distance as its radius while
 retaining source-safe undoable commits. Desktop/mobile UI, pixel-change,

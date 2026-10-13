@@ -141,6 +141,8 @@ export type Settings = {
   brushScatter?: number;
   /** Gradient geometry for the Gradient tool. */
   gradientMode?: 'linear' | 'radial';
+  /** Deterministic brush texture amount, from 0 to 100. */
+  brushTexture?: number;
   /** Brush tip rotation in degrees. */
   angle?: number;
   /** Brush tip roundness (100 is circular). */
@@ -360,6 +362,7 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],
     [candidate.brushSmoothing ?? 0, 0, 100] as [number, number, number],
     [candidate.brushScatter ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushTexture ?? 0, 0, 100] as [number, number, number],
   ];
   if (candidate.patternTileSize !== undefined) {
     try {
