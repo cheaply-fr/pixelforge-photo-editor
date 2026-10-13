@@ -104,6 +104,7 @@ import {
   type TextAlign,
   type Assets,
 } from '../src/document';
+import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
 import { defaultVectorMaskPath } from '../src/vectorMask';
 import {
   alphaFromRgba,
@@ -523,6 +524,7 @@ type Command =
   | 'text-align-right'
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
+  | 'text-warp'
   | 'rasterize-type'
   | 'text-mask-horizontal'
   | 'text-mask-vertical'
@@ -994,7 +996,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Create Work Path', command: 'noop', disabled: true },
     { label: 'Convert to Shape', command: 'noop', disabled: true },
     { label: 'Rasterize Type Layer', command: 'rasterize-type' },
-    { label: 'Warp Text…', command: 'noop', disabled: true },
+    { label: 'Warp Text…', command: 'text-warp' },
     { label: 'Font Preview Size', command: 'noop', disabled: true },
     { label: 'Language Options', command: 'noop', disabled: true },
     { label: 'Update All Text Layers', command: 'noop', disabled: true },
@@ -3172,6 +3174,23 @@ export default function Home() {
       return;
     }
     editLayer({ orientation });
+  };
+  const setTextWarp = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before warping type');
+      return;
+    }
+    const currentWarp = normalizeTextWarp(layer.warp),
+      styleInput = window.prompt(`Warp style (${TEXT_WARP_STYLES.join(', ')})`, currentWarp.style);
+    if (styleInput === null) return;
+    const style = TEXT_WARP_STYLES.includes(styleInput as TextWarp['style'])
+      ? styleInput as TextWarp['style'] : 'none';
+    const bendInput = window.prompt('Bend (-100 to 100)', String(currentWarp.bend));
+    if (bendInput === null) return;
+    const verticalInput = window.prompt('Vertical distortion (-100 to 100)', String(currentWarp.vertical));
+    if (verticalInput === null) return;
+    editLayer({ warp: normalizeTextWarp({ ...currentWarp, style, bend: Number(bendInput), vertical: Number(verticalInput) }) });
   };
   const editGroup = (id: string, patch: Partial<Group>) => {
     if (quickMasking) {
@@ -10369,6 +10388,7 @@ export default function Home() {
       setTextOrientation('horizontal');
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
+    else if (command === 'text-warp') setTextWarp();
     else if (command === 'rasterize-type') {
       const layer = current().layers.find((item) => item.id === current().active);
       if (!layer || layer.kind !== 'text') {
@@ -10922,6 +10942,7 @@ export default function Home() {
       case 'text-align-right':
       case 'text-orientation-horizontal':
       case 'text-orientation-vertical':
+      case 'text-warp':
         return !layer || layer.kind !== 'text' || locked;
       case 'rasterize-type':
         return !layer || layer.kind !== 'text' || locked;

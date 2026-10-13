@@ -124,6 +124,7 @@ import {
   isClippingSourceLayer,
   validClippingRelationship,
 } from './layerClipping.ts';
+import { isTextWarp, normalizeTextWarp, textWarpTransform, type TextWarp } from './textWarp.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = GROUP_BLEND_MODES;
@@ -255,6 +256,8 @@ export type Layer = Common &
         letterSpacing: number;
         /** Text flow direction; omitted legacy values normalize to horizontal. */
         orientation: TextOrientation;
+        /** Optional editable Photoshop-style warp metadata. */
+        warp?: TextWarp;
       }
     | {
         kind: 'rectangle';
@@ -1062,7 +1065,8 @@ export function drawTextLayer(
     align = layer.textAlign ?? 'left',
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
     spacing = layer.letterSpacing ?? 0,
-    orientation = layer.orientation ?? 'horizontal';
+    orientation = layer.orientation ?? 'horizontal',
+    warp = normalizeTextWarp(layer.warp);
   if (orientation === 'vertical') {
     const columnAdvance = Math.max(1, layer.fontSize * lineHeight);
     for (const [columnIndex, line] of layer.text.split('\n').entries()) {
@@ -1079,17 +1083,31 @@ export function drawTextLayer(
     const width = trackedTextWidth(context, line, spacing),
       start = alignedTextOffset(width, boxWidth, align),
       y = lineIndex * layer.fontSize * lineHeight;
-    if (spacing === 0) {
+    if (spacing === 0 && warp.style === 'none') {
       context.fillText(line, start, y);
       continue;
     }
     let x = start;
-    for (const glyph of Array.from(line)) {
-      context.fillText(glyph, x, y);
-      x += context.measureText(glyph).width + spacing;
+    const glyphs = Array.from(line);
+    const total = Math.max(1, width);
+    for (const glyph of glyphs) {
+      const glyphWidth = context.measureText(glyph).width;
+      const center = x + glyphWidth / 2;
+      const transform = warp.style === 'none'
+        ? { x: 0, y: 0, rotation: 0 }
+        : textWarpTransform(warp.style, warp.bend, center / total, layer.fontSize);
+      if (transform.rotation || transform.y) {
+        context.save();
+        context.translate(center + transform.x, y + transform.y);
+        context.rotate(transform.rotation);
+        context.fillText(glyph, -glyphWidth / 2, 0);
+        context.restore();
+      } else context.fillText(glyph, x, y);
+      x += glyphWidth + spacing;
     }
   }
 }
+
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const number = (v: unknown, min: number, max: number) =>
@@ -1180,6 +1198,7 @@ export function effectiveTextLayer<T extends Layer>(
     lineHeight: value.lineHeight ?? 1.2,
     letterSpacing: value.letterSpacing ?? 0,
     orientation: value.orientation ?? 'horizontal',
+    warp: normalizeTextWarp(value.warp),
   } as T;
 }
 export function validateFrame(
@@ -1376,7 +1395,8 @@ export function validateFrame(
         !number(layer.letterSpacing ?? 0, -100, 100) ||
         !TEXT_ORIENTATIONS.includes(
           (layer.orientation ?? 'horizontal') as TextOrientation,
-        )
+        ) ||
+        (layer.warp !== undefined && !isTextWarp(layer.warp))
       )
         return fail();
     } else if (

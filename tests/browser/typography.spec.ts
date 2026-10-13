@@ -158,3 +158,28 @@ test('legacy text layers migrate presentation defaults without flattening', asyn
   expect(migratedText).toMatchObject({ textAlign: 'left', lineHeight: 1.2, letterSpacing: 0 });
   expect(Number(migratedText?.boxWidth)).toBeGreaterThan(0);
 });
+
+test('Warp Text stays editable, changes the raster, and persists across reload', async ({ page }) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await selectTool(page, 'Text');
+  await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 160 } });
+  await page.getByLabel('Edit layer text', { exact: true }).fill('Warped text');
+  await page.getByLabel('Layer text color', { exact: true }).fill('#00ff00');
+  await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => {
+    (canvas as HTMLCanvasElement).dataset.beforeWarp = String(canvas.toDataURL().length);
+  });
+  const prompts = ['arc', '65', '20'];
+  page.on('dialog', async (dialog) => await dialog.accept(prompts.shift()!));
+  await page.getByRole('button', { name: 'Type', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Warp Text…', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await saved(page);
+  const exported = await project(page), frame = exported.history[exported.index];
+  const text = frame.layers.find((layer) => layer.kind === 'text');
+  expect(text).toMatchObject({ text: 'Warped text', warp: { style: 'arc', bend: 65, vertical: 20 } });
+  await page.reload();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  const reloaded = await project(page), reloadedText = reloaded.history[reloaded.index].layers.find((layer) => layer.kind === 'text');
+  expect(reloadedText).toMatchObject({ warp: { style: 'arc', bend: 65, vertical: 20 } });
+});
