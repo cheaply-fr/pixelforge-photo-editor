@@ -177,3 +177,12 @@ transformed path model and copied as deterministic standalone SVG without a
 history commit. Pure serialization and desktop/mobile clipboard evidence cover
 geometry, fill/stroke metadata and unsupported-layer guards; font embedding and
 Photoshop document-graph export remain staged.
+
+The typography utility increment adds `Edit → Find and Replace Text…`. A local
+dialog searches only editable text layers, supports Match case and Whole words
+only, commits all replacements as one immutable history frame, and leaves
+non-text content untouched. Pure tests cover case/word-boundary behavior,
+immutability and no-op handling; desktop/mobile acceptance covers the menu,
+dialog, replacement notice and project-file round trip. The candidate remains
+local evidence until protected CI, deployment and independent live acceptance
+pass for its SHA.
