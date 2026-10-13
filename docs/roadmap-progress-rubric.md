@@ -128,6 +128,12 @@ produce a same-sized source-safe raster approximation; pure and desktop/mobile
 tests cover mapping, source retention, undo history and reload persistence.
 Mesh-aware warp semantics and the deployed/live release gates remain separate.
 
+The current vector increment adds `Type → Create Work Path`. It converts an
+active selection's bounded rectangle into a four-anchor editable path layer,
+retaining selection/source state and project/reload identity. The approximation
+and its desktop/mobile persistence coverage are documented separately from
+full alpha-contour tracing.
+
 The following local increment adds Filter → Stylize → Wind, a bounded
 directional source-sampling approximation with editable amount, radius and angle
 metadata. Its pure and desktop/mobile tests cover deterministic directional

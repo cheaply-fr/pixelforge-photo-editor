@@ -529,6 +529,7 @@ type Command =
   | 'text-orientation-vertical'
   | 'text-warp'
   | 'rasterize-type'
+  | 'create-work-path'
   | 'text-mask-horizontal'
   | 'text-mask-vertical'
   | 'select-all'
@@ -1003,7 +1004,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Horizontal Type Mask', command: 'text-mask-horizontal' },
     { label: 'Vertical Type Mask', command: 'text-mask-vertical' },
     { label: 'OpenType', command: 'noop', disabled: true },
-    { label: 'Create Work Path', command: 'noop', disabled: true },
+    { label: 'Create Work Path', command: 'create-work-path' },
     { label: 'Convert to Shape', command: 'noop', disabled: true },
     { label: 'Rasterize Type Layer', command: 'rasterize-type' },
     { label: 'Warp Text…', command: 'text-warp' },
@@ -5390,6 +5391,33 @@ export default function Home() {
       return true;
     }
     return false;
+  };
+  const createWorkPathFromSelection = () => {
+    const f = current(), selection = f.selection;
+    if (!selection) {
+      setNotice('Create a selection before making a work path');
+      return;
+    }
+    const left = Math.max(0, Math.min(f.w - 1, Math.floor(selection.x)));
+    const top = Math.max(0, Math.min(f.h - 1, Math.floor(selection.y)));
+    const right = Math.max(left + 1, Math.min(f.w, Math.ceil(selection.x + selection.w)));
+    const bottom = Math.max(top + 1, Math.min(f.h, Math.ceil(selection.y + selection.h)));
+    const path: PathModel = {
+      nodes: [
+        { x: left, y: top },
+        { x: right, y: top },
+        { x: right, y: bottom },
+        { x: left, y: bottom },
+      ],
+      closed: true,
+      fill: false,
+      stroke: true,
+      strokeWidth: 1,
+      fillColor: color,
+      strokeColor: color,
+    };
+    if (addLayer({ ...commonLayer(`Work Path ${f.layers.length}`), kind: 'path', path }))
+      setNotice('Work Path created from the selection bounds; edit its anchors with Direct Selection');
   };
   const groupActiveLayer = () => {
     const f = current(),
@@ -10529,6 +10557,7 @@ export default function Home() {
       }
       return rasterize();
     }
+    else if (command === 'create-work-path') return createWorkPathFromSelection();
     else if (command === 'text-mask-horizontal')
       await applyTextMask('horizontal');
     else if (command === 'text-mask-vertical')
@@ -11028,6 +11057,8 @@ export default function Home() {
         return selectedIdsForFrame(frame).length === 0;
       case 'transform-selection':
         return !frame.selection;
+      case 'create-work-path':
+        return !frame.selection || frame.layers.length >= 32;
       case 'free-transform':
         return !layer || locked;
       case 'perspective-warp':
