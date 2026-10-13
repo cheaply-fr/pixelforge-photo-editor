@@ -42,3 +42,19 @@ test('custom brush preset normalization rejects malformed, duplicate and oversiz
   assert.equal(normalizeCustomBrushPresets(Array.from({ length: 40 }, (_, index) => ({ ...first, id: `${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000001` }))).length, 32);
   assert.throws(() => createCustomBrushPreset('bad', 'x', values), /invalid/);
 });
+
+test('custom brush preset migration defaults newly added dynamics safely', () => {
+  const legacy = { ...values };
+  delete legacy.secondaryBrushPreset;
+  delete legacy.brushWetEdges;
+  delete legacy.brushBuildUp;
+  const legacyPreset = {
+    id: '00000000-0000-4000-8000-000000000003',
+    label: 'Legacy',
+    ...legacy,
+  };
+  const [normalized] = normalizeCustomBrushPresets([legacyPreset]);
+  assert.equal(normalized?.secondaryBrushPreset, 'none');
+  assert.equal(normalized?.brushWetEdges, 0);
+  assert.equal(normalized?.brushBuildUp, 0);
+});
