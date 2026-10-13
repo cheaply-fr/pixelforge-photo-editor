@@ -15,6 +15,7 @@ export const FILTER_EFFECT_TYPES = [
   'blur-more',
   'box-blur',
   'gaussian-blur',
+  'unsharp-mask',
   'lens-blur',
   'iris-blur',
   'smart-blur',
@@ -2629,6 +2630,34 @@ function applyLensCorrection(
 }
 
 /**
+ * Apply a bounded, nondestructive Unsharp Mask.
+ *
+ * The blur radius and amount stay in filter metadata. The source alpha and
+ * transparent RGB padding remain byte-for-byte stable; only visible colour
+ * channels receive the high-frequency contribution.
+ */
+function applyUnsharpMask(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const blurred = new Uint8ClampedArray(source.length);
+  applyGaussianBlur(source, width, height, radius, blurred, 1);
+  const strength = clamp(amount, 0, 100) / 100;
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const alpha = source[offset + 3];
+    output[offset + 3] = alpha;
+    if (!alpha) continue;
+    output[offset] = clampByte(source[offset] + (source[offset] - blurred[offset]) * strength);
+    output[offset + 1] = clampByte(source[offset + 1] + (source[offset + 1] - blurred[offset + 1]) * strength);
+    output[offset + 2] = clampByte(source[offset + 2] + (source[offset + 2] - blurred[offset + 2]) * strength);
+  }
+}
+
+/**
  * Apply a bounded Tilt-Shift focal-band blur.
  *
  * `centerX`/`centerY` locate the middle of the focus line and `angle` rotates
@@ -2697,6 +2726,8 @@ export function applyFilterEffectsPixels(
     applyBoxBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'gaussian-blur') {
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'unsharp-mask') {
+    applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-blur') {
     applySmartBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'surface-blur') {

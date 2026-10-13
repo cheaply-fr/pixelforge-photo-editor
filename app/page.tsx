@@ -537,6 +537,7 @@ type Command =
   | 'filter-blur-more'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
+  | 'filter-unsharp-mask'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
   | 'filter-smart-blur'
@@ -1038,7 +1039,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Sharpen Edges', command: 'sharpen-noise' },
     { label: 'Sharpen More', command: 'sharpen-noise' },
     { label: 'Smart Sharpen…', command: 'sharpen-noise' },
-    { label: 'Unsharp Mask…', command: 'sharpen-noise' },
+    { label: 'Unsharp Mask…', command: 'filter-unsharp-mask' },
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Find Edges…', command: 'filter-find-edges' },
     { label: 'Emboss…', command: 'filter-emboss' },
@@ -10099,6 +10100,8 @@ export default function Home() {
       chooseFilterEffect('box-blur', 'Box Blur');
     else if (command === 'filter-gaussian-blur')
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
+    else if (command === 'filter-unsharp-mask')
+      chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-lens-blur')
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-iris-blur')
@@ -12720,6 +12723,9 @@ export default function Home() {
             {filterEffects.type === 'smart-blur' && (
               <p>Local edge-preserving bilateral approximation. Luminance boundaries are protected; semantic edges and depth are not inferred.</p>
             )}
+            {filterEffects.type === 'unsharp-mask' && (
+              <p>Unsharp Mask adds a bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; threshold, halo suppression and channel-specific controls remain planned.</p>
+            )}
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
             )}
@@ -12837,6 +12843,7 @@ export default function Home() {
                       ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
+                          filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||

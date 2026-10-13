@@ -104,6 +104,29 @@ test('Find Edges extracts deterministic Sobel luminance edges without mutating a
   })), true);
 });
 
+test('Unsharp Mask is deterministic, source-safe and preserves alpha/transparent RGB', () => {
+  const source = rgba(7, 3, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    return [x < 3 ? 32 : 210, y * 40 + 20, 90, x === 6 ? 128 : 255];
+  });
+  const original = source.slice();
+  const output = applyFilterEffectsPixels(source, 7, 3, {
+    type: 'unsharp-mask', amount: 100, radius: 3,
+  });
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.equal(output[3], 0);
+  assert.deepEqual(Array.from(output.slice(0, 3)), [17, 23, 29]);
+  for (let offset = 3; offset < source.length; offset += 4)
+    assert.equal(output[offset + 3], source[offset + 3]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 7, 3, {
+    type: 'unsharp-mask', amount: 100, radius: 3,
+  }));
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    type: 'unsharp-mask', amount: 120, radius: 99,
+  })), true);
+});
+
 test('linear shear interpolates fractional shifts and clamps image edges', () => {
   const source = rgba(9, 5, (x) => [x * 20, 0, 0, 255]);
   const output = applyFilterEffectsPixels(source, 9, 5, {
