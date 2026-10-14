@@ -272,6 +272,7 @@ import {
   describeImportFormat,
   importFailureMessage,
 } from '../src/importFormats';
+import { decodePsdComposite } from '../src/psd';
 import { renderSelection } from '../src/selections';
 import {
   refineSelectionAlpha,
@@ -7464,6 +7465,38 @@ export default function Home() {
       setNotice('Could not convert the text layer to shape');
     }
   };
+  const decodeImportedRaster = async (
+    selected: File,
+    importInfo: ReturnType<typeof describeImportFormat>,
+  ): Promise<HTMLCanvasElement> => {
+    if (importInfo.format === 'psd') {
+      const decoded = decodePsdComposite(new Uint8Array(await selected.arrayBuffer()));
+      const canvas = surface(decoded.width, decoded.height);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Image import is unavailable in this browser.');
+      const imageData = context.createImageData(decoded.width, decoded.height);
+      imageData.data.set(decoded.pixels);
+      context.putImageData(imageData, 0, 0);
+      return canvas;
+    }
+    const url = URL.createObjectURL(selected);
+    const image = new Image();
+    try {
+      image.src = url;
+      await image.decode();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    if (
+      image.width * image.height > 16000000 ||
+      image.width > 16000 ||
+      image.height > 16000
+    )
+      throw new Error('Image exceeds 16 megapixels. Current draft unchanged.');
+    const canvas = surface(image.width, image.height);
+    canvas.getContext('2d')!.drawImage(image, 0, 0);
+    return canvas;
+  };
   const load = async (selected?: File, asLayer = false) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before opening an image');
@@ -7484,24 +7517,7 @@ export default function Home() {
     try {
       if (selected.size > 64 * 1024 * 1024)
         throw new Error('Image file exceeds 64 MB');
-      const url = URL.createObjectURL(selected);
-      const image = new Image();
-      try {
-        image.src = url;
-        await image.decode();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-      if (
-        image.width * image.height > 16000000 ||
-        image.width > 16000 ||
-        image.height > 16000
-      )
-        throw new Error(
-          'Image exceeds 16 megapixels. Current draft unchanged.',
-        );
-      const c = surface(image.width, image.height);
-      c.getContext('2d')!.drawImage(image, 0, 0);
+      const c = await decodeImportedRaster(selected, importInfo);
       if (current() !== original)
         throw new Error('Document changed during import. Please try again.');
       if (asLayer) {
@@ -7516,7 +7532,9 @@ export default function Home() {
       )
         return;
       setNotice(
-        importInfo.format === 'heic'
+        importInfo.format === 'psd'
+          ? `PSD/PSB imported as a flattened editable raster${asLayer ? ' layer' : ''}; layers, masks, profiles and source metadata omitted`
+          : importInfo.format === 'heic'
           ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
           : importInfo.format === 'tiff'
             ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
@@ -7528,7 +7546,7 @@ export default function Home() {
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -7559,23 +7577,7 @@ export default function Home() {
     const original = current();
     try {
       if (selected.size > 64 * 1024 * 1024) throw new Error('Image file exceeds 64 MB');
-      const url = URL.createObjectURL(selected),
-        image = new Image();
-      try {
-        image.src = url;
-        await image.decode();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-      if (
-        image.width * image.height > 16000000 ||
-        image.width > 16000 ||
-        image.height > 16000
-      )
-        throw new Error('Image exceeds 16 megapixels. Current draft unchanged.');
-      const source = surface(image.width, image.height),
-        sourceContext = source.getContext('2d')!;
-      sourceContext.drawImage(image, 0, 0);
+      const source = await decodeImportedRaster(selected, importInfo);
       if (current() !== original)
         throw new Error('Document changed during import. Please try again.');
       const asset = addAsset(assets.current, source),
@@ -7628,7 +7630,9 @@ export default function Home() {
         })
       ) {
         setNotice(
-          importInfo.format === 'heic'
+          importInfo.format === 'psd'
+            ? 'PSD/PSB embedded as a flattened editable raster smart object; layers, masks, profiles and source metadata omitted'
+            : importInfo.format === 'heic'
             ? 'HEIC/HEIF embedded as a flattened raster smart object; source metadata omitted'
             : importInfo.format === 'tiff'
               ? 'TIFF embedded as a flattened raster smart object; source metadata omitted'
@@ -7639,7 +7643,7 @@ export default function Home() {
       }
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message

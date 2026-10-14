@@ -105,10 +105,10 @@ export function describeImportFormat(
     return {
       format: 'psd',
       label: 'PSD/PSB',
-      capability: 'unsupported',
-      tryDecode: false,
+      capability: 'conditional',
+      tryDecode: true,
       disclosure:
-        'PSD/PSB import is not supported yet. Export a flattened PNG or JPEG, or use a PixelForge project file to keep editable layers.',
+        'PSD/PSB import reads a bounded 8-bit RGB/grayscale composite as a flattened editable raster; layers, masks, profiles and source metadata are not retained.',
     };
   }
   if (TIFF_EXTENSIONS.has(extension) || hasMime(mimeType, ...TIFF_MIME_TYPES)) {
@@ -187,6 +187,9 @@ export function describeImportFormat(
 }
 
 export function importFailureMessage(info: ImportFormatInfo): string {
+  if (info.format === 'psd') {
+    return 'This PSD/PSB is not a supported 8-bit RGB/grayscale composite. Export a flattened PNG or JPEG; the current draft is unchanged.';
+  }
   if (info.format === 'heic') {
     return 'HEIC/HEIF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
   }

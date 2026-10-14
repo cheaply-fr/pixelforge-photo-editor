@@ -5,14 +5,14 @@ import {
   importFailureMessage,
 } from '../src/importFormats.ts';
 
-test('PSD and PSB are explicitly unsupported before decoding', () => {
+test('PSD and PSB are conditional flattened composite imports', () => {
   for (const name of ['layer.psd', 'large.PSB']) {
     const info = describeImportFormat(name, 'application/octet-stream');
     assert.deepEqual(
       { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
-      { format: 'psd', capability: 'unsupported', tryDecode: false },
+      { format: 'psd', capability: 'conditional', tryDecode: true },
     );
-    assert.match(info.disclosure, /flattened PNG or JPEG/);
+    assert.match(info.disclosure, /flattened editable raster/);
   }
   assert.match(importFailureMessage(describeImportFormat('layer.psd')), /PSD\/PSB/);
 });
@@ -83,7 +83,7 @@ test('format extension wins over a misleading browser MIME type', () => {
   const raw = describeImportFormat('camera.dng', 'image/jpeg');
   const heic = describeImportFormat('photo.heic', 'image/png');
   assert.equal(psd.format, 'psd');
-  assert.equal(psd.tryDecode, false);
+  assert.equal(psd.tryDecode, true);
   assert.equal(raw.format, 'raw');
   assert.equal(raw.tryDecode, false);
   assert.equal(heic.format, 'heic');

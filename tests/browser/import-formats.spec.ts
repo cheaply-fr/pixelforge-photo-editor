@@ -7,6 +7,12 @@ const ONE_PIXEL_PNG = Buffer.from(
 const SIMPLE_SVG = Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="#ff5c35"/></svg>',
 );
+const PSD_RGB_2X1 = Buffer.from([
+  0x38, 0x42, 0x50, 0x53, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4,
+  0, 0, 0, 1, 0, 0, 0, 2, 0, 8, 0, 3,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  255, 4, 8, 128, 16, 64, 255, 0,
+]);
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -45,13 +51,25 @@ test('keeps the native keyboard paste event cancellable only for internal layer 
   expect(defaultPrevented).toBe(false);
 });
 
-test('rejects PSD with an explicit layered-document compatibility label', async ({ page }) => {
+test('imports an RGB PSD composite as a flattened editable raster with explicit layer-loss disclosure', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'layered.psd',
-    mimeType: 'application/octet-stream',
+    mimeType: 'image/vnd.adobe.photoshop',
+    buffer: PSD_RGB_2X1,
+  });
+  await expect(page.getByText('PSD/PSB imported as a flattened editable raster; layers, masks, profiles and source metadata omitted', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '1');
+  await expect.poll(() => page.getByTestId('editor-canvas').evaluate((canvas) => [...(canvas as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 2, 1).data])).toEqual([255, 8, 16, 255, 0, 0, 0, 0]);
+});
+
+test('keeps the draft unchanged when a PSD composite is malformed', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'broken.psd',
+    mimeType: 'image/vnd.adobe.photoshop',
     buffer: Buffer.from('8BPS'),
   });
-  await expect(page.getByText('PSD/PSB import is not supported yet.', { exact: false })).toBeVisible();
+  await expect(page.getByText('This PSD/PSB is not a supported 8-bit RGB/grayscale composite.', { exact: false })).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
 });
 
