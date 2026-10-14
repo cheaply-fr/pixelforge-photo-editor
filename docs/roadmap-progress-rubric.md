@@ -346,3 +346,16 @@ DNS/TLS/live-editor/export and authorization checks have not occurred. Keep
 the completion estimate unchanged until the candidate passes protected CI,
 merge/deploy and its applicable independent live checks. TIFF scope and
 limitations are in [`tiff-import-contract.md`](tiff-import-contract.md).
+
+## Font fallback disclosure increment
+
+The Type menu now activates **Manage Missing Fonts** for the bounded local
+font family list. A browser-local `FontFaceSet` check reports each family as
+available or **Fallback active**, and the Text tool inspector repeats the
+warning for the selected family. Editable text remains local and reload-safe;
+no font files, text content or document pixels are uploaded. Malformed and
+unavailable values fail closed to fallback. Pure coverage is 830/830, with
+desktop/mobile browser acceptance 2/2; lint, typecheck and production build
+also pass locally. Provider-backed font installation, full OpenType shaping
+and language-specific fallback chains remain staged. See
+[`font-fallback-contract.md`](font-fallback-contract.md).

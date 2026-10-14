@@ -539,6 +539,8 @@ import {
   normalizeFontPreviewSize,
   type FontPreviewSize,
 } from '../src/fontPreview';
+import { checkFontAvailability } from '../src/fontAvailability';
+import MissingFontsDialog from '../src/MissingFontsDialog';
 import { normalizeColorMode, type ColorMode } from '../src/colorMode';
 type MenuName =
   | 'File'
@@ -799,6 +801,7 @@ type Command =
   | 'screen-full-menu'
   | 'screen-full'
   | 'font-preview-size'
+  | 'missing-fonts'
   | 'image-mode';
 type MenuItem = {
   label: string;
@@ -1167,7 +1170,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Font Preview Size', command: 'font-preview-size' },
     { label: 'Language Options', command: 'noop', disabled: true },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
-    { label: 'Manage Missing Fonts', command: 'noop', disabled: true },
+    { label: 'Manage Missing Fonts', command: 'missing-fonts' },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
     { label: 'Load Default Type Styles', command: 'load-default-type-styles' },
     { label: 'Save Default Type Styles', command: 'save-default-type-styles' },
@@ -2097,6 +2100,7 @@ export default function Home() {
     [fontSize, setFontSize] = useState(56),
     [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
     [fontPreviewSize, setFontPreviewSize] = useState<FontPreviewSize>(DEFAULT_FONT_PREVIEW_SIZE),
+    [missingFontsOpen, setMissingFontsOpen] = useState(false),
     [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
@@ -2603,6 +2607,13 @@ export default function Home() {
     setFontFamily,
     setFontPreviewSize,
   ]);
+  const fontAvailability = checkFontAvailability(
+    fontFamily,
+    (font) =>
+      typeof document !== 'undefined' && document.fonts
+        ? document.fonts.check(font)
+        : true,
+  );
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
     if (!preset) return;
@@ -11895,6 +11906,7 @@ export default function Home() {
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'spellcheck') return setSpellcheckOpen(true);
+    else if (command === 'missing-fonts') return setMissingFontsOpen(true);
     else if (command === 'color-settings') return setColorSettingsOpen(true);
     else if (command === 'assign-profile') return setColorProfileOperation('assign');
     else if (command === 'convert-profile') return setColorProfileOperation('convert');
@@ -13134,6 +13146,9 @@ export default function Home() {
       )}
       {spellcheckOpen && (
         <SpellcheckDialog layers={spellcheckLayers} close={() => setSpellcheckOpen(false)} />
+      )}
+      {missingFontsOpen && (
+        <MissingFontsDialog families={FONTS} close={() => setMissingFontsOpen(false)} />
       )}
       {colorSettingsOpen && (
         <ColorSettingsDialog
@@ -15434,6 +15449,11 @@ export default function Home() {
                 onChange={(e) => setText(e.target.value)}
               />
               <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) }}>{font}</option>)}</select></label>
+              {fontAvailability === 'fallback' && (
+                <output data-testid="font-fallback-warning" className="adjust-note">
+                  “{fontFamily}” is unavailable; browser fallback rendering is active.
+                </output>
+              )}
               <label className="select-row"><span>Preview</span><select aria-label="Font preview size" className="text-input" value={fontPreviewSize} onChange={(event) => setFontPreviewSize(normalizeFontPreviewSize(event.target.value))}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
               <Slider
                 label="Size"

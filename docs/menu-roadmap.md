@@ -10,6 +10,12 @@ The File menu now includes **Batch export history…** and **Batch export images
 
 The import boundary also classifies SVG as conditional browser rasterization and PDF as explicitly unsupported before decoding. SVG opens only as a flattened editable raster with vector paths, external resources, fonts and source metadata omitted; PDF directs the user to render a page to PNG or JPEG. These are capability disclosures, not editable SVG/PDF round-trip support.
 
+The Type menu now exposes **Manage Missing Fonts**. It performs a bounded
+browser-local availability check for PixelForge's supported family list and
+shows a fallback warning in the text inspector while preserving the editable
+font preference. No font file, text content or document pixel leaves the
+browser; see [`font-fallback-contract.md`](./font-fallback-contract.md).
+
 PSD/PSB import now decodes bounded 8-bit RGB/grayscale raw or PackBits
 composites into flattened raster assets or embedded smart objects. Layer
 records, masks, profiles and source metadata are explicitly discarded and
@@ -76,7 +82,7 @@ These tables record the visible commands verbatim where practical. Groups provid
 | Fonts and panels | More from Adobe Fonts…; Panels ▶; Anti-Alias ▶; Orientation ▶; OpenType ▶ | Local/system font workflow first. Horizontal and vertical editable text flow are active with persisted orientation controls in the Type menu and Layers panel; **Type → Create Work Path traces the resolved selection alpha into editable compound path contours, preserving islands and holes through reload; licensed optional font providers, full OpenType shaping/metrics and text panels remain staged. See [`vertical-type-contract.md`](./vertical-type-contract.md) and [`work-path-contract.md`](./work-path-contract.md). |
 | Conversions | Create Work Path; Convert to Shape; Rasterize Type Layer; Convert Text Shape Type; Convert to Dynamic Text ▶ | **Convert to Shape now vectorizes a visible unlocked editable text layer into bounded compound path contours while preserving layer identity and undo recovery; see [`convert-to-shape-contract.md`](./convert-to-shape-contract.md). Rasterize Type Layer is active for unlocked text layers:** it uses the existing source-safe rasterization pipeline, preserves the layer identity/group placement, and is undoable back to editable text with desktop/mobile acceptance coverage. Vector outlines, text-on-shape representation and explicit reversible conversion boundaries remain staged |
 | Layout and discovery | Warp Text…; Match Font…; Font Preview Size ▶; Language Options ▶ | Text transforms, font matching quality, preview preferences, writing direction and script support |
-| Maintenance and presets | Paste Lorem Ipsum; Update All Text Layers; Manage Missing Fonts; Paste Lorem Ipsum; Load Default Type Styles; Save Default Type Styles | Missing-font diagnostics, safe bulk updates and validated portable style presets |
+| Maintenance and presets | Paste Lorem Ipsum; Update All Text Layers; Manage Missing Fonts; Paste Lorem Ipsum; Load Default Type Styles; Save Default Type Styles | **Manage Missing Fonts now discloses browser fallback state for the bounded local family list;** see [`font-fallback-contract.md`](./font-fallback-contract.md). Safe bulk updates and validated portable style presets remain active; provider-backed font installation remains staged |
 
 | Select group | Commands visible in the reference | Dependency / intended increment |
 | --- | --- | --- |
