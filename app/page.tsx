@@ -253,7 +253,8 @@ import { updateAllTextLayers } from '../src/textBatch';
 import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
 import { findSpellingHints } from '../src/spellcheck';
 import ColorSettingsDialog from '../src/ColorSettingsDialog';
-import { normalizeColorProfile, type ColorProfile } from '../src/colorProfile';
+import ColorProfileDialog from '../src/ColorProfileDialog';
+import { convertRgbaProfile, normalizeColorProfile, type ColorProfile } from '../src/colorProfile';
 import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
 import { purgeUndoHistory } from '../src/historyPurge';
 import {
@@ -557,6 +558,8 @@ type Command =
   | 'update-text-layers'
   | 'spellcheck'
   | 'color-settings'
+  | 'assign-profile'
+  | 'convert-profile'
   | 'camera-raw'
   | 'fade'
   | 'actions'
@@ -1019,6 +1022,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
     { label: 'Color Settings…', command: 'color-settings' },
+    { label: 'Assign Profile…', command: 'assign-profile' },
+    { label: 'Convert to Profile…', command: 'convert-profile' },
     { label: 'Keyboard Shortcuts…', command: 'keyboard-shortcuts' },
     { label: 'Menus…', command: 'noop', disabled: true },
     { label: 'Toolbar…', command: 'toolbar-settings' },
@@ -2125,6 +2130,7 @@ export default function Home() {
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
     [spellcheckOpen, setSpellcheckOpen] = useState(false),
     [colorSettingsOpen, setColorSettingsOpen] = useState(false),
+    [colorProfileOperation, setColorProfileOperation] = useState<'assign' | 'convert' | null>(null),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
       try {
@@ -5271,6 +5277,60 @@ export default function Home() {
   ) => {
     setCameraRawEditing(false);
     if (setPhotoAdjustments(patch)) setNotice('Camera Raw correction applied; remains editable');
+  };
+  const applyColorProfile = async (profile: ColorProfile, operation: 'assign' | 'convert') => {
+    const sourceFrame = current();
+    const sourceProfile = normalizeColorProfile(sourceFrame.colorProfile);
+    if (sourceProfile === profile) {
+      setColorProfileOperation(null);
+      setNotice(`Document is already using ${profile === 'srgb' ? 'sRGB' : 'Display P3'}`);
+      return;
+    }
+    if (operation === 'assign') {
+      setColorProfileOperation(null);
+      if (commit({ ...sourceFrame, colorProfile: profile }))
+        setNotice(`Assigned ${profile === 'srgb' ? 'sRGB' : 'Display P3'} without changing RGB bytes`);
+      return;
+    }
+    try {
+      const nextAssets: Assets = { ...assets.current };
+      const replacements = new Map<string, string>();
+      const contentIds = new Set(
+        sourceFrame.layers
+          .filter((layer) => isRasterContentLayer(layer))
+          .map((layer) => layer.asset),
+      );
+      for (const assetId of contentIds) {
+        if (current() !== sourceFrame) throw new Error('The document changed during profile conversion');
+        const asset = assets.current[assetId];
+        if (!asset) throw new Error('The source asset is missing');
+        const image = await decodeAsset(asset);
+        if (current() !== sourceFrame) throw new Error('The document changed during profile conversion');
+        const surfaceCanvas = document.createElement('canvas');
+        surfaceCanvas.width = asset.w;
+        surfaceCanvas.height = asset.h;
+        const context = surfaceCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) throw new Error('The browser cannot create a color conversion surface');
+        context.drawImage(image, 0, 0);
+        const imageData = context.getImageData(0, 0, asset.w, asset.h);
+        imageData.data.set(convertRgbaProfile(imageData.data, asset.w, asset.h, sourceProfile, profile));
+        context.putImageData(imageData, 0, 0);
+        const convertedId = crypto.randomUUID();
+        nextAssets[convertedId] = { url: surfaceCanvas.toDataURL(), w: asset.w, h: asset.h };
+        replacements.set(assetId, convertedId);
+      }
+      const layers = sourceFrame.layers.map((layer) => {
+        if (!isRasterContentLayer(layer)) return layer;
+        const asset = replacements.get(layer.asset);
+        return asset ? { ...layer, asset } : layer;
+      });
+      setColorProfileOperation(null);
+      if (commit({ ...sourceFrame, colorProfile: profile, layers }, false, nextAssets))
+        setNotice(`Converted raster content to ${profile === 'srgb' ? 'sRGB' : 'Display P3'}; undo restores the source assets`);
+    } catch (error) {
+      setColorProfileOperation(null);
+      setNotice(error instanceof Error ? error.message : 'Color profile conversion failed; the draft is unchanged');
+    }
   };
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
     if (type !== 'none') {
@@ -11800,6 +11860,8 @@ export default function Home() {
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'spellcheck') return setSpellcheckOpen(true);
     else if (command === 'color-settings') return setColorSettingsOpen(true);
+    else if (command === 'assign-profile') return setColorProfileOperation('assign');
+    else if (command === 'convert-profile') return setColorProfileOperation('convert');
     else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
@@ -13040,6 +13102,14 @@ export default function Home() {
             setColorSettingsOpen(false);
             if (commit(next)) setNotice(`Working color profile set to ${profile === 'srgb' ? 'sRGB' : 'Display P3'}`);
           }}
+        />
+      )}
+      {colorProfileOperation && (
+        <ColorProfileDialog
+          current={normalizeColorProfile(frame?.colorProfile)}
+          operation={colorProfileOperation}
+          close={() => setColorProfileOperation(null)}
+          apply={(profile) => applyColorProfile(profile, colorProfileOperation)}
         />
       )}
       {purgeHistoryOpen && (

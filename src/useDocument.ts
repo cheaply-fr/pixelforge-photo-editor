@@ -132,7 +132,9 @@ export function useDocument(onError: (message: string) => void) {
     [paint],
   );
   const commit = useCallback(
-    (value: Frame, replace = false) => {
+    (value: Frame, replace = false, nextAssets?: Assets) => {
+      const previousAssets = assets.current;
+      if (nextAssets) assets.current = nextAssets;
       try {
         // Stack edits can invalidate a clipping relationship. Repair those
         // links at the history boundary so reorder/delete/group operations
@@ -165,7 +167,7 @@ export function useDocument(onError: (message: string) => void) {
         publish(sanitized);
         return true;
       } catch (error) {
-        assets.current = referencedAssets(history.current, assets.current);
+        assets.current = referencedAssets(history.current, previousAssets);
         if (history.current[index.current])
           void paint(history.current[index.current]);
         onError(
