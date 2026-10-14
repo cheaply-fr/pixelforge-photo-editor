@@ -36,6 +36,30 @@ const TIFF_RGB_2X1 = (() => {
   bytes.set([255, 8, 16, 4, 128, 64], 140);
   return Buffer.from(bytes);
 })();
+const TIFF_ORIENTED_2X2 = (() => {
+  const bytes = new Uint8Array(164), view = new DataView(bytes.buffer);
+  bytes.set([0x49, 0x49], 0);
+  view.setUint16(2, 42, true);
+  view.setUint32(4, 8, true);
+  view.setUint16(8, 11, true);
+  const entries: Array<[number, number, number, number]> = [
+    [256, 4, 1, 2], [257, 4, 1, 2], [258, 3, 3, 146], [259, 3, 1, 1], [262, 3, 1, 2],
+    [273, 4, 1, 152], [277, 3, 1, 3], [278, 4, 1, 2], [279, 4, 1, 12], [284, 3, 1, 1],
+    [274, 3, 1, 6],
+  ];
+  entries.forEach(([tag, type, count, value], index) => {
+    const offset = 10 + index * 12;
+    view.setUint16(offset, tag, true);
+    view.setUint16(offset + 2, type, true);
+    view.setUint32(offset + 4, count, true);
+    if (type === 3 && count === 1) view.setUint16(offset + 8, value, true);
+    else view.setUint32(offset + 8, value, true);
+  });
+  view.setUint32(142, 0, true);
+  bytes.set([8, 0, 8, 0, 8, 0], 146);
+  bytes.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 152);
+  return Buffer.from(bytes);
+})();
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -130,6 +154,21 @@ test('labels a browser-decoded TIFF source as conditional flattened raster impor
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '1');
   await expect.poll(() => page.getByTestId('editor-canvas').evaluate((canvas) => [...(canvas as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 2, 1).data])).toEqual([255, 8, 16, 255, 4, 128, 64, 255]);
+});
+
+test('normalizes TIFF orientation before publishing the flattened browser raster', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'oriented.tiff',
+    mimeType: 'image/tiff',
+    buffer: TIFF_ORIENTED_2X2,
+  });
+  const canvas = page.getByTestId('editor-canvas');
+  await expect(canvas).toHaveAttribute('width', '2');
+  await expect(canvas).toHaveAttribute('height', '2');
+  await expect.poll(() => canvas.evaluate((node) => [...(node as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 2, 2).data])).toEqual([
+    7, 8, 9, 255, 1, 2, 3, 255,
+    10, 11, 12, 255, 4, 5, 6, 255,
+  ]);
 });
 
 test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
