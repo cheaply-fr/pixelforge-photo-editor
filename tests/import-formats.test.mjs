@@ -48,7 +48,7 @@ test('TIFF is conditional and never claims a lossless container round trip', () 
     assert.match(info.disclosure, /browser decoder/);
     assert.match(info.disclosure, /flattened editable raster/);
   }
-  assert.match(importFailureMessage(byName), /^TIFF decoding is unavailable/);
+  assert.match(importFailureMessage(byName), /^This TIFF is not a supported/);
 });
 
 test('SVG is conditional flattened rasterization with vector-loss disclosure', () => {

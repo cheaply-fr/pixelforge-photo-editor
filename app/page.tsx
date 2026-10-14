@@ -273,6 +273,7 @@ import {
   importFailureMessage,
 } from '../src/importFormats';
 import { decodePsdComposite } from '../src/psd';
+import { decodeTiffComposite } from '../src/tiff';
 import { renderSelection } from '../src/selections';
 import {
   refineSelectionAlpha,
@@ -7469,8 +7470,11 @@ export default function Home() {
     selected: File,
     importInfo: ReturnType<typeof describeImportFormat>,
   ): Promise<HTMLCanvasElement> => {
-    if (importInfo.format === 'psd') {
-      const decoded = decodePsdComposite(new Uint8Array(await selected.arrayBuffer()));
+    if (importInfo.format === 'psd' || importInfo.format === 'tiff') {
+      const bytes = new Uint8Array(await selected.arrayBuffer());
+      const decoded = importInfo.format === 'psd'
+        ? decodePsdComposite(bytes)
+        : decodeTiffComposite(bytes);
       const canvas = surface(decoded.width, decoded.height);
       const context = canvas.getContext('2d');
       if (!context) throw new Error('Image import is unavailable in this browser.');

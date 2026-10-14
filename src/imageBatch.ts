@@ -8,6 +8,7 @@ import {
 import { encodeImageWithWorker } from './workerEncode.ts';
 import { describeImportFormat } from './importFormats.ts';
 import { decodePsdComposite } from './psd.ts';
+import { decodeTiffComposite } from './tiff.ts';
 import { applyBatchActionToCanvas, publicBatchActionDescriptor, runBatchActionQueue } from './batchActions.ts';
 import { bindActionParameters, type ActionParameterValues, type ActionSet } from './actions.ts';
 
@@ -124,8 +125,11 @@ export async function decodeBatchImage(source: BatchImageSource): Promise<HTMLCa
   // a renamed/opaque file into an unsafe raster import.
   if (!format.tryDecode)
     throw new Error(format.disclosure);
-  if (format.format === 'psd') {
-    const decoded = decodePsdComposite(new Uint8Array(await source.file.arrayBuffer()));
+  if (format.format === 'psd' || format.format === 'tiff') {
+    const bytes = new Uint8Array(await source.file.arrayBuffer());
+    const decoded = format.format === 'psd'
+      ? decodePsdComposite(bytes)
+      : decodeTiffComposite(bytes);
     if (typeof document === 'undefined')
       throw new Error('PSD composite decoding requires a browser canvas.');
     const canvas = document.createElement('canvas');

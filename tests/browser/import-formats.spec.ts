@@ -13,6 +13,28 @@ const PSD_RGB_2X1 = Buffer.from([
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
   255, 4, 8, 128, 16, 64, 255, 0,
 ]);
+const TIFF_RGB_2X1 = (() => {
+  const bytes = new Uint8Array(140), view = new DataView(bytes.buffer);
+  bytes.set([0x49, 0x49], 0);
+  view.setUint16(2, 42, true);
+  view.setUint32(4, 8, true);
+  view.setUint16(8, 10, true);
+  const entries: Array<[number, number, number]> = [
+    [256, 4, 2], [257, 4, 1], [258, 3, 8], [259, 3, 1], [262, 3, 2],
+    [273, 4, 134], [277, 3, 3], [278, 4, 1], [279, 4, 6], [284, 3, 1],
+  ];
+  entries.forEach(([tag, type, value], index) => {
+    const offset = 10 + index * 12;
+    view.setUint16(offset, tag, true);
+    view.setUint16(offset + 2, type, true);
+    view.setUint32(offset + 4, 1, true);
+    if (type === 3) view.setUint16(offset + 8, value, true);
+    else view.setUint32(offset + 8, value, true);
+  });
+  view.setUint32(130, 0, true);
+  bytes.set([255, 8, 16, 4, 128, 64], 134);
+  return Buffer.from(bytes);
+})();
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -98,15 +120,15 @@ test('labels a browser-decoded HEIC source as flattened raster with metadata omi
 test('labels a browser-decoded TIFF source as conditional flattened raster import', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'scan.tiff',
-    // The bytes are a valid PNG fixture so this acceptance test exercises the
-    // browser decoder while the extension carries the TIFF capability label.
-    mimeType: 'image/png',
-    buffer: ONE_PIXEL_PNG,
+    mimeType: 'image/tiff',
+    buffer: TIFF_RGB_2X1,
   });
   await expect(
     page.getByText('TIFF imported as a flattened raster; source metadata omitted', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '1');
+  await expect.poll(() => page.getByTestId('editor-canvas').evaluate((canvas) => [...(canvas as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 2, 1).data])).toEqual([255, 8, 16, 255, 4, 128, 64, 255]);
 });
 
 test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
@@ -116,7 +138,7 @@ test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
     buffer: Buffer.from([0, 1, 2, 3, 4]),
   });
   await expect(
-    page.getByText('TIFF decoding is unavailable in this browser.', { exact: false }),
+    page.getByText('This TIFF is not a supported 8-bit chunky RGB/grayscale composite.', { exact: false }),
   ).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');

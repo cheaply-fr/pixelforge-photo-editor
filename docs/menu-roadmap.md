@@ -17,6 +17,11 @@ malformed or unsupported composites leave the current draft unchanged. This
 is flattened compatibility, not layered PSD/PSB round-trip support; camera
 RAW and PDF/page structure remain separately evaluated capabilities.
 
+TIFF import now decodes bounded classic 8-bit chunky RGB/grayscale raw or
+PackBits strips in either endian order with the same explicit flattened-loss
+boundary; tiled, planar, palette, CMYK, BigTIFF and metadata round trips remain
+unsupported.
+
 **Edit → Fade…** is active after an undoable raster edit, blending the previous and current raster assets at a bounded opacity while preserving source history; see [`fade-contract.md`](./fade-contract.md). The Edit menu now exposes **Mixer Brush Tool (B)**, **History Brush Tool (Y)**, **Art History Brush Tool (Y)** and **Set History Brush Source**. Mixer Brush uses a bounded immutable source snapshot with Wet/Load/Mix/Flow controls; History Brush restores a selected local undo snapshot through opacity/flow; Art History Brush applies deterministic painterly neighbourhood dabs from that snapshot with opacity, flow, style and fidelity controls. These tools require an unlocked raster layer, commit one undoable asset per stroke and persist settings/source selection in anonymous drafts. Bristle and full wet-media dynamics remain staged; see [`mixer-history-brush-contract.md`](./mixer-history-brush-contract.md) and [`art-history-brush-contract.md`](./art-history-brush-contract.md).
 
 ## Menu taxonomy extracted from the references

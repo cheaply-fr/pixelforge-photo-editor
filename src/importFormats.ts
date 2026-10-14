@@ -194,7 +194,7 @@ export function importFailureMessage(info: ImportFormatInfo): string {
     return 'HEIC/HEIF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
   }
   if (info.format === 'tiff') {
-    return 'TIFF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
+    return 'This TIFF is not a supported 8-bit chunky RGB/grayscale composite. Export a flattened PNG or JPEG; the current draft is unchanged.';
   }
   if (info.format === 'svg') {
     return 'SVG rasterization is unavailable in this browser. Export a PNG or JPEG; the current draft is unchanged.';
