@@ -14,25 +14,26 @@ const PSD_RGB_2X1 = Buffer.from([
   255, 4, 8, 128, 16, 64, 255, 0,
 ]);
 const TIFF_RGB_2X1 = (() => {
-  const bytes = new Uint8Array(140), view = new DataView(bytes.buffer);
+  const bytes = new Uint8Array(146), view = new DataView(bytes.buffer);
   bytes.set([0x49, 0x49], 0);
   view.setUint16(2, 42, true);
   view.setUint32(4, 8, true);
   view.setUint16(8, 10, true);
-  const entries: Array<[number, number, number]> = [
-    [256, 4, 2], [257, 4, 1], [258, 3, 8], [259, 3, 1], [262, 3, 2],
-    [273, 4, 134], [277, 3, 3], [278, 4, 1], [279, 4, 6], [284, 3, 1],
+  const entries: Array<[number, number, number, number]> = [
+    [256, 4, 1, 2], [257, 4, 1, 1], [258, 3, 3, 134], [259, 3, 1, 1], [262, 3, 1, 2],
+    [273, 4, 1, 140], [277, 3, 1, 3], [278, 4, 1, 1], [279, 4, 1, 6], [284, 3, 1, 1],
   ];
-  entries.forEach(([tag, type, value], index) => {
+  entries.forEach(([tag, type, count, value], index) => {
     const offset = 10 + index * 12;
     view.setUint16(offset, tag, true);
     view.setUint16(offset + 2, type, true);
-    view.setUint32(offset + 4, 1, true);
-    if (type === 3) view.setUint16(offset + 8, value, true);
+    view.setUint32(offset + 4, count, true);
+    if (type === 3 && count === 1) view.setUint16(offset + 8, value, true);
     else view.setUint32(offset + 8, value, true);
   });
   view.setUint32(130, 0, true);
-  bytes.set([255, 8, 16, 4, 128, 64], 134);
+  bytes.set([8, 0, 8, 0, 8, 0], 134);
+  bytes.set([255, 8, 16, 4, 128, 64], 140);
   return Buffer.from(bytes);
 })();
 

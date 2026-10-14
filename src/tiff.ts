@@ -104,6 +104,8 @@ export type TiffComposite = {
   height: number;
   samplesPerPixel: number;
   compression: 'raw' | 'packbits';
+  predictor: 'none' | 'horizontal';
+  orientation: number;
   pixels: Uint8ClampedArray;
 };
 
@@ -136,39 +138,81 @@ export function decodeTiffComposite(input: Uint8Array): TiffComposite {
   const height = values(reader, entries.get(257))[0];
   const bits = values(reader, entries.get(258));
   const compression = values(reader, entries.get(259))[0] ?? 1;
+  const orientation = values(reader, entries.get(274))[0] ?? 1;
   const photometric = values(reader, entries.get(262))[0];
   const stripOffsets = values(reader, entries.get(273));
   const samplesPerPixel = values(reader, entries.get(277))[0] ?? 1;
   const rowsPerStrip = values(reader, entries.get(278))[0];
   const stripByteCounts = values(reader, entries.get(279));
   const planar = values(reader, entries.get(284))[0] ?? 1;
+  const predictor = values(reader, entries.get(317))[0] ?? 1;
+  const extraSamples = values(reader, entries.get(338));
   if (!width || !height || width > MAX_DIMENSION || height > MAX_DIMENSION || width * height > MAX_PIXELS)
     throw new Error('TIFF image exceeds 16 megapixels');
-  if (!bits.length || bits.some((value) => value !== 8)) throw new Error('Only 8-bit TIFF composites are supported');
+  if (bits.length !== samplesPerPixel || bits.some((value) => value !== 8))
+    throw new Error('TIFF BitsPerSample must specify 8 bits for every channel');
   const rgb = photometric === 2 && (samplesPerPixel === 3 || samplesPerPixel === 4);
   const gray = (photometric === 0 || photometric === 1) && (samplesPerPixel === 1 || samplesPerPixel === 2);
   if (!rgb && !gray) throw new Error('Only chunky 8-bit RGB or grayscale TIFF composites are supported');
   if (planar !== 1) throw new Error('Planar TIFF data is not supported');
+  if (orientation < 1 || orientation > 8) throw new Error('TIFF orientation is invalid');
+  if (predictor !== 1 && predictor !== 2)
+    throw new Error('Only TIFF None and Horizontal differencing predictors are supported');
+  if ((samplesPerPixel === 4 || samplesPerPixel === 2) &&
+    (extraSamples.length !== 1 || (extraSamples[0] !== 1 && extraSamples[0] !== 2)))
+    throw new Error('TIFF alpha channels must declare associated or unassociated alpha');
+  if (samplesPerPixel !== 4 && samplesPerPixel !== 2 && extraSamples.length)
+    throw new Error('TIFF extra channels are not supported');
   if (!rowsPerStrip || stripOffsets.length !== stripByteCounts.length)
     throw new Error('TIFF strip metadata is incomplete');
   const bytesPerRow = width * samplesPerPixel;
-  const pixels = new Uint8ClampedArray(width * height * 4);
+  const swapsAxes = orientation >= 5;
+  const outputWidth = swapsAxes ? height : width;
+  const outputHeight = swapsAxes ? width : height;
+  const pixels = new Uint8ClampedArray(outputWidth * outputHeight * 4);
   for (let strip = 0; strip < stripOffsets.length; strip += 1) {
     const startRow = strip * rowsPerStrip;
     if (startRow >= height) break;
     const rowCount = Math.min(rowsPerStrip, height - startRow);
     const decoded = decodeStrip(readAt(reader, stripOffsets[strip], stripByteCounts[strip]), rowCount * bytesPerRow, compression);
     for (let row = 0; row < rowCount; row += 1) {
+      const rowStart = row * bytesPerRow;
+      if (predictor === 2) {
+        for (let index = samplesPerPixel; index < bytesPerRow; index += 1)
+          decoded[rowStart + index] = (decoded[rowStart + index] + decoded[rowStart + index - samplesPerPixel]) & 0xff;
+      }
       for (let column = 0; column < width; column += 1) {
         const source = (row * bytesPerRow) + column * samplesPerPixel;
-        const target = ((startRow + row) * width + column) * 4;
+        const sourceY = startRow + row;
+        let targetX = column;
+        let targetY = sourceY;
+        switch (orientation) {
+          case 2: targetX = width - 1 - column; break;
+          case 3: targetX = width - 1 - column; targetY = height - 1 - sourceY; break;
+          case 4: targetY = height - 1 - sourceY; break;
+          case 5: targetX = sourceY; targetY = column; break;
+          case 6: targetX = height - 1 - sourceY; targetY = column; break;
+          case 7: targetX = height - 1 - sourceY; targetY = width - 1 - column; break;
+          case 8: targetX = sourceY; targetY = width - 1 - column; break;
+        }
+        const target = (targetY * outputWidth + targetX) * 4;
         if (rgb) {
-          pixels[target] = decoded[source];
-          pixels[target + 1] = decoded[source + 1];
-          pixels[target + 2] = decoded[source + 2];
-          pixels[target + 3] = samplesPerPixel === 4 ? decoded[source + 3] : 255;
+          const alpha = samplesPerPixel === 4 ? decoded[source + 3] : 255;
+          if (samplesPerPixel === 4 && extraSamples[0] === 1 && alpha > 0) {
+            pixels[target] = Math.min(255, Math.round(decoded[source] * 255 / alpha));
+            pixels[target + 1] = Math.min(255, Math.round(decoded[source + 1] * 255 / alpha));
+            pixels[target + 2] = Math.min(255, Math.round(decoded[source + 2] * 255 / alpha));
+          } else {
+            pixels[target] = decoded[source];
+            pixels[target + 1] = decoded[source + 1];
+            pixels[target + 2] = decoded[source + 2];
+          }
+          pixels[target + 3] = alpha;
         } else {
-          const value = photometric === 0 ? 255 - decoded[source] : decoded[source];
+          const graySample = samplesPerPixel === 2 && extraSamples[0] === 1 && decoded[source + 1] > 0
+            ? Math.min(255, Math.round(decoded[source] * 255 / decoded[source + 1]))
+            : decoded[source];
+          const value = photometric === 0 ? 255 - graySample : graySample;
           pixels[target] = value;
           pixels[target + 1] = value;
           pixels[target + 2] = value;
@@ -178,10 +222,12 @@ export function decodeTiffComposite(input: Uint8Array): TiffComposite {
     }
   }
   return {
-    width,
-    height,
+    width: outputWidth,
+    height: outputHeight,
     samplesPerPixel,
     compression: compression === 1 ? 'raw' : 'packbits',
+    predictor: predictor === 1 ? 'none' : 'horizontal',
+    orientation,
     pixels,
   };
 }
