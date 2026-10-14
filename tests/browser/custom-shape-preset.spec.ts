@@ -55,7 +55,7 @@ test('Polygon tool persists triangle and star variants in project settings', asy
   await expect(variant).toHaveValue('polygon');
   await variant.selectOption('star');
   await expect(variant).toHaveValue('star');
-  const sides = page.getByLabel('Polygon sides', { exact: true });
+  const sides = page.getByRole('slider', { name: 'Polygon sides', exact: true });
   await sides.fill('7');
   await expect(sides).toHaveValue('7');
   const pending = page.waitForEvent('download');
@@ -68,7 +68,7 @@ test('Polygon tool persists triangle and star variants in project settings', asy
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await selectTool(page, 'Polygon');
   await expect(page.getByLabel('Polygon variant', { exact: true })).toHaveValue('star');
-  await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('7');
+  await expect(page.getByRole('slider', { name: 'Polygon sides', exact: true })).toHaveValue('7');
 });
 
 test('custom polygon presets retain their variant and side count', async ({ page }) => {
@@ -76,7 +76,7 @@ test('custom polygon presets retain their variant and side count', async ({ page
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await selectTool(page, 'Polygon');
   await page.getByLabel('Polygon variant', { exact: true }).selectOption('star');
-  await page.getByLabel('Polygon sides', { exact: true }).fill('9');
+  await page.getByRole('slider', { name: 'Polygon sides', exact: true }).fill('9');
   await page.getByLabel('Star inner radius', { exact: true }).fill('70');
   page.once('dialog', (dialog) => dialog.accept('Star badge'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -87,9 +87,9 @@ test('custom polygon presets retain their variant and side count', async ({ page
   const project = await downloadedProject((await (await pending).path())!);
   expect(project.settings.customShapePresets?.[0]).toMatchObject({ kind: 'polygon', variant: 'star', sides: 9, innerRadius: 0.7 });
   await page.getByLabel('Polygon variant', { exact: true }).selectOption('polygon');
-  await page.getByLabel('Polygon sides', { exact: true }).fill('5');
+  await page.getByRole('slider', { name: 'Polygon sides', exact: true }).fill('5');
   await page.getByLabel('Saved shape preset', { exact: true }).selectOption({ label: 'Star badge (polygon)' });
   await expect(page.getByLabel('Polygon variant', { exact: true })).toHaveValue('star');
-  await expect(page.getByLabel('Polygon sides', { exact: true })).toHaveValue('9');
+  await expect(page.getByRole('slider', { name: 'Polygon sides', exact: true })).toHaveValue('9');
   await expect(page.getByLabel('Star inner radius', { exact: true })).toHaveValue('70');
 });

@@ -220,7 +220,7 @@ test('applies an active nondestructive filter Action to a flattened batch', asyn
   await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
   await openActions(page);
   await page.getByRole('button', { name: 'Stop recording' }).click();
-  await expect(page.getByText('Parameterized filter', { exact: true })).toBeVisible();
+  await expect(page.getByText('Batch noise', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Batch…', exact: true }).click();
   await page.getByTestId('batch-image-input').setInputFiles({
     name: 'batch-noise.png',
