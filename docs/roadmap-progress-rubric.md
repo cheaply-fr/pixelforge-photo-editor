@@ -65,6 +65,15 @@ in `tests/browser/history-panel.spec.ts`. This increment is locally verified;
 it is not CI, deployment or live acceptance until a protected workflow runs for
 the candidate SHA.
 
+The current local increment adds `Image → Mode` with a bounded RGB Color /
+Grayscale frame property. Grayscale applies Rec. 709 luminance at render time,
+preserves alpha and immutable source assets, and survives undo, reload and
+portable-project round trips. Pure coverage is in
+`tests/color-mode.test.mjs`; desktop/mobile menu, pixel, alpha, source-retention,
+undo, reload and project coverage is in `tests/browser/color-mode.spec.ts`.
+The candidate passes 828/828 pure tests and focused color-mode acceptance 4/4;
+protected CI, deployment and live acceptance remain separate gates.
+
 The brush-family controls also include a persisted, bounded smoothing amount
 for Brush, Pencil and Eraser. `src/brushSmoothing.ts` keeps pointer response
 deterministic and source-safe, with pure coverage in

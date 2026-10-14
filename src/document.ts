@@ -43,6 +43,7 @@ import {
   type ResampleMethod,
 } from './imageSize.ts';
 import { validColorProfile, type ColorProfile } from './colorProfile.ts';
+import { applyColorModePixels, normalizeColorMode, type ColorMode } from './colorMode.ts';
 import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { normalizeTextPathBinding, layoutTextOnPath, mapTextPathPoints, flattenTextPath, type TextPathBinding } from './textOnPath.ts';
 import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
@@ -406,6 +407,8 @@ export type Selection = {
 export type Frame = {
   w: number;
   h: number;
+  /** Optional document working mode; legacy frames default to RGB. */
+  colorMode?: ColorMode;
   /** Optional working color-profile label; omitted legacy frames default to sRGB. */
   colorProfile?: ColorProfile;
   /** Optional print-size metadata; omitted in legacy drafts and defaults to 72 ppi. */
@@ -1274,6 +1277,8 @@ export function validateFrame(
   if (value.imageSize !== undefined && !validImageSizeMetadata(value.imageSize))
     return fail();
   if (value.colorProfile !== undefined && !validColorProfile(value.colorProfile))
+    return fail();
+  if (value.colorMode !== undefined && normalizeColorMode(value.colorMode) !== value.colorMode)
     return fail();
   const ids = new Set<string>();
   if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();
@@ -2798,6 +2803,11 @@ export async function renderFrame(
     }
     context.restore();
     reportProgress(layerIndex);
+  }
+  if (frame.colorMode === 'grayscale') {
+    const image = context.getImageData(0, 0, frame.w, frame.h);
+    image.data.set(applyColorModePixels(image.data, frame.colorMode));
+    context.putImageData(image, 0, 0);
   }
   return out;
 }

@@ -539,6 +539,7 @@ import {
   normalizeFontPreviewSize,
   type FontPreviewSize,
 } from '../src/fontPreview';
+import { normalizeColorMode, type ColorMode } from '../src/colorMode';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -797,7 +798,8 @@ type Command =
   | 'screen-standard'
   | 'screen-full-menu'
   | 'screen-full'
-  | 'font-preview-size';
+  | 'font-preview-size'
+  | 'image-mode';
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -1040,7 +1042,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Reset adjustments', command: 'reset' },
   ],
   Image: [
-    { label: 'Mode', command: 'noop', disabled: true },
+    { label: 'Mode', command: 'image-mode' },
     { label: 'Adjustments', command: 'reset', disabled: true },
     { label: 'Levels…', command: 'levels' },
     { label: 'Curves…', command: 'curves' },
@@ -5248,6 +5250,12 @@ export default function Home() {
     }
   };
   const resetAdjustments = () => adjust({ ...neutral });
+  const toggleImageMode = () => {
+    const frame = current();
+    const next: ColorMode = normalizeColorMode(frame.colorMode) === 'rgb' ? 'grayscale' : 'rgb';
+    if (!commit({ ...frame, colorMode: next })) return;
+    setNotice(`Image mode: ${next === 'grayscale' ? 'Grayscale' : 'RGB Color'}`);
+  };
   const setBrightness = (brightness: number) => adjust({ brightness }),
     setContrast = (contrast: number) => adjust({ contrast }),
     setSaturation = (saturation: number) => adjust({ saturation }),
@@ -12088,6 +12096,7 @@ export default function Home() {
     else if (command === 'create-clipping-mask') createClippingMask();
     else if (command === 'release-clipping-mask') releaseClippingMask();
     else if (command === 'reset') resetAdjustments();
+    else if (command === 'image-mode') toggleImageMode();
     else if (command === 'levels')
       setNotice('Levels controls are available in Adjust selected layer');
     else if (command === 'hue-saturation')
