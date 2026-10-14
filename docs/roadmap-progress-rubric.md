@@ -359,3 +359,12 @@ desktop/mobile browser acceptance 2/2; lint, typecheck and production build
 also pass locally. Provider-backed font installation, full OpenType shaping
 and language-specific fallback chains remain staged. See
 [`font-fallback-contract.md`](font-fallback-contract.md).
+
+## Menu visibility preference increment
+
+**Edit → Menus…** now persists a versioned browser-local preference for hiding
+explicitly disabled roadmap commands. Working commands, command search,
+document pixels and project files remain unchanged; malformed preferences fail
+closed to the default capability-map view. Pure coverage is 832/832 and the
+desktop/mobile acceptance is 2/2; lint, typecheck and production build pass
+locally. See [`menu-preferences-contract.md`](menu-preferences-contract.md).

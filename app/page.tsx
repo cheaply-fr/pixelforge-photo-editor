@@ -541,6 +541,11 @@ import {
 } from '../src/fontPreview';
 import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
+import MenuSettingsDialog from '../src/MenuSettingsDialog';
+import {
+  MENU_PREFERENCES_STORAGE_KEY,
+  normalizeMenuPreferences,
+} from '../src/menuPreferences';
 import { normalizeColorMode, type ColorMode } from '../src/colorMode';
 type MenuName =
   | 'File'
@@ -565,6 +570,7 @@ type Command =
   | 'define-custom-path'
   | 'update-custom-path'
   | 'keyboard-shortcuts'
+  | 'menu-settings'
   | 'filter-gallery'
   | 'toolbar-settings'
   | 'update-text-layers'
@@ -1040,7 +1046,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Assign Profile…', command: 'assign-profile' },
     { label: 'Convert to Profile…', command: 'convert-profile' },
     { label: 'Keyboard Shortcuts…', command: 'keyboard-shortcuts' },
-    { label: 'Menus…', command: 'noop', disabled: true },
+    { label: 'Menus…', command: 'menu-settings' },
     { label: 'Toolbar…', command: 'toolbar-settings' },
     { label: 'Reset adjustments', command: 'reset' },
   ],
@@ -1960,6 +1966,16 @@ function readLastFilterType(): FilterEffectType | undefined {
   }
 }
 
+function readMenuPreferences() {
+  if (typeof window === 'undefined') return normalizeMenuPreferences(undefined);
+  try {
+    const raw = window.localStorage.getItem(MENU_PREFERENCES_STORAGE_KEY);
+    return normalizeMenuPreferences(raw ? JSON.parse(raw) : undefined);
+  } catch {
+    return normalizeMenuPreferences(undefined);
+  }
+}
+
 export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
@@ -2020,6 +2036,7 @@ export default function Home() {
   const initialCommandShortcutPreferences = readCommandShortcutPreferences(commandShortcutIds);
   const initialToolFamilyChoices = readToolFamilyChoices();
   const initialLastFilterType = readLastFilterType();
+  const initialMenuPreferences = readMenuPreferences();
   const [tool, setActiveTool] = useState<Tool>('move'),
     [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>(() => initialToolFamilyChoices as Record<string, Tool>),
     [toolFlyout, setToolFlyout] = useState<string | null>(null),
@@ -2133,6 +2150,8 @@ export default function Home() {
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
     [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
+    [menuSettingsOpen, setMenuSettingsOpen] = useState(false),
+    [showDisabledMenuItems, setShowDisabledMenuItems] = useState(() => initialMenuPreferences.showDisabled),
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
     [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
     [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
@@ -11901,6 +11920,7 @@ export default function Home() {
     else if (command === 'define-custom-path') return defineCustomPath();
     else if (command === 'update-custom-path') return updateCustomPathPreset();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
+    else if (command === 'menu-settings') return setMenuSettingsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'camera-raw') return setCameraRawEditing(true);
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
@@ -12749,6 +12769,19 @@ export default function Home() {
         return false;
     }
   };
+  const visibleMenuItems = (menu: MenuName) => {
+    const items = MENU_DEFS[menu];
+    if (showDisabledMenuItems) return items;
+    return items.filter((item, index) => {
+      if (!item.separator) return !item.disabled;
+      const previous = items[index - 1];
+      const next = items[index + 1];
+      return Boolean(
+        previous && !previous.separator && !previous.disabled &&
+        next && !next.separator && !next.disabled,
+      );
+    });
+  };
   const stopToolHold = () => {
     if (toolHoldTimer.current !== null) {
       clearTimeout(toolHoldTimer.current);
@@ -12796,8 +12829,8 @@ export default function Home() {
     setToolFlyout(flyout);
     setToolFlyoutAnchor(event.currentTarget);
   };
-  const commandSearchItems: CommandSearchItem[] = (Object.entries(MENU_DEFS) as [MenuName, MenuItem[]][])
-    .flatMap(([menu, items]) => items
+  const commandSearchItems: CommandSearchItem[] = (Object.keys(MENU_DEFS) as MenuName[])
+    .flatMap((menu) => visibleMenuItems(menu)
       .filter((item) => !item.separator && item.command !== 'search-commands')
       .map((item) => ({
         label: item.label,
@@ -13150,6 +13183,26 @@ export default function Home() {
       {missingFontsOpen && (
         <MissingFontsDialog families={FONTS} close={() => setMissingFontsOpen(false)} />
       )}
+      {menuSettingsOpen && (
+        <MenuSettingsDialog
+          showDisabled={showDisabledMenuItems}
+          close={() => setMenuSettingsOpen(false)}
+          apply={(showDisabled) => {
+            setShowDisabledMenuItems(showDisabled);
+            setMenuSettingsOpen(false);
+            try {
+              window.localStorage.setItem(
+                MENU_PREFERENCES_STORAGE_KEY,
+                JSON.stringify(normalizeMenuPreferences({
+                  version: 1,
+                  showDisabled,
+                })),
+              );
+            } catch { /* private mode */ }
+            setNotice(showDisabled ? 'Disabled roadmap commands are visible' : 'Disabled roadmap commands are hidden');
+          }}
+        />
+      )}
       {colorSettingsOpen && (
         <ColorSettingsDialog
           value={normalizeColorProfile(frame?.colorProfile)}
@@ -13266,7 +13319,7 @@ export default function Home() {
                   tabIndex={-1}
                   onKeyDown={(event) => handleMenuKeyDown(event, menuName)}
                 >
-                  {MENU_DEFS[menuName].map((item, index) =>
+                  {visibleMenuItems(menuName).map((item, index) =>
                     item.separator ? (
                       <hr key={`separator-${menuName}-${index}`} />
                     ) : (
