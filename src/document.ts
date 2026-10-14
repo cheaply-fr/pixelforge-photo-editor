@@ -249,6 +249,8 @@ type Common = {
   smartFilters?: FilterEffects[];
   /** Optional source-to-base relationship for a nondestructive clipping mask. */
   clippingTo?: string;
+  /** Optional local transform-link identity shared by ordinary layers. */
+  layerLinkId?: string;
 };
 export type Layer = Common &
   (
@@ -1337,6 +1339,7 @@ export function validateFrame(
       (layer.smartFilters !== undefined && (!isRasterContentLayer(layer) || !validSmartFilters(layer.smartFilters))) ||
       (layer.clippingTo !== undefined &&
         typeof layer.clippingTo !== 'string') ||
+      (layer.layerLinkId !== undefined && !validId(layer.layerLinkId)) ||
       (layer.groupId !== undefined &&
         (!validId(layer.groupId) || !groupIds.has(layer.groupId)))
     )

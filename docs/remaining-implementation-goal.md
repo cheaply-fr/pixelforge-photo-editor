@@ -31,13 +31,19 @@ Every shipped milestone must include actual UI and data-model behavior, extensiv
 
 The goal remains active until every original requirement and recorded capability passes its applicable acceptance gates. Missing, indirect or uncertain evidence means unfinished work. Do not narrow success to implemented subsets or mark the project complete to replace the goal.
 
-The current layer-link increment adds `Layer → Select Linked Layers`. It
-selects every smart-object instance sharing a selected `linkId`, unions
-multiple selected link groups in stack order, preserves pixels/transforms and
-source assets, and guards stale or unlinked selections. Pure coverage is in
-`tests/linked-layers.test.mjs`; desktop/mobile undo, reload, pixel and project
-round-trip coverage is in `tests/browser/smart-objects.spec.ts`. External
-provider-backed linked files and synchronized asset graphs remain staged.
+The current layer-link increment adds `Layer → Link Layers`, `Layer → Unlink
+Layers` and `Layer → Select Linked Layers`. Ordinary selected unlocked layers
+receive a persisted `layerLinkId`; affine transform edits propagate to linked
+peers as one undoable delta while each asset remains independent. Select Linked
+Layers also selects every smart-object instance sharing a selected embedded
+`linkId`, unions multiple selected link groups in stack order, preserves
+pixels/transforms and source assets, and guards stale or unlinked selections.
+Pure coverage is in `tests/layer-links.test.mjs` and
+`tests/linked-layers.test.mjs`; desktop/mobile undo, reload, transform, pixel
+and project round-trip coverage is in `tests/browser/layer-links.spec.ts` and
+`tests/browser/smart-objects.spec.ts`. External provider-backed linked files,
+nested links and synchronized cloud asset graphs remain staged. See
+[`layer-links-contract.md`](./layer-links-contract.md).
 
 The current typography increment adds `Type → Save Default Type Styles` and
 `Type → Load Default Type Styles`. A bounded local preset stores supported

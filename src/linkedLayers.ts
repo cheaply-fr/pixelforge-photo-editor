@@ -23,23 +23,30 @@ export function planSelectLinkedLayers(frame: Frame): SelectLinkedLayersPlan {
   }
   const selectedIds = selectedLayerIdsForFrame(frame);
   if (!selectedIds.length) return { ok: false, reason: 'no-selection', layerIds: [] };
-  const linkIds = [
+  const linkKeys = [
     ...new Set(
       selectedIds.flatMap((id) => {
         const layer = frame.layers.find((candidate) => candidate.id === id);
-        return layer?.kind === 'smart-object' && layer.linkId ? [layer.linkId] : [];
+        if (layer?.layerLinkId) return [`layer:${layer.layerLinkId}`];
+        return layer?.kind === 'smart-object' && layer.linkId ? [`smart:${layer.linkId}`] : [];
       }),
     ),
   ];
-  if (!linkIds.length)
+  if (!linkKeys.length)
     return { ok: false, reason: 'no-linked-selection', layerIds: selectedIds };
-  const links = new Set(linkIds);
+  const links = new Set(linkKeys);
   const layerIds = frame.layers
-    .filter((layer): layer is Layer & { kind: 'smart-object'; linkId: string } =>
-      layer.kind === 'smart-object' && layer.linkId !== undefined && links.has(layer.linkId),
+    .filter((layer): layer is Layer & { kind: 'smart-object'; linkId?: string } => {
+      const key = layer.layerLinkId
+        ? `layer:${layer.layerLinkId}`
+        : layer.kind === 'smart-object' && layer.linkId
+          ? `smart:${layer.linkId}`
+          : undefined;
+      return key !== undefined && links.has(key);
+    },
     )
     .map((layer) => layer.id);
-  return { ok: true, layerIds, linkIds };
+  return { ok: true, layerIds, linkIds: linkKeys.map((key) => key.slice(key.indexOf(':') + 1)) };
 }
 
 /** Apply a validated plan immutably and retain the current active layer. */

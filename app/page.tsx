@@ -148,6 +148,13 @@ import {
   type TypeStyle,
 } from '../src/typeStyles';
 import {
+  applyLinkLayers,
+  applyUnlinkLayers,
+  linkLayersReason,
+  planLinkLayers,
+  planUnlinkLayers,
+} from '../src/layerLinks';
+import {
   beginPerformanceSpan,
   type PerformanceSpan,
 } from '../src/performanceMarks';
@@ -593,6 +600,8 @@ type Command =
   | 'link-smart-objects'
   | 'select-linked-layers'
   | 'unlink-smart-objects'
+  | 'link-layers'
+  | 'unlink-layers'
   | 'load-default-type-styles'
   | 'save-default-type-styles'
   | 'rasterize-layer'
@@ -1083,6 +1092,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Link Smart Object Contents', command: 'link-smart-objects' },
     { label: 'Select Linked Layers', command: 'select-linked-layers' },
     { label: 'Unlink Smart Object Contents', command: 'unlink-smart-objects' },
+    { label: 'Link Layers', command: 'link-layers' },
+    { label: 'Unlink Layers', command: 'unlink-layers' },
     { label: 'Rasterize', command: 'rasterize-layer' },
     { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
@@ -3692,10 +3703,42 @@ export default function Home() {
         ? (patch as Layer)
         : ({ ...layer, ...patch } as Layer);
     if (JSON.stringify(next) === JSON.stringify(layer)) return true;
+    let layers = f.layers.map((l) => (l.id === layer.id ? next : l));
+    if (patch.matrix !== undefined && layer.layerLinkId !== undefined) {
+      const linked = f.layers.filter(
+        (candidate) => candidate.id !== layer.id && candidate.layerLinkId === layer.layerLinkId,
+      );
+      if (linked.some((candidate) => layerIsLocked(f, candidate))) {
+        setNotice('Unlock all linked layers before transforming');
+        return false;
+      }
+      const [a, b, c, d, e, g] = layer.matrix;
+      const determinant = a * d - b * c;
+      if (Math.abs(determinant) < 0.000000000001) {
+        setNotice('Linked layer transform is invalid');
+        return false;
+      }
+      const inverse: Matrix = [
+        d / determinant,
+        -b / determinant,
+        -c / determinant,
+        a / determinant,
+        (c * g - d * e) / determinant,
+        (b * e - a * g) / determinant,
+      ];
+      const delta = multiply(next.matrix, inverse);
+      layers = f.layers.map((candidate) =>
+        candidate.id === layer.id
+          ? next
+          : candidate.layerLinkId === layer.layerLinkId
+            ? { ...candidate, matrix: multiply(delta, candidate.matrix) }
+            : candidate,
+      );
+    }
     if (
       commit({
         ...f,
-        layers: f.layers.map((l) => (l.id === layer.id ? next : l)),
+        layers,
       })
     ) {
       setNotice('Layer updated');
@@ -7585,13 +7628,40 @@ export default function Home() {
       setNotice(selectLinkedLayersReason(plan.reason));
       return;
     }
+    const smartOnly = plan.layerIds.every((id) => {
+      const layer = original.layers.find((candidate) => candidate.id === id);
+      return layer?.kind === 'smart-object' && layer.linkId !== undefined && layer.layerLinkId === undefined;
+    });
+    const notice = smartOnly
+      ? `Selected ${plan.layerIds.length} linked smart-object layers`
+      : `Selected ${plan.layerIds.length} linked layers`;
     const next = applySelectLinkedLayers(original, plan);
     if (next === original) {
-      setNotice(`Selected ${plan.layerIds.length} linked smart-object layers`);
+      setNotice(notice);
       return;
     }
     if (commit(next))
-      setNotice(`Selected ${plan.layerIds.length} linked smart-object layers`);
+      setNotice(notice);
+  };
+  const linkLayers = () => {
+    const original = current();
+    const plan = planLinkLayers(original, crypto.randomUUID());
+    if (!plan.ok) {
+      setNotice(linkLayersReason(plan.reason));
+      return;
+    }
+    if (commit(applyLinkLayers(original, plan)))
+      setNotice(`Linked ${plan.layerIds.length} layers for synchronized transforms`);
+  };
+  const unlinkLayers = () => {
+    const original = current();
+    const plan = planUnlinkLayers(original);
+    if (!plan.ok) {
+      setNotice(linkLayersReason(plan.reason));
+      return;
+    }
+    if (commit(applyUnlinkLayers(original, plan)))
+      setNotice(`Unlinked ${plan.layerIds.length} layers`);
   };
   const unlinkSmartObjectContents = () => {
     const original = current();
@@ -11744,6 +11814,8 @@ export default function Home() {
     else if (command === 'link-smart-objects') return linkSmartObjectContents();
     else if (command === 'select-linked-layers') return selectLinkedLayers();
     else if (command === 'unlink-smart-objects') return unlinkSmartObjectContents();
+    else if (command === 'link-layers') return linkLayers();
+    else if (command === 'unlink-layers') return unlinkLayers();
     else if (command === 'save-default-type-styles') return saveDefaultTypeStyles();
     else if (command === 'load-default-type-styles') return loadDefaultTypeStyles();
     else if (command === 'rasterize-layer') return rasterize();
@@ -12234,12 +12306,17 @@ export default function Home() {
         );
       case 'select-linked-layers':
         return !selectedLayersForFrame(frame).some(
-          (candidate) => candidate.kind === 'smart-object' && candidate.linkId !== undefined,
+          (candidate) => candidate.layerLinkId !== undefined ||
+            (candidate.kind === 'smart-object' && candidate.linkId !== undefined),
         );
       case 'unlink-smart-objects':
         return !selectedLayersForFrame(frame).some(
           (candidate) => candidate.kind === 'smart-object' && candidate.linkId !== undefined,
         );
+      case 'link-layers':
+        return !planLinkLayers(frame, '12345678-1234-4234-8234-123456789abc').ok;
+      case 'unlink-layers':
+        return !planUnlinkLayers(frame).ok;
       case 'rename-layer':
         return !layer || locked;
       case 'layer-style':
