@@ -532,6 +532,13 @@ import {
   SCREEN_MODE_STORAGE_KEY,
   type ScreenMode,
 } from '../src/screenModes';
+import {
+  DEFAULT_FONT_PREVIEW_SIZE,
+  fontPreviewPixels,
+  nextFontPreviewSize,
+  normalizeFontPreviewSize,
+  type FontPreviewSize,
+} from '../src/fontPreview';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -789,7 +796,8 @@ type Command =
   | 'reset-rotate-view'
   | 'screen-standard'
   | 'screen-full-menu'
-  | 'screen-full';
+  | 'screen-full'
+  | 'font-preview-size';
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -1154,7 +1162,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Rasterize Type Layer', command: 'rasterize-type' },
     { label: 'Warp Text…', command: 'text-warp' },
     { label: 'Text on Path…', command: 'text-on-path' },
-    { label: 'Font Preview Size', command: 'noop', disabled: true },
+    { label: 'Font Preview Size', command: 'font-preview-size' },
     { label: 'Language Options', command: 'noop', disabled: true },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'noop', disabled: true },
@@ -2086,6 +2094,7 @@ export default function Home() {
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56),
     [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
+    [fontPreviewSize, setFontPreviewSize] = useState<FontPreviewSize>(DEFAULT_FONT_PREVIEW_SIZE),
     [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
@@ -2449,6 +2458,7 @@ export default function Home() {
     text,
     fontSize,
     fontFamily,
+    fontPreviewSize,
     defaultTypeStyle,
     ...neutral,
   });
@@ -2526,6 +2536,7 @@ export default function Home() {
     setText(s.text);
     setFontSize(s.fontSize);
     setFontFamily(s.fontFamily && FONTS.includes(s.fontFamily) ? s.fontFamily : 'Arial');
+    setFontPreviewSize(normalizeFontPreviewSize(s.fontPreviewSize));
     setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
     setTool,
@@ -2588,6 +2599,7 @@ export default function Home() {
     setText,
     setFontSize,
     setFontFamily,
+    setFontPreviewSize,
   ]);
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
@@ -5700,6 +5712,7 @@ export default function Home() {
         text,
         fontSize,
         fontFamily,
+        fontPreviewSize,
         defaultTypeStyle,
         ...neutral,
       },
@@ -5803,6 +5816,7 @@ export default function Home() {
     text,
     fontSize,
     fontFamily,
+    fontPreviewSize,
     defaultTypeStyle,
     history,
     index,
@@ -11969,6 +11983,11 @@ export default function Home() {
       setTextOrientation('vertical');
     else if (command === 'text-warp') setTextWarp();
     else if (command === 'text-on-path') setTextOnPath();
+    else if (command === 'font-preview-size') {
+      const next = nextFontPreviewSize(fontPreviewSize);
+      setFontPreviewSize(next);
+      setNotice(`Font preview size: ${next}`);
+    }
     else if (command === 'paste-lorem') pasteLoremIpsum();
     else if (command === 'convert-to-shape') return convertTextToShape();
     else if (command === 'rasterize-type') {
@@ -15405,7 +15424,8 @@ export default function Home() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
-              <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font }}>{font}</option>)}</select></label>
+              <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) }}>{font}</option>)}</select></label>
+              <label className="select-row"><span>Preview</span><select aria-label="Font preview size" className="text-input" value={fontPreviewSize} onChange={(event) => setFontPreviewSize(normalizeFontPreviewSize(event.target.value))}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
               <Slider
                 label="Size"
                 value={fontSize}

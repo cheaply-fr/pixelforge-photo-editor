@@ -79,3 +79,20 @@ test('keeps the Text tool font choice in the local settings and new editable lay
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Text tool font', { exact: true })).toHaveValue('Georgia');
 });
+
+test('persists the Font Preview Size preference and cycles it from the Type menu', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Text tool', { exact: true }).click();
+  await expect(page.getByLabel('Font preview size', { exact: true })).toHaveValue('medium');
+  await page.getByRole('button', { name: 'Type', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Font Preview Size', exact: true }).click();
+  await expect(page.getByText('Font preview size: large', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Font preview size', { exact: true })).toHaveValue('large');
+  const saved = await project(page);
+  expect(saved.settings.fontPreviewSize).toBe('large');
+
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Font preview size', { exact: true })).toHaveValue('large');
+});

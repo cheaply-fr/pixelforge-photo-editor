@@ -71,6 +71,7 @@ import {
   type DocumentMetadata,
 } from './metadata.ts';
 import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
+import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -233,6 +234,8 @@ export type Settings = {
   fontSize: number;
   /** Local/system font used when the Text tool creates a new editable layer. */
   fontFamily?: (typeof FONTS)[number];
+  /** Preview scale used by the Text tool's bounded local font picker. */
+  fontPreviewSize?: FontPreviewSize;
   /** Optional local default for new or existing editable text layers. */
   defaultTypeStyle?: TypeStyle;
   brightness: number;
@@ -376,6 +379,7 @@ function validSettings(settings: unknown): settings is Settings {
     typeof candidate.text !== 'string' ||
     candidate.text.length > 10000 ||
     (candidate.fontFamily !== undefined && !FONTS.includes(candidate.fontFamily as (typeof FONTS)[number])) ||
+    (candidate.fontPreviewSize !== undefined && normalizeFontPreviewSize(candidate.fontPreviewSize) !== candidate.fontPreviewSize) ||
     (candidate.exportFormat !== undefined &&
       !EXPORT_FORMATS.includes(candidate.exportFormat)) ||
     (candidate.exportQuality !== undefined &&
