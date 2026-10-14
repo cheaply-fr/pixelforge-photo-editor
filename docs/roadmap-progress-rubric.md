@@ -304,24 +304,26 @@ Pure and desktop/mobile acceptance cover normalization, collision rejection,
 invocation and persistence. See
 [`command-shortcuts-contract.md`](command-shortcuts-contract.md).
 
-## TIFF composite import candidate (`8757eb052539b112f7314befd7f84498cbfda6bb`)
+## TIFF composite import candidate (`befd7ef`)
 
-The current candidate adds bounded classic TIFF composite import for 8-bit
-chunky RGB/RGBA and grayscale/alpha using raw or PackBits strips in either
-byte order. Unsupported BigTIFF, tiled/planar, palette, CMYK, unsupported
-compression, oversized and malformed inputs fail before replacing the active
-draft. PSD/PSB and TIFF batch decode use the same bounded decoders as editor
-open/import. TIFF-specific pure tests pass 3/3; the focused import browser
-suite passes 20/20 across desktop and mobile, including representative RGBA
-pixels, malformed-file draft retention and PSD coverage. The complete local
-pure suite passes 820/820, and lint, typecheck and production build pass.
+The candidate adds bounded classic TIFF composite import for 8-bit chunky
+RGB/RGBA and grayscale/alpha using raw or PackBits strips in either byte order.
+The follow-up hardening adds strict per-channel BitsPerSample validation,
+None/Horizontal predictors, EXIF orientation normalization for values 1–8 and
+explicit associated/unassociated alpha handling with safe unpremultiplication.
+Unsupported BigTIFF, tiled/planar, palette, CMYK, unsupported compression,
+oversized and malformed inputs fail before replacing the active draft. PSD/PSB
+and TIFF batch decode use the same bounded decoders as editor open/import.
+TIFF-specific pure tests pass 5/5; the focused import browser suite passes
+20/20 across desktop and mobile, including representative pixels,
+flattening disclosure and malformed-file draft retention. The complete local
+pure suite passes 822/822, and lint, typecheck and production build pass.
 
-Protected PR workflow #634 is still running for this exact SHA; lint,
-typecheck, build and pure tests are green, while the full E2E step remains in
-progress. PR #136 is open at this SHA. Run #633 passed for the preceding PSD
-composite-import SHA `7f409faeb265c10e13beef303a0a4dda24bf7c74`, which is useful
-preceding evidence but does not validate the TIFF changes. The live site remains
-healthy on `7495c1b4f2490c7a135ef9011d7fd0ffefae93b6`; candidate deployment,
+Protected PR workflow #634 passed for the preceding TIFF SHA
+`8757eb052539b112f7314befd7f84498cbfda6bb`; it validates the initial TIFF
+scope but not this hardening commit. PR #136 is open at `befd7ef`; a new
+protected run is required for this exact SHA. The live site remains healthy on
+`7495c1b4f2490c7a135ef9011d7fd0ffefae93b6`; candidate deployment,
 DNS/TLS/live-editor/export and authorization checks have not occurred. Keep
 the completion estimate unchanged until the candidate passes protected CI,
 merge/deploy and its applicable independent live checks. TIFF scope and
