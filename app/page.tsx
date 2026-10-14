@@ -142,6 +142,12 @@ import {
   selectLinkedLayersReason,
 } from '../src/linkedLayers';
 import {
+  applyTypeStyle,
+  normalizeTypeStyle,
+  typeStyleFromLayer,
+  type TypeStyle,
+} from '../src/typeStyles';
+import {
   beginPerformanceSpan,
   type PerformanceSpan,
 } from '../src/performanceMarks';
@@ -587,6 +593,8 @@ type Command =
   | 'link-smart-objects'
   | 'select-linked-layers'
   | 'unlink-smart-objects'
+  | 'load-default-type-styles'
+  | 'save-default-type-styles'
   | 'rasterize-layer'
   | 'matting'
   | 'duplicate-layer'
@@ -1131,8 +1139,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'noop', disabled: true },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
-    { label: 'Load Default Type Styles', command: 'noop', disabled: true },
-    { label: 'Save Default Type Styles', command: 'noop', disabled: true },
+    { label: 'Load Default Type Styles', command: 'load-default-type-styles' },
+    { label: 'Save Default Type Styles', command: 'save-default-type-styles' },
   ],
   Select: [
     { label: 'All', shortcut: 'Ctrl+A', command: 'select-all' },
@@ -2056,7 +2064,8 @@ export default function Home() {
       undefined,
     ),
     [text, setText] = useState('Your text'),
-    [fontSize, setFontSize] = useState(56);
+    [fontSize, setFontSize] = useState(56),
+    [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
   });
@@ -2416,6 +2425,7 @@ export default function Home() {
     exportTargetBytes,
     text,
     fontSize,
+    defaultTypeStyle,
     ...neutral,
   });
   const documentValue = (): Draft => ({
@@ -2491,6 +2501,7 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
+    setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
     setTool,
     setZoom,
@@ -3700,6 +3711,29 @@ export default function Home() {
       return;
     }
     editLayer({ textAlign });
+  };
+  const saveDefaultTypeStyles = () => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    const style = typeStyleFromLayer(layer);
+    if (!style) {
+      setNotice('Select an editable text layer before saving default type styles');
+      return;
+    }
+    setDefaultTypeStyle(style);
+    setNotice('Default type style saved on this device');
+  };
+  const loadDefaultTypeStyles = () => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select an editable text layer before loading default type styles');
+      return;
+    }
+    if (!defaultTypeStyle) {
+      setNotice('Save a default type style before loading it');
+      return;
+    }
+    if (editLayer(applyTypeStyle(layer, defaultTypeStyle)))
+      setNotice('Default type style applied');
   };
   const setTextOrientation = (orientation: 'horizontal' | 'vertical') => {
     const f = current();
@@ -5547,6 +5581,7 @@ export default function Home() {
         exportTargetBytes,
         text,
         fontSize,
+        defaultTypeStyle,
         ...neutral,
       },
       metadata: { ...metadata },
@@ -5648,6 +5683,7 @@ export default function Home() {
     metadata,
     text,
     fontSize,
+    defaultTypeStyle,
     history,
     index,
     assets,
@@ -11708,6 +11744,8 @@ export default function Home() {
     else if (command === 'link-smart-objects') return linkSmartObjectContents();
     else if (command === 'select-linked-layers') return selectLinkedLayers();
     else if (command === 'unlink-smart-objects') return unlinkSmartObjectContents();
+    else if (command === 'save-default-type-styles') return saveDefaultTypeStyles();
+    else if (command === 'load-default-type-styles') return loadDefaultTypeStyles();
     else if (command === 'rasterize-layer') return rasterize();
     else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
@@ -12461,6 +12499,10 @@ export default function Home() {
       case 'text-orientation-vertical':
       case 'text-warp':
         return !layer || layer.kind !== 'text' || locked;
+      case 'save-default-type-styles':
+        return !layer || layer.kind !== 'text' || locked;
+      case 'load-default-type-styles':
+        return !layer || layer.kind !== 'text' || locked || !defaultTypeStyle;
       case 'text-on-path':
         return !layer || layer.kind !== 'text' || locked || !frame.layers.some((candidate) => candidate.kind === 'path');
       case 'paste-lorem':

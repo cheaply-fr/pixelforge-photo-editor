@@ -69,6 +69,7 @@ import {
   normalizeDocumentMetadata,
   type DocumentMetadata,
 } from './metadata.ts';
+import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -229,6 +230,8 @@ export type Settings = {
   exportTargetBytes?: number;
   text: string;
   fontSize: number;
+  /** Optional local default for new or existing editable text layers. */
+  defaultTypeStyle?: TypeStyle;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -440,6 +443,13 @@ function validSettings(settings: unknown): settings is Settings {
     }
   }
   if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected'].includes(candidate.gradientMode)) return false;
+  if (candidate.defaultTypeStyle !== undefined) {
+    try {
+      normalizeTypeStyle(candidate.defaultTypeStyle);
+    } catch {
+      return false;
+    }
+  }
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
