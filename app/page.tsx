@@ -2085,6 +2085,7 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56),
+    [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
     [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
@@ -2447,6 +2448,7 @@ export default function Home() {
     exportTargetBytes,
     text,
     fontSize,
+    fontFamily,
     defaultTypeStyle,
     ...neutral,
   });
@@ -2523,6 +2525,7 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
+    setFontFamily(s.fontFamily && FONTS.includes(s.fontFamily) ? s.fontFamily : 'Arial');
     setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
     setTool,
@@ -2584,6 +2587,7 @@ export default function Home() {
     setExportTargetBytes,
     setText,
     setFontSize,
+    setFontFamily,
   ]);
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
@@ -3856,7 +3860,7 @@ export default function Home() {
       kind: 'text',
       text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n\nSed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
       fontSize: Math.max(12, Math.min(96, fontSize)),
-      fontFamily: 'Arial',
+      fontFamily,
       bold: false,
       color,
       boxWidth: Math.max(240, Math.min(720, f.w - 128)),
@@ -5695,6 +5699,7 @@ export default function Home() {
         exportTargetBytes,
         text,
         fontSize,
+        fontFamily,
         defaultTypeStyle,
         ...neutral,
       },
@@ -5797,6 +5802,7 @@ export default function Home() {
     metadata,
     text,
     fontSize,
+    fontFamily,
     defaultTypeStyle,
     history,
     index,
@@ -9518,7 +9524,7 @@ export default function Home() {
         kind: 'text',
         text: text || 'Your text',
         fontSize,
-        fontFamily: 'Arial',
+        fontFamily,
         bold: true,
         color,
         boxWidth: Math.max(1, f.w - p.x),
@@ -15399,6 +15405,7 @@ export default function Home() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
+              <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font }}>{font}</option>)}</select></label>
               <Slider
                 label="Size"
                 value={fontSize}

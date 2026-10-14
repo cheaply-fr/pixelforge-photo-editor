@@ -226,6 +226,18 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
   );
 });
 
+test('Text tool font choice persists and rejects unsupported local fonts', () => {
+  const saved = validateDraft({
+    ...baseDraft(),
+    settings: { ...settings, fontFamily: 'Georgia' },
+  });
+  assert.equal(saved.settings.fontFamily, 'Georgia');
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, fontFamily: 'Comic Sans' } }),
+    /Saved document is not supported/,
+  );
+});
+
 test('cloud session and project response validators reject malformed or oversized data', () => {
   assert.deepEqual(validateCloudSession({ authenticated: false }), {
     authenticated: false,

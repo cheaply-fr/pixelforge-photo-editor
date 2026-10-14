@@ -14,6 +14,7 @@ import {
   effectiveAdjustments,
   effectiveTextLayer,
   neutral,
+  FONTS,
   validId,
   type Assets,
   type Frame,
@@ -230,6 +231,8 @@ export type Settings = {
   exportTargetBytes?: number;
   text: string;
   fontSize: number;
+  /** Local/system font used when the Text tool creates a new editable layer. */
+  fontFamily?: (typeof FONTS)[number];
   /** Optional local default for new or existing editable text layers. */
   defaultTypeStyle?: TypeStyle;
   brightness: number;
@@ -372,6 +375,7 @@ function validSettings(settings: unknown): settings is Settings {
     ].includes(candidate.tool as Tool) ||
     typeof candidate.text !== 'string' ||
     candidate.text.length > 10000 ||
+    (candidate.fontFamily !== undefined && !FONTS.includes(candidate.fontFamily as (typeof FONTS)[number])) ||
     (candidate.exportFormat !== undefined &&
       !EXPORT_FORMATS.includes(candidate.exportFormat)) ||
     (candidate.exportQuality !== undefined &&

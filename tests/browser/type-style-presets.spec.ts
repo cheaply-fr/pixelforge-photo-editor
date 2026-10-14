@@ -62,3 +62,20 @@ test('guards default type style commands for non-text and missing-style states',
   await expect(page.getByRole('menuitem', { name: 'Save Default Type Styles', exact: true })).toBeDisabled();
   await expect(page.getByRole('menuitem', { name: 'Load Default Type Styles', exact: true })).toBeDisabled();
 });
+
+test('keeps the Text tool font choice in the local settings and new editable layer', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Text tool font', { exact: true }).selectOption('Georgia');
+  await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 120 } });
+  await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
+  const saved = await project(page);
+  const layer = saved.history[saved.index].layers.find((item: { kind: string }) => item.kind === 'text') as { fontFamily: string };
+  expect(layer.fontFamily).toBe('Georgia');
+  expect(saved.settings.fontFamily).toBe('Georgia');
+
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Text tool font', { exact: true })).toHaveValue('Georgia');
+});
