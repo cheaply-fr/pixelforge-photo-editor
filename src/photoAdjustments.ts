@@ -16,12 +16,27 @@ export type PhotoAdjustments = {
   vibrance: number;
   /** Convert visible pixels to Rec. 709 luminance. */
   blackAndWhite: boolean;
+  /** Camera Raw-style highlight recovery in percentage points. */
+  highlights: number;
+  /** Camera Raw-style shadow recovery in percentage points. */
+  shadows: number;
+  /** Warm/cool colour temperature shift. */
+  temperature: number;
+  /** Green/magenta tint shift. */
+  tint: number;
+  /** Local-contrast approximation around middle gray. */
+  clarity: number;
 };
 
 export const neutralPhotoAdjustments: PhotoAdjustments = {
   exposure: 0,
   vibrance: 0,
   blackAndWhite: false,
+  highlights: 0,
+  shadows: 0,
+  temperature: 0,
+  tint: 0,
+  clarity: 0,
 };
 
 type PhotoPixels = Uint8ClampedArray<ArrayBufferLike>;
@@ -48,6 +63,21 @@ export function effectivePhotoAdjustments(
       ? clamp(value.vibrance, -100, 100)
       : neutralPhotoAdjustments.vibrance,
     blackAndWhite: value?.blackAndWhite === true,
+    highlights: finite(value?.highlights)
+      ? clamp(value.highlights, -100, 100)
+      : neutralPhotoAdjustments.highlights,
+    shadows: finite(value?.shadows)
+      ? clamp(value.shadows, -100, 100)
+      : neutralPhotoAdjustments.shadows,
+    temperature: finite(value?.temperature)
+      ? clamp(value.temperature, -100, 100)
+      : neutralPhotoAdjustments.temperature,
+    tint: finite(value?.tint)
+      ? clamp(value.tint, -100, 100)
+      : neutralPhotoAdjustments.tint,
+    clarity: finite(value?.clarity)
+      ? clamp(value.clarity, -100, 100)
+      : neutralPhotoAdjustments.clarity,
   };
 }
 
@@ -62,7 +92,12 @@ export function validPhotoAdjustments(value: unknown): value is PhotoAdjustments
     finite(candidate.vibrance) &&
     candidate.vibrance >= -100 &&
     candidate.vibrance <= 100 &&
-    typeof candidate.blackAndWhite === 'boolean'
+    typeof candidate.blackAndWhite === 'boolean' &&
+    (candidate.highlights === undefined || (finite(candidate.highlights) && candidate.highlights >= -100 && candidate.highlights <= 100)) &&
+    (candidate.shadows === undefined || (finite(candidate.shadows) && candidate.shadows >= -100 && candidate.shadows <= 100)) &&
+    (candidate.temperature === undefined || (finite(candidate.temperature) && candidate.temperature >= -100 && candidate.temperature <= 100)) &&
+    (candidate.tint === undefined || (finite(candidate.tint) && candidate.tint >= -100 && candidate.tint <= 100)) &&
+    (candidate.clarity === undefined || (finite(candidate.clarity) && candidate.clarity >= -100 && candidate.clarity <= 100))
   );
 }
 
@@ -73,7 +108,12 @@ export function isNeutralPhotoAdjustments(
   return (
     normalized.exposure === 0 &&
     normalized.vibrance === 0 &&
-    normalized.blackAndWhite === false
+    normalized.blackAndWhite === false &&
+    normalized.highlights === 0 &&
+    normalized.shadows === 0 &&
+    normalized.temperature === 0 &&
+    normalized.tint === 0 &&
+    normalized.clarity === 0
   );
 }
 
@@ -88,6 +128,40 @@ function assertPixels(source: PhotoPixels): void {
 
 function luminance(red: number, green: number, blue: number): number {
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function applyRawTonalControls(
+  red: number,
+  green: number,
+  blue: number,
+  settings: PhotoAdjustments,
+): [number, number, number] {
+  const gray = luminance(red, green, blue);
+  const highlightWeight = Math.max(0, (gray - 128) / 127);
+  const shadowWeight = Math.max(0, (128 - gray) / 128);
+  const tonalDelta =
+    settings.highlights * highlightWeight * 0.9 +
+    settings.shadows * shadowWeight * 0.9;
+  red += tonalDelta;
+  green += tonalDelta;
+  blue += tonalDelta;
+
+  // These bounded channel offsets intentionally disclose a local approximation
+  // rather than pretending to load camera profiles or linear-light RAW data.
+  const temperature = settings.temperature * 0.32;
+  const tint = settings.tint * 0.28;
+  red += temperature + tint * 0.2;
+  green += temperature * 0.2 - tint;
+  blue -= temperature + tint * 0.2;
+
+  const clarity = settings.clarity / 100;
+  const clarityFactor = 1 + clarity * 0.55;
+  const correctedGray = luminance(red, green, blue);
+  return [
+    clamp(correctedGray + (red - correctedGray) * clarityFactor),
+    clamp(correctedGray + (green - correctedGray) * clarityFactor),
+    clamp(correctedGray + (blue - correctedGray) * clarityFactor),
+  ];
 }
 
 /**
@@ -136,6 +210,7 @@ export function applyPhotoAdjustmentsPixels(
     let green = clamp(source[offset + 1] * exposureScale);
     let blue = clamp(source[offset + 2] * exposureScale);
 
+    [red, green, blue] = applyRawTonalControls(red, green, blue, settings);
     [red, green, blue] = applyVibrance(red, green, blue, settings.vibrance);
     if (settings.blackAndWhite) {
       const gray = luminance(red, green, blue);

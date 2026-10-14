@@ -176,6 +176,7 @@ import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
+import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
@@ -556,6 +557,7 @@ type Command =
   | 'update-text-layers'
   | 'spellcheck'
   | 'color-settings'
+  | 'camera-raw'
   | 'fade'
   | 'actions'
   | 'patch-tool'
@@ -1193,7 +1195,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
     { label: 'Neural Filters…', command: 'noop', disabled: true },
     { label: 'Filter Gallery…', command: 'filter-gallery' },
-    { label: 'Camera Raw Filter…', command: 'noop', disabled: true },
+    { label: 'Camera Raw Filter…', command: 'camera-raw' },
     { label: 'AI Denoise…', command: 'noop', disabled: true },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
@@ -2269,6 +2271,7 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  const [cameraRawEditing, setCameraRawEditing] = useState(false);
   const [colorRanging, setColorRanging] = useState(false);
   const [fillLayerDialog, setFillLayerDialog] = useState(false);
   const [focusAreaValue, setFocusAreaValue] = useState(false);
@@ -5263,6 +5266,12 @@ export default function Home() {
   const setPhotoAdjustments = (
     patch: Partial<Adjustments['photoAdjustments']>,
   ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });
+  const applyCameraRaw = (
+    patch: Partial<Adjustments['photoAdjustments']>,
+  ) => {
+    setCameraRawEditing(false);
+    if (setPhotoAdjustments(patch)) setNotice('Camera Raw correction applied; remains editable');
+  };
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
     if (type !== 'none') {
       setLastFilterType(type);
@@ -11786,6 +11795,7 @@ export default function Home() {
     else if (command === 'update-custom-path') return updateCustomPathPreset();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
+    else if (command === 'camera-raw') return setCameraRawEditing(true);
     else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'spellcheck') return setSpellcheckOpen(true);
@@ -12247,6 +12257,9 @@ export default function Home() {
     switch (item.command) {
       case 'last-filter':
         return !lastFilterType || !layer || locked || !layer.visible;
+      case 'camera-raw':
+        return !layer || locked || !layer.visible ||
+          (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'undo':
         return !canUndo || quickMasking;
       case 'redo':
@@ -12836,6 +12849,13 @@ export default function Home() {
             setSelectionFeathering(false);
             setSelectionFeather(feather);
           }}
+        />
+      )}
+      {cameraRawEditing && (
+        <CameraRawDialog
+          initial={photoAdjustments}
+          close={() => setCameraRawEditing(false)}
+          apply={applyCameraRaw}
         />
       )}
       {colorRanging && (

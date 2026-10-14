@@ -156,6 +156,11 @@ test('photo finishing controls are nondestructive, persisted and undoable', asyn
     exposure: 1.5,
     vibrance: 35,
     blackAndWhite: true,
+    highlights: 0,
+    shadows: 0,
+    temperature: 0,
+    tint: 0,
+    clarity: 0,
   });
   expect(layer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
@@ -171,6 +176,11 @@ test('photo finishing controls are nondestructive, persisted and undoable', asyn
     exposure: 0,
     vibrance: 0,
     blackAndWhite: false,
+    highlights: 0,
+    shadows: 0,
+    temperature: 0,
+    tint: 0,
+    clarity: 0,
   });
 
   await page.getByLabel('Exposure', { exact: true }).fill('2');
@@ -185,6 +195,11 @@ test('photo finishing controls are nondestructive, persisted and undoable', asyn
     exposure: 2,
     vibrance: -20,
     blackAndWhite: false,
+    highlights: 0,
+    shadows: 0,
+    temperature: 0,
+    tint: 0,
+    clarity: 0,
   });
 });
 
@@ -320,4 +335,40 @@ test('photo finishing composes with Hue on editable translucent vector shapes wi
   await expect.poll(() => pixels(page, points)).toEqual(decorated);
   await expect(page.getByLabel('Shape color', { exact: true })).toHaveValue('#403020');
   expect(errors).toEqual([]);
+});
+
+test('Camera Raw Filter exposes bounded raw-style controls, preserves alpha and round-trips', async ({ page }) => {
+  const source = await importFixture(page, [[238, 198, 176, 255], [24, 36, 48, 127], [9, 8, 7, 0]], 'camera-raw-rgba');
+  const before = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Camera Raw Filter…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  const dialog = page.getByRole('dialog', { name: 'Camera Raw Filter' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('Highlights', { exact: true }).fill('-70');
+  await dialog.getByLabel('Shadows', { exact: true }).fill('75');
+  await dialog.getByLabel('Temperature', { exact: true }).fill('60');
+  await dialog.getByLabel('Tint', { exact: true }).fill('-30');
+  await dialog.getByLabel('Clarity', { exact: true }).fill('45');
+  await dialog.getByRole('button', { name: 'Apply Camera Raw', exact: true }).click();
+  await expect(page.getByText('Camera Raw correction applied; remains editable', { exact: true })).toBeVisible();
+  const adjusted = await project(page);
+  expect(activeLayer(adjusted).adjustments?.photoAdjustments).toMatchObject({
+    highlights: -70,
+    shadows: 75,
+    temperature: 60,
+    tint: -30,
+    clarity: 45,
+  });
+  expectSameSources(source, adjusted);
+  const after = await pixels(page);
+  expect(after[0]).not.toEqual(before[0]);
+  expect(after[1][3]).toBe(before[1][3]);
+  expect(after[2]).toEqual(before[2]);
+  await undo(page);
+  await expect.poll(() => pixels(page)).toEqual(before);
+  await roundTrip(page, adjusted);
+  await reload(page);
+  await expect.poll(() => pixels(page)).toEqual(after);
 });

@@ -13,12 +13,12 @@ const pixel = (data, index) => Array.from(data.slice(index * 4, index * 4 + 4));
 test('photo adjustment metadata normalizes legacy and bounded values', () => {
   assert.deepEqual(
     effectivePhotoAdjustments({ exposure: 20, vibrance: -500, blackAndWhite: 1 }),
-    { exposure: 5, vibrance: -100, blackAndWhite: false },
+    { exposure: 5, vibrance: -100, blackAndWhite: false, highlights: 0, shadows: 0, temperature: 0, tint: 0, clarity: 0 },
   );
   assert.deepEqual(effectivePhotoAdjustments(undefined), neutralPhotoAdjustments);
   assert.deepEqual(
     effectivePhotoAdjustments({ exposure: Number.NaN, vibrance: Infinity, blackAndWhite: true }),
-    { exposure: 0, vibrance: 0, blackAndWhite: true },
+    { exposure: 0, vibrance: 0, blackAndWhite: true, highlights: 0, shadows: 0, temperature: 0, tint: 0, clarity: 0 },
   );
   assert.equal(validPhotoAdjustments({ exposure: 0, vibrance: 0, blackAndWhite: false }), true);
   assert.equal(validPhotoAdjustments({ exposure: 5.01, vibrance: 0, blackAndWhite: false }), false);
@@ -81,6 +81,39 @@ test('negative vibrance fades chroma to luminance and reaches neutral at minus 1
   assert.deepEqual(pixel(result, 0).slice(0, 3), [104, 104, 104]);
   assert.deepEqual(pixel(result, 1).slice(0, 3), [19, 19, 19]);
   assert.equal(pixel(result, 0)[3], 255);
+});
+
+test('Camera Raw tonal controls recover shadows/highlights and shift colour without touching alpha', () => {
+  const source = new Uint8ClampedArray([
+    240, 200, 180, 255,
+    24, 36, 48, 127,
+    9, 8, 7, 0,
+  ]);
+  const result = applyPhotoAdjustmentsPixels(source, {
+    highlights: -80,
+    shadows: 80,
+    temperature: 60,
+    tint: -35,
+    clarity: 50,
+  });
+  assert.ok(result[0] < source[0], 'highlight recovery lowers a bright pixel');
+  assert.ok(result[4] > source[4], 'shadow recovery lifts a dark pixel');
+  assert.notDeepEqual(Array.from(result.slice(4, 7)), Array.from(source.slice(4, 7)));
+  assert.equal(result[3], 255);
+  assert.equal(result[7], 127);
+  assert.deepEqual(Array.from(result.slice(8, 12)), [9, 8, 7, 0]);
+});
+
+test('Camera Raw metadata bounds are safe and legacy three-field records remain valid', () => {
+  assert.deepEqual(effectivePhotoAdjustments({ highlights: 500, shadows: -500, temperature: NaN, tint: 12, clarity: 25 }), {
+    ...neutralPhotoAdjustments,
+    highlights: 100,
+    shadows: -100,
+    tint: 12,
+    clarity: 25,
+  });
+  assert.equal(validPhotoAdjustments({ exposure: 0, vibrance: 0, blackAndWhite: false }), true);
+  assert.equal(validPhotoAdjustments({ exposure: 0, vibrance: 0, blackAndWhite: false, temperature: 101 }), false);
 });
 
 test('black and white uses Rec. 709 luminance after exposure and vibrance', () => {
