@@ -7,6 +7,7 @@ const additiveModifier: 'Meta' | 'Control' =
 type Project = {
   history: Array<{
     layers: Array<{ id: string; kind: string; asset?: string; sourceName?: string; linkId?: string; matrix: number[] }>;
+    selectedLayerIds?: string[];
     artboards?: Array<{ id: string; name: string; x: number; y: number; w: number; h: number; visible?: boolean; locked?: boolean; layerIds?: string[] }>;
     activeArtboardId?: string;
   }>;
@@ -125,6 +126,27 @@ test('links selected smart-object contents and propagates replacement while pres
   expect(linked[0].linkId).toBeTruthy();
   expect(linked[1].linkId).toBe(linked[0].linkId);
   expect(linked[0].asset).toBe(linked[1].asset);
+  const linkedPixels = await sample(page, 0, 0);
+  await rows.nth(0).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  const selectLinked = page.getByRole('menuitem', { name: 'Select Linked Layers', exact: true });
+  await expect(selectLinked).toBeEnabled();
+  await selectLinked.click();
+  await expect(page.getByText('Selected 2 linked smart-object layers', { exact: true })).toBeVisible();
+  out = await project(page);
+  frame = out.history[out.index];
+  expect(frame.selectedLayerIds).toEqual(frame.layers.filter((layer) => layer.kind === 'smart-object').map((layer) => layer.id));
+  expect(await sample(page, 0, 0)).toEqual(linkedPixels);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  out = await project(page);
+  frame = out.history[out.index];
+  expect(frame.selectedLayerIds).toEqual(frame.layers.filter((layer) => layer.kind === 'smart-object').map((layer) => layer.id));
+  expect(await sample(page, 0, 0)).toEqual(linkedPixels);
   const transforms = linked.map((layer) => layer.matrix);
   await page.getByRole('button', { name: 'Replace contents', exact: true }).click();
   await page.getByTestId('smart-object-input').setInputFiles({ name: 'green-source.png', mimeType: 'image/png', buffer: Buffer.from(await fixture(page, [0, 255, 0]), 'base64') });
