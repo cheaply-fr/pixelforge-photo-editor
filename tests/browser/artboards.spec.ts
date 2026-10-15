@@ -5,6 +5,7 @@ type Project = {
   history: Array<{
     w: number;
     h: number;
+    layers: Array<{ id: string; matrix: [number, number, number, number, number, number] }>;
     artboards?: Array<{
       id: string;
       name: string;
@@ -15,6 +16,7 @@ type Project = {
       visible: boolean;
       locked: boolean;
       background?: string;
+      layerIds?: string[];
     }>;
     activeArtboardId?: string;
   }>;
@@ -146,4 +148,48 @@ test('active named artboard renders and exports at viewport dimensions', async (
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   const roundTrip = await downloadProject(page);
   expect(roundTrip.history[roundTrip.index].artboards?.[0]).toMatchObject({ id: 'hero', w: 320, h: 200 });
+});
+
+test('artboard visibility controls hide overlays, move the active target and persist on desktop and mobile', async ({ page }) => {
+  const project = await downloadProject(page);
+  const frame = project.history[project.index];
+  frame.artboards = [
+    { id: 'hero', name: 'Hero', x: 0, y: 0, w: 640, h: 480, visible: true, locked: false },
+    { id: 'social', name: 'Social', x: 660, y: 0, w: 120, h: 120, visible: true, locked: false },
+  ];
+  frame.activeArtboardId = 'hero';
+  await uploadProject(page, project);
+  await expect(page.getByLabel('Show Hero artboard')).toBeChecked();
+  await page.getByLabel('Show Hero artboard').uncheck();
+  await expect(page.locator('.canvas-wrap')).toHaveAttribute('data-active-artboard', 'social');
+  await expect(page.locator('.artboard-overlay g')).toHaveCount(1);
+  await expect(page.getByText('Hero hidden', { exact: true })).toBeVisible();
+  const savedProject = await downloadProject(page);
+  expect(savedProject.history[savedProject.index].artboards).toEqual([
+    expect.objectContaining({ id: 'hero', visible: false }),
+    expect.objectContaining({ id: 'social', visible: true }),
+  ]);
+  await page.reload();
+  await expect(page.getByLabel('Show Hero artboard')).not.toBeChecked();
+  await expect(page.locator('.artboard-overlay g')).toHaveCount(1);
+});
+
+test('Fit active layer to artboard applies bounded cover geometry and persists membership', async ({ page }) => {
+  const project = await downloadProject(page);
+  const frame = project.history[project.index];
+  const active = frame.layers.at(-1)!;
+  frame.artboards = [{ id: 'hero', name: 'Hero', x: 100, y: 80, w: 320, h: 200, visible: true, locked: false, layerIds: [] }];
+  frame.activeArtboardId = 'hero';
+  await uploadProject(page, project);
+  await page.getByTestId('artboard-fit-active').click();
+  await expect(page.getByText('Active layer fitted to artboard (cover)', { exact: true })).toBeVisible();
+  const savedProject = await downloadProject(page);
+  const savedFrame = savedProject.history[savedProject.index];
+  expect(savedFrame.artboards?.[0].layerIds).toContain(active.id);
+  const savedLayer = savedFrame.layers.find((item) => item.id === active.id)!;
+  expect(savedLayer.matrix[4]).toBe(100);
+  expect(savedLayer.matrix[5]).toBeCloseTo(73.333333, 4);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  expect((await downloadProject(page)).history.at(-1)?.layers.find((item) => item.id === active.id)?.matrix).toEqual(savedLayer.matrix);
 });

@@ -36,3 +36,12 @@ test('star inner vertices remain inside the outer ring', () => {
   assert.ok(Math.abs(Math.max(...radii) - 60) < 1e-12);
   assert.ok(Math.abs(Math.min(...radii) - 30) < 1e-12);
 });
+
+test('star inner radius is bounded and deterministic', () => {
+  const points = shapePoints(120, 120, 'star', 5, 0.7);
+  const center = { x: 60, y: 60 };
+  const radii = points.map((point) => Math.hypot(point.x - center.x, point.y - center.y));
+  assert.ok(Math.abs(Math.min(...radii) - 42) < 1e-12);
+  assert.throws(() => shapePoints(120, 120, 'star', 5, 0.05), /inner radius/);
+  assert.throws(() => shapePoints(120, 120, 'star', 5, 0.95), /inner radius/);
+});

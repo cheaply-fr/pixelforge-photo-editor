@@ -56,8 +56,8 @@ test('rejects missing, bottom and locked or hidden layer states', () => {
   );
 });
 
-test('guard reasons are user-facing and identify the staged boundary', () => {
-  assert.match(layerMergeReason('grouped-layers'), /isolated folder compositing/);
+test('guard reasons are user-facing and identify the supported folder boundary', () => {
+  assert.match(layerMergeReason('grouped-layers'), /complete visible, unlocked folder/);
   assert.match(layerMergeReason('no-lower-layer'), /above another layer/);
 });
 
@@ -79,6 +79,27 @@ test('plans a contiguous multi-selection in canonical stack order', () => {
     lastIndex: 2,
     selectedIndices: [0, 1, 2],
     selectedLayerIds: ['bottom', 'middle', 'active'],
+  });
+});
+
+test('expands a complete folder selection into an isolated merge unit', () => {
+  const value = frame({
+    layers: [
+      { id: 'bottom', name: 'Bottom', kind: 'raster', visible: true, locked: false },
+      { id: 'folder-a', name: 'Folder A', kind: 'raster', visible: true, locked: false, groupId: 'folder' },
+      { id: 'outside', name: 'Outside', kind: 'raster', visible: true, locked: false },
+      { id: 'folder-b', name: 'Folder B', kind: 'text', visible: true, locked: false, groupId: 'folder' },
+    ],
+    active: 'folder-b',
+    selectedLayerIds: ['folder-a'],
+    groups: [{ id: 'folder', name: 'Folder', visible: true, locked: false, opacity: 0.8, blend: 'multiply', collapsed: false }],
+  });
+  assert.deepEqual(planSelectedLayerMerge(value), {
+    ok: true,
+    firstIndex: 1,
+    lastIndex: 3,
+    selectedIndices: [1, 3],
+    selectedLayerIds: ['folder-a', 'folder-b'],
   });
 });
 
@@ -130,6 +151,10 @@ test('multi-selection planner guards insufficient, missing, non-contiguous, grou
     'locked-layer',
   );
   assert.match(selectedLayerMergeReason('non-contiguous-selection'), /contiguous/);
+  assert.match(
+    selectedLayerMergeReason('grouped-layers'),
+    /every visible, unlocked layer in one folder/,
+  );
 });
 
 test('applies a selected merge without mutating unrelated layers, groups or artboards', () => {

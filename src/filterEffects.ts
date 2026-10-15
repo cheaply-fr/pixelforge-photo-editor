@@ -8,10 +8,12 @@
  */
 
 import { deinterlacePixels, effectiveDeinterlaceSettings, validDeinterlaceSettings, type DeinterlaceSettings } from './deinterlace.ts';
+import { isGradientStops, normalizeGradientStops, type GradientStop } from './gradientStops.ts';
 
 export const FILTER_EFFECT_TYPES = [
   'none',
   'average-blur',
+  'blur',
   'blur-more',
   'box-blur',
   'gaussian-blur',
@@ -46,6 +48,7 @@ export const FILTER_EFFECT_TYPES = [
   'lens-correction',
   'displace',
   'pinch',
+  'liquify',
   'polar-coordinates',
   'ripple',
   'spherize',
@@ -57,8 +60,17 @@ export const FILTER_EFFECT_TYPES = [
   'flame',
   'find-edges',
   'emboss',
+  'solarize',
+  'diffuse',
+  'wind',
   'deinterlace',
   'ntsc-colors',
+  'gradient-map',
+  'median',
+  'dust-scratches',
+  'despeckle',
+  'reduce-noise',
+  'add-noise',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -130,6 +142,14 @@ export type TreeSettings = {
   leafiness: number;
 };
 
+/** Editable endpoints for the bounded local Gradient Map approximation. */
+export type GradientMapSettings = {
+  shadow: string;
+  highlight: string;
+  stops?: GradientStop[];
+  blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -155,8 +175,15 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
   leafiness: 55,
 };
 
+export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
+  shadow: '#000000',
+  highlight: '#ffffff',
+};
+
 export type FilterEffects = {
   type: FilterEffectType;
+  /** Radial Blur sampling direction; legacy records default to spin. */
+  radialMode?: 'spin' | 'zoom';
   /** Legacy lens corrections default to inward source sampling. */
   lensDirection?: 'inward' | 'outward';
   /** Strength as a percentage. */
@@ -170,6 +197,10 @@ export type FilterEffects = {
   centerY: number;
   /** Stable seed reserved for deterministic procedural variants. */
   seed: number;
+  /** Use one seeded value for all channels in the Add Noise effect. */
+  noiseMonochromatic?: boolean;
+  /** Distribution used by Add Noise's deterministic sample generator. */
+  noiseDistribution?: 'uniform' | 'gaussian';
   /** Authored polyline in normalized layer coordinates, limited to 2–8 points. */
   path?: BlurPathPoint[];
   /** Omitted for legacy global radial Spin Blur records. */
@@ -189,6 +220,9 @@ export type FilterEffects = {
   /** Editable warp geometry for the seeded Fibers Render effect. */
   fibers?: FibersSettings;
   tree?: TreeSettings;
+  gradientMap?: GradientMapSettings;
+  /** Threshold for the local Dust & Scratches outlier detector. */
+  threshold?: number;
   deinterlace?: DeinterlaceSettings;
 };
 
@@ -207,6 +241,13 @@ const finite = (value: unknown): value is number =>
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 const clampByte = (value: number) => clamp(Math.round(value), 0, 255);
+const validHexColor = (value: unknown): value is string =>
+  typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
+const hexRgb = (value: string): [number, number, number] => [
+  Number.parseInt(value.slice(1, 3), 16),
+  Number.parseInt(value.slice(3, 5), 16),
+  Number.parseInt(value.slice(5, 7), 16),
+];
 
 /** Normalize a partial metadata record at every persistence/render boundary. */
 export function effectiveFilterEffects(
@@ -235,6 +276,13 @@ export function effectiveFilterEffects(
     ? Math.trunc(source.seed) >>> 0
     : neutralFilterEffects.seed;
   const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
+  if (type === 'add-noise') {
+    normalized.noiseMonochromatic = source.noiseMonochromatic === true;
+    normalized.noiseDistribution = source.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform';
+  }
+  if (type === 'radial-blur') {
+    normalized.radialMode = source.radialMode === 'zoom' ? 'zoom' : 'spin';
+  }
   if (type === 'lens-correction') {
     normalized.lensDirection = source.lensDirection === 'outward' ? 'outward' : 'inward';
   }
@@ -308,6 +356,26 @@ export function effectiveFilterEffects(
       leafiness: finite(settings?.leafiness) ? clamp(Math.round(settings.leafiness), 0, 100) : DEFAULT_TREE_SETTINGS.leafiness,
     };
   }
+  if (type === 'gradient-map') {
+    const stops = normalizeGradientStops(source.gradientMap?.stops);
+    normalized.gradientMap = {
+      shadow: validHexColor(source.gradientMap?.shadow)
+        ? source.gradientMap!.shadow.toLowerCase()
+        : DEFAULT_GRADIENT_MAP_SETTINGS.shadow,
+      highlight: validHexColor(source.gradientMap?.highlight)
+        ? source.gradientMap!.highlight.toLowerCase()
+        : DEFAULT_GRADIENT_MAP_SETTINGS.highlight,
+      ...(stops.length ? { stops } : {}),
+      blend: source.gradientMap?.blend === 'multiply' || source.gradientMap?.blend === 'screen' || source.gradientMap?.blend === 'overlay'
+        ? source.gradientMap.blend
+        : 'normal',
+    };
+  }
+  if (type === 'dust-scratches' || type === 'reduce-noise') {
+    normalized.threshold = finite(source.threshold)
+      ? clamp(Math.round(source.threshold), 0, 255)
+      : type === 'reduce-noise' ? 25 : 12;
+  }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
@@ -368,12 +436,20 @@ function validTreeSettings(value: unknown): value is TreeSettings {
   return finite(settings.branches) && Number.isInteger(settings.branches) && settings.branches >= 2 && settings.branches <= 8 &&
     finite(settings.leafiness) && Number.isInteger(settings.leafiness) && settings.leafiness >= 0 && settings.leafiness <= 100;
 }
+function validGradientMapSettings(value: unknown): value is GradientMapSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<GradientMapSettings>;
+  return validHexColor(settings.shadow) && validHexColor(settings.highlight) &&
+    (settings.stops === undefined || isGradientStops(settings.stops)) &&
+    (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const effect = value as Partial<FilterEffects>;
   return (
     FILTER_EFFECT_TYPES.includes(effect.type as FilterEffectType) &&
+    (effect.radialMode === undefined || effect.radialMode === 'spin' || effect.radialMode === 'zoom') &&
     (effect.lensDirection === undefined || effect.lensDirection === 'inward' || effect.lensDirection === 'outward') &&
     (effect.path === undefined || validBlurPath(effect.path)) &&
     (effect.spinEllipse === undefined || validSpinEllipse(effect.spinEllipse)) &&
@@ -385,6 +461,10 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.mezzotint === undefined || validMezzotintSettings(effect.mezzotint)) &&
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
+    (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
+    (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
+    (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
@@ -421,7 +501,7 @@ export function isNeutralFilterEffects(
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
     (effect.type === 'deinterlace' && effect.radius === 0) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.type !== 'add-noise' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -1161,6 +1241,62 @@ function applyRadialBlur(
 }
 
 /**
+ * Apply the zoom variant of Radial Blur. Samples move along the ray through
+ * the editable centre rather than around a polar ring. The bounded radial
+ * spread keeps transparent edges source-safe and remains fully nondestructive.
+ */
+function applyZoomRadialBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  centerX: number,
+  centerY: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
+  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
+  const sampleCount = 8;
+  const spread = bounded / 64 * 0.65;
+  const mix = clamp(strength, 0, 1);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (source[destination + 3] === 0) continue;
+      const dx = x - centerPixelX;
+      const dy = y - centerPixelY;
+      const distance = Math.hypot(dx, dy);
+      if (distance < 0.5) continue;
+      const sums = [0, 0, 0];
+      let weight = 0;
+      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
+        const scale = 1 + (spread * sampleIndex) / sampleCount;
+        const sample = sourcePixel(
+          source,
+          width,
+          height,
+          centerPixelX + dx * scale,
+          centerPixelY + dy * scale,
+        );
+        const alpha = sample[3] / 255;
+        if (!alpha) continue;
+        sums[0] += sample[0] * alpha;
+        sums[1] += sample[1] * alpha;
+        sums[2] += sample[2] * alpha;
+        weight += alpha;
+      }
+      if (!weight) continue;
+      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
+/**
  * Apply the bounded Blur Gallery Spin Blur approximation. Spin is represented
  * by the same fixed-sample polar integration as Radial Blur, but has its own
  * metadata type so a document can distinguish the gallery command. The
@@ -1590,6 +1726,99 @@ function applyNtscColors(
     output[offset] = clampByte((luma + (red - luma) * blendScale) * 255);
     output[offset + 1] = clampByte((luma + (green - luma) * blendScale) * 255);
     output[offset + 2] = clampByte((luma + (blue - luma) * blendScale) * 255);
+  }
+}
+
+function applySolarize(
+  source: Uint8ClampedArray,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const strength = clamp(amount, 0, 100) / 100;
+  for (let offset = 0; offset < source.length; offset += 4) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      const input = source[offset + channel];
+      const inverted = input >= 128 ? 255 - input : input;
+      output[offset + channel] = clampByte(input + (inverted - input) * strength);
+    }
+    output[offset + 3] = source[offset + 3];
+    if (output[offset + 3] === 0) {
+      output[offset] = source[offset];
+      output[offset + 1] = source[offset + 1];
+      output[offset + 2] = source[offset + 2];
+    }
+  }
+}
+
+/** Apply a bounded four-neighbour diffusion approximation without mutating source. */
+function applyDiffuse(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const offsetDistance = Math.max(1, Math.min(64, Math.round(radius)));
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (alpha === 0) continue;
+      const samples = [
+        [Math.max(0, x - offsetDistance), y],
+        [Math.min(width - 1, x + offsetDistance), y],
+        [x, Math.max(0, y - offsetDistance)],
+        [x, Math.min(height - 1, y + offsetDistance)],
+      ];
+      for (let channel = 0; channel < 3; channel += 1) {
+        let total = 0;
+        for (const [sampleX, sampleY] of samples)
+          total += source[(sampleY * width + sampleX) * 4 + channel];
+        const average = total / samples.length;
+        output[offset + channel] = clampByte(
+          source[offset + channel] + (average - source[offset + channel]) * strength,
+        );
+      }
+      output[offset + 3] = alpha;
+    }
+  }
+}
+
+/** Apply a bounded directional streak using immutable source samples. */
+function applyWind(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const distance = Math.max(1, Math.min(64, Math.round(effect.radius)));
+  const radians = (effect.angle * Math.PI) / 180;
+  const dx = Math.cos(radians), dy = Math.sin(radians);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (alpha === 0) continue;
+      const total = [0, 0, 0];
+      for (let step = 1; step <= distance; step += 1) {
+        const sampleX = Math.max(0, Math.min(width - 1, Math.round(x - dx * step)));
+        const sampleY = Math.max(0, Math.min(height - 1, Math.round(y - dy * step)));
+        const sampleOffset = (sampleY * width + sampleX) * 4;
+        total[0] += source[sampleOffset];
+        total[1] += source[sampleOffset + 1];
+        total[2] += source[sampleOffset + 2];
+      }
+      for (let channel = 0; channel < 3; channel += 1) {
+        const average = total[channel] / distance;
+        output[offset + channel] = clampByte(
+          source[offset + channel] + (average - source[offset + channel]) * strength,
+        );
+      }
+      output[offset + 3] = alpha;
+    }
   }
 }
 
@@ -2173,7 +2402,7 @@ function applyDistort(
     centerX = effect.centerX * (width - 1),
     centerY = effect.centerY * (height - 1),
     radius =
-      effect.type === 'pinch'
+      effect.type === 'pinch' || effect.type === 'liquify'
         ? Math.max(
             1,
             (Math.min(width, height) * 0.7 * Math.max(1, effect.radius)) / 64,
@@ -2206,6 +2435,17 @@ function applyDistort(
         const scale = 1 - amount * falloff * falloff;
         sampleX = centerX + dx * scale;
         sampleY = centerY + dy * scale;
+      } else if (effect.type === 'liquify' && distance < radius) {
+        // Bounded local push/twist approximation. The inverse map samples
+        // only the immutable source and fades to identity at the influence
+        // boundary; it intentionally does not claim Photoshop mesh semantics.
+        const falloff = 1 - normalized;
+        const scale = 1 - amount * 0.35 * falloff * falloff;
+        const turn = angle * amount * falloff * falloff;
+        const cosine = Math.cos(turn);
+        const sine = Math.sin(turn);
+        sampleX = centerX + (dx * cosine - dy * sine) * scale;
+        sampleY = centerY + (dx * sine + dy * cosine) * scale;
       } else if (effect.type === 'spherize' && distance < radius) {
         // Inverse-map a bounded spherical bulge with a smooth edge falloff.
         // The exact centre and influence boundary remain stable.
@@ -2218,8 +2458,13 @@ function applyDistort(
         sampleX = x + (dx / Math.max(1, distance)) * wave;
         sampleY = y + (dy / Math.max(1, distance)) * wave;
       }
+      // Distortions that move a pixel through a fractional coordinate use
+      // premultiplied-alpha bilinear sampling. This keeps transparent edge
+      // padding from bleeding into visible pixels and makes Twirl stable on
+      // diagonal boundaries instead of producing nearest-neighbour stair
+      // steps.
       const sample =
-        (effect.type === 'pinch' || effect.type === 'spherize' || effect.type === 'ripple')
+        (effect.type === 'twirl' || effect.type === 'pinch' || effect.type === 'liquify' || effect.type === 'spherize' || effect.type === 'ripple')
           ? sourcePixelBilinear(source, width, height, sampleX, sampleY)
           : sourcePixel(source, width, height, sampleX, sampleY);
       if (sample[3] === 0) continue;
@@ -2801,6 +3046,204 @@ function applyTiltShift(
   });
 }
 
+/** Map source luminance between two editable colours without changing alpha. */
+function applyGradientMap(
+  source: Uint8ClampedArray,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const settings = effect.gradientMap ?? DEFAULT_GRADIENT_MAP_SETTINGS;
+  const stops = [
+    { position: 0, rgb: hexRgb(settings.shadow) },
+    ...(settings.stops ?? []).map((stop) => ({ position: stop.position / 100, rgb: hexRgb(stop.color) })),
+    { position: 1, rgb: hexRgb(settings.highlight) },
+  ];
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const alpha = source[offset + 3];
+    output[offset + 3] = alpha;
+    if (!alpha) continue;
+    const luminance = (source[offset] * 0.2126 + source[offset + 1] * 0.7152 + source[offset + 2] * 0.0722) / 255;
+    let left = stops[0];
+    let right = stops[stops.length - 1];
+    for (let index = 1; index < stops.length; index += 1) {
+      if (luminance <= stops[index].position) {
+        right = stops[index];
+        left = stops[index - 1];
+        break;
+      }
+    }
+    const span = Math.max(0.0001, right.position - left.position);
+    const ratio = Math.max(0, Math.min(1, (luminance - left.position) / span));
+    const mapped = [0, 1, 2].map((channel) =>
+      left.rgb[channel] + (right.rgb[channel] - left.rgb[channel]) * ratio,
+    );
+    const blend = settings.blend ?? 'normal';
+    const composited = mapped.map((value, channel) => {
+      const base = source[offset + channel] / 255;
+      const layer = value / 255;
+      const result = blend === 'multiply'
+        ? base * layer
+        : blend === 'screen'
+          ? 1 - (1 - base) * (1 - layer)
+          : blend === 'overlay'
+            ? base < 0.5 ? 2 * base * layer : 1 - 2 * (1 - base) * (1 - layer)
+            : layer;
+      return result * 255;
+    });
+    output[offset] = clampByte(source[offset] + (composited[0] - source[offset]) * strength);
+    output[offset + 1] = clampByte(source[offset + 1] + (composited[1] - source[offset + 1]) * strength);
+    output[offset + 2] = clampByte(source[offset + 2] + (composited[2] - source[offset + 2]) * strength);
+  }
+}
+
+/** Apply a bounded median neighbourhood filter while retaining source alpha. */
+function applyMedian(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const span = Math.min(8, Math.max(1, Math.round(radius)));
+  const values: [number[], number[], number[]] = [[], [], []];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (!source[offset + 3]) continue;
+      values[0].length = 0;
+      values[1].length = 0;
+      values[2].length = 0;
+      for (let sy = Math.max(0, y - span); sy <= Math.min(height - 1, y + span); sy += 1) {
+        for (let sx = Math.max(0, x - span); sx <= Math.min(width - 1, x + span); sx += 1) {
+          const sample = (sy * width + sx) * 4;
+          if (!source[sample + 3]) continue;
+          values[0].push(source[sample]);
+          values[1].push(source[sample + 1]);
+          values[2].push(source[sample + 2]);
+        }
+      }
+      for (const channel of values) channel.sort((a, b) => a - b);
+      const median = values.map((channel) => channel[Math.floor(channel.length / 2)] ?? source[offset]);
+      output[offset] = clampByte(source[offset] + (median[0] - source[offset]) * strength);
+      output[offset + 1] = clampByte(source[offset + 1] + (median[1] - source[offset + 1]) * strength);
+      output[offset + 2] = clampByte(source[offset + 2] + (median[2] - source[offset + 2]) * strength);
+      output[offset + 3] = source[offset + 3];
+    }
+  }
+}
+
+/** Bounded Dust & Scratches approximation: replace only local tonal outliers. */
+function applyDustScratches(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const threshold = clamp(Math.round(effect.threshold ?? 12), 0, 255);
+  const samples: number[][] = [[], [], []];
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    const alpha = source[offset + 3];
+    if (alpha === 0) continue;
+    samples[0].length = 0; samples[1].length = 0; samples[2].length = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (source[sample + 3] === 0) continue;
+        samples[0].push(source[sample]); samples[1].push(source[sample + 1]); samples[2].push(source[sample + 2]);
+      }
+    const medians = samples.map((channel) => {
+      if (!channel.length) return 0;
+      channel.sort((a, b) => a - b);
+      return channel[Math.floor(channel.length / 2)];
+    });
+    const distance = Math.max(Math.abs(source[offset] - medians[0]), Math.abs(source[offset + 1] - medians[1]), Math.abs(source[offset + 2] - medians[2]));
+    if (distance <= threshold) continue;
+    const mix = clamp(strength, 0, 1);
+    output[offset] = clampByte(source[offset] + (medians[0] - source[offset]) * mix);
+    output[offset + 1] = clampByte(source[offset + 1] + (medians[1] - source[offset + 1]) * mix);
+    output[offset + 2] = clampByte(source[offset + 2] + (medians[2] - source[offset + 2]) * mix);
+  }
+}
+
+/** Bounded edge-aware Reduce Noise approximation using a colour-weighted kernel. */
+function applyReduceNoise(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const preserve = clamp(Math.round(effect.threshold ?? 25), 1, 255);
+  const mix = clamp(strength, 0, 1);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    if (!source[destination + 3]) continue;
+    const baseR = source[destination], baseG = source[destination + 1], baseB = source[destination + 2];
+    let sumR = 0, sumG = 0, sumB = 0, weight = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const distance = Math.abs(source[sample] - baseR) + Math.abs(source[sample + 1] - baseG) + Math.abs(source[sample + 2] - baseB);
+        const similarity = Math.max(0, 1 - distance / (preserve * 3));
+        const spatial = 1 / (1 + Math.hypot(sx - x, sy - y));
+        const sampleWeight = similarity * spatial;
+        sumR += source[sample] * sampleWeight;
+        sumG += source[sample + 1] * sampleWeight;
+        sumB += source[sample + 2] * sampleWeight;
+        weight += sampleWeight;
+      }
+    if (!weight) continue;
+    output[destination] = clampByte(baseR + (sumR / weight - baseR) * mix);
+    output[destination + 1] = clampByte(baseG + (sumG / weight - baseG) * mix);
+    output[destination + 2] = clampByte(baseB + (sumB / weight - baseB) * mix);
+  }
+}
+
+/** Apply a seeded uniform Add Noise approximation without touching alpha. */
+function applyAddNoise(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const amplitude = clamp(effect.amount, 0, 100) * 2.55;
+  const monochromatic = effect.noiseMonochromatic === true;
+  for (let index = 0; index < width * height; index += 1) {
+    const offset = index * 4;
+    if (!source[offset + 3]) continue;
+    const sample = (channel: number) => {
+      const channelKey = monochromatic ? 0 : channel;
+      let value = (Math.imul((effect.seed >>> 0) ^ 0x9e3779b9, index + 1) ^ Math.imul(channelKey + 1, 0x85ebca6b)) >>> 0;
+      value ^= value >>> 16;
+      value = Math.imul(value, 0x7feb352d) >>> 0;
+      value ^= value >>> 15;
+      const first = value / 0xffffffff;
+      if (effect.noiseDistribution !== 'gaussian') return first * 2 - 1;
+      let second = (value ^ 0xa5a5a5a5) >>> 0;
+      second ^= second >>> 16;
+      second = Math.imul(second, 0x7feb352d) >>> 0;
+      second ^= second >>> 15;
+      const u = Math.max(1e-6, first);
+      const v = Math.max(1e-6, second / 0xffffffff);
+      return Math.max(-1, Math.min(1, Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) / 2.5));
+    };
+    output[offset] = clampByte(source[offset] + sample(0) * amplitude);
+    output[offset + 1] = clampByte(source[offset + 1] + sample(1) * amplitude);
+    output[offset + 2] = clampByte(source[offset + 2] + sample(2) * amplitude);
+    output[offset + 3] = source[offset + 3];
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -2816,6 +3259,10 @@ export function applyFilterEffectsPixels(
   const strength = effect.amount / 100;
   if (effect.type === 'average-blur') {
     applyAverageBlur(data, width, height, output, strength);
+  } else if (effect.type === 'blur') {
+    // Photoshop's one-click Blur is a light, bounded box blur. Keep it
+    // distinct from Average (whole-image average) and Blur More (stronger).
+    applyBoxBlur(data, width, height, 1, output, strength);
   } else if (effect.type === 'blur-more') {
     // Photoshop's one-click Blur More is a stronger, bounded box blur. Keep
     // the source-safe renderer and metadata contract while doubling radius.
@@ -2858,15 +3305,8 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'motion-blur') {
     applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
   } else if (effect.type === 'radial-blur') {
-    applyRadialBlur(
-      data,
-      width,
-      height,
-      effect.radius,
-      effect.centerX,
-      effect.centerY,
-      output,
-      strength,
+    (effect.radialMode === 'zoom' ? applyZoomRadialBlur : applyRadialBlur)(
+      data, width, height, effect.radius, effect.centerX, effect.centerY, output, strength,
     );
   } else if (effect.type === 'spin-blur') {
     applySpinBlur(
@@ -2907,6 +3347,18 @@ export function applyFilterEffectsPixels(
     applyColorHalftone(data, width, height, effect, output, strength);
   } else if (effect.type === 'ntsc-colors') {
     applyNtscColors(data, output, strength);
+  } else if (effect.type === 'gradient-map') {
+    applyGradientMap(data, effect, output, strength);
+  } else if (effect.type === 'median') {
+    applyMedian(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'dust-scratches') {
+    applyDustScratches(data, width, height, effect, output, strength);
+  } else if (effect.type === 'despeckle') {
+    applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
+  } else if (effect.type === 'reduce-noise') {
+    applyReduceNoise(data, width, height, effect, output, strength);
+  } else if (effect.type === 'add-noise') {
+    applyAddNoise(data, width, height, effect, output);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {
@@ -2939,6 +3391,12 @@ export function applyFilterEffectsPixels(
     applyFindEdges(data, width, height, output, strength);
   } else if (effect.type === 'emboss') {
     applyEmboss(data, width, height, effect, output, strength);
+  } else if (effect.type === 'solarize') {
+    applySolarize(data, output, effect.amount);
+  } else if (effect.type === 'diffuse') {
+    applyDiffuse(data, width, height, effect.radius, output, strength);
+  } else if (effect.type === 'wind') {
+    applyWind(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {

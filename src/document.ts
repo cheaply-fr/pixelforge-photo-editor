@@ -42,7 +42,11 @@ import {
   type ImageSizeMetadata,
   type ResampleMethod,
 } from './imageSize.ts';
+import { validColorProfile, type ColorProfile } from './colorProfile.ts';
+import { applyColorModePixels, normalizeColorMode, type ColorMode } from './colorMode.ts';
 import { pathContours, validatePath, type PathModel } from './paths.ts';
+import { normalizeTextPathBinding, layoutTextOnPath, mapTextPathPoints, flattenTextPath, type TextPathBinding } from './textOnPath.ts';
+import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
   applyVectorMaskPixels,
@@ -67,6 +71,7 @@ import {
   validFilterEffects,
   type FilterEffects,
 } from './filterEffects.ts';
+import { effectiveSmartFilters, validSmartFilters } from './smartFilters.ts';
 import {
   applyTiledNeighborhoodEffect,
   isTiledNeighborhoodBlur,
@@ -110,6 +115,18 @@ import {
   type ContentAwareFill,
 } from './contentAwareCleanup.ts';
 import {
+  validContentAwareMove,
+  moveContentAwareSelection,
+  CONTENT_AWARE_MOVE_MAX_OPERATIONS,
+  type ContentAwareMove,
+} from './contentAwareMove.ts';
+import {
+  validContentAwareScale,
+  scaleContentAwareSelection,
+  CONTENT_AWARE_SCALE_MAX_OPERATIONS,
+  type ContentAwareScale,
+} from './contentAwareScale.ts';
+import {
   applyLayerStylesPixels,
   isNeutralLayerStyles,
   validLayerStyles,
@@ -124,6 +141,7 @@ import {
   isClippingSourceLayer,
   validClippingRelationship,
 } from './layerClipping.ts';
+import { isTextWarp, normalizeTextWarp, textWarpTransform, type TextWarp } from './textWarp.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = GROUP_BLEND_MODES;
@@ -222,8 +240,18 @@ type Common = {
   patchStrokes?: PatchStroke[];
   /** Optional constrained local cleanup operations over layer-local masks. */
   contentAwareFills?: ContentAwareFill[];
+  /** Optional nondestructive local selection moves over layer-local masks. */
+  contentAwareMoves?: ContentAwareMove[];
+  /** Optional nondestructive local selection scales over layer-local masks. */
+  contentAwareScales?: ContentAwareScale[];
+  /** Optional nondestructive known-matte colour decontamination. */
+  matting?: MattingSettings;
+  /** Optional bounded ordered nondestructive filter stack. */
+  smartFilters?: FilterEffects[];
   /** Optional source-to-base relationship for a nondestructive clipping mask. */
   clippingTo?: string;
+  /** Optional local transform-link identity shared by ordinary layers. */
+  layerLinkId?: string;
 };
 export type Layer = Common &
   (
@@ -234,6 +262,8 @@ export type Layer = Common &
         asset: string;
         /** Original file label retained for replace-contents UX. */
         sourceName?: string;
+        /** Optional local link identity shared by smart-object instances. */
+        linkId?: string;
       }
     | {
         /** A source-free, nondestructive correction applied to the composite below this layer. */
@@ -255,6 +285,10 @@ export type Layer = Common &
         letterSpacing: number;
         /** Text flow direction; omitted legacy values normalize to horizontal. */
         orientation: TextOrientation;
+        /** Optional editable Photoshop-style warp metadata. */
+        warp?: TextWarp;
+        /** Optional editable attachment to a vector path layer. */
+        textPath?: TextPathBinding;
       }
     | {
         kind: 'rectangle';
@@ -291,6 +325,8 @@ export type Layer = Common &
         sides: number;
         /** Legacy drafts omit this and render as a regular polygon. */
         variant?: ParametricShapeVariant;
+        /** Star inner radius, expressed as a fraction of the outer radius. */
+        innerRadius?: number;
       }
     | {
         /** A local-coordinate, straight-segment Pen path. */
@@ -371,6 +407,10 @@ export type Selection = {
 export type Frame = {
   w: number;
   h: number;
+  /** Optional document working mode; legacy frames default to RGB. */
+  colorMode?: ColorMode;
+  /** Optional working color-profile label; omitted legacy frames default to sRGB. */
+  colorProfile?: ColorProfile;
   /** Optional print-size metadata; omitted in legacy drafts and defaults to 72 ppi. */
   imageSize?: ImageSizeMetadata;
   layers: Layer[];
@@ -1057,12 +1097,29 @@ export function alignedTextOffset(
 export function drawTextLayer(
   context: CanvasRenderingContext2D,
   layer: Extract<Layer, { kind: 'text' }>,
+  path?: { points: readonly { x: number; y: number }[]; offset: number; reverse: boolean },
 ): void {
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     align = layer.textAlign ?? 'left',
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
     spacing = layer.letterSpacing ?? 0,
-    orientation = layer.orientation ?? 'horizontal';
+    orientation = layer.orientation ?? 'horizontal',
+    warp = normalizeTextWarp(layer.warp);
+  if (path && orientation === 'horizontal') {
+    const placements = layoutTextOnPath(context, layer.text, path.points, {
+      offset: path.offset,
+      reverse: path.reverse,
+      letterSpacing: spacing,
+    });
+    for (const placement of placements) {
+      context.save();
+      context.translate(placement.x, placement.y);
+      context.rotate(placement.rotation);
+      context.fillText(placement.glyph, -context.measureText(placement.glyph).width / 2, 0);
+      context.restore();
+    }
+    return;
+  }
   if (orientation === 'vertical') {
     const columnAdvance = Math.max(1, layer.fontSize * lineHeight);
     for (const [columnIndex, line] of layer.text.split('\n').entries()) {
@@ -1079,17 +1136,31 @@ export function drawTextLayer(
     const width = trackedTextWidth(context, line, spacing),
       start = alignedTextOffset(width, boxWidth, align),
       y = lineIndex * layer.fontSize * lineHeight;
-    if (spacing === 0) {
+    if (spacing === 0 && warp.style === 'none') {
       context.fillText(line, start, y);
       continue;
     }
     let x = start;
-    for (const glyph of Array.from(line)) {
-      context.fillText(glyph, x, y);
-      x += context.measureText(glyph).width + spacing;
+    const glyphs = Array.from(line);
+    const total = Math.max(1, width);
+    for (const glyph of glyphs) {
+      const glyphWidth = context.measureText(glyph).width;
+      const center = x + glyphWidth / 2;
+      const transform = warp.style === 'none'
+        ? { x: 0, y: 0, rotation: 0 }
+        : textWarpTransform(warp.style, warp.bend, center / total, layer.fontSize);
+      if (transform.rotation || transform.y) {
+        context.save();
+        context.translate(center + transform.x, y + transform.y);
+        context.rotate(transform.rotation);
+        context.fillText(glyph, -glyphWidth / 2, 0);
+        context.restore();
+      } else context.fillText(glyph, x, y);
+      x += glyphWidth + spacing;
     }
   }
 }
+
 const record = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 const number = (v: unknown, min: number, max: number) =>
@@ -1180,6 +1251,10 @@ export function effectiveTextLayer<T extends Layer>(
     lineHeight: value.lineHeight ?? 1.2,
     letterSpacing: value.letterSpacing ?? 0,
     orientation: value.orientation ?? 'horizontal',
+    warp: normalizeTextWarp(value.warp),
+    ...(normalizeTextPathBinding(value.textPath)
+      ? { textPath: normalizeTextPathBinding(value.textPath) }
+      : {}),
   } as T;
 }
 export function validateFrame(
@@ -1200,6 +1275,10 @@ export function validateFrame(
   )
     return fail();
   if (value.imageSize !== undefined && !validImageSizeMetadata(value.imageSize))
+    return fail();
+  if (value.colorProfile !== undefined && !validColorProfile(value.colorProfile))
+    return fail();
+  if (value.colorMode !== undefined && normalizeColorMode(value.colorMode) !== value.colorMode)
     return fail();
   const ids = new Set<string>();
   if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();
@@ -1261,8 +1340,11 @@ export function validateFrame(
       !layer.matrix.every((v) => number(v, -1000000, 1000000)) ||
       !validAdjustments(layer.adjustments) ||
       (layer.styles !== undefined && !validLayerStyles(layer.styles)) ||
+      (layer.matting !== undefined && (!isRasterContentLayer(layer) || !validMattingSettings(layer.matting))) ||
+      (layer.smartFilters !== undefined && (!isRasterContentLayer(layer) || !validSmartFilters(layer.smartFilters))) ||
       (layer.clippingTo !== undefined &&
         typeof layer.clippingTo !== 'string') ||
+      (layer.layerLinkId !== undefined && !validId(layer.layerLinkId)) ||
       (layer.groupId !== undefined &&
         (!validId(layer.groupId) || !groupIds.has(layer.groupId)))
     )
@@ -1278,7 +1360,9 @@ export function validateFrame(
         layer.maskInverted !== undefined ||
         layer.spotHealing !== undefined ||
         layer.patchStrokes !== undefined ||
-        layer.contentAwareFills !== undefined)
+        layer.contentAwareFills !== undefined ||
+        layer.contentAwareMoves !== undefined ||
+        layer.contentAwareScales !== undefined)
     )
       return fail();
     if (
@@ -1292,6 +1376,8 @@ export function validateFrame(
       if (layer.kind === 'smart-object' && Object.hasOwn(layer, 'fillColor'))
         return fail();
       if (layer.kind === 'smart-object' && layer.sourceName !== undefined && !short(layer.sourceName, 160))
+        return fail();
+      if (layer.kind === 'smart-object' && layer.linkId !== undefined && !validId(layer.linkId))
         return fail();
       if (layer.kind === 'raster' && layer.fillColor !== undefined && (typeof layer.fillColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.fillColor)))
         return fail();
@@ -1316,11 +1402,21 @@ export function validateFrame(
         !validSpotHealingStrokes(layer.spotHealing, assets[layer.asset].w, assets[layer.asset].h)
       )
         return fail();
-      if (layer.kind === 'smart-object' && (layer.spotHealing !== undefined || layer.patchStrokes !== undefined || layer.contentAwareFills !== undefined))
+      if (layer.kind === 'smart-object' && (layer.spotHealing !== undefined || layer.patchStrokes !== undefined || layer.contentAwareFills !== undefined || layer.contentAwareMoves !== undefined || layer.contentAwareScales !== undefined))
         return fail();
       if (
         layer.patchStrokes !== undefined &&
         !validPatchStrokes(layer.patchStrokes, assets[layer.asset].w, assets[layer.asset].h)
+      )
+        return fail();
+      if (
+        layer.patchStrokes?.some(
+          (stroke) =>
+            stroke.selectionMask !== undefined &&
+            (!Object.hasOwn(assets, stroke.selectionMask) ||
+              assets[stroke.selectionMask].w !== assets[layer.asset].w ||
+              assets[stroke.selectionMask].h !== assets[layer.asset].h),
+        )
       )
         return fail();
       const contentAwareFills = layer.contentAwareFills as
@@ -1334,6 +1430,42 @@ export function validateFrame(
             !Object.hasOwn(assets, maskId) ||
             assets[maskId].w !== assets[layer.asset].w ||
             assets[maskId].h !== assets[layer.asset].h
+          )
+            return fail();
+        }
+      }
+      const contentAwareMoves = layer.contentAwareMoves as ContentAwareMove[] | undefined;
+      if (contentAwareMoves !== undefined) {
+        if (
+          !Array.isArray(contentAwareMoves) ||
+          contentAwareMoves.length > CONTENT_AWARE_MOVE_MAX_OPERATIONS ||
+          !contentAwareMoves.every((move) => validContentAwareMove(move))
+        )
+          return fail();
+        for (const move of contentAwareMoves) {
+          if (
+            !move.mask ||
+            !Object.hasOwn(assets, move.mask) ||
+            assets[move.mask].w !== assets[layer.asset].w ||
+            assets[move.mask].h !== assets[layer.asset].h
+          )
+            return fail();
+        }
+      }
+      const contentAwareScales = layer.contentAwareScales as ContentAwareScale[] | undefined;
+      if (contentAwareScales !== undefined) {
+        if (
+          !Array.isArray(contentAwareScales) ||
+          contentAwareScales.length > CONTENT_AWARE_SCALE_MAX_OPERATIONS ||
+          !contentAwareScales.every((scale) => validContentAwareScale(scale))
+        )
+          return fail();
+        for (const scale of contentAwareScales) {
+          if (
+            !scale.mask ||
+            !Object.hasOwn(assets, scale.mask) ||
+            assets[scale.mask].w !== assets[layer.asset].w ||
+            assets[scale.mask].h !== assets[layer.asset].h
           )
             return fail();
         }
@@ -1359,6 +1491,8 @@ export function validateFrame(
         layer.spotHealing !== undefined ||
         layer.patchStrokes !== undefined ||
         layer.contentAwareFills !== undefined ||
+        layer.contentAwareMoves !== undefined ||
+        layer.contentAwareScales !== undefined ||
         Object.hasOwn(layer, 'asset')
       )
         return fail();
@@ -1376,7 +1510,9 @@ export function validateFrame(
         !number(layer.letterSpacing ?? 0, -100, 100) ||
         !TEXT_ORIENTATIONS.includes(
           (layer.orientation ?? 'horizontal') as TextOrientation,
-        )
+        ) ||
+        (layer.warp !== undefined && !isTextWarp(layer.warp)) ||
+        (layer.textPath !== undefined && !normalizeTextPathBinding(layer.textPath))
       )
         return fail();
     } else if (
@@ -1394,6 +1530,8 @@ export function validateFrame(
           (!('fill' in layer) || typeof layer.fill !== 'boolean')) ||
         (layer.kind === 'polygon' &&
           (!integer(layer.sides, 3, 32) ||
+            (layer.innerRadius !== undefined &&
+              !number(layer.innerRadius, 0.1, 0.9)) ||
             (() => {
               try {
                 validateShapeVariant(layer.variant);
@@ -1414,6 +1552,13 @@ export function validateFrame(
   }
   // Relationships are stack-sensitive and therefore need a cross-layer pass
   // after every layer has been structurally validated.
+  for (const textLayer of value.layers.filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text')) {
+    const binding = normalizeTextPathBinding(textLayer.textPath);
+    if (binding) {
+      const pathLayer = value.layers.find((candidate) => candidate.id === binding.pathLayerId);
+      if (!pathLayer || pathLayer.kind !== 'path') return fail();
+    }
+  }
   if (
     value.layers.some(
       (layer) =>
@@ -1535,6 +1680,10 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
         used[layer.asset] = assets[layer.asset];
         for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
+        for (const move of layer.kind === 'raster' ? layer.contentAwareMoves || [] : [])
+          if (move.mask && assets[move.mask]) used[move.mask] = assets[move.mask];
+        for (const scale of layer.kind === 'raster' ? layer.contentAwareScales || [] : [])
+          if (scale.mask && assets[scale.mask]) used[scale.mask] = assets[scale.mask];
       }
     }
   }
@@ -2093,12 +2242,31 @@ export async function renderFrame(
         patchedContext = patched.getContext('2d')!;
       patchedContext.drawImage(rasterSource, 0, 0);
       const imageData = patchedContext.getImageData(0, 0, patched.width, patched.height);
+      const patchMasks: Record<string, Uint8ClampedArray> = {};
+      for (const stroke of layer.patchStrokes) {
+        if (!stroke.selectionMask || patchMasks[stroke.selectionMask]) continue;
+        const maskImage = await decodeAsset(assets[stroke.selectionMask]);
+        const maskSurface = surface(maskImage.naturalWidth, maskImage.naturalHeight);
+        const maskContext = maskSurface.getContext('2d')!;
+        maskContext.drawImage(maskImage, 0, 0);
+        const rgba = maskContext.getImageData(
+          0,
+          0,
+          maskSurface.width,
+          maskSurface.height,
+        ).data;
+        const alpha = new Uint8ClampedArray(maskSurface.width * maskSurface.height);
+        for (let pixel = 0; pixel < alpha.length; pixel += 1)
+          alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
+        patchMasks[stroke.selectionMask] = alpha;
+      }
       imageData.data.set(
         applyPatchStrokes(
           imageData.data,
           patched.width,
           patched.height,
           layer.patchStrokes,
+          patchMasks,
         ),
       );
       patchedContext.putImageData(imageData, 0, 0);
@@ -2139,6 +2307,102 @@ export async function renderFrame(
       );
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
+    }
+    if (layer.kind === 'raster' && rasterSource && layer.contentAwareMoves?.length) {
+      const asset = assets[layer.asset],
+        moved = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        movedContext = moved.getContext('2d')!;
+      movedContext.drawImage(rasterSource, 0, 0);
+      const imageData = movedContext.getImageData(0, 0, moved.width, moved.height),
+        masks: Record<string, Uint8ClampedArray> = {};
+      for (const move of layer.contentAwareMoves) {
+        if (!move.mask || masks[move.mask]) continue;
+        const maskAsset = assets[move.mask];
+        if (!maskAsset) continue;
+        const maskImage = await decodeAsset(maskAsset),
+          maskCanvas = surface(maskImage.naturalWidth, maskImage.naturalHeight),
+          maskContext = maskCanvas.getContext('2d')!;
+        maskContext.drawImage(maskImage, 0, 0);
+        const rgba = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data,
+          alpha = new Uint8ClampedArray(maskCanvas.width * maskCanvas.height);
+        for (let pixel = 0; pixel < alpha.length; pixel += 1)
+          alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
+        masks[move.mask] = alpha;
+      }
+      for (const move of layer.contentAwareMoves) {
+        if (!move.mask || !masks[move.mask]) continue;
+        imageData.data.set(
+          moveContentAwareSelection(
+            imageData.data,
+            moved.width,
+            moved.height,
+            masks[move.mask],
+            move,
+          ),
+        );
+      }
+      movedContext.putImageData(imageData, 0, 0);
+      rasterSource = moved;
+    }
+    if (layer.kind === 'raster' && rasterSource && layer.contentAwareScales?.length) {
+      const asset = assets[layer.asset],
+        scaled = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        scaledContext = scaled.getContext('2d')!;
+      scaledContext.drawImage(rasterSource, 0, 0);
+      const imageData = scaledContext.getImageData(0, 0, scaled.width, scaled.height),
+        masks: Record<string, Uint8ClampedArray> = {};
+      for (const scale of layer.contentAwareScales) {
+        if (!scale.mask || masks[scale.mask]) continue;
+        const maskAsset = assets[scale.mask];
+        if (!maskAsset) continue;
+        const maskImage = await decodeAsset(maskAsset),
+          maskCanvas = surface(maskImage.naturalWidth, maskImage.naturalHeight),
+          maskContext = maskCanvas.getContext('2d')!;
+        maskContext.drawImage(maskImage, 0, 0);
+        const rgba = maskContext.getImageData(0, 0, maskCanvas.width, maskCanvas.height).data,
+          alpha = new Uint8ClampedArray(maskCanvas.width * maskCanvas.height);
+        for (let pixel = 0; pixel < alpha.length; pixel += 1)
+          alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
+        masks[scale.mask] = alpha;
+      }
+      for (const scale of layer.contentAwareScales) {
+        if (!scale.mask || !masks[scale.mask]) continue;
+        imageData.data.set(
+          scaleContentAwareSelection(
+            imageData.data,
+            scaled.width,
+            scaled.height,
+            masks[scale.mask],
+            scale,
+          ),
+        );
+      }
+      scaledContext.putImageData(imageData, 0, 0);
+      rasterSource = scaled;
+    }
+    if (isRasterContentLayer(layer) && rasterSource && layer.matting) {
+      const asset = assets[layer.asset],
+        matted = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        mattedContext = matted.getContext('2d')!;
+      mattedContext.drawImage(rasterSource, 0, 0);
+      const imageData = mattedContext.getImageData(0, 0, matted.width, matted.height);
+      imageData.data.set(applyMattingPixels(
+        imageData.data,
+        matted.width,
+        matted.height,
+        effectiveMatting(layer.matting),
+      ));
+      mattedContext.putImageData(imageData, 0, 0);
+      rasterSource = matted;
+    }
+    if (isRasterContentLayer(layer) && rasterSource && layer.smartFilters?.length) {
+      const asset = assets[layer.asset],
+        stacked = surface(override?.width ?? asset.w, override?.height ?? asset.h),
+        stackedContext = stacked.getContext('2d')!;
+      stackedContext.drawImage(rasterSource, 0, 0);
+      for (const effect of effectiveSmartFilters(layer.smartFilters))
+        applyFilterEffects(stacked, effect);
+      rasterSource = stacked;
     }
     if (isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
       const asset = assets[layer.asset];
@@ -2435,7 +2699,16 @@ export async function renderFrame(
       context.fillStyle = layer.color;
       context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
       context.textBaseline = 'top';
-      drawTextLayer(context, layer);
+      const binding = normalizeTextPathBinding(layer.textPath),
+        pathLayer = binding
+          ? frame.layers.find((candidate): candidate is Extract<Layer, { kind: 'path' }> => candidate.id === binding.pathLayerId && candidate.kind === 'path')
+          : undefined,
+        pathPoints = pathLayer && binding
+          ? mapTextPathPoints(flattenTextPath(pathLayer.path), pathLayer.matrix, layer.matrix)
+          : undefined;
+      drawTextLayer(context, layer, pathPoints && binding
+        ? { points: pathPoints, offset: binding.offset, reverse: binding.reverse }
+        : undefined);
     }
     if (layer.kind === 'rectangle') {
       context.fillStyle = layer.color;
@@ -2480,6 +2753,7 @@ export async function renderFrame(
         Math.max(1, layer.height - layer.stroke),
         layer.variant,
         layer.sides,
+        layer.innerRadius,
       ).map((point) => ({
         x: point.x + layer.stroke / 2,
         y: point.y + layer.stroke / 2,
@@ -2529,6 +2803,11 @@ export async function renderFrame(
     }
     context.restore();
     reportProgress(layerIndex);
+  }
+  if (frame.colorMode === 'grayscale') {
+    const image = context.getImageData(0, 0, frame.w, frame.h);
+    image.data.set(applyColorModePixels(image.data, frame.colorMode));
+    context.putImageData(image, 0, 0);
   }
   return out;
 }

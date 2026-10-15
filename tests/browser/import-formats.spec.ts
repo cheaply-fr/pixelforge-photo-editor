@@ -7,6 +7,59 @@ const ONE_PIXEL_PNG = Buffer.from(
 const SIMPLE_SVG = Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="#ff5c35"/></svg>',
 );
+const PSD_RGB_2X1 = Buffer.from([
+  0x38, 0x42, 0x50, 0x53, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4,
+  0, 0, 0, 1, 0, 0, 0, 2, 0, 8, 0, 3,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  255, 4, 8, 128, 16, 64, 255, 0,
+]);
+const TIFF_RGB_2X1 = (() => {
+  const bytes = new Uint8Array(146), view = new DataView(bytes.buffer);
+  bytes.set([0x49, 0x49], 0);
+  view.setUint16(2, 42, true);
+  view.setUint32(4, 8, true);
+  view.setUint16(8, 10, true);
+  const entries: Array<[number, number, number, number]> = [
+    [256, 4, 1, 2], [257, 4, 1, 1], [258, 3, 3, 134], [259, 3, 1, 1], [262, 3, 1, 2],
+    [273, 4, 1, 140], [277, 3, 1, 3], [278, 4, 1, 1], [279, 4, 1, 6], [284, 3, 1, 1],
+  ];
+  entries.forEach(([tag, type, count, value], index) => {
+    const offset = 10 + index * 12;
+    view.setUint16(offset, tag, true);
+    view.setUint16(offset + 2, type, true);
+    view.setUint32(offset + 4, count, true);
+    if (type === 3 && count === 1) view.setUint16(offset + 8, value, true);
+    else view.setUint32(offset + 8, value, true);
+  });
+  view.setUint32(130, 0, true);
+  bytes.set([8, 0, 8, 0, 8, 0], 134);
+  bytes.set([255, 8, 16, 4, 128, 64], 140);
+  return Buffer.from(bytes);
+})();
+const TIFF_ORIENTED_2X2 = (() => {
+  const bytes = new Uint8Array(164), view = new DataView(bytes.buffer);
+  bytes.set([0x49, 0x49], 0);
+  view.setUint16(2, 42, true);
+  view.setUint32(4, 8, true);
+  view.setUint16(8, 11, true);
+  const entries: Array<[number, number, number, number]> = [
+    [256, 4, 1, 2], [257, 4, 1, 2], [258, 3, 3, 146], [259, 3, 1, 1], [262, 3, 1, 2],
+    [273, 4, 1, 152], [277, 3, 1, 3], [278, 4, 1, 2], [279, 4, 1, 12], [284, 3, 1, 1],
+    [274, 3, 1, 6],
+  ];
+  entries.forEach(([tag, type, count, value], index) => {
+    const offset = 10 + index * 12;
+    view.setUint16(offset, tag, true);
+    view.setUint16(offset + 2, type, true);
+    view.setUint32(offset + 4, count, true);
+    if (type === 3 && count === 1) view.setUint16(offset + 8, value, true);
+    else view.setUint32(offset + 8, value, true);
+  });
+  view.setUint32(142, 0, true);
+  bytes.set([8, 0, 8, 0, 8, 0], 146);
+  bytes.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 152);
+  return Buffer.from(bytes);
+})();
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -45,13 +98,25 @@ test('keeps the native keyboard paste event cancellable only for internal layer 
   expect(defaultPrevented).toBe(false);
 });
 
-test('rejects PSD with an explicit layered-document compatibility label', async ({ page }) => {
+test('imports an RGB PSD composite as a flattened editable raster with explicit layer-loss disclosure', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'layered.psd',
-    mimeType: 'application/octet-stream',
+    mimeType: 'image/vnd.adobe.photoshop',
+    buffer: PSD_RGB_2X1,
+  });
+  await expect(page.getByText('PSD/PSB imported as a flattened editable raster; layers, masks, profiles and source metadata omitted', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '1');
+  await expect.poll(() => page.getByTestId('editor-canvas').evaluate((canvas) => [...(canvas as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 2, 1).data])).toEqual([255, 8, 16, 255, 0, 0, 0, 0]);
+});
+
+test('keeps the draft unchanged when a PSD composite is malformed', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'broken.psd',
+    mimeType: 'image/vnd.adobe.photoshop',
     buffer: Buffer.from('8BPS'),
   });
-  await expect(page.getByText('PSD/PSB import is not supported yet.', { exact: false })).toBeVisible();
+  await expect(page.getByText('This PSD/PSB is not a supported 8-bit RGB/grayscale composite.', { exact: false })).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
 });
 
@@ -80,15 +145,30 @@ test('labels a browser-decoded HEIC source as flattened raster with metadata omi
 test('labels a browser-decoded TIFF source as conditional flattened raster import', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'scan.tiff',
-    // The bytes are a valid PNG fixture so this acceptance test exercises the
-    // browser decoder while the extension carries the TIFF capability label.
-    mimeType: 'image/png',
-    buffer: ONE_PIXEL_PNG,
+    mimeType: 'image/tiff',
+    buffer: TIFF_RGB_2X1,
   });
   await expect(
     page.getByText('TIFF imported as a flattened raster; source metadata omitted', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '1');
+  await expect.poll(() => page.getByTestId('editor-canvas').evaluate((canvas) => [...(canvas as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 2, 1).data])).toEqual([255, 8, 16, 255, 4, 128, 64, 255]);
+});
+
+test('normalizes TIFF orientation before publishing the flattened browser raster', async ({ page }) => {
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'oriented.tiff',
+    mimeType: 'image/tiff',
+    buffer: TIFF_ORIENTED_2X2,
+  });
+  const canvas = page.getByTestId('editor-canvas');
+  await expect(canvas).toHaveAttribute('width', '2');
+  await expect(canvas).toHaveAttribute('height', '2');
+  await expect.poll(() => canvas.evaluate((node) => [...(node as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 2, 2).data])).toEqual([
+    7, 8, 9, 255, 1, 2, 3, 255,
+    10, 11, 12, 255, 4, 5, 6, 255,
+  ]);
 });
 
 test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
@@ -98,7 +178,7 @@ test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
     buffer: Buffer.from([0, 1, 2, 3, 4]),
   });
   await expect(
-    page.getByText('TIFF decoding is unavailable in this browser.', { exact: false }),
+    page.getByText('This TIFF is not a supported 8-bit chunky RGB/grayscale composite.', { exact: false }),
   ).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');

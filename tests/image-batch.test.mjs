@@ -124,13 +124,11 @@ test('multi-input export fails safely when every source is invalid', async () =>
   assert.deepEqual(progress.map((event) => event.status), ['failed', 'failed']);
 });
 
-test('batch decoding labels layered and camera formats before invoking browser decoders', async () => {
-  for (const source of [
-    { name: 'layered.psd', file: blob([1], 'application/octet-stream') },
-    { name: 'camera.nef', file: blob([1], 'application/octet-stream') },
-  ]) {
-    await assert.rejects(decodeBatchImage(source), /not supported yet|RAW/);
-  }
+test('batch decoding rejects camera formats before invoking browser decoders', async () => {
+  await assert.rejects(
+    decodeBatchImage({ name: 'camera.nef', file: blob([1], 'application/octet-stream') }),
+    /not supported yet|RAW/,
+  );
 });
 
 test('batch decoding rejects unknown containers before invoking browser decoders', async () => {

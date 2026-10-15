@@ -4,6 +4,7 @@ import {
   type ActionSet,
   type ActionStep,
 } from './actions.ts';
+import { applyFilterEffects, type FilterEffectType } from './filterEffects.ts';
 
 /** Keep anonymous batch work bounded on memory-constrained devices. */
 export const MAX_BATCH_ACTION_ITEMS = 64;
@@ -121,6 +122,28 @@ function numberParameter(step: ActionStep, name: string, fallback: number): numb
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function gradientStopsParameter(step: ActionStep): unknown[] {
+  const value = step.parameters?.gradientStops;
+  if (typeof value !== 'string' || value.length > 2048) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.slice(0, 6) : [];
+  } catch {
+    return [];
+  }
+}
+
+function filterExtraParameters(step: ActionStep): Record<string, unknown> {
+  const value = step.parameters?.filterExtra;
+  if (typeof value !== 'string' || value.length > 4096) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLCanvasElement {
   const context = input.getContext('2d');
   if (!context) throw new Error('Canvas rendering is unavailable in this browser.');
@@ -157,6 +180,93 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
   if (Object.prototype.hasOwnProperty.call(filters, step.command)) {
     target.filter = filters[step.command];
     target.drawImage(input, 0, 0);
+    return output;
+  }
+  const filterTypes: Record<string, FilterEffectType> = {
+    'filter-average': 'average-blur',
+    'filter-blur': 'blur',
+    'filter-blur-more': 'blur-more',
+    'filter-box-blur': 'box-blur',
+    'filter-gaussian-blur': 'gaussian-blur',
+    'filter-lens-blur': 'lens-blur',
+    'filter-iris-blur': 'iris-blur',
+    'filter-smart-blur': 'smart-blur',
+    'filter-surface-blur': 'surface-blur',
+    'filter-shape-blur': 'shape-blur',
+    'filter-sharpen': 'sharpen',
+    'filter-unsharp-mask': 'unsharp-mask',
+    'filter-sharpen-more': 'sharpen-more',
+    'filter-sharpen-edges': 'sharpen-edges',
+    'filter-smart-sharpen': 'smart-sharpen',
+    'filter-motion-blur': 'motion-blur',
+    'filter-radial-blur': 'radial-blur',
+    'filter-spin-blur': 'spin-blur',
+    'filter-path-blur': 'path-blur',
+    'filter-field-blur': 'field-blur',
+    'filter-tilt-shift': 'tilt-shift',
+    'filter-mosaic': 'mosaic',
+    'filter-fragment': 'fragment',
+    'filter-crystallize': 'crystallize',
+    'filter-facet': 'facet',
+    'filter-color-halftone': 'color-halftone',
+    'filter-mezzotint': 'mezzotint',
+    'filter-pointillize': 'pointillize',
+    'filter-picture-frame': 'picture-frame',
+    'filter-tree': 'tree',
+    'filter-clouds': 'clouds',
+    'filter-fibers': 'fibers',
+    'filter-difference-clouds': 'difference-clouds',
+    'filter-lens-flare': 'lens-flare',
+    'filter-flame': 'flame',
+    'filter-find-edges': 'find-edges',
+    'filter-emboss': 'emboss',
+    'filter-deinterlace': 'deinterlace',
+    'filter-ntsc-colors': 'ntsc-colors',
+    'filter-solarize': 'solarize',
+    'filter-diffuse': 'diffuse',
+    'filter-wind': 'wind',
+    'filter-gradient-map': 'gradient-map',
+    'filter-median': 'median',
+    'filter-dust-scratches': 'dust-scratches',
+    'filter-despeckle': 'despeckle',
+    'filter-reduce-noise': 'reduce-noise',
+    'filter-add-noise': 'add-noise',
+    'filter-lens-correction': 'lens-correction',
+    'filter-displace': 'displace',
+    'filter-pinch': 'pinch',
+    'filter-liquify': 'liquify',
+    'filter-polar-coordinates': 'polar-coordinates',
+    'filter-ripple': 'ripple',
+    'filter-spherize': 'spherize',
+    'filter-twirl': 'twirl',
+    'filter-wave': 'wave',
+    'filter-shear': 'shear',
+    'filter-zigzag': 'zigzag',
+  };
+  const filterType = filterTypes[step.command];
+  if (filterType) {
+    const extra = filterExtraParameters(step);
+    applyFilterEffects(output, {
+      ...extra,
+      type: filterType,
+      amount: numberParameter(step, 'amount', 70),
+      radius: numberParameter(step, 'radius', 10),
+      angle: numberParameter(step, 'angle', 0),
+      centerX: numberParameter(step, 'centerX', 0.5),
+      centerY: numberParameter(step, 'centerY', 0.5),
+      seed: numberParameter(step, 'seed', 0),
+      threshold: numberParameter(step, 'threshold', 25),
+      noiseMonochromatic: step.parameters?.noiseMonochromatic === true,
+      noiseDistribution: step.parameters?.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform',
+      gradientMap: {
+        shadow: typeof step.parameters?.gradientShadow === 'string' ? step.parameters.gradientShadow : '#000000',
+        highlight: typeof step.parameters?.gradientHighlight === 'string' ? step.parameters.gradientHighlight : '#ffffff',
+        stops: gradientStopsParameter(step) as Array<{ position: number; color: string }>,
+        blend: step.parameters?.gradientBlend === 'multiply' || step.parameters?.gradientBlend === 'screen' || step.parameters?.gradientBlend === 'overlay'
+          ? step.parameters.gradientBlend
+          : 'normal',
+      },
+    });
     return output;
   }
   throw new Error(`Action step “${step.label}” is not supported for flattened batch images.`);

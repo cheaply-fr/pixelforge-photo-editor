@@ -103,7 +103,7 @@ test('Arrange commands move selected layers as a stable block and persist throug
   expect(frame.selectedLayerIds).toHaveLength(2);
 });
 
-test('Arrange menu disables boundary, locked and grouped moves', async ({ page }) => {
+test('Arrange menu disables boundary and locked moves, while grouped blocks remain movable', async ({ page }) => {
   await drawShape(page, 0.1, 0.1, 0.08, 0.06);
   await drawShape(page, 0.35, 0.2, 0.08, 0.06);
 
@@ -128,8 +128,11 @@ test('Arrange menu disables boundary, locked and grouped moves', async ({ page }
   await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   menu = layerMenu(page);
-  await expect(menu.getByRole('menuitem', { name: 'Bring Forward', exact: true })).toBeDisabled();
+  await expect(menu.getByRole('menuitem', { name: 'Bring Forward', exact: true })).toBeEnabled();
   await expect(menu.getByRole('menuitem', { name: 'Send Backward', exact: true })).toBeDisabled();
+  await menu.getByRole('menuitem', { name: 'Bring Forward', exact: true }).click();
+  const moved = await project(page);
+  expect(moved.history[moved.index].layers.find((layer) => layer.name === 'Shape 2')?.groupId).toBeTruthy();
 });
 
 test('Arrange commands retain platform modifier selection semantics', async ({ page }) => {

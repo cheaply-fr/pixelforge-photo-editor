@@ -91,6 +91,33 @@ test('patch selection alpha clips writes without changing unselected pixels', ()
   assert.deepEqual(pixel(result, width, 3, 4), [20, 40, 60, 255]);
 });
 
+test('patch captures a named selection-mask asset without mutating the mask', () => {
+  const width = 9;
+  const height = 9;
+  const source = rgba(width, height);
+  source.set([255, 0, 0, 255], (4 * width + 1) * 4);
+  const mask = new Uint8ClampedArray(width * height);
+  mask[4 * width + 4] = 255;
+  const before = mask.slice();
+  const result = applyPatchStrokes(
+    source,
+    width,
+    height,
+    [stroke({
+      selectionMask: 'mask-asset',
+      points: [{ x: 4, y: 4 }],
+      size: 3,
+      sourceOffset: { x: -3, y: 0 },
+    })],
+    { 'mask-asset': mask },
+  );
+  assert.deepEqual(mask, before);
+  assert.deepEqual(pixel(result, width, 4, 4), [255, 0, 0, 255]);
+  assert.deepEqual(pixel(result, width, 3, 4), [20, 40, 60, 255]);
+  assert.equal(validPatchStroke(stroke({ selectionMask: 'mask-asset' }), width, height), true);
+  assert.equal(validPatchStroke(stroke({ selectionMask: 'bad value' }), width, height), false);
+});
+
 test('patch validation rejects malformed, oversized and out-of-bounds metadata', () => {
   assert.equal(validPatchStroke(stroke(), 12, 10), true);
   assert.equal(

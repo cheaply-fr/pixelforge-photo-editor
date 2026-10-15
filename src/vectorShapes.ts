@@ -17,18 +17,21 @@ export function shapePoints(
   height: number,
   variant: ParametricShapeVariant = 'polygon',
   sides = 5,
+  innerRadius = 0.5,
 ): ShapePoint[] {
   if (!finite(width) || !finite(height) || width <= 0 || height <= 0)
     throw new Error('Shape dimensions are invalid');
   const normalized = validateShapeVariant(variant);
   if (!Number.isInteger(sides) || sides < 3 || sides > 32)
     throw new Error('Shape sides are invalid');
+  if (!finite(innerRadius) || innerRadius < 0.1 || innerRadius > 0.9)
+    throw new Error('Shape inner radius is invalid');
   const count = normalized === 'triangle' ? 3 : normalized === 'star' ? sides * 2 : sides;
   const points: ShapePoint[] = [];
   const cx = width / 2, cy = height / 2, rx = width / 2, ry = height / 2;
   for (let index = 0; index < count; index += 1) {
     const angle = -Math.PI / 2 + (index * Math.PI * 2) / count;
-    const radius = normalized === 'star' && index % 2 === 1 ? 0.5 : 1;
+    const radius = normalized === 'star' && index % 2 === 1 ? innerRadius : 1;
     points.push({ x: cx + Math.cos(angle) * rx * radius, y: cy + Math.sin(angle) * ry * radius });
   }
   return points;

@@ -1326,6 +1326,30 @@ test('Merge Layers disables non-contiguous multi-selection', async ({ page }) =>
   ).toBeDisabled();
 });
 
+test('Merge Layers merges a complete folder as one isolated unit', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^New white document/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Duplicate Layer/ }).click();
+  const rows = page.getByRole('button', { name: /^Select layer / });
+  await expect(rows).toHaveCount(3);
+  await rows.nth(1).click();
+  await rows.nth(2).click({ modifiers: [additiveModifier] });
+  await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Merge Layers', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Merge Layers', exact: true }).click();
+  await expect(page.getByText('2 layers merged; undo restores the individual layers')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('heading', { name: /Layers/ })).toContainText('2 /');
+});
+
 test('layer menu copy, paste, hide and flatten preserve an undoable project', async ({
   page,
 }) => {
@@ -1372,6 +1396,20 @@ test('layer menu copy, paste, hide and flatten preserve an undoable project', as
   path = await (await downloaded).path();
   project = await downloadedProject(path!);
   expect(project.history[project.index].layers.length).toBe(3);
+});
+
+test('Cookie Cutter creates an editable vector mask and survives reload', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const prompts = ['star'];
+  page.on('dialog', async (dialog) => await dialog.accept(prompts.shift()!));
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Cookie Cutter Mask…', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Cookie Cutter Mask…', exact: true }).click();
+  await expect(page.getByText(/Cookie Cutter star mask created/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByText(/Vector mask/)).toBeVisible();
 });
 
 test('layer clipboard shortcuts guard locked and last layers and survive undo/reload', async ({
@@ -1615,6 +1653,10 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   ).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(
+    editMenu.getByRole('menuitem', { name: /^Search/ }),
+  ).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(
     editMenu.getByRole('menuitem', { name: /^Fill/ }),
   ).toBeFocused();
   await page.keyboard.press('Escape');
@@ -1813,24 +1855,31 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
   expect(adjusted[3]).toBe(before[3]);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
-  await expect(page.getByLabel('Noise amount', { exact: true })).toHaveValue('35');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('70');
+  await page.getByLabel('Effect amount', { exact: true }).fill('35');
+  await page.getByLabel('Add Noise monochromatic', { exact: true }).check();
+  await page.getByLabel('Add Noise distribution', { exact: true }).selectOption('gaussian');
+  const filtered = await sample();
   const projectDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const projectPath = await (await projectDownload).path();
   const project = await downloadedProject(projectPath!) as {
-    history: Array<{ layers: Array<{ adjustments: { sharpenNoise: { noise: number; seed: number; monochromatic: boolean } } }> }>;
+    history: Array<{ layers: Array<{ adjustments: { filterEffects: { type: string; amount: number; noiseMonochromatic?: boolean; noiseDistribution?: string } } }> }>;
     index: number;
   };
-  expect(project.history[project.index].layers.at(-1)!.adjustments.sharpenNoise).toMatchObject({
-    noise: 35,
-    seed: 42,
-    monochromatic: true,
+  expect(project.history[project.index].layers.at(-1)!.adjustments.filterEffects).toMatchObject({
+    type: 'add-noise',
+    amount: 35,
+    noiseMonochromatic: true,
+    noiseDistribution: 'gaussian',
   });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await expect(page.getByLabel('Noise amount', { exact: true })).toHaveValue('35');
-  await expect(page.getByLabel('Noise seed', { exact: true })).toHaveValue('42');
-  await expect(page.getByLabel('Monochromatic noise', { exact: true })).toBeChecked();
-  await expect.poll(sample).toEqual(adjusted);
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('35');
+  await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Add Noise distribution', { exact: true })).toHaveValue('gaussian');
+  await expect.poll(sample).toEqual(filtered);
 });

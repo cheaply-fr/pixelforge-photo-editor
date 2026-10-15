@@ -191,15 +191,16 @@ function coverageAt(x: number, y: number, point: BrushStrokePoint, settings: Mix
   return brushCoverage(x - point.x, y - point.y, stamp.radius, stamp.hardness, stamp.roundness, stamp.angle, stamp.flipX, stamp.flipY);
 }
 
-function alphaMix(destination: Uint8ClampedArray, source: ArrayLike<number>, offset: number, amount: number, preserveSourceTransparency: boolean) {
-  const sa = source[offset + 3] / 255;
+function alphaMix(destination: Uint8ClampedArray, source: ArrayLike<number>, offset: number, amount: number, preserveSourceTransparency: boolean, sampledSource?: ArrayLike<number>) {
+  const paint = sampledSource ?? source;
+  const sa = paint[3] / 255;
   if (preserveSourceTransparency && sa <= 0) return false;
   const da = destination[offset + 3] / 255;
   const outputAlpha = clamp(da + (sa - da) * amount, 0, 1);
   let changed = false;
   for (let channel = 0; channel < 3; channel += 1) {
     const before = destination[offset + channel];
-    const sourceColour = source[offset + channel];
+    const sourceColour = paint[channel];
     destination[offset + channel] = Math.round(before + (sourceColour - before) * amount);
     changed = changed || before !== destination[offset + channel];
   }
@@ -208,7 +209,7 @@ function alphaMix(destination: Uint8ClampedArray, source: ArrayLike<number>, off
   return changed || beforeAlpha !== destination[offset + 3];
 }
 
-function applyStroke(destinationInput: Uint8ClampedArray, source: ArrayLike<number>, width: number, height: number, points: readonly BrushStrokePoint[], size: number, hardness: number, intensity: (coverage: number, point: BrushStrokePoint) => number, selectionMask?: ArrayLike<number>): Uint8ClampedArray {
+function applyStroke(destinationInput: Uint8ClampedArray, source: ArrayLike<number>, width: number, height: number, points: readonly BrushStrokePoint[], size: number, hardness: number, intensity: (coverage: number, point: BrushStrokePoint) => number, selectionMask?: ArrayLike<number>, sampleSource?: (destination: Uint8ClampedArray, source: ArrayLike<number>, offset: number) => ArrayLike<number> | undefined): Uint8ClampedArray {
   const destination = new Uint8ClampedArray(destinationInput);
   if (!points.length) return destination;
   const radius = size / 2;
@@ -223,7 +224,8 @@ function applyStroke(destinationInput: Uint8ClampedArray, source: ArrayLike<numb
       if (!selection) continue;
       const amount = clamp(intensity(coverageAt(x, y, point, { size, hardness } as MixerBrushSettings), point) * selection, 0, 1);
       if (amount <= 0) continue;
-      alphaMix(destination, source, index * 4, amount, true);
+      const offset = index * 4;
+      alphaMix(destination, source, offset, amount, true, sampleSource?.(destination, source, offset));
     }
   }
   return destination;
@@ -237,7 +239,25 @@ export function applyMixerBrushPixels(destination: Uint8ClampedArray, source: Ar
   const load = settings.load / 100;
   const mix = settings.mix / 100;
   const flow = settings.flow / 100;
-  return applyStroke(destination, source, width, height, points, settings.size, settings.hardness, (coverage) => coverage * flow * mix * (0.25 + 0.75 * wet * load), selectionMask);
+  return applyStroke(
+    destination,
+    source,
+    width,
+    height,
+    points,
+    settings.size,
+    settings.hardness,
+    (coverage) => coverage * flow * mix * (0.25 + 0.75 * wet * load),
+    selectionMask,
+    wet > 0 && load < 1
+      ? (current, immutable, offset) => new Uint8ClampedArray([
+        Math.round(immutable[offset] * (1 - wet * (1 - load)) + current[offset] * wet * (1 - load)),
+        Math.round(immutable[offset + 1] * (1 - wet * (1 - load)) + current[offset + 1] * wet * (1 - load)),
+        Math.round(immutable[offset + 2] * (1 - wet * (1 - load)) + current[offset + 2] * wet * (1 - load)),
+        immutable[offset + 3],
+      ])
+      : undefined,
+  );
 }
 
 /** Restore a historical source through an opacity/flow-controlled brush. */

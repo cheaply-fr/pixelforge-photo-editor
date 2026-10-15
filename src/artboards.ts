@@ -53,6 +53,25 @@ export function sanitizeArtboardLayerMembership(
   );
 }
 
+/**
+ * Update one artboard's visibility without mutating the draft history.
+ * At least one viewport must remain visible so the active export target can
+ * always resolve to a renderable artboard.
+ */
+export function setArtboardVisibility(
+  artboards: readonly Artboard[],
+  id: string,
+  visible: boolean,
+): Artboard[] {
+  if (!artboards.some((artboard) => artboard.id === id))
+    throw new Error('The requested artboard does not exist');
+  if (!visible && artboards.filter((artboard) => artboard.visible).length <= 1)
+    throw new Error('At least one artboard must remain visible');
+  return artboards.map((artboard) =>
+    artboard.id === id ? { ...artboard, visible } : { ...artboard },
+  );
+}
+
 const integer = (value: unknown, min: number, max: number) =>
   typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
 

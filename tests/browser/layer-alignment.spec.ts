@@ -109,3 +109,22 @@ test('folder distribution spaces three visible layers and leaves outer layers fi
     reloaded.history[reloaded.index].groups![0].id,
   );
 });
+
+test('selected root layers distribute without requiring a folder', async ({ page }) => {
+  await drawShape(page, 0.08, 0.1, 0.06, 0.05);
+  await drawShape(page, 0.34, 0.18, 0.08, 0.05);
+  await drawShape(page, 0.72, 0.12, 0.07, 0.06);
+  const rows = page.getByRole('button', { name: /^Select layer Shape/ });
+  await rows.nth(0).click();
+  await rows.nth(2).click({ modifiers: ['Shift'] });
+  await expect(page.getByRole('button', { name: 'Distribute horizontally', exact: true })).toBeEnabled();
+  const before = await project(page);
+  const layersBefore = before.history[before.index].layers;
+  await page.getByRole('button', { name: 'Distribute horizontally', exact: true }).click();
+  const after = await project(page);
+  const layersAfter = after.history[after.index].layers;
+  expect(layersAfter.filter((layer) => layer.name.startsWith('Shape'))).toHaveLength(3);
+  expect(layersAfter.find((layer) => layer.name === 'Shape 2')!.matrix[4]).not.toBe(
+    layersBefore.find((layer) => layer.name === 'Shape 2')!.matrix[4],
+  );
+});

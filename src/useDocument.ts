@@ -19,6 +19,8 @@ import {
   selectedLayerIdsForFrame,
   toggleLayerSelection,
 } from './layerSelection';
+import { TileCache } from './tilePlan';
+import { detectTileCacheBudget } from './tileCachePolicy';
 
 export type RenderProgress = {
   completed: number;
@@ -45,8 +47,14 @@ export function useDocument(onError: (message: string) => void) {
     [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
   const [tiledProgress, setTiledProgress] = useState<TiledNeighborhoodProgress | null>(null);
+  const [tiledCacheBudget] = useState(() => detectTileCacheBudget());
   const renderSequence = useRef(0),
-    renderAbort = useRef<AbortController | null>(null);
+    renderAbort = useRef<AbortController | null>(null),
+    documentRevision = useRef(0),
+    // Keep a device-aware in-memory session cache for repeat renders of the
+    // same document revision. Keys include the revision, so edits cannot
+    // reuse stale pixels; the byte cap keeps anonymous mobile drafts bounded.
+    tiledCache = useRef(new TileCache<Uint8ClampedArray>(tiledCacheBudget));
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };
@@ -73,7 +81,8 @@ export function useDocument(onError: (message: string) => void) {
           {
             signal: controller.signal,
             reuseWorker: true,
-            tiledRevision: sequence,
+            tiledRevision: documentRevision.current,
+            tiledCache: tiledCache.current,
             isCancelled: () => sequence !== renderSequence.current,
             onProgress: (completed, total) => {
               if (sequence === renderSequence.current)
@@ -115,6 +124,7 @@ export function useDocument(onError: (message: string) => void) {
   );
   const publish = useCallback(
     (value: Frame) => {
+      documentRevision.current += 1;
       setFrame(value);
       setRevision((v) => v + 1);
       void paint(value);
@@ -122,7 +132,9 @@ export function useDocument(onError: (message: string) => void) {
     [paint],
   );
   const commit = useCallback(
-    (value: Frame, replace = false) => {
+    (value: Frame, replace = false, nextAssets?: Assets) => {
+      const previousAssets = assets.current;
+      if (nextAssets) assets.current = nextAssets;
       try {
         // Stack edits can invalidate a clipping relationship. Repair those
         // links at the history boundary so reorder/delete/group operations
@@ -155,7 +167,7 @@ export function useDocument(onError: (message: string) => void) {
         publish(sanitized);
         return true;
       } catch (error) {
-        assets.current = referencedAssets(history.current, assets.current);
+        assets.current = referencedAssets(history.current, previousAssets);
         if (history.current[index.current])
           void paint(history.current[index.current]);
         onError(
@@ -199,6 +211,7 @@ export function useDocument(onError: (message: string) => void) {
           signal: installController.signal,
           reuseWorker: true,
           tiledRevision: installSequence,
+          tiledCache: tiledCache.current,
           isCancelled: () => installSequence !== renderSequence.current,
           onProgress: (completed, total) => {
             if (installSequence === renderSequence.current)
@@ -297,6 +310,7 @@ export function useDocument(onError: (message: string) => void) {
     renderProgress,
     tiledTelemetry,
     tiledProgress,
+    tiledCacheBudget,
     paint,
     commit,
     install,

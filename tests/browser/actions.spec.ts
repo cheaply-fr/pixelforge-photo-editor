@@ -207,6 +207,116 @@ test('applies a recorded Action to a bounded image batch and downloads a privacy
   expect(await download.failure()).toBeNull();
 });
 
+test('applies an active nondestructive filter Action to a flattened batch', async ({ page }) => {
+  const onePixel = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Batch noise');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Batch noise', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Batch…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles({
+    name: 'batch-noise.png',
+    mimeType: 'image/png',
+    buffer: onePixel,
+  });
+  await expect(page.getByRole('heading', { name: 'Batch apply “Batch noise”' })).toBeVisible();
+  await page.getByRole('button', { name: 'Apply Action and build ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toMatch(/pixelforge-images-batch\.zip$/);
+  expect(await download.failure()).toBeNull();
+});
+
+test('applies an enabled blur-family Action to a flattened batch', async ({ page }) => {
+  const onePixel = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
+  );
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Batch lens blur');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Lens Blur…', exact: true }).click();
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await page.getByRole('button', { name: 'Batch…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles({
+    name: 'batch-lens-blur.png',
+    mimeType: 'image/png',
+    buffer: onePixel,
+  });
+  await expect(page.getByRole('heading', { name: 'Batch apply “Batch lens blur”' })).toBeVisible();
+  await page.getByRole('button', { name: 'Apply Action and build ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toMatch(/pixelforge-images-batch\.zip$/);
+  expect(await download.failure()).toBeNull();
+});
+
+test('persists normalized filter controls in recorded Actions', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Parameterized filter');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add Noise…', exact: true }).click();
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  const parameters = await page.evaluate(() => {
+    const payload = JSON.parse(window.localStorage.getItem('pixelforge.actions.v1') || '{"actions":[]}');
+    const actions = payload.actions || [];
+    const action = actions[actions.length - 1];
+    const steps = action?.steps || [];
+    return steps[steps.length - 1]?.parameters;
+  });
+  expect(parameters).toMatchObject({
+    amount: expect.any(Number),
+    radius: expect.any(Number),
+    seed: expect.any(Number),
+    noiseMonochromatic: false,
+    noiseDistribution: 'uniform',
+  });
+});
+
+test('persists Gradient Map colors in recorded Actions', async ({ page }) => {
+  await openActions(page);
+  await page.getByLabel('Recipe name').fill('Parameterized gradient map');
+  await page.getByTestId('start-action-recording').click();
+  await page.getByRole('button', { name: 'Close action recipes' }).click();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Gradient Map…', exact: true }).click();
+  await page.getByRole('button', { name: 'Add stop', exact: true }).click();
+  await openActions(page);
+  await page.getByRole('button', { name: 'Stop recording' }).click();
+  await expect(page.getByText('Parameterized gradient map', { exact: true })).toBeVisible();
+  const parameters = await page.evaluate(() => {
+    const payload = JSON.parse(window.localStorage.getItem('pixelforge.actions.v1') || '{"actions":[]}');
+    const actions = payload.actions || [];
+    const action = actions[actions.length - 1];
+    const steps = action?.steps || [];
+    return steps[steps.length - 1]?.parameters;
+  });
+  expect(parameters).toMatchObject({
+    gradientShadow: '#000000',
+    gradientHighlight: '#ffffff',
+    gradientBlend: 'normal',
+  });
+  expect(parameters.gradientStops).toContain('"position":25');
+});
+
 test('records and replays the Fibers Render command', async ({ page }) => {
   await openActions(page);
   await page.getByLabel('Recipe name').fill('Fibers filament finish');

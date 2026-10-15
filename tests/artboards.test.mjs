@@ -7,10 +7,12 @@ import {
   createArtboard,
   effectiveArtboards,
   sanitizeArtboardLayerMembership,
+  setArtboardVisibility,
   transformArtboard,
   validArtboard,
   validArtboards,
 } from '../src/artboards.ts';
+import { fitLayerMatrixToArtboard, fitLayerToArtboard } from '../src/artboardFit.ts';
 
 const frame = { w: 800, h: 600 };
 const item = {
@@ -99,4 +101,39 @@ test('destructive layer operations sanitize membership without mutating history'
     sanitizeArtboardLayerMembership([{ ...item, layerIds: [] }], []).at(0)?.layerIds,
     [],
   );
+});
+
+test('artboard visibility updates immutably and keeps one export target visible', () => {
+  const source = [
+    { ...item, id: 'hero', visible: true },
+    { ...item, id: 'social', visible: true, x: 400 },
+  ];
+  const hidden = setArtboardVisibility(source, 'hero', false);
+  assert.deepEqual(hidden.map((artboard) => artboard.visible), [false, true]);
+  assert.equal(source[0].visible, true);
+  assert.throws(() => setArtboardVisibility(hidden, 'social', false), /at least one/i);
+  assert.throws(() => setArtboardVisibility(source, 'missing', false), /does not exist/i);
+});
+
+test('fitting a layer to an artboard preserves sources, membership and fit geometry', () => {
+  const assetId = '00000000-0000-4000-8000-000000000010';
+  const layerId = '00000000-0000-4000-8000-000000000011';
+  const layer = {
+    id: layerId, name: 'Photo', kind: 'raster', asset: assetId, visible: true, locked: false,
+    opacity: 1, blend: 'source-over', matrix: [1, 0, 0, 1, 20, 30], adjustments: {},
+  };
+  const frame = {
+    w: 800, h: 600, active: layerId, layers: [layer], groups: [],
+    artboards: [{ ...item, id: 'hero', x: 100, y: 120, w: 400, h: 200, layerIds: [] }],
+    activeArtboardId: 'hero', selection: undefined,
+  };
+  const assets = { [assetId]: { w: 200, h: 100, pixels: new Uint8ClampedArray(200 * 100 * 4) } };
+  const matrix = fitLayerMatrixToArtboard(layer, frame.artboards[0], assets, 'contain');
+  assert.deepEqual(matrix, [2, 0, 0, 2, 100, 120]);
+  const fitted = fitLayerToArtboard(frame, assets, 'hero', layerId, 'cover');
+  assert.deepEqual(fitted.artboards?.[0].layerIds, [layerId]);
+  assert.notEqual(fitted.layers[0], frame.layers[0]);
+  assert.deepEqual(frame.layers[0].matrix, [1, 0, 0, 1, 20, 30]);
+  assert.deepEqual(assets[assetId].pixels, new Uint8ClampedArray(200 * 100 * 4));
+  assert.throws(() => fitLayerToArtboard({ ...frame, layers: [{ ...layer, locked: true }] }, assets, 'hero', layerId), /locked/i);
 });

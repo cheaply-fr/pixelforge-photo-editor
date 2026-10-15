@@ -157,6 +157,87 @@ test('draft storage preparation rejects malformed revisions and cloud links', ()
   );
 });
 
+test('gradient geometry and endpoint persist and reject unknown values', () => {
+  const radial = validateDraft({
+    ...baseDraft(),
+    settings: {
+      ...settings,
+      gradientMode: 'radial',
+      gradientEnd: 'background',
+      gradientMidpoint: '#00ff00',
+      gradientMidpointPosition: 64,
+      gradientDither: 58,
+      gradientNoise: 42,
+      gradientReverse: true,
+      gradientStops: [
+        { position: 24, color: '#123456' },
+        { position: 76, color: '#abcdef' },
+      ],
+      secondaryBrushPreset: 'round-soft',
+    },
+  });
+  assert.equal(radial.settings.gradientMode, 'radial');
+  assert.equal(radial.settings.gradientEnd, 'background');
+  assert.equal(radial.settings.gradientMidpoint, '#00ff00');
+  assert.equal(radial.settings.gradientMidpointPosition, 64);
+  assert.equal(radial.settings.gradientDither, 58);
+  assert.equal(radial.settings.gradientNoise, 42);
+  assert.equal(radial.settings.gradientReverse, true);
+  assert.deepEqual(radial.settings.gradientStops, [
+    { position: 24, color: '#123456' },
+    { position: 76, color: '#abcdef' },
+  ]);
+  assert.equal(radial.settings.secondaryBrushPreset, 'round-soft');
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'diamond' } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientEnd: 'opaque' } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMidpoint: '#bad' } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientDither: 101 } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientNoise: 101 } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMidpointPosition: 100 } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientReverse: 'yes' } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientStops: [{ position: 80, color: '#ffffff' }, { position: 20, color: '#000000' }] } }),
+    /Saved document is not supported/,
+  );
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, secondaryBrushPreset: 'missing' } }),
+    /Saved document is not supported/,
+  );
+});
+
+test('Text tool font choice persists and rejects unsupported local fonts', () => {
+  const saved = validateDraft({
+    ...baseDraft(),
+    settings: { ...settings, fontFamily: 'Georgia' },
+  });
+  assert.equal(saved.settings.fontFamily, 'Georgia');
+  assert.throws(
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, fontFamily: 'Comic Sans' } }),
+    /Saved document is not supported/,
+  );
+});
+
 test('cloud session and project response validators reject malformed or oversized data', () => {
   assert.deepEqual(validateCloudSession({ authenticated: false }), {
     authenticated: false,

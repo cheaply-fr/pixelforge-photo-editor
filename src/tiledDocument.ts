@@ -28,6 +28,7 @@ import {
  * entering the tiled path before their coordinate phase has an oracle test.
  */
 export const TILED_NEIGHBORHOOD_EFFECT_TYPES = [
+  'blur',
   'blur-more',
   'box-blur',
   'gaussian-blur',
@@ -57,7 +58,9 @@ export function tiledNeighborhoodRadius(
   const effect = effectiveFilterEffects(value);
   if (!TILED_NEIGHBORHOOD_EFFECT_TYPES.includes(effect.type as TiledNeighborhoodEffectType))
     return undefined;
-  const radius = effect.type === 'blur-more'
+  const radius = effect.type === 'blur'
+    ? 1
+    : effect.type === 'blur-more'
     ? Math.min(64, effect.radius * 2)
     : effect.radius;
   return effect.amount > 0 && radius > 0 && radius <= 64 ? radius : undefined;

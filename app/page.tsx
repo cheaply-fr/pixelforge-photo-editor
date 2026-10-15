@@ -71,6 +71,7 @@ import {
 } from '../src/cloud';
 import {
   addAsset,
+  identity,
   colorSelectMask,
   commonLayer,
   isRasterContentLayer,
@@ -103,8 +104,31 @@ import {
   type SelectionPart,
   type TextAlign,
   type Assets,
+  FONTS,
 } from '../src/document';
+import {
+  applyImagePixels,
+  CALCULATION_MODES,
+  calculateImagePixels,
+  type CalculationMode,
+} from '../src/applyImage';
+import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
+import { normalizeTextPathBinding } from '../src/textOnPath';
+import {
+  createCustomBrushPreset,
+  normalizeCustomBrushPresets,
+  type CustomBrushPreset,
+} from '../src/customBrushPresets';
+import {
+  createCustomPatternPreset,
+  normalizeCustomPatternPresets,
+  type CustomPatternPreset,
+} from '../src/customPatternPresets';
+import { createCustomShapePreset, normalizeCustomShapePresets, type CustomShapeKind, type CustomShapePreset } from '../src/customShapePresets';
+import { createCustomPathPreset, normalizeCustomPathPresets, type CustomPathPreset } from '../src/customPathPresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
+import { MATTING_MODES, effectiveMatting } from '../src/matting';
+import { cookieCutterPath, COOKIE_CUTTER_SHAPES, type CookieCutterShape } from '../src/cookieCutter';
 import {
   alphaFromRgba,
   normalizeTextMaskRequest,
@@ -112,6 +136,24 @@ import {
   type TextMaskOrientation,
 } from '../src/textMask';
 import { useDocument } from '../src/useDocument';
+import {
+  applySelectLinkedLayers,
+  planSelectLinkedLayers,
+  selectLinkedLayersReason,
+} from '../src/linkedLayers';
+import {
+  applyTypeStyle,
+  normalizeTypeStyle,
+  typeStyleFromLayer,
+  type TypeStyle,
+} from '../src/typeStyles';
+import {
+  applyLinkLayers,
+  applyUnlinkLayers,
+  linkLayersReason,
+  planLinkLayers,
+  planUnlinkLayers,
+} from '../src/layerLinks';
 import {
   beginPerformanceSpan,
   type PerformanceSpan,
@@ -134,6 +176,7 @@ import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
+import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
 import TrimDialog from '../src/TrimDialog';
@@ -188,6 +231,7 @@ import {
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
+import { applyFadePixels } from '../src/fade';
 import { createBackgroundMask } from '../src/backgroundRemoval';
 import {
   applyMaskRefinementPixels,
@@ -197,6 +241,22 @@ import {
 } from '../src/maskRefinement';
 import { type ExportFormat } from '../src/export';
 import ActionsPanel from '../src/ActionsPanel';
+import TextReplaceDialog from '../src/TextReplaceDialog';
+import { replaceTextLayers } from '../src/textReplace';
+import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
+import KeyboardShortcutsDialog, { type KeyboardShortcutItem } from '../src/KeyboardShortcutsDialog';
+import FilterGalleryDialog, { type FilterGalleryItem } from '../src/FilterGalleryDialog';
+import ToolbarSettingsDialog, { type ToolbarColumns, type ToolbarDensity } from '../src/ToolbarSettingsDialog';
+import { normalizeToolbarPreferences, TOOLBAR_PREFERENCES_VERSION } from '../src/toolbarPreferences';
+import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
+import { updateAllTextLayers } from '../src/textBatch';
+import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
+import { findSpellingHints } from '../src/spellcheck';
+import ColorSettingsDialog from '../src/ColorSettingsDialog';
+import ColorProfileDialog from '../src/ColorProfileDialog';
+import { convertRgbaProfile, normalizeColorProfile, type ColorProfile } from '../src/colorProfile';
+import PurgeHistoryDialog from '../src/PurgeHistoryDialog';
+import { purgeUndoHistory } from '../src/historyPurge';
 import {
   MAX_ACTION_SETS,
   appendActionStep,
@@ -207,10 +267,13 @@ import {
   type ActionSet,
   type ActionStep,
 } from '../src/actions';
+import { filterActionParameters } from '../src/filterActionParameters';
 import {
   describeImportFormat,
   importFailureMessage,
 } from '../src/importFormats';
+import { decodePsdComposite } from '../src/psd';
+import { decodeTiffComposite } from '../src/tiff';
 import { renderSelection } from '../src/selections';
 import {
   refineSelectionAlpha,
@@ -226,6 +289,7 @@ import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { skySelectionMask, subjectSelectionMask } from '../src/assistedSelection';
+import { objectSelectionMask } from '../src/objectSelection';
 import { similarColorMask } from '../src/similarSelection';
 import {
   canvasPointFromClient,
@@ -241,7 +305,9 @@ import {
   type PathBooleanOperation,
 } from '../src/pathBooleans';
 import { pathContours, transformPath } from '../src/paths';
-import { shapePoints } from '../src/vectorShapes';
+import { pathToSvg } from '../src/svgExport';
+import { traceAlphaContours } from '../src/alphaContours';
+import { shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -286,12 +352,74 @@ import {
 } from '../src/patternStamp';
 import {
   TOOL_CATEGORIES,
+  categoryForTool,
   compactCategoryTools,
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
+import {
+  normalizeToolShortcutPreferences,
+  toolShortcutMatches,
+  TOOL_SHORTCUTS_VERSION,
+} from '../src/toolShortcuts';
+import {
+  commandShortcutMatches,
+  normalizeCommandShortcutPreferences,
+  COMMAND_SHORTCUTS_VERSION,
+} from '../src/commandShortcuts';
+import { normalizeLastFilterType } from '../src/lastFilter';
+import {
+  normalizeToolFamilyChoices,
+  serializeToolFamilyChoices,
+  TOOL_FAMILY_CHOICES_STORAGE_KEY,
+} from '../src/toolFamilyChoices';
 import { removeRedEye } from '../src/redEye';
+import {
+  BRUSH_SMOOTHING_DEFAULT,
+  stabilizeBrushPoint,
+} from '../src/brushSmoothing';
+import {
+  BRUSH_SCATTER_DEFAULT,
+  scatterBrushPoint,
+} from '../src/brushDynamics';
+import {
+  BRUSH_TEXTURE_DEFAULT,
+  brushTextureOpacity,
+} from '../src/brushTexture';
+import {
+  BRUSH_DUAL_DEFAULT,
+  dualBrushOpacity,
+} from '../src/brushDual';
+import {
+  BRUSH_BRISTLE_DEFAULT,
+  bristleOpacity,
+} from '../src/brushBristle';
+import {
+  BRUSH_WET_EDGES_DEFAULT,
+} from '../src/brushWetEdges';
+import {
+  BRUSH_BUILD_UP_DEFAULT,
+} from '../src/brushBuildUp';
+import {
+  normalizeSecondaryBrushPreset,
+  secondaryBrushOpacity,
+  type SecondaryBrushPreset,
+} from '../src/brushSecondary';
+import {
+  GRADIENT_DITHER_DEFAULT,
+  applyGradientDither,
+} from '../src/gradientDither';
+import {
+  GRADIENT_NOISE_DEFAULT,
+  applyGradientNoise,
+} from '../src/gradientNoise';
+import {
+  MAX_GRADIENT_STOPS,
+  normalizeGradientStops,
+  type GradientStop,
+} from '../src/gradientStops';
 import { ToolFlyout } from '../src/ToolFlyout';
+import HistoryPanel from '../src/HistoryPanel';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -342,15 +470,26 @@ import {
   type ContentAwareFill,
 } from '../src/contentAwareCleanup';
 import {
+  CONTENT_AWARE_MOVE_MAX_OFFSET,
+  CONTENT_AWARE_MOVE_MAX_OPERATIONS,
+} from '../src/contentAwareMove';
+import {
+  CONTENT_AWARE_SCALE_MAX_PERCENT,
+  CONTENT_AWARE_SCALE_MIN_PERCENT,
+  CONTENT_AWARE_SCALE_MAX_OPERATIONS,
+} from '../src/contentAwareScale';
+import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_FIBERS_SETTINGS,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
+  isNeutralFilterEffects,
   neutralFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
+import { appendSmartFilter } from '../src/smartFilters';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -368,10 +507,13 @@ import {
   type RectangularCropPlan,
   type SliceRect,
 } from '../src/cropTools';
+import { planPerspectiveWarp, warpPerspectiveRgba as warpLayerPerspectiveRgba } from '../src/perspectiveWarp';
 import {
   createArtboard,
   sanitizeArtboardLayerMembership,
+  setArtboardVisibility,
 } from '../src/artboards';
+import { fitLayerToArtboard, type FrameFit } from '../src/artboardFit';
 import { sliceAtPoint } from '../src/slices';
 import {
   formatMeasurement,
@@ -390,6 +532,21 @@ import {
   SCREEN_MODE_STORAGE_KEY,
   type ScreenMode,
 } from '../src/screenModes';
+import {
+  DEFAULT_FONT_PREVIEW_SIZE,
+  fontPreviewPixels,
+  nextFontPreviewSize,
+  normalizeFontPreviewSize,
+  type FontPreviewSize,
+} from '../src/fontPreview';
+import { checkFontAvailability } from '../src/fontAvailability';
+import MissingFontsDialog from '../src/MissingFontsDialog';
+import MenuSettingsDialog from '../src/MenuSettingsDialog';
+import {
+  MENU_PREFERENCES_STORAGE_KEY,
+  normalizeMenuPreferences,
+} from '../src/menuPreferences';
+import { normalizeColorMode, type ColorMode } from '../src/colorMode';
 type MenuName =
   | 'File'
   | 'Edit'
@@ -402,6 +559,27 @@ type MenuName =
   | 'Plugins';
 type Command =
   | 'noop'
+  | 'search-commands'
+  | 'purge-history'
+  | 'find-replace-text'
+  | 'apply-image'
+  | 'calculations'
+  | 'define-brush-preset'
+  | 'define-pattern'
+  | 'define-custom-shape'
+  | 'define-custom-path'
+  | 'update-custom-path'
+  | 'keyboard-shortcuts'
+  | 'menu-settings'
+  | 'filter-gallery'
+  | 'toolbar-settings'
+  | 'update-text-layers'
+  | 'spellcheck'
+  | 'color-settings'
+  | 'assign-profile'
+  | 'convert-profile'
+  | 'camera-raw'
+  | 'fade'
   | 'actions'
   | 'patch-tool'
   | 'mixer-brush-tool'
@@ -409,6 +587,8 @@ type Command =
   | 'art-history-brush-tool'
   | 'set-history-source'
   | 'content-aware-fill'
+  | 'content-aware-move'
+  | 'content-aware-scale'
   | 'resize'
   | 'canvas-size'
   | 'trim'
@@ -427,6 +607,7 @@ type Command =
   | 'webp'
   | 'undo'
   | 'redo'
+  | 'toggle-last-state'
   | 'copy-layer'
   | 'copy-merged'
   | 'cut-layer'
@@ -439,8 +620,17 @@ type Command =
   | 'new-adjustment-layer'
   | 'new-smart-object'
   | 'replace-smart-object'
+  | 'link-smart-objects'
+  | 'select-linked-layers'
+  | 'unlink-smart-objects'
+  | 'link-layers'
+  | 'unlink-layers'
+  | 'load-default-type-styles'
+  | 'save-default-type-styles'
   | 'rasterize-layer'
+  | 'matting'
   | 'duplicate-layer'
+  | 'copy-svg'
   | 'delete-layer'
   | 'rename-layer'
   | 'layer-style'
@@ -473,9 +663,14 @@ type Command =
   | 'text-align-right'
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
+  | 'text-warp'
+  | 'text-on-path'
+  | 'convert-to-shape'
   | 'rasterize-type'
+  | 'create-work-path'
   | 'text-mask-horizontal'
   | 'text-mask-vertical'
+  | 'paste-lorem'
   | 'select-all'
   | 'select-all-layers'
   | 'deselect-layers'
@@ -495,9 +690,12 @@ type Command =
   | 'focus-area'
   | 'subject-selection'
   | 'sky-selection'
+  | 'object-selection'
   | 'select-and-mask'
   | 'mask-selection'
+  | 'mask-all-objects'
   | 'remove-background'
+  | 'cookie-cutter'
   | 'invert-layer-mask'
   | 'toggle-layer-mask'
   | 'remove-layer-mask'
@@ -508,6 +706,7 @@ type Command =
   | 'create-clipping-mask'
   | 'release-clipping-mask'
   | 'free-transform'
+  | 'perspective-warp'
   | 'quick-mask'
   | 'save-selection'
   | 'load-selection'
@@ -536,6 +735,7 @@ type Command =
   | 'filter-warm'
   | 'filter-cool'
   | 'filter-average'
+  | 'filter-blur'
   | 'filter-blur-more'
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
@@ -571,6 +771,7 @@ type Command =
   | 'filter-lens-flare'
   | 'filter-displace'
   | 'filter-pinch'
+  | 'filter-liquify'
   | 'filter-polar-coordinates'
   | 'filter-ripple'
   | 'filter-spherize'
@@ -581,9 +782,21 @@ type Command =
   | 'filter-flame'
   | 'filter-find-edges'
   | 'filter-emboss'
+  | 'filter-solarize'
+  | 'filter-diffuse'
+  | 'filter-wind'
+  | 'filter-gradient-map'
+  | 'filter-median'
+  | 'filter-dust-scratches'
+  | 'filter-despeckle'
+  | 'filter-reduce-noise'
+  | 'filter-add-noise'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
+  | 'last-filter'
+  | 'convert-smart-filters'
+  | 'clear-smart-filters'
   | 'zoom-in'
   | 'zoom-out'
   | 'fit'
@@ -593,7 +806,10 @@ type Command =
   | 'reset-rotate-view'
   | 'screen-standard'
   | 'screen-full-menu'
-  | 'screen-full';
+  | 'screen-full'
+  | 'font-preview-size'
+  | 'missing-fonts'
+  | 'image-mode';
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -774,15 +990,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     {
       label: 'Toggle Last State',
       shortcut: 'Ctrl+Alt+Z',
-      command: 'undo',
-      disabled: true,
+      command: 'toggle-last-state',
     },
     { label: '', command: 'noop', separator: true },
     {
       label: 'Fade…',
       shortcut: 'Ctrl+Shift+F',
-      command: 'noop',
-      disabled: true,
+      command: 'fade',
     },
     { label: '', command: 'noop', separator: true },
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
@@ -791,9 +1005,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Search', shortcut: 'Ctrl+F', command: 'noop', disabled: true },
-    { label: 'Check Spelling…', command: 'noop', disabled: true },
-    { label: 'Find and Replace Text…', command: 'noop', disabled: true },
+    { label: 'Search', shortcut: 'Ctrl+F', command: 'search-commands' },
+    { label: 'Check Spelling…', command: 'spellcheck' },
+    { label: 'Find and Replace Text…', command: 'find-replace-text' },
     { label: '', command: 'noop', separator: true },
     { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
     { label: 'Action recipes…', command: 'actions' },
@@ -804,11 +1018,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Set History Brush Source', command: 'set-history-source' },
     { label: 'Stroke…', command: 'stroke-selection' },
     { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
+    { label: 'Content-Aware Move…', command: 'content-aware-move' },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
     { label: 'Generative Fill…', command: 'noop', disabled: true },
     { label: 'Generate Image…', command: 'noop', disabled: true },
     { label: 'Reflection Removal…', command: 'noop', disabled: true },
     { label: 'Remove Background…', command: 'remove-background' },
+    { label: 'Cookie Cutter Mask…', command: 'cookie-cutter' },
     { label: '', command: 'noop', separator: true },
     {
       label: 'Free Transform',
@@ -816,22 +1032,27 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       command: 'free-transform',
     },
     { label: 'Transform', command: 'noop', disabled: true },
-    { label: 'Perspective Warp', command: 'noop', disabled: true },
+    { label: 'Perspective Warp…', command: 'perspective-warp' },
     { label: 'Puppet Warp', command: 'noop', disabled: true },
-    { label: 'Content-Aware Scale', command: 'noop', disabled: true },
+    { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Define Brush Preset…', command: 'noop', disabled: true },
-    { label: 'Define Pattern…', command: 'noop', disabled: true },
-    { label: 'Purge', command: 'noop', disabled: true },
+    { label: 'Define Brush Preset…', command: 'define-brush-preset' },
+    { label: 'Define Pattern…', command: 'define-pattern' },
+    { label: 'Define Custom Shape…', command: 'define-custom-shape' },
+    { label: 'Define Custom Path…', command: 'define-custom-path' },
+    { label: 'Update Custom Path Preset', command: 'update-custom-path' },
+    { label: 'Purge Undo History…', command: 'purge-history' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Color Settings…', command: 'noop', disabled: true },
-    { label: 'Keyboard Shortcuts…', command: 'noop', disabled: true },
-    { label: 'Menus…', command: 'noop', disabled: true },
-    { label: 'Toolbar…', command: 'noop', disabled: true },
+    { label: 'Color Settings…', command: 'color-settings' },
+    { label: 'Assign Profile…', command: 'assign-profile' },
+    { label: 'Convert to Profile…', command: 'convert-profile' },
+    { label: 'Keyboard Shortcuts…', command: 'keyboard-shortcuts' },
+    { label: 'Menus…', command: 'menu-settings' },
+    { label: 'Toolbar…', command: 'toolbar-settings' },
     { label: 'Reset adjustments', command: 'reset' },
   ],
   Image: [
-    { label: 'Mode', command: 'noop', disabled: true },
+    { label: 'Mode', command: 'image-mode' },
     { label: 'Adjustments', command: 'reset', disabled: true },
     { label: 'Levels…', command: 'levels' },
     { label: 'Curves…', command: 'curves' },
@@ -863,8 +1084,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Reveal All', command: 'reveal-all' },
     { label: '', command: 'noop', separator: true },
     { label: 'Duplicate…', command: 'duplicate-document' },
-    { label: 'Apply Image…', command: 'noop', disabled: true },
-    { label: 'Calculations…', command: 'noop', disabled: true },
+    { label: 'Apply Image…', command: 'apply-image' },
+    { label: 'Calculations…', command: 'calculations' },
     { label: 'Analysis', command: 'noop', disabled: true },
   ],
   Layer: [
@@ -874,16 +1095,19 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       shortcut: 'Ctrl+J',
       command: 'duplicate-layer',
     },
+    { label: 'Copy SVG', command: 'copy-svg' },
     { label: 'Delete Layer', command: 'delete-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Quick Export document as PNG', command: 'png' },
     { label: 'Export As…', command: 'png' },
     { label: 'Rename Layer…', command: 'rename-layer' },
     { label: 'Layer Style', command: 'layer-style' },
-    { label: 'Smart Filter', command: 'noop', disabled: true },
+    { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
+    { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
     { label: 'Layer Mask', command: 'mask-selection' },
+    { label: 'Mask All Objects', command: 'mask-all-objects' },
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
     { label: 'Disable Layer Mask', command: 'toggle-layer-mask' },
     { label: 'Remove Layer Mask', command: 'remove-layer-mask' },
@@ -895,7 +1119,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Release Clipping Mask', command: 'release-clipping-mask' },
     { label: 'New Smart Object…', command: 'new-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
+    { label: 'Link Smart Object Contents', command: 'link-smart-objects' },
+    { label: 'Select Linked Layers', command: 'select-linked-layers' },
+    { label: 'Unlink Smart Object Contents', command: 'unlink-smart-objects' },
+    { label: 'Link Layers', command: 'link-layers' },
+    { label: 'Unlink Layers', command: 'unlink-layers' },
     { label: 'Rasterize', command: 'rasterize-layer' },
+    { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
     { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
     {
@@ -940,17 +1170,18 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Horizontal Type Mask', command: 'text-mask-horizontal' },
     { label: 'Vertical Type Mask', command: 'text-mask-vertical' },
     { label: 'OpenType', command: 'noop', disabled: true },
-    { label: 'Create Work Path', command: 'noop', disabled: true },
-    { label: 'Convert to Shape', command: 'noop', disabled: true },
+    { label: 'Create Work Path', command: 'create-work-path' },
+    { label: 'Convert to Shape', command: 'convert-to-shape' },
     { label: 'Rasterize Type Layer', command: 'rasterize-type' },
-    { label: 'Warp Text…', command: 'noop', disabled: true },
-    { label: 'Font Preview Size', command: 'noop', disabled: true },
+    { label: 'Warp Text…', command: 'text-warp' },
+    { label: 'Text on Path…', command: 'text-on-path' },
+    { label: 'Font Preview Size', command: 'font-preview-size' },
     { label: 'Language Options', command: 'noop', disabled: true },
-    { label: 'Update All Text Layers', command: 'noop', disabled: true },
-    { label: 'Manage Missing Fonts', command: 'noop', disabled: true },
-    { label: 'Paste Lorem Ipsum', command: 'noop', disabled: true },
-    { label: 'Load Default Type Styles', command: 'noop', disabled: true },
-    { label: 'Save Default Type Styles', command: 'noop', disabled: true },
+    { label: 'Update All Text Layers', command: 'update-text-layers' },
+    { label: 'Manage Missing Fonts', command: 'missing-fonts' },
+    { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
+    { label: 'Load Default Type Styles', command: 'load-default-type-styles' },
+    { label: 'Save Default Type Styles', command: 'save-default-type-styles' },
   ],
   Select: [
     { label: 'All', shortcut: 'Ctrl+A', command: 'select-all' },
@@ -966,6 +1197,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Focus Area…', command: 'focus-area' },
     { label: 'Subject', command: 'subject-selection' },
     { label: 'Sky', command: 'sky-selection' },
+    { label: 'Object Selection…', command: 'object-selection' },
     { label: 'Select and Mask…', command: 'select-and-mask' },
     { label: 'Modify', command: 'noop', disabled: true },
     { label: 'Grow…', command: 'grow-selection' },
@@ -987,20 +1219,22 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Warm', command: 'filter-warm' },
     { label: 'Cool', command: 'filter-cool' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Convert for Smart Filters', command: 'noop', disabled: true },
+    { label: 'Last Filter', command: 'last-filter' },
+    { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
     { label: 'Neural Filters…', command: 'noop', disabled: true },
-    { label: 'Filter Gallery…', command: 'noop', disabled: true },
-    { label: 'Camera Raw Filter…', command: 'noop', disabled: true },
+    { label: 'Filter Gallery…', command: 'filter-gallery' },
+    { label: 'Camera Raw Filter…', command: 'camera-raw' },
     { label: 'AI Denoise…', command: 'noop', disabled: true },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
-    { label: 'Liquify…', command: 'noop', disabled: true },
+    { label: 'Liquify…', command: 'filter-liquify' },
     { label: 'Vanishing Point…', command: 'noop', disabled: true },
     { label: '', command: 'noop', separator: true },
     { label: 'Blur', command: 'noop', disabled: true },
     { label: 'Field Blur…', command: 'filter-field-blur' },
     { label: 'Tilt-Shift…', command: 'filter-tilt-shift' },
     { label: 'Average', command: 'filter-average' },
+    { label: 'Blur', command: 'filter-blur' },
     { label: 'Blur More', command: 'filter-blur-more' },
     { label: 'Box Blur…', command: 'filter-box-blur' },
     { label: 'Gaussian Blur…', command: 'filter-gaussian-blur' },
@@ -1025,7 +1259,11 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Wave…', command: 'filter-wave' },
     { label: 'ZigZag…', command: 'filter-zigzag' },
     { label: 'Noise', command: 'noop', disabled: true },
-    { label: 'Add Noise…', command: 'sharpen-noise' },
+    { label: 'Add Noise…', command: 'filter-add-noise' },
+    { label: 'Median…', command: 'filter-median' },
+    { label: 'Dust & Scratches…', command: 'filter-dust-scratches' },
+    { label: 'Despeckle', command: 'filter-despeckle' },
+    { label: 'Reduce Noise…', command: 'filter-reduce-noise' },
     { label: 'Pixelate', command: 'noop', disabled: true },
     { label: 'Color Halftone…', command: 'filter-color-halftone' },
     { label: 'Crystallize…', command: 'filter-crystallize' },
@@ -1050,11 +1288,16 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Stylize', command: 'noop', disabled: true },
     { label: 'Find Edges…', command: 'filter-find-edges' },
     { label: 'Emboss…', command: 'filter-emboss' },
+    { label: 'Solarize…', command: 'filter-solarize' },
+    { label: 'Diffuse…', command: 'filter-diffuse' },
+    { label: 'Wind…', command: 'filter-wind' },
+    { label: 'Gradient Map…', command: 'filter-gradient-map' },
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
     { label: '', command: 'noop', separator: true },
     { label: 'Clear local filter effect', command: 'filter-clear-effect' },
+    { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
   ],
   View: [
     { label: 'Zoom in', shortcut: '+', command: 'zoom-in' },
@@ -1153,6 +1396,7 @@ type Gesture = {
     pressure?: number;
     pointerType?: string;
   }>;
+  smoothedLast?: { x: number; y: number };
   points?: PathNode[];
   lastPressure?: number;
   pointerType?: string;
@@ -1190,6 +1434,13 @@ type StampCanvasOptions = {
   pressureSize?: boolean;
   pressureOpacity?: boolean;
   spacing?: number;
+  scatter?: number;
+  texture?: number;
+  dual?: number;
+  secondaryPreset?: SecondaryBrushPreset;
+  bristle?: number;
+  wetEdges?: number;
+  buildUp?: number;
   angle?: number;
   roundness?: number;
   flipX?: boolean;
@@ -1206,7 +1457,10 @@ const stampCanvas = (
   target: HTMLCanvasElement,
   options: StampCanvasOptions,
 ) => {
-  const resolved = resolveBrushStamp(options),
+  const texturedOpacity = options.opacity * brushTextureOpacity(options.x, options.y, options.texture ?? 0) *
+    dualBrushOpacity(options.x, options.y, options.dual ?? 0) *
+    bristleOpacity(options.x, options.y, options.bristle ?? 0),
+    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity }),
     radius = resolved.radius,
     left = Math.max(0, Math.floor(options.x - radius)),
     top = Math.max(0, Math.floor(options.y - radius)),
@@ -1248,11 +1502,14 @@ const stampCanvas = (
     y: options.y - top,
     size: options.size,
     hardness: options.hardness,
-    opacity: options.opacity,
+    opacity: texturedOpacity,
     pointerType: options.pointerType,
     pressure: options.pressure,
     pressureSize: options.pressureSize,
     pressureOpacity: options.pressureOpacity,
+    bristle: options.bristle,
+    wetEdges: options.wetEdges,
+    buildUp: options.buildUp,
     spacing: options.spacing,
     angle: options.angle,
     roundness: options.roundness,
@@ -1264,8 +1521,42 @@ const stampCanvas = (
     sourceX,
     sourceY,
   });
-  if (result.changed) context.putImageData(image, left, top);
-  return result.changed;
+  let changed = result.changed;
+  const secondary = options.secondaryPreset && options.secondaryPreset !== 'none'
+    ? brushPresetById(options.secondaryPreset)
+    : undefined;
+  const secondaryOpacity = secondaryBrushOpacity(options.dual);
+  if (secondary && secondaryOpacity > 0) {
+    const secondaryResult = applyRadialStamp(image.data, {
+      width,
+      height,
+      x: options.x - left,
+      y: options.y - top,
+      size: secondary.size,
+      hardness: secondary.hardness,
+      opacity: texturedOpacity * secondaryOpacity,
+      pointerType: options.pointerType,
+      pressure: options.pressure,
+      pressureSize: secondary.pressureSize,
+      pressureOpacity: secondary.pressureOpacity,
+      bristle: options.bristle,
+      wetEdges: options.wetEdges,
+      buildUp: options.buildUp,
+      spacing: secondary.spacing,
+      angle: secondary.angle,
+      roundness: secondary.roundness,
+      flipX: secondary.flipX,
+      flipY: secondary.flipY,
+      mode: options.mode,
+      color: options.color,
+      source,
+      sourceX,
+      sourceY,
+    });
+    changed = secondaryResult.changed || changed;
+  }
+  if (changed) context.putImageData(image, left, top);
+  return changed;
 };
 
 /** Stamp a line at bounded intervals so fast pointer moves remain continuous. */
@@ -1302,6 +1593,7 @@ const stampCanvasSegment = (
     const t = step / steps,
       x = from.x + (to.x - from.x) * t,
       y = from.y + (to.y - from.y) * t,
+      scattered = scatterBrushPoint({ x, y }, resolved.size, options.scatter ?? 0),
       sourceX = options.sourceAnchor
         ? options.sourceAnchor.x +
           (x - (options.destinationAnchor?.x ?? from.x))
@@ -1313,8 +1605,8 @@ const stampCanvasSegment = (
     changed =
       stampCanvas(target, {
         ...options,
-        x,
-        y,
+        x: scattered.x,
+        y: scattered.y,
         sourceX,
         sourceY,
       }) || changed;
@@ -1611,6 +1903,81 @@ const selectionMaskForLayer = async (
   return mask;
 };
 
+function readToolbarPreferences() {
+  const categoryIds = TOOL_CATEGORIES.map((category) => category.id);
+  const categoryTools = Object.fromEntries(TOOL_CATEGORIES.map((category) => [category.id, category.tools]));
+  if (typeof window === 'undefined') return normalizeToolbarPreferences(undefined, categoryIds, categoryTools);
+  try {
+    const envelope = window.localStorage.getItem('pixelforge.toolbar-preferences');
+    if (envelope) {
+      const parsed = JSON.parse(envelope);
+      if (parsed?.version === TOOLBAR_PREFERENCES_VERSION)
+        return normalizeToolbarPreferences(parsed, categoryIds, categoryTools);
+    }
+    const rawHidden = window.localStorage.getItem('pixelforge.toolbar-hidden-categories');
+    const rawOrder = window.localStorage.getItem('pixelforge.toolbar-category-order');
+    return normalizeToolbarPreferences({
+      columns: window.localStorage.getItem('pixelforge.toolbar-columns'),
+      density: window.localStorage.getItem('pixelforge.toolbar-density'),
+      hiddenCategories: rawHidden ? JSON.parse(rawHidden) : [],
+      categoryOrder: rawOrder ? JSON.parse(rawOrder) : categoryIds,
+    }, categoryIds, categoryTools);
+  } catch {
+    return normalizeToolbarPreferences(undefined, categoryIds, categoryTools);
+  }
+}
+
+function readToolShortcutPreferences() {
+  const toolIds = TOOLS.map((item) => item.id);
+  if (typeof window === 'undefined') return normalizeToolShortcutPreferences(undefined, toolIds);
+  try {
+    const raw = window.localStorage.getItem('pixelforge.tool-shortcuts');
+    return normalizeToolShortcutPreferences(raw ? JSON.parse(raw) : undefined, toolIds);
+  } catch {
+    return normalizeToolShortcutPreferences(undefined, toolIds);
+  }
+}
+
+function readCommandShortcutPreferences(commandIds: readonly string[]) {
+  if (typeof window === 'undefined') return normalizeCommandShortcutPreferences(undefined, commandIds);
+  try {
+    const raw = window.localStorage.getItem('pixelforge.command-shortcuts');
+    return normalizeCommandShortcutPreferences(raw ? JSON.parse(raw) : undefined, commandIds);
+  } catch {
+    return normalizeCommandShortcutPreferences(undefined, commandIds);
+  }
+}
+
+function readToolFamilyChoices() {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(TOOL_FAMILY_CHOICES_STORAGE_KEY);
+    return normalizeToolFamilyChoices(raw ? JSON.parse(raw) : undefined);
+  } catch {
+    return {};
+  }
+}
+
+function readLastFilterType(): FilterEffectType | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const raw = window.localStorage.getItem('pixelforge.last-filter');
+    return normalizeLastFilterType(raw, FILTER_EFFECT_TYPES) as FilterEffectType | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readMenuPreferences() {
+  if (typeof window === 'undefined') return normalizeMenuPreferences(undefined);
+  try {
+    const raw = window.localStorage.getItem(MENU_PREFERENCES_STORAGE_KEY);
+    return normalizeMenuPreferences(raw ? JSON.parse(raw) : undefined);
+  } catch {
+    return normalizeMenuPreferences(undefined);
+  }
+}
+
 export default function Home() {
   const file = useRef<HTMLInputElement>(null),
     layerFile = useRef<HTMLInputElement>(null),
@@ -1627,10 +1994,11 @@ export default function Home() {
     menuItemRefs = useRef<Record<MenuName, Array<HTMLButtonElement | null>>>(
       {} as Record<MenuName, Array<HTMLButtonElement | null>>,
     ),
+    runCommandRef = useRef<((command: Command) => void) | null>(null),
     pendingMenuFocus = useRef<Record<MenuName, 'first' | 'last' | undefined>>(
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
-    smartObjectAction = useRef<'new' | 'replace'>('new');
+    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new');
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
     [name, setName] = useState('coastline-edit');
@@ -1645,6 +2013,7 @@ export default function Home() {
       renderProgress,
       tiledTelemetry,
       tiledProgress,
+      tiledCacheBudget,
       commit,
       install,
       select,
@@ -1659,8 +2028,19 @@ export default function Home() {
   useEffect(() => {
     revisionRef.current = revision;
   }, [revision]);
+  const initialToolbarPreferences = readToolbarPreferences();
+  const initialToolShortcutPreferences = readToolShortcutPreferences();
+  const commandShortcutIds = Array.from(new Set(
+    (Object.values(MENU_DEFS) as MenuItem[][]).flatMap((items) =>
+      items.filter((item) => item.shortcut && item.command !== 'noop').map((item) => item.command),
+    ),
+  ));
+  const initialCommandShortcutPreferences = readCommandShortcutPreferences(commandShortcutIds);
+  const initialToolFamilyChoices = readToolFamilyChoices();
+  const initialLastFilterType = readLastFilterType();
+  const initialMenuPreferences = readMenuPreferences();
   const [tool, setActiveTool] = useState<Tool>('move'),
-    [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>({}),
+    [toolFamilyChoices, setToolFamilyChoices] = useState<Record<string, Tool>>(() => initialToolFamilyChoices as Record<string, Tool>),
     [toolFlyout, setToolFlyout] = useState<string | null>(null),
     [toolFlyoutAnchor, setToolFlyoutAnchor] =
       useState<HTMLButtonElement | null>(null),
@@ -1686,7 +2066,33 @@ export default function Home() {
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
+    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
+    [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
+    [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
+    [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
+    [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
+    [selectedCustomPathPresetId, setSelectedCustomPathPresetId] = useState(''),
+    [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
+    [polygonSides, setPolygonSides] = useState(5),
+    [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
+    [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
+    [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
+    [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
+    [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
+    [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
+    [brushWetEdges, setBrushWetEdges] = useState(BRUSH_WET_EDGES_DEFAULT),
+    [brushBuildUp, setBrushBuildUp] = useState(BRUSH_BUILD_UP_DEFAULT),
+    [secondaryBrushPreset, setSecondaryBrushPreset] = useState<SecondaryBrushPreset>('none'),
+    [brushFlow, setBrushFlow] = useState(100),
+    [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
+    [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
+    [gradientMidpoint, setGradientMidpoint] = useState('none'),
+    [gradientMidpointPosition, setGradientMidpointPosition] = useState(50),
+    [gradientReverse, setGradientReverse] = useState(false),
+    [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
+    [gradientNoise, setGradientNoise] = useState(GRADIENT_NOISE_DEFAULT),
+    [gradientStops, setGradientStops] = useState<GradientStop[]>([]),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
     [brushFlipX, setBrushFlipX] = useState(false),
@@ -1710,7 +2116,11 @@ export default function Home() {
       undefined,
     ),
     [text, setText] = useState('Your text'),
-    [fontSize, setFontSize] = useState(56);
+    [fontSize, setFontSize] = useState(56),
+    [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
+    [fontPreviewSize, setFontPreviewSize] = useState<FontPreviewSize>(DEFAULT_FONT_PREVIEW_SIZE),
+    [missingFontsOpen, setMissingFontsOpen] = useState(false),
+    [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
   });
@@ -1718,9 +2128,17 @@ export default function Home() {
     setActiveTool(next);
     const family = flyoutForTool(next);
     if (family)
-      setToolFamilyChoices((current) =>
-        current[family] === next ? current : { ...current, [family]: next },
-      );
+      setToolFamilyChoices((current) => {
+        if (current[family] === next) return current;
+        const updated = { ...current, [family]: next };
+        try {
+          window.localStorage.setItem(
+            TOOL_FAMILY_CHOICES_STORAGE_KEY,
+            serializeToolFamilyChoices(updated),
+          );
+        } catch { /* private mode */ }
+        return updated;
+      });
   }, []);
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
@@ -1732,6 +2150,26 @@ export default function Home() {
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
+    [commandSearchOpen, setCommandSearchOpen] = useState(false),
+    [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
+    [menuSettingsOpen, setMenuSettingsOpen] = useState(false),
+    [showDisabledMenuItems, setShowDisabledMenuItems] = useState(() => initialMenuPreferences.showDisabled),
+    [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
+    [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
+    [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
+    [toolbarDensity, setToolbarDensity] = useState<ToolbarDensity>(() => initialToolbarPreferences.density),
+    [hiddenToolCategories, setHiddenToolCategories] = useState<string[]>(() => initialToolbarPreferences.hiddenCategories),
+    [toolbarCategoryOrder, setToolbarCategoryOrder] = useState<string[]>(() => initialToolbarPreferences.categoryOrder),
+    [toolbarToolOrder, setToolbarToolOrder] = useState<Record<string, string[]>>(() => initialToolbarPreferences.toolOrder),
+    [toolShortcutBindings, setToolShortcutBindings] = useState<Record<string, string>>(() => initialToolShortcutPreferences.bindings),
+    [commandShortcutBindings, setCommandShortcutBindings] = useState<Record<string, string>>(() => initialCommandShortcutPreferences.bindings),
+    [lastFilterType, setLastFilterType] = useState<FilterEffectType | undefined>(() => initialLastFilterType),
+    [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
+    [textReplaceOpen, setTextReplaceOpen] = useState(false),
+    [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
+    [spellcheckOpen, setSpellcheckOpen] = useState(false),
+    [colorSettingsOpen, setColorSettingsOpen] = useState(false),
+    [colorProfileOperation, setColorProfileOperation] = useState<'assign' | 'convert' | null>(null),
     [actions, setActions] = useState<ActionSet[]>(() => {
       if (typeof window === 'undefined') return [];
       try {
@@ -1834,6 +2272,9 @@ export default function Home() {
             action,
             command,
             menuItem?.label || command,
+            command.startsWith('filter-')
+              ? filterActionParameters(filterEffects)
+              : undefined,
           );
         } catch {
           return action;
@@ -1875,6 +2316,7 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  const [cameraRawEditing, setCameraRawEditing] = useState(false);
   const [colorRanging, setColorRanging] = useState(false);
   const [fillLayerDialog, setFillLayerDialog] = useState(false);
   const [focusAreaValue, setFocusAreaValue] = useState(false);
@@ -1995,7 +2437,31 @@ export default function Home() {
     pressureSize,
     pressureOpacity,
     brushPreset,
+    customBrushPresets,
+    customPatternPresets,
+    customShapePresets,
+    customPathPresets,
+    polygonVariant,
+    polygonSides,
+    polygonInnerRadius,
     spacing: brushSpacing,
+    brushSmoothing,
+    brushScatter,
+    brushTexture,
+    brushDual,
+    brushBristle,
+    brushWetEdges,
+    brushBuildUp,
+    secondaryBrushPreset,
+    brushFlow,
+    gradientMode,
+    gradientEnd,
+    gradientMidpoint,
+    gradientMidpointPosition,
+    gradientReverse,
+    gradientDither,
+    gradientNoise,
+    gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
     flipX: brushFlipX,
@@ -2018,6 +2484,9 @@ export default function Home() {
     exportTargetBytes,
     text,
     fontSize,
+    fontFamily,
+    fontPreviewSize,
+    defaultTypeStyle,
     ...neutral,
   });
   const documentValue = (): Draft => ({
@@ -2045,7 +2514,32 @@ export default function Home() {
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
     setBrushPreset(s.brushPreset ?? 'round-hard');
+    setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
+    setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
+    setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
+    setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
+    setSelectedCustomPathPresetId('');
+    setPolygonVariant(s.polygonVariant ?? 'polygon');
+    setPolygonSides(Math.max(3, Math.min(32, Math.round(s.polygonSides ?? 5))));
+    setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
+    setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
+    setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
+    setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
+    setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
+    setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
+    setBrushWetEdges(s.brushWetEdges ?? BRUSH_WET_EDGES_DEFAULT);
+    setBrushBuildUp(s.brushBuildUp ?? BRUSH_BUILD_UP_DEFAULT);
+    setSecondaryBrushPreset(normalizeSecondaryBrushPreset(s.secondaryBrushPreset));
+    setBrushFlow(s.brushFlow ?? 100);
+    setGradientMode(s.gradientMode ?? 'linear');
+    setGradientEnd(s.gradientEnd ?? 'transparent');
+    setGradientMidpoint(s.gradientMidpoint ?? 'none');
+    setGradientMidpointPosition(s.gradientMidpointPosition ?? 50);
+    setGradientReverse(s.gradientReverse ?? false);
+    setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
+    setGradientNoise(s.gradientNoise ?? GRADIENT_NOISE_DEFAULT);
+    setGradientStops(normalizeGradientStops(s.gradientStops));
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
     setBrushFlipX(s.flipX ?? false);
@@ -2068,6 +2562,9 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
+    setFontFamily(s.fontFamily && FONTS.includes(s.fontFamily) ? s.fontFamily : 'Arial');
+    setFontPreviewSize(normalizeFontPreviewSize(s.fontPreviewSize));
+    setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
     setTool,
     setZoom,
@@ -2080,7 +2577,32 @@ export default function Home() {
     setPressureSize,
     setPressureOpacity,
     setBrushPreset,
+    setCustomBrushPresets,
+    setCustomPatternPresets,
+    setCustomShapePresets,
+    setCustomPathPresets,
+    setSelectedCustomPathPresetId,
+    setPolygonVariant,
+    setPolygonSides,
+    setPolygonInnerRadius,
     setBrushSpacing,
+    setBrushSmoothing,
+    setBrushScatter,
+    setBrushTexture,
+    setBrushDual,
+    setBrushBristle,
+    setBrushWetEdges,
+    setBrushBuildUp,
+    setSecondaryBrushPreset,
+    setBrushFlow,
+    setGradientMode,
+    setGradientEnd,
+    setGradientMidpoint,
+    setGradientMidpointPosition,
+    setGradientReverse,
+    setGradientDither,
+    setGradientNoise,
+    setGradientStops,
     setBrushAngle,
     setBrushRoundness,
     setBrushFlipX,
@@ -2103,7 +2625,16 @@ export default function Home() {
     setExportTargetBytes,
     setText,
     setFontSize,
+    setFontFamily,
+    setFontPreviewSize,
   ]);
+  const fontAvailability = checkFontAvailability(
+    fontFamily,
+    (font) =>
+      typeof document !== 'undefined' && document.fonts
+        ? document.fonts.check(font)
+        : true,
+  );
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
     if (!preset) return;
@@ -2118,6 +2649,202 @@ export default function Home() {
     setPressureSize(preset.pressureSize);
     setPressureOpacity(preset.pressureOpacity);
     setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const applyCustomBrushPreset = (preset: CustomBrushPreset) => {
+    setSize(preset.size);
+    setHardness(preset.hardness);
+    setBrushSpacing(preset.spacing);
+    setBrushAngle(preset.angle);
+    setBrushRoundness(preset.roundness);
+    setBrushFlipX(preset.flipX);
+    setBrushFlipY(preset.flipY);
+    setPressureSize(preset.pressureSize);
+    setPressureOpacity(preset.pressureOpacity);
+    setBrushSmoothing(preset.brushSmoothing);
+    setBrushScatter(preset.brushScatter);
+    setBrushTexture(preset.brushTexture);
+    setBrushDual(preset.brushDual);
+    setSecondaryBrushPreset(preset.secondaryBrushPreset);
+    setBrushBristle(preset.brushBristle);
+    setBrushWetEdges(preset.brushWetEdges);
+    setBrushBuildUp(preset.brushBuildUp);
+    setBrushFlow(preset.brushFlow);
+    setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const defineBrushPreset = () => {
+    const label = window.prompt('Name this brush preset', 'Custom brush');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Brush preset name cannot be empty');
+      return;
+    }
+    try {
+      const preset = createCustomBrushPreset(crypto.randomUUID(), trimmed, {
+        size,
+        hardness,
+        spacing: brushSpacing,
+        angle: brushAngle,
+        roundness: brushRoundness,
+        flipX: brushFlipX,
+        flipY: brushFlipY,
+        pressureSize,
+        pressureOpacity,
+        brushSmoothing,
+        brushScatter,
+        brushTexture,
+        brushDual,
+        secondaryBrushPreset,
+        brushBristle,
+        brushWetEdges,
+        brushBuildUp,
+        brushFlow,
+      });
+      setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      applyCustomBrushPreset(preset);
+      setNotice(`Brush preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Brush preset could not be saved');
+    }
+  };
+  const applyCustomPatternPreset = (preset: CustomPatternPreset) => {
+    setPatternId(preset.pattern);
+    setPatternTileSize(preset.tileSize);
+    setColor(preset.foreground);
+    setBackgroundColor(preset.background);
+    setNotice(`Pattern preset “${preset.label}” applied`);
+  };
+  const definePattern = () => {
+    const label = window.prompt('Name this pattern preset', 'Custom pattern');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Pattern preset name cannot be empty');
+      return;
+    }
+    try {
+      const preset = createCustomPatternPreset(crypto.randomUUID(), trimmed, {
+        pattern: patternId,
+        tileSize: patternTileSize,
+        foreground: color,
+        background: backgroundColor,
+      });
+      setCustomPatternPresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      applyCustomPatternPreset(preset);
+      setNotice(`Pattern preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Pattern preset could not be saved');
+    }
+  };
+  const applyCustomShapePreset = (preset: CustomShapePreset) => {
+    setTool(preset.kind as Tool);
+    setColor(preset.color);
+    if (preset.kind === 'polygon') {
+      setPolygonVariant(preset.variant ?? 'polygon');
+      setPolygonSides(Math.max(3, Math.min(32, Math.round(preset.sides ?? 5))));
+      setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(preset.innerRadius ?? 0.5))));
+    }
+    setSelectedCustomShapePresetId(preset.id);
+    setNotice(`Shape preset “${preset.label}” applied`);
+  };
+  const removeCustomShapePreset = () => {
+    if (!selectedCustomShapePresetId) return;
+    const preset = customShapePresets.find((item) => item.id === selectedCustomShapePresetId);
+    if (!preset) return;
+    setCustomShapePresets((currentPresets) => currentPresets.filter((item) => item.id !== selectedCustomShapePresetId));
+    setSelectedCustomShapePresetId('');
+    setNotice(`Shape preset “${preset.label}” removed from this device`);
+  };
+  const defineCustomShape = () => {
+    const label = window.prompt('Name this custom shape', 'Custom shape');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Custom shape name cannot be empty');
+      return;
+    }
+    const currentKind = ['rectangle', 'ellipse', 'line', 'polygon'].includes(tool) ? tool as CustomShapeKind : undefined;
+    const chosen = currentKind ?? window.prompt('Shape kind (rectangle, ellipse, line or polygon)', 'rectangle');
+    if (!chosen || !['rectangle', 'ellipse', 'line', 'polygon'].includes(chosen)) {
+      setNotice('Choose a supported custom shape kind');
+      return;
+    }
+    try {
+      const kind = chosen as CustomShapeKind;
+      const preset = createCustomShapePreset({
+        label: trimmed,
+        kind,
+        color,
+        ...(kind === 'polygon' ? { variant: polygonVariant, sides: polygonSides } : {}),
+        ...(kind === 'polygon' ? { innerRadius: polygonInnerRadius } : {}),
+      });
+      setCustomShapePresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      applyCustomShapePreset(preset);
+      setNotice(`Shape preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Custom shape could not be saved');
+    }
+  };
+  const removeCustomPathPreset = () => {
+    if (!selectedCustomPathPresetId) return;
+    const preset = customPathPresets.find((item) => item.id === selectedCustomPathPresetId);
+    if (!preset) return;
+    setCustomPathPresets((currentPresets) => currentPresets.filter((item) => item.id !== selectedCustomPathPresetId));
+    setSelectedCustomPathPresetId('');
+    setNotice(`Path preset “${preset.label}” removed from this device`);
+  };
+  const applyCustomPathPreset = (preset: CustomPathPreset) => {
+    const source = validatePath(preset.path);
+    const added = addLayer({ ...commonLayer(preset.label), kind: 'path', path: source });
+    if (added) {
+      setActiveTool('direct-select');
+      setSelectedCustomPathPresetId(preset.id);
+      setNotice(`Path preset “${preset.label}” applied as an editable path layer`);
+    }
+  };
+  const defineCustomPath = () => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'path') {
+      setNotice('Select an editable path layer before defining a custom path');
+      return;
+    }
+    const label = window.prompt('Name this custom path', layer.name || 'Custom path');
+    if (label === null) return;
+    const trimmed = label.trim().slice(0, 80);
+    if (!trimmed) {
+      setNotice('Custom path name cannot be empty');
+      return;
+    }
+    try {
+      const preset = createCustomPathPreset({ label: trimmed, path: layer.path });
+      setCustomPathPresets((currentPresets) => [...currentPresets, preset].slice(-32));
+      setSelectedCustomPathPresetId(preset.id);
+      setNotice(`Path preset “${trimmed}” saved on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Custom path could not be saved');
+    }
+  };
+  const updateCustomPathPreset = () => {
+    if (!selectedCustomPathPresetId) {
+      setNotice('Choose a saved path preset before updating it');
+      return;
+    }
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    const existing = customPathPresets.find((item) => item.id === selectedCustomPathPresetId);
+    if (!layer || layer.kind !== 'path' || !existing) {
+      setNotice('Select an editable path layer and saved preset before updating it');
+      return;
+    }
+    try {
+      const path = validatePath(layer.path);
+      setCustomPathPresets((currentPresets) => currentPresets.map((item) =>
+        item.id === existing.id ? { ...item, path } : item));
+      setNotice(`Path preset “${existing.label}” updated on this device`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Custom path preset could not be updated');
+    }
   };
   const resetColors = () => {
     setColor('#000000');
@@ -2574,6 +3301,39 @@ export default function Home() {
       setNotice(`Active artboard: ${f.artboards.find((item) => item.id === id)?.name || id}`);
     }
   };
+  const updateArtboardVisibility = (id: string, visible: boolean) => {
+    const f = current();
+    if (!f.artboards) return;
+    try {
+      const artboards = setArtboardVisibility(f.artboards, id, visible);
+      const active = f.activeArtboardId === id && !visible
+        ? artboards.find((item) => item.visible)?.id
+        : f.activeArtboardId;
+      if (commit({ ...f, artboards, activeArtboardId: active })) {
+        void paint(current());
+        setNotice(`${artboards.find((item) => item.id === id)?.name || id} ${visible ? 'shown' : 'hidden'}`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not update artboard visibility');
+    }
+  };
+  const fitActiveLayerToArtboard = (fit: FrameFit) => {
+    const f = current();
+    const artboardId = f.activeArtboardId;
+    if (!artboardId || !f.active) {
+      setNotice('Select an artboard and editable layer first');
+      return;
+    }
+    try {
+      const next = fitLayerToArtboard(f, assets.current, artboardId, f.active, fit);
+      if (commit(next)) {
+        void paint(current());
+        setNotice(`Active layer fitted to artboard (${fit})`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not fit the active layer to the artboard');
+    }
+  };
   const appendMeasurement = (annotation: MeasurementAnnotation) => {
     const f = current();
     if (commit({ ...f, measurements: [...(f.measurements || []), annotation] }))
@@ -2628,6 +3388,20 @@ export default function Home() {
       data.data[offset + 1] = 255;
       data.data[offset + 2] = 255;
       data.data[offset + 3] = mask.selected[i];
+    }
+    context.putImageData(data, 0, 0);
+    return addAsset(assets.current, image);
+  };
+  const alphaMaskAsset = (width: number, height: number, alpha: ArrayLike<number>) => {
+    const image = surface(width, height),
+      context = image.getContext('2d')!,
+      data = context.createImageData(width, height);
+    for (let i = 0; i < width * height; i += 1) {
+      const offset = i * 4;
+      data.data[offset] = 255;
+      data.data[offset + 1] = 255;
+      data.data[offset + 2] = 255;
+      data.data[offset + 3] = alpha[i] ?? 0;
     }
     context.putImageData(data, 0, 0);
     return addAsset(assets.current, image);
@@ -2990,10 +3764,42 @@ export default function Home() {
         ? (patch as Layer)
         : ({ ...layer, ...patch } as Layer);
     if (JSON.stringify(next) === JSON.stringify(layer)) return true;
+    let layers = f.layers.map((l) => (l.id === layer.id ? next : l));
+    if (patch.matrix !== undefined && layer.layerLinkId !== undefined) {
+      const linked = f.layers.filter(
+        (candidate) => candidate.id !== layer.id && candidate.layerLinkId === layer.layerLinkId,
+      );
+      if (linked.some((candidate) => layerIsLocked(f, candidate))) {
+        setNotice('Unlock all linked layers before transforming');
+        return false;
+      }
+      const [a, b, c, d, e, g] = layer.matrix;
+      const determinant = a * d - b * c;
+      if (Math.abs(determinant) < 0.000000000001) {
+        setNotice('Linked layer transform is invalid');
+        return false;
+      }
+      const inverse: Matrix = [
+        d / determinant,
+        -b / determinant,
+        -c / determinant,
+        a / determinant,
+        (c * g - d * e) / determinant,
+        (b * e - a * g) / determinant,
+      ];
+      const delta = multiply(next.matrix, inverse);
+      layers = f.layers.map((candidate) =>
+        candidate.id === layer.id
+          ? next
+          : candidate.layerLinkId === layer.layerLinkId
+            ? { ...candidate, matrix: multiply(delta, candidate.matrix) }
+            : candidate,
+      );
+    }
     if (
       commit({
         ...f,
-        layers: f.layers.map((l) => (l.id === layer.id ? next : l)),
+        layers,
       })
     ) {
       setNotice('Layer updated');
@@ -3010,6 +3816,29 @@ export default function Home() {
     }
     editLayer({ textAlign });
   };
+  const saveDefaultTypeStyles = () => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    const style = typeStyleFromLayer(layer);
+    if (!style) {
+      setNotice('Select an editable text layer before saving default type styles');
+      return;
+    }
+    setDefaultTypeStyle(style);
+    setNotice('Default type style saved on this device');
+  };
+  const loadDefaultTypeStyles = () => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select an editable text layer before loading default type styles');
+      return;
+    }
+    if (!defaultTypeStyle) {
+      setNotice('Save a default type style before loading it');
+      return;
+    }
+    if (editLayer(applyTypeStyle(layer, defaultTypeStyle)))
+      setNotice('Default type style applied');
+  };
   const setTextOrientation = (orientation: 'horizontal' | 'vertical') => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
@@ -3018,6 +3847,100 @@ export default function Home() {
       return;
     }
     editLayer({ orientation });
+  };
+  const setTextWarp = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before warping type');
+      return;
+    }
+    const currentWarp = normalizeTextWarp(layer.warp),
+      styleInput = window.prompt(`Warp style (${TEXT_WARP_STYLES.join(', ')})`, currentWarp.style);
+    if (styleInput === null) return;
+    const style = TEXT_WARP_STYLES.includes(styleInput as TextWarp['style'])
+      ? styleInput as TextWarp['style'] : 'none';
+    const bendInput = window.prompt('Bend (-100 to 100)', String(currentWarp.bend));
+    if (bendInput === null) return;
+    const verticalInput = window.prompt('Vertical distortion (-100 to 100)', String(currentWarp.vertical));
+    if (verticalInput === null) return;
+    editLayer({ warp: normalizeTextWarp({ ...currentWarp, style, bend: Number(bendInput), vertical: Number(verticalInput) }) });
+  };
+  const setTextOnPath = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before attaching text to a path');
+      return;
+    }
+    const paths = f.layers.filter((item): item is Extract<Layer, { kind: 'path' }> => item.kind === 'path');
+    if (!paths.length) {
+      setNotice('Create a Pen path layer before attaching text to a path');
+      return;
+    }
+    const defaultPath = layer.textPath?.pathLayerId || paths[0].id;
+    const pathId = window.prompt(`Path layer ID (${paths.map((item) => `${item.id}: ${item.name}`).join(', ')})`, defaultPath);
+    if (pathId === null) return;
+    const path = paths.find((item) => item.id === pathId.trim());
+    if (!path) {
+      setNotice('Text path layer ID was not found');
+      return;
+    }
+    const offsetInput = window.prompt('Path offset in pixels', String(layer.textPath?.offset ?? 0));
+    if (offsetInput === null) return;
+    const reverse = window.confirm('Reverse text direction along the path?');
+    const binding = normalizeTextPathBinding({ pathLayerId: path.id, offset: Number(offsetInput), reverse });
+    if (!binding) {
+      setNotice('Text path settings are invalid');
+      return;
+    }
+    editLayer({ textPath: binding });
+    setNotice('Text attached to editable path');
+  };
+  const pasteLoremIpsum = () => {
+    const f = current();
+    if (f.layers.length >= 32) {
+      setNotice('Layer limit reached; remove a layer before inserting text');
+      return;
+    }
+    const layer = addLayer({
+      ...commonLayer(`Lorem Ipsum ${f.layers.length}`),
+      kind: 'text',
+      text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit.\n\nSed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
+      fontSize: Math.max(12, Math.min(96, fontSize)),
+      fontFamily,
+      bold: false,
+      color,
+      boxWidth: Math.max(240, Math.min(720, f.w - 128)),
+      textAlign: 'left',
+      lineHeight: 1.35,
+      letterSpacing: 0,
+      orientation: 'horizontal',
+      matrix: [1, 0, 0, 1, Math.min(64, Math.max(0, f.w - 240)), Math.min(96, Math.max(0, f.h - 96))],
+    });
+    if (layer) setNotice('Editable Lorem Ipsum text layer added');
+  };
+  const replaceText = (
+    find: string,
+    replacement: string,
+    matchCase: boolean,
+    wholeWord: boolean,
+  ) => {
+    const f = current();
+    const result = replaceTextLayers(f, {
+      find,
+      replace: replacement,
+      matchCase,
+      wholeWord,
+    });
+    setTextReplaceOpen(false);
+    if (!result.replacements) {
+      setNotice(`No editable text matched “${find}”`);
+      return;
+    }
+    if (commit(result.frame)) {
+      setNotice(
+        `Replaced ${result.replacements} match${result.replacements === 1 ? '' : 'es'} across ${result.layersChanged} text layer${result.layersChanged === 1 ? '' : 's'}`,
+      );
+    }
   };
   const editGroup = (id: string, patch: Partial<Group>) => {
     if (quickMasking) {
@@ -3368,6 +4291,43 @@ export default function Home() {
         setNotice(`Could not create a ${kind === 'subject' ? 'Subject' : 'Sky'} selection`);
     }
   };
+  const applyObjectSelection = async () => {
+    const f = current(), frameIndex = index.current,
+      workToken = ++selectionWorkToken.current,
+      operation = selectionOperation, sourceAssets = assets.current;
+    const point = window.prompt(
+      'Object Selection point (canvas pixels, x,y)',
+      `${Math.round(f.w / 2)},${Math.round(f.h / 2)}`,
+    );
+    if (point === null) return;
+    const [xText, yText] = point.split(',').map((value) => value.trim());
+    const x = Number(xText), y = Number(yText);
+    const tolerance = Number(window.prompt('Object Selection colour tolerance (0-255)', '32') ?? '32');
+    const softness = Number(window.prompt('Object Selection edge softness (0-255)', '8') ?? '8');
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(tolerance) || !Number.isFinite(softness)) {
+      setNotice('Object Selection values must be numeric');
+      return;
+    }
+    try {
+      const rendered = await renderFrame(f, sourceAssets),
+        pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+        alpha = objectSelectionMask(pixels, { width: f.w, height: f.h, x, y, tolerance, softness }),
+        mask = surface(f.w, f.h), image = mask.getContext('2d')!.createImageData(f.w, f.h);
+      for (let pixel = 0; pixel < alpha.length; pixel += 1) {
+        const offset = pixel * 4;
+        image.data[offset] = 255;
+        image.data[offset + 1] = 255;
+        image.data[offset + 2] = 255;
+        image.data[offset + 3] = alpha[pixel];
+      }
+      mask.getContext('2d')!.putImageData(image, 0, 0);
+      const selection: Selection = { shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h, feather: 0, inverted: false };
+      const candidate = await composeSelectionCandidate(f, selection, mask, operation, sourceAssets);
+      publishSelectionCandidate(f, frameIndex, workToken, candidate, 'Object Selection created (local connected-colour proxy)');
+    } catch {
+      if (isCurrentSelectionOperation(f, frameIndex, workToken)) setNotice('Could not create an Object Selection');
+    }
+  };
   const applySelectAndMask = async (smoothRadius: number, feather: number) => {
     const f = current(), frameIndex = index.current, before = f.selection,
       workToken = ++selectionWorkToken.current;
@@ -3573,6 +4533,47 @@ export default function Home() {
       );
     } finally {
       setLayerTransforming(false);
+    }
+  };
+  const applyPerspectiveWarp = async () => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
+      setNotice('Select a raster or smart-object layer before using Perspective Warp');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the active layer before using Perspective Warp');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]);
+      const width = image.naturalWidth, height = image.naturalHeight;
+      const defaultQuad = `10,10;${Math.max(11, width - 10)},10;${Math.max(11, width - 10)},${Math.max(11, height - 10)};10,${Math.max(11, height - 10)}`;
+      const input = window.prompt('Perspective Warp target quad (clockwise x,y; x,y; x,y; x,y)', defaultQuad);
+      if (input === null) return;
+      const points = input.split(';').map((entry) => entry.split(',').map((value) => Number(value.trim())));
+      if (points.length !== 4 || points.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value)))) {
+        setNotice('Perspective Warp needs four numeric x,y points');
+        return;
+      }
+      const plan = planPerspectiveWarp(width, height, points.map(([x, y]) => ({ x, y })) as CropQuad);
+      const source = surface(width, height), sourceContext = source.getContext('2d')!;
+      sourceContext.drawImage(image, 0, 0);
+      const pixels = sourceContext.getImageData(0, 0, width, height).data;
+      const warped = warpLayerPerspectiveRgba(pixels, width, height, plan);
+      const output = surface(width, height), outputContext = output.getContext('2d')!;
+      const outputImage = outputContext.createImageData(width, height);
+      outputImage.data.set(warped);
+      outputContext.putImageData(outputImage, 0, 0);
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('Perspective Warp cancelled because the document changed');
+        return;
+      }
+      const asset = addAsset(assets.current, output);
+      if (editLayer({ asset })) setNotice('Perspective Warp applied locally; undo restores the source asset');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not apply Perspective Warp');
     }
   };
   const applySelectionRefinement = async (radius: number) => {
@@ -3900,6 +4901,32 @@ export default function Home() {
     if (editLayer({ vectorMask: { path: defaultVectorMaskPath(bounds.width, bounds.height), enabled: true, inverted: false } }))
       setNotice('Vector mask created; edit the path with Direct Selection');
   };
+  const createCookieCutterMask = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !isVectorMaskableLayer(layer) || !layer.visible) {
+      setNotice('Select a visible pixel-producing layer before using Cookie Cutter');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Cookie Cutter');
+      return;
+    }
+    if (layer.vectorMask) {
+      setNotice('Remove the existing vector mask before using Cookie Cutter');
+      return;
+    }
+    const choice = window.prompt(`Cookie Cutter shape (${COOKIE_CUTTER_SHAPES.join(', ')})`, 'ellipse');
+    if (choice === null) return;
+    const shape = COOKIE_CUTTER_SHAPES.includes(choice as CookieCutterShape)
+      ? choice as CookieCutterShape : 'ellipse';
+    try {
+      const bounds = vectorMaskBounds(layer);
+      if (editLayer({ vectorMask: { path: cookieCutterPath(bounds.width, bounds.height, shape), enabled: true, inverted: false } }))
+        setNotice(`Cookie Cutter ${shape} mask created; edit it with Direct Selection`);
+    } catch {
+      setNotice('Cookie Cutter could not create a bounded mask');
+    }
+  };
   const invertVectorMask = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer?.vectorMask || !layer.visible || !isVectorMaskableLayer(layer)) {
@@ -3989,6 +5016,57 @@ export default function Home() {
       );
     }
   };
+  const maskAllObjects = async () => {
+    const f = current();
+    const tolerance = colorTolerance;
+    const targets = f.layers.filter(
+      (layer): layer is Extract<Layer, { kind: 'raster' }> =>
+        layer.kind === 'raster' && layer.visible && !layerIsLocked(f, layer),
+    );
+    if (!targets.length) {
+      setNotice('Show and unlock at least one raster layer before masking objects');
+      return;
+    }
+    try {
+      const masks = new Map<string, HTMLCanvasElement>();
+      for (const layer of targets) {
+        const image = await decodeAsset(assets.current[layer.asset]);
+        const source = surface(image.naturalWidth, image.naturalHeight);
+        const context = source.getContext('2d');
+        if (!context) throw new Error('Object mask canvas is unavailable');
+        context.drawImage(image, 0, 0);
+        const result = createBackgroundMask(source, tolerance);
+        const maskCanvas = surface(f.w, f.h);
+        const maskContext = maskCanvas.getContext('2d');
+        if (!maskContext) throw new Error('Object mask output is unavailable');
+        maskContext.imageSmoothingEnabled = false;
+        maskContext.save();
+        maskContext.setTransform(...layer.matrix);
+        maskContext.drawImage(result.canvas, 0, 0);
+        maskContext.restore();
+        masks.set(layer.id, maskCanvas);
+      }
+      if (current() !== f) {
+        setNotice('The document changed while object masks were calculated');
+        return;
+      }
+      const maskAssets = new Map<string, string>();
+      for (const [layerId, canvas] of masks)
+        maskAssets.set(layerId, addAsset(assets.current, canvas));
+      const layers = f.layers.map((layer) => {
+        const mask = maskAssets.get(layer.id);
+        return mask
+          ? { ...layer, mask, maskEnabled: true, maskInverted: false }
+          : layer;
+      });
+      if (commit({ ...f, layers }))
+        setNotice(
+          `${targets.length} object mask${targets.length === 1 ? '' : 's'} created locally (edge-connected proxy)`,
+        );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Object masks could not be applied');
+    }
+  };
   const applyContentAwareFill = async () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -4061,6 +5139,138 @@ export default function Home() {
       setNotice('Content-Aware Fill could not be applied');
     }
   };
+  const applyContentAwareMove = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Content-Aware Move');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Content-Aware Move');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Content-Aware Move');
+      return;
+    }
+    if ((layer.contentAwareMoves?.length ?? 0) >= CONTENT_AWARE_MOVE_MAX_OPERATIONS) {
+      setNotice(`This layer has ${CONTENT_AWARE_MOVE_MAX_OPERATIONS} Content-Aware Move operations; export a copy before adding more`);
+      return;
+    }
+    const dxText = window.prompt('Move selection horizontally in pixels', '24');
+    if (dxText === null) return;
+    const dyText = window.prompt('Move selection vertically in pixels', '0');
+    if (dyText === null) return;
+    const dx = Number(dxText),
+      dy = Number(dyText);
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) ||
+      Math.abs(dx) > CONTENT_AWARE_MOVE_MAX_OFFSET || Math.abs(dy) > CONTENT_AWARE_MOVE_MAX_OFFSET) {
+      setNotice(`Content-Aware Move offsets must be within ±${CONTENT_AWARE_MOVE_MAX_OFFSET} pixels`);
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(
+          f.selection,
+          f,
+          layer,
+          assets.current,
+          width,
+          height,
+        );
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Content-Aware Move was prepared');
+        return;
+      }
+      const maskAsset = alphaMaskAsset(width, height, mask),
+        move = {
+          version: 1 as const,
+          mask: maskAsset,
+          dx,
+          dy,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        };
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id
+          ? { ...item, contentAwareMoves: [...(item.contentAwareMoves ?? []), move] }
+          : item),
+      })) setNotice('Content-Aware Move applied locally; undo restores the original pixels');
+    } catch {
+      setNotice('Content-Aware Move could not be applied');
+    }
+  };
+  const applyContentAwareScale = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Content-Aware Scale');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Content-Aware Scale');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Content-Aware Scale');
+      return;
+    }
+    if ((layer.contentAwareScales?.length ?? 0) >= CONTENT_AWARE_SCALE_MAX_OPERATIONS) {
+      setNotice(`This layer has ${CONTENT_AWARE_SCALE_MAX_OPERATIONS} Content-Aware Scale operations; export a copy before adding more`);
+      return;
+    }
+    const horizontalText = window.prompt('Scale selection horizontally (%)', '120');
+    if (horizontalText === null) return;
+    const verticalText = window.prompt('Scale selection vertically (%)', horizontalText);
+    if (verticalText === null) return;
+    const scaleX = Number(horizontalText),
+      scaleY = Number(verticalText);
+    if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) ||
+      scaleX < CONTENT_AWARE_SCALE_MIN_PERCENT || scaleX > CONTENT_AWARE_SCALE_MAX_PERCENT ||
+      scaleY < CONTENT_AWARE_SCALE_MIN_PERCENT || scaleY > CONTENT_AWARE_SCALE_MAX_PERCENT) {
+      setNotice(`Content-Aware Scale values must be between ${CONTENT_AWARE_SCALE_MIN_PERCENT}% and ${CONTENT_AWARE_SCALE_MAX_PERCENT}%`);
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, width, height);
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Content-Aware Scale was prepared');
+        return;
+      }
+      const maskAsset = alphaMaskAsset(width, height, mask),
+        scale = {
+          version: 1 as const,
+          mask: maskAsset,
+          scaleX: scaleX / 100,
+          scaleY: scaleY / 100,
+          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
+          opacity: brushOpacity / 100,
+        };
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id
+          ? { ...item, contentAwareScales: [...(item.contentAwareScales ?? []), scale] }
+          : item),
+      })) setNotice('Content-Aware Scale applied locally; undo restores the original pixels');
+    } catch {
+      setNotice('Content-Aware Scale could not be applied');
+    }
+  };
   const adjust = (patch: Partial<Adjustments>) => {
     const layer = current().layers.find((l) => l.id === current().active)!;
     return editLayer({
@@ -4123,6 +5333,12 @@ export default function Home() {
     }
   };
   const resetAdjustments = () => adjust({ ...neutral });
+  const toggleImageMode = () => {
+    const frame = current();
+    const next: ColorMode = normalizeColorMode(frame.colorMode) === 'rgb' ? 'grayscale' : 'rgb';
+    if (!commit({ ...frame, colorMode: next })) return;
+    setNotice(`Image mode: ${next === 'grayscale' ? 'Grayscale' : 'RGB Color'}`);
+  };
   const setBrightness = (brightness: number) => adjust({ brightness }),
     setContrast = (contrast: number) => adjust({ contrast }),
     setSaturation = (saturation: number) => adjust({ saturation }),
@@ -4141,12 +5357,95 @@ export default function Home() {
     adjust({ curves: { ...curves, [channel]: points } });
   const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
-  const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) =>
-    adjust({ filterEffects: { ...filterEffects, ...patch } });
+  const updateRecordedFilterParameters = (effects: Adjustments['filterEffects']) => {
+    const id = recordingActionRef.current;
+    if (!id || replayingActionRef.current) return;
+    setActions((currentActions) => currentActions.map((action) => {
+      if (action.id !== id) return action;
+      const last = action.steps[action.steps.length - 1];
+      if (!last || !last.command.startsWith('filter-')) return action;
+      const steps = action.steps.slice();
+      steps[steps.length - 1] = {
+        ...last,
+        parameters: filterActionParameters(effects),
+      };
+      return { ...action, steps, updatedAt: new Date().toISOString() };
+    }));
+  };
+  const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) => {
+    const next = { ...filterEffects, ...patch };
+    const changed = adjust({ filterEffects: next });
+    if (changed) updateRecordedFilterParameters(next);
+    return changed;
+  };
   const setPhotoAdjustments = (
     patch: Partial<Adjustments['photoAdjustments']>,
   ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });
+  const applyCameraRaw = (
+    patch: Partial<Adjustments['photoAdjustments']>,
+  ) => {
+    setCameraRawEditing(false);
+    if (setPhotoAdjustments(patch)) setNotice('Camera Raw correction applied; remains editable');
+  };
+  const applyColorProfile = async (profile: ColorProfile, operation: 'assign' | 'convert') => {
+    const sourceFrame = current();
+    const sourceProfile = normalizeColorProfile(sourceFrame.colorProfile);
+    if (sourceProfile === profile) {
+      setColorProfileOperation(null);
+      setNotice(`Document is already using ${profile === 'srgb' ? 'sRGB' : 'Display P3'}`);
+      return;
+    }
+    if (operation === 'assign') {
+      setColorProfileOperation(null);
+      if (commit({ ...sourceFrame, colorProfile: profile }))
+        setNotice(`Assigned ${profile === 'srgb' ? 'sRGB' : 'Display P3'} without changing RGB bytes`);
+      return;
+    }
+    try {
+      const nextAssets: Assets = { ...assets.current };
+      const replacements = new Map<string, string>();
+      const contentIds = new Set(
+        sourceFrame.layers
+          .filter((layer) => isRasterContentLayer(layer))
+          .map((layer) => layer.asset),
+      );
+      for (const assetId of contentIds) {
+        if (current() !== sourceFrame) throw new Error('The document changed during profile conversion');
+        const asset = assets.current[assetId];
+        if (!asset) throw new Error('The source asset is missing');
+        const image = await decodeAsset(asset);
+        if (current() !== sourceFrame) throw new Error('The document changed during profile conversion');
+        const surfaceCanvas = document.createElement('canvas');
+        surfaceCanvas.width = asset.w;
+        surfaceCanvas.height = asset.h;
+        const context = surfaceCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) throw new Error('The browser cannot create a color conversion surface');
+        context.drawImage(image, 0, 0);
+        const imageData = context.getImageData(0, 0, asset.w, asset.h);
+        imageData.data.set(convertRgbaProfile(imageData.data, asset.w, asset.h, sourceProfile, profile));
+        context.putImageData(imageData, 0, 0);
+        const convertedId = crypto.randomUUID();
+        nextAssets[convertedId] = { url: surfaceCanvas.toDataURL(), w: asset.w, h: asset.h };
+        replacements.set(assetId, convertedId);
+      }
+      const layers = sourceFrame.layers.map((layer) => {
+        if (!isRasterContentLayer(layer)) return layer;
+        const asset = replacements.get(layer.asset);
+        return asset ? { ...layer, asset } : layer;
+      });
+      setColorProfileOperation(null);
+      if (commit({ ...sourceFrame, colorProfile: profile, layers }, false, nextAssets))
+        setNotice(`Converted raster content to ${profile === 'srgb' ? 'sRGB' : 'Display P3'}; undo restores the source assets`);
+    } catch (error) {
+      setColorProfileOperation(null);
+      setNotice(error instanceof Error ? error.message : 'Color profile conversion failed; the draft is unchanged');
+    }
+  };
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
+    if (type !== 'none') {
+      setLastFilterType(type);
+      try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
+    }
     if (
       adjust({
         filterEffects:
@@ -4174,8 +5473,13 @@ export default function Home() {
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
+                ...(type === 'gradient-map' ? {
+                  gradientMap: { shadow: '#000000', highlight: '#ffffff' },
+                } : {}),
+                ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
+                ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -4202,11 +5506,21 @@ export default function Home() {
                     ? 10
                     : type === 'clouds'
                       ? 16
+                    : type === 'gradient-map'
+                    ? 1
+                    : type === 'median'
+                    ? 2
+                    : type === 'dust-scratches'
+                    ? 2
+                    : type === 'despeckle'
+                    ? 1
+                    : type === 'reduce-noise'
+                    ? 2
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
                       ? 36
-                    : type === 'pinch'
+                    : type === 'pinch' || type === 'liquify'
                       ? 40
                     : type === 'spherize'
                         ? 40
@@ -4220,7 +5534,7 @@ export default function Home() {
                           ? 12
                         : 6,
                 angle:
-                  type === 'twirl'
+                  type === 'twirl' || type === 'liquify'
                     ? 75
                     : type === 'shear'
                       ? 90
@@ -4233,6 +5547,39 @@ export default function Home() {
           ? 'Local filter effect cleared'
           : `${label} applied; remains editable in Filter effects`,
       );
+  };
+  const convertForSmartFilters = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object')) {
+      setNotice('Select a raster or smart-object layer before converting for Smart Filters');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the layer before converting for Smart Filters');
+      return;
+    }
+    const effect = effectiveFilterEffects(layer.adjustments.filterEffects);
+    if (isNeutralFilterEffects(effect)) {
+      setNotice('Choose a local filter effect before converting for Smart Filters');
+      return;
+    }
+    try {
+      const stack = appendSmartFilter(layer.smartFilters, effect);
+      if (editLayer({
+        smartFilters: stack,
+        adjustments: {
+          ...layer.adjustments,
+          filterEffects: { ...neutralFilterEffects },
+        },
+      })) setNotice(`Smart Filter stack now contains ${stack.length} effect${stack.length === 1 ? '' : 's'}; source pixels remain editable`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not convert the filter');
+    }
+  };
+  const clearSmartFilters = () => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (editLayer({ smartFilters: [] }))
+      setNotice(`Smart Filter stack cleared${layer?.smartFilters?.length ? '; undo restores it' : ''}`);
   };
   const chooseFilter = (filter: string, label: string) => {
     if (adjust({ filter }))
@@ -4407,7 +5754,31 @@ export default function Home() {
         pressureSize,
         pressureOpacity,
         brushPreset,
+        customBrushPresets,
+        customPatternPresets,
+        customShapePresets,
+        customPathPresets,
+        polygonVariant,
+        polygonSides,
+        polygonInnerRadius,
         spacing: brushSpacing,
+        brushSmoothing,
+        brushScatter,
+        brushTexture,
+        brushDual,
+        secondaryBrushPreset,
+        brushBristle,
+        brushWetEdges,
+        brushBuildUp,
+        brushFlow,
+        gradientMode,
+        gradientEnd,
+        gradientMidpoint,
+        gradientMidpointPosition,
+        gradientReverse,
+        gradientDither,
+        gradientStops,
+        gradientNoise,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -4431,6 +5802,9 @@ export default function Home() {
         exportTargetBytes,
         text,
         fontSize,
+        fontFamily,
+        fontPreviewSize,
+        defaultTypeStyle,
         ...neutral,
       },
       metadata: { ...metadata },
@@ -4483,7 +5857,31 @@ export default function Home() {
     pressureSize,
     pressureOpacity,
     brushPreset,
+    customBrushPresets,
+    customPatternPresets,
+    customShapePresets,
+    customPathPresets,
+    polygonVariant,
+    polygonSides,
+    polygonInnerRadius,
     brushSpacing,
+    brushSmoothing,
+    brushScatter,
+    brushTexture,
+    brushDual,
+    brushBristle,
+    brushWetEdges,
+    brushBuildUp,
+    secondaryBrushPreset,
+    brushFlow,
+    gradientMode,
+    gradientEnd,
+    gradientMidpoint,
+    gradientMidpointPosition,
+    gradientReverse,
+    gradientDither,
+    gradientStops,
+    gradientNoise,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -4508,6 +5906,9 @@ export default function Home() {
     metadata,
     text,
     fontSize,
+    fontFamily,
+    fontPreviewSize,
+    defaultTypeStyle,
     history,
     index,
     assets,
@@ -4938,6 +6339,46 @@ export default function Home() {
     }
     return false;
   };
+  const createWorkPathFromSelection = async () => {
+    const f = current(), selection = f.selection;
+    if (!selection) {
+      setNotice('Create a selection before making a work path');
+      return;
+    }
+    let rendered: HTMLCanvasElement;
+    try {
+      rendered = await renderSelection(selection, f.w, f.h, assets.current);
+    } catch {
+      setNotice('The selection mask could not be rendered into a work path');
+      return;
+    }
+    if (current() !== f) {
+      setNotice('Work Path cancelled because the document changed');
+      return;
+    }
+    const pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data;
+    const alpha = new Uint8ClampedArray(f.w * f.h);
+    for (let index = 0; index < alpha.length; index += 1) alpha[index] = pixels[index * 4 + 3];
+    const traced = traceAlphaContours(alpha, f.w, f.h);
+    if (!traced.contours.length) {
+      setNotice('The selection has no visible pixels for a work path');
+      return;
+    }
+    const first = traced.contours[0];
+    const path: PathModel = {
+      nodes: first.nodes,
+      closed: true,
+      fill: false,
+      stroke: true,
+      strokeWidth: 1,
+      fillColor: color,
+      strokeColor: color,
+      contours: traced.contours,
+      fillRule: 'evenodd',
+    };
+    if (addLayer({ ...commonLayer(`Work Path ${f.layers.length}`), kind: 'path', path }))
+      setNotice(`Work Path traced from ${traced.contours.length} selection contour${traced.contours.length === 1 ? '' : 's'}; edit its anchors with Direct Selection`);
+  };
   const groupActiveLayer = () => {
     const f = current(),
       layers = selectedLayersForFrame(f);
@@ -5109,31 +6550,41 @@ export default function Home() {
   const distributeGroupLayers = (axis: DistributionAxis) => {
     const f = current(),
       activeLayer = f.layers.find((item) => item.id === f.active),
+      selected = selectedLayersForFrame(f),
       groupId = activeLayer?.groupId,
-      group = groupId
-        ? f.groups?.find((item) => item.id === groupId)
-        : undefined;
-    if (!activeLayer || !group) {
-      setNotice('Select a grouped layer before distributing');
+      group = groupId ? f.groups?.find((item) => item.id === groupId) : undefined,
+      selectedGroups = new Set(selected.flatMap((item) => item.groupId ? [item.groupId] : [])),
+      eligible = selected.length >= 3
+        ? selected
+        : group
+          ? f.layers.filter((item) => item.groupId === group.id)
+          : [];
+    if (!eligible.length) {
+      setNotice('Select at least three layers before distributing');
       return;
     }
-    if (group.locked) {
+    if (selectedGroups.size > 1 || (selectedGroups.size === 1 && selected.some((item) => item.groupId !== [...selectedGroups][0]))) {
+      setNotice('Select layers from one folder or from the root stack');
+      return;
+    }
+    const selectedGroup = selectedGroups.size === 1
+      ? f.groups?.find((item) => item.id === [...selectedGroups][0])
+      : undefined;
+    if (selectedGroup?.locked || group?.locked) {
       setNotice('Unlock this group before distributing');
       return;
     }
-    if (!group.visible) {
+    if (selectedGroup?.visible === false || group?.visible === false) {
       setNotice('Show this group before distributing');
       return;
     }
-    const eligible = f.layers.filter(
-      (item) => item.groupId === group.id && item.visible && !item.locked,
-    );
-    if (eligible.length < 3) {
-      setNotice('A group needs three visible unlocked layers to distribute');
+    const visibleEligible = eligible.filter((item) => item.visible && !item.locked);
+    if (visibleEligible.length < 3) {
+      setNotice('At least three visible unlocked layers are required to distribute');
       return;
     }
     try {
-      const bounds = eligible.map((item) => ({
+      const bounds = visibleEligible.map((item) => ({
           id: item.id,
           ...layerBounds(item, assets.current),
         })),
@@ -5244,6 +6695,238 @@ export default function Home() {
           : `${copies.length} layers duplicated`,
       );
   };
+  const fadeLastEdit = async () => {
+    if (index.current <= 0) {
+      setNotice('Fade is available immediately after an undoable raster edit');
+      return;
+    }
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    const previous = history.current[index.current - 1];
+    const previousLayer = previous?.layers.find((item) => item.id === f.active);
+    if (
+      !layer ||
+      layer.kind !== 'raster' ||
+      !layer.asset ||
+      !previousLayer ||
+      previousLayer.kind !== 'raster' ||
+      !previousLayer.asset
+    ) {
+      setNotice('Fade currently supports the active raster layer after a raster edit');
+      return;
+    }
+    const amountText = window.prompt('Fade opacity (0–100%)', '50');
+    if (amountText === null) return;
+    const amount = Number(amountText);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
+      setNotice('Fade opacity must be between 0 and 100%');
+      return;
+    }
+    try {
+      const [previousImage, currentImage] = await Promise.all([
+        decodeAsset(assets.current[previousLayer.asset]),
+        decodeAsset(assets.current[layer.asset]),
+      ]);
+      if (
+        previousImage.naturalWidth !== currentImage.naturalWidth ||
+        previousImage.naturalHeight !== currentImage.naturalHeight
+      )
+        throw new Error('Fade requires matching raster dimensions');
+      const previousSurface = surface(previousImage.naturalWidth, previousImage.naturalHeight);
+      const currentSurface = surface(currentImage.naturalWidth, currentImage.naturalHeight);
+      previousSurface.getContext('2d')!.drawImage(previousImage, 0, 0);
+      currentSurface.getContext('2d')!.drawImage(currentImage, 0, 0);
+      const previousPixels = previousSurface.getContext('2d')!.getImageData(0, 0, previousSurface.width, previousSurface.height);
+      const currentPixels = currentSurface.getContext('2d')!.getImageData(0, 0, currentSurface.width, currentSurface.height);
+      currentPixels.data.set(applyFadePixels(previousPixels.data, currentPixels.data, amount));
+      const output = surface(currentSurface.width, currentSurface.height);
+      output.getContext('2d')!.putImageData(currentPixels, 0, 0);
+      if (current() !== f) {
+        setNotice('Document changed while Fade was preparing; nothing was overwritten');
+        return;
+      }
+      const asset = addAsset(assets.current, output);
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item),
+      }))
+        setNotice(`Fade applied at ${Math.round(amount)}%; undo restores the original edit`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Fade could not be applied');
+    }
+  };
+  const applyImage = async () => {
+    const beforeFrame = current();
+    const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
+    if (!layer || layer.kind !== 'raster') {
+      setNotice('Select an unlocked raster layer before using Apply Image');
+      return;
+    }
+    if (layerIsLocked(beforeFrame, layer) || !layer.visible) {
+      setNotice('Unlock and show the active raster layer before using Apply Image');
+      return;
+    }
+    const opacityText = window.prompt('Apply Image opacity (0–100%)', '100');
+    if (opacityText === null) return;
+    const opacity = Number(opacityText);
+    if (!Number.isFinite(opacity) || opacity < 0 || opacity > 100) {
+      setNotice('Apply Image opacity must be between 0 and 100%');
+      return;
+    }
+    const beforeIndex = index.current;
+    const beforeRevision = revisionRef.current;
+    try {
+      const activeImage = await decodeAsset(assets.current[layer.asset]);
+      if (activeImage.naturalWidth !== beforeFrame.w || activeImage.naturalHeight !== beforeFrame.h)
+        throw new Error('Apply Image requires the active raster to match the document dimensions');
+      const source = await renderFrame(beforeFrame, assets.current);
+      if (beforeFrame.selection) {
+        const mask = await renderSelection(
+          beforeFrame.selection,
+          beforeFrame.w,
+          beforeFrame.h,
+          assets.current,
+        );
+        const sourceContext = source.getContext('2d');
+        if (!sourceContext) throw new Error('Apply Image source canvas is unavailable');
+        sourceContext.globalCompositeOperation = 'destination-in';
+        sourceContext.drawImage(mask, 0, 0);
+        sourceContext.globalCompositeOperation = 'source-over';
+      }
+      const target = surface(beforeFrame.w, beforeFrame.h);
+      const targetContext = target.getContext('2d');
+      if (!targetContext) throw new Error('Apply Image target canvas is unavailable');
+      targetContext.drawImage(activeImage, 0, 0);
+      const targetPixels = targetContext.getImageData(0, 0, beforeFrame.w, beforeFrame.h);
+      const sourcePixels = source.getContext('2d')?.getImageData(0, 0, beforeFrame.w, beforeFrame.h);
+      if (!sourcePixels) throw new Error('Apply Image source pixels are unavailable');
+      targetPixels.data.set(applyImagePixels(targetPixels.data, sourcePixels.data, opacity));
+      targetContext.putImageData(targetPixels, 0, 0);
+      if (
+        current() !== beforeFrame ||
+        index.current !== beforeIndex ||
+        revisionRef.current !== beforeRevision
+      ) {
+        setNotice('Document changed while Apply Image was preparing; nothing was overwritten');
+        return;
+      }
+      const asset = addAsset(assets.current, target);
+      if (commit({
+        ...beforeFrame,
+        layers: beforeFrame.layers.map((item) => item.id === layer.id ? {
+          ...item,
+          asset,
+          matrix: identity(),
+          adjustments: { ...neutral },
+          mask: undefined,
+          maskEnabled: undefined,
+          maskInverted: undefined,
+          vectorMask: undefined,
+          spotHealing: undefined,
+          patchStrokes: undefined,
+          contentAwareFills: undefined,
+          matting: undefined,
+          smartFilters: [],
+          clippingTo: undefined,
+        } : item),
+      })) {
+        setNotice(`Apply Image composited the visible image at ${Math.round(opacity)}%; undo restores the editable source`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Apply Image could not be applied');
+    }
+  };
+  const calculateImage = async () => {
+    const beforeFrame = current();
+    const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
+    if (!layer || layer.kind !== 'raster') {
+      setNotice('Select an unlocked raster layer before using Calculations');
+      return;
+    }
+    if (layerIsLocked(beforeFrame, layer) || !layer.visible) {
+      setNotice('Unlock and show the active raster layer before using Calculations');
+      return;
+    }
+    const modeText = window.prompt(
+      `Calculations blend mode (${CALCULATION_MODES.join(', ')})`,
+      'multiply',
+    );
+    if (modeText === null) return;
+    const mode = modeText.trim().toLowerCase() as CalculationMode;
+    if (!CALCULATION_MODES.includes(mode)) {
+      setNotice(`Calculations mode must be one of: ${CALCULATION_MODES.join(', ')}`);
+      return;
+    }
+    const opacityText = window.prompt('Calculations opacity (0–100%)', '100');
+    if (opacityText === null) return;
+    const opacity = Number(opacityText);
+    if (!Number.isFinite(opacity) || opacity < 0 || opacity > 100) {
+      setNotice('Calculations opacity must be between 0 and 100%');
+      return;
+    }
+    const beforeIndex = index.current;
+    const beforeRevision = revisionRef.current;
+    try {
+      const activeImage = await decodeAsset(assets.current[layer.asset]);
+      if (activeImage.naturalWidth !== beforeFrame.w || activeImage.naturalHeight !== beforeFrame.h)
+        throw new Error('Calculations requires the active raster to match the document dimensions');
+      const source = await renderFrame(beforeFrame, assets.current);
+      if (beforeFrame.selection) {
+        const mask = await renderSelection(
+          beforeFrame.selection,
+          beforeFrame.w,
+          beforeFrame.h,
+          assets.current,
+        );
+        const sourceContext = source.getContext('2d');
+        if (!sourceContext) throw new Error('Calculations source canvas is unavailable');
+        sourceContext.globalCompositeOperation = 'destination-in';
+        sourceContext.drawImage(mask, 0, 0);
+        sourceContext.globalCompositeOperation = 'source-over';
+      }
+      const target = surface(beforeFrame.w, beforeFrame.h);
+      const targetContext = target.getContext('2d');
+      if (!targetContext) throw new Error('Calculations target canvas is unavailable');
+      targetContext.drawImage(activeImage, 0, 0);
+      const targetPixels = targetContext.getImageData(0, 0, beforeFrame.w, beforeFrame.h);
+      const sourcePixels = source.getContext('2d')?.getImageData(0, 0, beforeFrame.w, beforeFrame.h);
+      if (!sourcePixels) throw new Error('Calculations source pixels are unavailable');
+      targetPixels.data.set(calculateImagePixels(targetPixels.data, sourcePixels.data, mode, opacity));
+      targetContext.putImageData(targetPixels, 0, 0);
+      if (
+        current() !== beforeFrame ||
+        index.current !== beforeIndex ||
+        revisionRef.current !== beforeRevision
+      ) {
+        setNotice('Document changed while Calculations was preparing; nothing was overwritten');
+        return;
+      }
+      const asset = addAsset(assets.current, target);
+      if (commit({
+        ...beforeFrame,
+        layers: beforeFrame.layers.map((item) => item.id === layer.id ? {
+          ...item,
+          asset,
+          matrix: identity(),
+          adjustments: { ...neutral },
+          mask: undefined,
+          maskEnabled: undefined,
+          maskInverted: undefined,
+          vectorMask: undefined,
+          spotHealing: undefined,
+          patchStrokes: undefined,
+          contentAwareFills: undefined,
+          matting: undefined,
+          smartFilters: [],
+          clippingTo: undefined,
+        } : item),
+      })) {
+        setNotice(`Calculations applied ${mode} at ${Math.round(opacity)}%; undo restores the editable source`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Calculations could not be applied');
+    }
+  };
   const copyLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -5255,6 +6938,21 @@ export default function Home() {
     setHasClipboard(true);
     setNotice('Active layer copied');
     return true;
+  };
+  const copySvg = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !['path', 'rectangle', 'ellipse', 'polygon'].includes(layer.kind)) {
+      setNotice('Select a path, rectangle, ellipse or polygon layer before copying SVG');
+      return;
+    }
+    try {
+      const svg = pathToSvg(booleanOperand(layer), f.w, f.h);
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(svg);
+      setNotice('SVG copied from the editable vector layer');
+    } catch {
+      setNotice('Could not serialize this layer as SVG');
+    }
   };
   const copyMerged = async () => {
     const beforeFrame = current();
@@ -5561,8 +7259,9 @@ export default function Home() {
   const mergeLayers = async () => {
     const f = current();
     const selectionIds = selectedIdsForFrame(f);
+    const activeLayer = f.layers.find((layer) => layer.id === f.active);
     const selectedPlan =
-      selectionIds.length >= 2 ? planSelectedLayerMerge(f) : undefined;
+      selectionIds.length >= 2 || Boolean(activeLayer?.groupId) ? planSelectedLayerMerge(f) : undefined;
     if (selectedPlan && !selectedPlan.ok) {
       setNotice(selectedLayerMergeReason(selectedPlan.reason));
       return;
@@ -5581,14 +7280,16 @@ export default function Home() {
     const selectedLayers = selectedIndices.map((layerIndex) => f.layers[layerIndex]);
     const active = selectedLayers[selectedLayers.length - 1];
     try {
-      // Render only the selected root-level range in stack order. Grouped
-      // selections are rejected by the planner because they need isolated
-      // folder merge semantics; ordinary folder rendering remains unchanged.
+      // Render only the selected range or complete folder in stack order.
+      // Folder members keep their isolated group surface during the merge.
+      const mergeGroupIds = new Set(selectedLayers.flatMap((layer) => layer.groupId ? [layer.groupId] : []));
       const image = await renderFrame(
         {
           ...f,
           layers: selectedLayers,
-          groups: [],
+          groups: mergeGroupIds.size === 1
+            ? (f.groups || []).filter((group) => mergeGroupIds.has(group.id))
+            : [],
           active: active.id,
         },
         assets.current,
@@ -5605,6 +7306,7 @@ export default function Home() {
         ...mergedFrame.layers[0],
         visible: true,
         locked: false,
+        ...(mergeGroupIds.size === 1 ? { groupId: [...mergeGroupIds][0] } : {}),
       };
       const next = selectedPlan?.ok
         ? applySelectedLayerMerge(f, selectedPlan, merged)
@@ -5779,6 +7481,137 @@ export default function Home() {
       setNotice('Could not rasterize layer');
     }
   };
+  const applyMatting = () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object')) {
+      setNotice('Select a raster or smart-object layer before applying matting');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the layer before applying matting');
+      return;
+    }
+    const modeText = window.prompt('Matting colour (white or black)', effectiveMatting(layer.matting).mode);
+    if (modeText === null) return;
+    const mode = modeText.trim().toLowerCase();
+    if (!MATTING_MODES.includes(mode as (typeof MATTING_MODES)[number])) {
+      setNotice('Matting colour must be white or black');
+      return;
+    }
+    const amountText = window.prompt('Matting amount (0-100%)', String(effectiveMatting(layer.matting).amount));
+    if (amountText === null) return;
+    const amount = Number(amountText);
+    if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
+      setNotice('Matting amount must be between 0 and 100');
+      return;
+    }
+    if (editLayer({ matting: { mode: mode as (typeof MATTING_MODES)[number], amount } }))
+      setNotice(`${mode[0].toUpperCase()}${mode.slice(1)} matte removal applied nondestructively`);
+  };
+  const convertTextToShape = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text') {
+      setNotice('Select a text layer before converting to shape');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the text layer before converting to shape');
+      return;
+    }
+    try {
+      // Render only the editable glyph source at full opacity, then vectorize
+      // its alpha. This bakes the current font/wrap/warp pixels into a local
+      // path while preserving the original text in undo history.
+      const rendered = await renderFrame(
+        {
+          ...f,
+          groups: [],
+          layers: [{
+            ...layer,
+            groupId: undefined,
+            visible: true,
+            opacity: 1,
+            blend: 'source-over',
+            adjustments: { ...neutral },
+          }],
+        },
+        assets.current,
+      );
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('Shape conversion cancelled because the document changed');
+        return;
+      }
+      const pixels = rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+        alpha = new Uint8ClampedArray(f.w * f.h);
+      for (let index = 0; index < alpha.length; index += 1) alpha[index] = pixels[index * 4 + 3];
+      const traced = traceAlphaContours(alpha, f.w, f.h, 16);
+      if (!traced.contours.length) {
+        setNotice('The text has no visible glyph pixels to convert');
+        return;
+      }
+      const first = traced.contours[0], path: PathModel = {
+        nodes: first.nodes,
+        closed: true,
+        fill: true,
+        stroke: false,
+        strokeWidth: 1,
+        fillColor: layer.color,
+        strokeColor: layer.color,
+        contours: traced.contours,
+        fillRule: 'evenodd',
+      };
+      const converted: Layer = {
+        ...commonLayer(`${layer.name} shape`),
+        id: layer.id,
+        kind: 'path',
+        path,
+        opacity: layer.opacity,
+        blend: layer.blend,
+        visible: layer.visible,
+        groupId: layer.groupId,
+        styles: layer.styles,
+      };
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? converted : item) }))
+        setNotice(`Text converted to ${traced.contours.length} editable shape contour${traced.contours.length === 1 ? '' : 's'}; undo restores the text layer`);
+    } catch {
+      setNotice('Could not convert the text layer to shape');
+    }
+  };
+  const decodeImportedRaster = async (
+    selected: File,
+    importInfo: ReturnType<typeof describeImportFormat>,
+  ): Promise<HTMLCanvasElement> => {
+    if (importInfo.format === 'psd' || importInfo.format === 'tiff') {
+      const bytes = new Uint8Array(await selected.arrayBuffer());
+      const decoded = importInfo.format === 'psd'
+        ? decodePsdComposite(bytes)
+        : decodeTiffComposite(bytes);
+      const canvas = surface(decoded.width, decoded.height);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Image import is unavailable in this browser.');
+      const imageData = context.createImageData(decoded.width, decoded.height);
+      imageData.data.set(decoded.pixels);
+      context.putImageData(imageData, 0, 0);
+      return canvas;
+    }
+    const url = URL.createObjectURL(selected);
+    const image = new Image();
+    try {
+      image.src = url;
+      await image.decode();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    if (
+      image.width * image.height > 16000000 ||
+      image.width > 16000 ||
+      image.height > 16000
+    )
+      throw new Error('Image exceeds 16 megapixels. Current draft unchanged.');
+    const canvas = surface(image.width, image.height);
+    canvas.getContext('2d')!.drawImage(image, 0, 0);
+    return canvas;
+  };
   const load = async (selected?: File, asLayer = false) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before opening an image');
@@ -5799,24 +7632,7 @@ export default function Home() {
     try {
       if (selected.size > 64 * 1024 * 1024)
         throw new Error('Image file exceeds 64 MB');
-      const url = URL.createObjectURL(selected);
-      const image = new Image();
-      try {
-        image.src = url;
-        await image.decode();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-      if (
-        image.width * image.height > 16000000 ||
-        image.width > 16000 ||
-        image.height > 16000
-      )
-        throw new Error(
-          'Image exceeds 16 megapixels. Current draft unchanged.',
-        );
-      const c = surface(image.width, image.height);
-      c.getContext('2d')!.drawImage(image, 0, 0);
+      const c = await decodeImportedRaster(selected, importInfo);
       if (current() !== original)
         throw new Error('Document changed during import. Please try again.');
       if (asLayer) {
@@ -5831,7 +7647,9 @@ export default function Home() {
       )
         return;
       setNotice(
-        importInfo.format === 'heic'
+        importInfo.format === 'psd'
+          ? `PSD/PSB imported as a flattened editable raster${asLayer ? ' layer' : ''}; layers, masks, profiles and source metadata omitted`
+          : importInfo.format === 'heic'
           ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
           : importInfo.format === 'tiff'
             ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
@@ -5843,7 +7661,7 @@ export default function Home() {
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -5854,7 +7672,11 @@ export default function Home() {
       if (layerFile.current) layerFile.current.value = '';
     }
   };
-  const importSmartObject = async (selected?: File, replace = false) => {
+  const importSmartObject = async (
+    selected?: File,
+    replace = false,
+    fitToArtboard = false,
+  ) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before importing a smart object');
       return;
@@ -5870,23 +7692,7 @@ export default function Home() {
     const original = current();
     try {
       if (selected.size > 64 * 1024 * 1024) throw new Error('Image file exceeds 64 MB');
-      const url = URL.createObjectURL(selected),
-        image = new Image();
-      try {
-        image.src = url;
-        await image.decode();
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-      if (
-        image.width * image.height > 16000000 ||
-        image.width > 16000 ||
-        image.height > 16000
-      )
-        throw new Error('Image exceeds 16 megapixels. Current draft unchanged.');
-      const source = surface(image.width, image.height),
-        sourceContext = source.getContext('2d')!;
-      sourceContext.drawImage(image, 0, 0);
+      const source = await decodeImportedRaster(selected, importInfo);
       if (current() !== original)
         throw new Error('Document changed during import. Please try again.');
       const asset = addAsset(assets.current, source),
@@ -5897,17 +7703,39 @@ export default function Home() {
           setNotice('Select a smart object before replacing its contents');
           return;
         }
-        if (
-          commit({
-            ...original,
-            layers: original.layers.map((layer) =>
-              layer.id === target.id
-                ? { ...layer, asset, sourceName }
-                : layer,
-            ),
-          })
-        )
-          setNotice('Smart object contents replaced; transform and edits preserved');
+        const linkedId = target.linkId;
+        const replaced = {
+          ...original,
+          layers: original.layers.map((layer) =>
+            layer.kind === 'smart-object' &&
+            (layer.id === target.id || (linkedId !== undefined && layer.linkId === linkedId))
+              ? { ...layer, asset, sourceName }
+              : layer,
+          ),
+        };
+        const next = fitToArtboard
+          ? replaced.activeArtboardId
+            ? fitLayerToArtboard(
+                replaced,
+                assets.current,
+                replaced.activeArtboardId,
+                target.id,
+                'cover',
+              )
+            : (() => {
+                throw new Error('Select an active artboard before fitting replacement contents');
+              })()
+          : replaced;
+        if (commit(next))
+          setNotice(
+            fitToArtboard
+              ? linkedId
+                ? 'Linked smart-object contents replaced and fitted to the active artboard'
+                : 'Smart object contents replaced and fitted to the active artboard'
+              : linkedId
+                ? 'Linked smart-object contents replaced; transforms preserved'
+                : 'Smart object contents replaced; transform and edits preserved',
+          );
       } else if (
         addLayer({
           ...commonLayer(sourceName),
@@ -5917,7 +7745,9 @@ export default function Home() {
         })
       ) {
         setNotice(
-          importInfo.format === 'heic'
+          importInfo.format === 'psd'
+            ? 'PSD/PSB embedded as a flattened editable raster smart object; layers, masks, profiles and source metadata omitted'
+            : importInfo.format === 'heic'
             ? 'HEIC/HEIF embedded as a flattened raster smart object; source metadata omitted'
             : importInfo.format === 'tiff'
               ? 'TIFF embedded as a flattened raster smart object; source metadata omitted'
@@ -5928,7 +7758,7 @@ export default function Home() {
       }
     } catch (error) {
       setNotice(
-        importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -5938,9 +7768,113 @@ export default function Home() {
       if (smartObjectFile.current) smartObjectFile.current.value = '';
     }
   };
-  const chooseSmartObjectFile = (replace: boolean) => {
-    smartObjectAction.current = replace ? 'replace' : 'new';
+  const chooseSmartObjectFile = (replace: boolean, fitToArtboard = false) => {
+    smartObjectAction.current = replace
+      ? fitToArtboard
+        ? 'replace-fit'
+        : 'replace'
+      : 'new';
     smartObjectFile.current?.click();
+  };
+  const linkSmartObjectContents = () => {
+    const original = current();
+    const selected = selectedLayersForFrame(original);
+    const smartObjects = selected.filter(
+      (layer): layer is Extract<Layer, { kind: 'smart-object' }> =>
+        layer.kind === 'smart-object',
+    );
+    if (smartObjects.length < 2) {
+      setNotice('Select at least two smart-object layers to link their contents');
+      return;
+    }
+    const source = original.layers.find((layer) => layer.id === original.active);
+    const sourceObject = source?.kind === 'smart-object' ? source : smartObjects[0];
+    const linkId = crypto.randomUUID();
+    const ids = new Set(smartObjects.map((layer) => layer.id));
+    const next = {
+      ...original,
+      layers: original.layers.map((layer) =>
+        ids.has(layer.id) && layer.kind === 'smart-object'
+          ? {
+              ...layer,
+              asset: sourceObject.asset,
+              sourceName: sourceObject.sourceName,
+              linkId,
+            }
+          : layer,
+      ),
+    };
+    if (commit(next))
+      setNotice(
+        `Linked ${smartObjects.length} smart-object layers; replacing one updates all linked contents`,
+      );
+  };
+  const selectLinkedLayers = () => {
+    const original = current();
+    const plan = planSelectLinkedLayers(original);
+    if (!plan.ok) {
+      setNotice(selectLinkedLayersReason(plan.reason));
+      return;
+    }
+    const smartOnly = plan.layerIds.every((id) => {
+      const layer = original.layers.find((candidate) => candidate.id === id);
+      return layer?.kind === 'smart-object' && layer.linkId !== undefined && layer.layerLinkId === undefined;
+    });
+    const notice = smartOnly
+      ? `Selected ${plan.layerIds.length} linked smart-object layers`
+      : `Selected ${plan.layerIds.length} linked layers`;
+    const next = applySelectLinkedLayers(original, plan);
+    if (next === original) {
+      setNotice(notice);
+      return;
+    }
+    if (commit(next))
+      setNotice(notice);
+  };
+  const linkLayers = () => {
+    const original = current();
+    const plan = planLinkLayers(original, crypto.randomUUID());
+    if (!plan.ok) {
+      setNotice(linkLayersReason(plan.reason));
+      return;
+    }
+    if (commit(applyLinkLayers(original, plan)))
+      setNotice(`Linked ${plan.layerIds.length} layers for synchronized transforms`);
+  };
+  const unlinkLayers = () => {
+    const original = current();
+    const plan = planUnlinkLayers(original);
+    if (!plan.ok) {
+      setNotice(linkLayersReason(plan.reason));
+      return;
+    }
+    if (commit(applyUnlinkLayers(original, plan)))
+      setNotice(`Unlinked ${plan.layerIds.length} layers`);
+  };
+  const unlinkSmartObjectContents = () => {
+    const original = current();
+    const selected = selectedLayersForFrame(original);
+    const linked = selected.filter(
+      (layer): layer is Layer & { kind: 'smart-object'; linkId: string } =>
+        layer.kind === 'smart-object' && layer.linkId !== undefined,
+    );
+    if (!linked.length) {
+      setNotice('Select a linked smart-object layer to unlink');
+      return;
+    }
+    const ids = new Set(linked.map((layer) => layer.id));
+    const next = {
+      ...original,
+      layers: original.layers.map((layer) =>
+        ids.has(layer.id) && layer.kind === 'smart-object'
+          ? (() => {
+              const { linkId: _linkId, ...unlinked } = layer;
+              return unlinked;
+            })()
+          : layer,
+      ),
+    };
+    if (commit(next)) setNotice(`Unlinked ${linked.length} smart-object layer${linked.length === 1 ? '' : 's'}`);
   };
   const point = (
     e: Pick<React.PointerEvent<HTMLCanvasElement>, 'clientX' | 'clientY'>,
@@ -7240,6 +9174,12 @@ export default function Home() {
       const asset = assets.current[layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
         y = Math.max(0, Math.min(asset.h - 1, local.y)),
+        selectionMask =
+          f.selection?.mask &&
+          assets.current[f.selection.mask]?.w === asset.w &&
+          assets.current[f.selection.mask]?.h === asset.h
+            ? f.selection.mask
+            : undefined,
         g: Gesture = {
           tool,
           start: { x, y },
@@ -7257,6 +9197,7 @@ export default function Home() {
               x: cloneSource.x - x,
               y: cloneSource.y - y,
             },
+            ...(selectionMask ? { selectionMask } : {}),
           },
         };
       gesture.current = g;
@@ -7688,7 +9629,7 @@ export default function Home() {
         kind: 'text',
         text: text || 'Your text',
         fontSize,
-        fontFamily: 'Arial',
+        fontFamily,
         bold: true,
         color,
         boxWidth: Math.max(1, f.w - p.x),
@@ -7754,6 +9695,7 @@ export default function Home() {
       tool,
       start: tool === 'move' ? p : local,
       last: tool === 'move' ? p : local,
+      smoothedLast: local,
       frame: f,
       layer,
       lastPressure: pressure(e),
@@ -7771,18 +9713,27 @@ export default function Home() {
           if (gesture.current !== g) return;
           g.buffer = buffer;
           let from = local;
+          let stabilized = local;
           for (const point of g.queued || [
             { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
           ]) {
-            stampCanvasSegment(buffer, from, point, {
+            const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
+            stampCanvasSegment(buffer, from, destination, {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
-              opacity: brushOpacity / 100,
+              opacity: (brushOpacity / 100) * (brushFlow / 100),
               pointerType: point.pointerType,
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
               spacing: brushSpacing,
+              scatter: brushScatter,
+              texture: brushTexture,
+              dual: brushDual,
+              secondaryPreset: secondaryBrushPreset,
+              bristle: brushBristle,
+              wetEdges: brushWetEdges,
+              buildUp: brushBuildUp,
               angle: brushAngle,
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
@@ -7790,8 +9741,10 @@ export default function Home() {
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
               color: tool === 'eraser' ? undefined : brushColor(color),
             });
-            from = point;
+            from = destination;
+            stabilized = destination;
           }
+          g.smoothedLast = stabilized;
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
         } catch {
@@ -8306,15 +10259,24 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
-      stampCanvasSegment(g.buffer, g.last, local, {
+      const from = g.smoothedLast ?? g.last;
+      const destination = stabilizeBrushPoint(from, local, brushSmoothing);
+      stampCanvasSegment(g.buffer, from, destination, {
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
-        opacity: brushOpacity / 100,
+        opacity: (brushOpacity / 100) * (brushFlow / 100),
         pointerType: g.pointerType,
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
         spacing: brushSpacing,
+        scatter: brushScatter,
+        texture: brushTexture,
+        dual: brushDual,
+        secondaryPreset: secondaryBrushPreset,
+        bristle: brushBristle,
+        wetEdges: brushWetEdges,
+        buildUp: brushBuildUp,
         angle: brushAngle,
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
@@ -8323,6 +10285,8 @@ export default function Home() {
         color: g.tool === 'eraser' ? undefined : brushColor(color),
       });
       void paint(g.frame, { [g.layer.id]: g.buffer });
+      g.smoothedLast = destination;
+      g.last = local;
     } else if (
       g.tool === 'rectangle' ||
       g.tool === 'ellipse' ||
@@ -8361,7 +10325,7 @@ export default function Home() {
               height: Math.max(1, height),
               stroke: Math.max(1, size / 3),
               color,
-              ...(g.tool === 'polygon' ? { sides: 5 } : { fill: false }),
+              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : { fill: false }),
               matrix: [
                 1,
                 0,
@@ -8894,16 +10858,25 @@ export default function Home() {
     ) {
       g.lastPressure = g.lastPressure ?? 1;
       g.pointerType = g.pointerType || e.pointerType;
-      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
-        stampCanvasSegment(g.buffer, g.last, local, {
+      const from = g.smoothedLast ?? g.last;
+      const destination = stabilizeBrushPoint(from, local, brushSmoothing);
+      if (g.moved && (from.x !== destination.x || from.y !== destination.y))
+        stampCanvasSegment(g.buffer, from, destination, {
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
-          opacity: brushOpacity / 100,
+          opacity: (brushOpacity / 100) * (brushFlow / 100),
           pointerType: g.pointerType,
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
           pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
           spacing: brushSpacing,
+          scatter: brushScatter,
+          texture: brushTexture,
+          dual: brushDual,
+          secondaryPreset: secondaryBrushPreset,
+          bristle: brushBristle,
+          wetEdges: brushWetEdges,
+          buildUp: brushBuildUp,
           angle: brushAngle,
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
@@ -8911,6 +10884,7 @@ export default function Home() {
           mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
           color: g.tool === 'eraser' ? undefined : brushColor(color),
         });
+      g.smoothedLast = destination;
       const asset = addAsset(assets.current, g.buffer);
       const changed = commit({
         ...f,
@@ -8999,7 +10973,7 @@ export default function Home() {
               stroke: Math.max(1, size / 3),
               color,
               fill: false,
-              ...(g.tool === 'polygon' ? { sides: 5 } : {}),
+              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : {}),
               matrix,
             } as Layer),
       );
@@ -9127,16 +11101,50 @@ export default function Home() {
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
         const context = buffer.getContext('2d')!,
-          gradient = context.createLinearGradient(
-            g.start.x,
-            g.start.y,
-            local.x,
-            local.y,
-          );
-        gradient.addColorStop(0, color);
-        gradient.addColorStop(1, '#ffffff00');
+          gradient = gradientMode === 'radial'
+            ? context.createRadialGradient(
+              g.start.x,
+              g.start.y,
+              0,
+              g.start.x,
+              g.start.y,
+              Math.max(1, Math.hypot(local.x - g.start.x, local.y - g.start.y)),
+            )
+            : context.createLinearGradient(
+              g.start.x,
+              g.start.y,
+              local.x,
+              local.y,
+            );
+        const endColor = gradientEnd === 'background' ? backgroundColor : '#ffffff00';
+        const midpointStop = gradientMidpoint === 'none'
+          ? 0.5
+          : Math.max(0.01, Math.min(0.99, gradientMidpointPosition / 100));
+        const startColor = gradientReverse ? endColor : color,
+          finalColor = gradientReverse ? color : endColor;
+        if (gradientMode === 'reflected') {
+          gradient.addColorStop(0, color);
+          gradient.addColorStop(midpointStop, gradientMidpoint === 'none' ? endColor : gradientMidpoint);
+          gradient.addColorStop(1, color);
+        } else {
+          gradient.addColorStop(0, startColor);
+          const authoredStops = normalizeGradientStops(gradientStops);
+          if (authoredStops.length > 0) {
+            for (const stop of authoredStops) gradient.addColorStop(stop.position / 100, stop.color);
+          } else if (gradientMidpoint !== 'none') {
+            gradient.addColorStop(midpointStop, gradientMidpoint);
+          }
+          gradient.addColorStop(1, finalColor);
+        }
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
+        if (gradientNoise > 0 || gradientDither > 0) {
+          const imageData = context.getImageData(0, 0, buffer.width, buffer.height);
+          let pixels = applyGradientNoise(imageData.data, buffer.width, buffer.height, gradientNoise);
+          pixels = applyGradientDither(pixels, buffer.width, buffer.height, gradientDither);
+          imageData.data.set(pixels);
+          context.putImageData(imageData, 0, 0);
+        }
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -9469,6 +11477,15 @@ export default function Home() {
       travel(1);
       setNotice('Redone');
     };
+  const purgeHistory = () => {
+    try {
+      const retained = purgeUndoHistory(history.current, index.current);
+      if (commit(retained[0], true)) setNotice('Undo history purged; current document retained');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Undo history could not be purged');
+    }
+    setPurgeHistoryOpen(false);
+  };
   const download = (format?: ExportFormat) => {
     if (format) setExportFormat(format);
     setExporting({ frame: current(), assets: { ...assets.current }, name });
@@ -9563,6 +11580,12 @@ export default function Home() {
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
       if (!ready || cloudBusy || document.querySelector('dialog[open]')) return;
+      if (command && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setActiveMenu(null);
+        setCommandSearchOpen(true);
+        return;
+      }
       if (
         e.key === 'Escape' &&
         (gesture.current?.tool === 'polygonal-lasso' ||
@@ -9718,6 +11741,23 @@ export default function Home() {
         else setNotice('Exit Quick Mask mode before changing the document');
         return;
       }
+      const customTool = Object.entries(toolShortcutBindings).find(([, binding]) =>
+        toolShortcutMatches(binding, e),
+      )?.[0] as Tool | undefined;
+      if (customTool) {
+        e.preventDefault();
+        setTool(customTool);
+        setNotice(toolSelectionNotice(customTool, TOOLS.find((item) => item.id === customTool)?.label || customTool));
+        return;
+      }
+      const customCommand = Object.entries(commandShortcutBindings).find(([, binding]) =>
+        commandShortcutMatches(binding, e),
+      )?.[0] as Command | undefined;
+      if (customCommand) {
+        e.preventDefault();
+        runCommandRef.current?.(customCommand);
+        return;
+      }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
         void fillActiveLayer();
@@ -9863,6 +11903,14 @@ export default function Home() {
   });
   const runCommand = async (command: Command) => {
     if (command === 'noop') return;
+    if (command === 'search-commands') {
+      setCommandSearchOpen(true);
+      return;
+    }
+    if (command === 'purge-history') {
+      setPurgeHistoryOpen(true);
+      return;
+    }
     if (command === 'actions') {
       setActionsOpen(true);
       return;
@@ -9916,9 +11964,35 @@ export default function Home() {
     else if (command === 'png') download('png');
     else if (command === 'jpg') download('jpeg');
     else if (command === 'webp') download('webp');
+    else if (command === 'fade') return fadeLastEdit();
+    else if (command === 'apply-image') return applyImage();
+    else if (command === 'calculations') return calculateImage();
+    else if (command === 'define-brush-preset') return defineBrushPreset();
+    else if (command === 'define-pattern') return definePattern();
+    else if (command === 'define-custom-shape') return defineCustomShape();
+    else if (command === 'define-custom-path') return defineCustomPath();
+    else if (command === 'update-custom-path') return updateCustomPathPreset();
+    else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
+    else if (command === 'menu-settings') return setMenuSettingsOpen(true);
+    else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
+    else if (command === 'camera-raw') return setCameraRawEditing(true);
+    else if (command === 'toolbar-settings') return setToolbarSettingsOpen(true);
+    else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
+    else if (command === 'spellcheck') return setSpellcheckOpen(true);
+    else if (command === 'missing-fonts') return setMissingFontsOpen(true);
+    else if (command === 'color-settings') return setColorSettingsOpen(true);
+    else if (command === 'assign-profile') return setColorProfileOperation('assign');
+    else if (command === 'convert-profile') return setColorProfileOperation('convert');
+    else if (command === 'find-replace-text') setTextReplaceOpen(true);
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
+    else if (command === 'toggle-last-state') {
+      if (index.current > 0) travel(-1);
+      else if (index.current < history.current.length - 1) travel(1);
+      setNotice('Toggled the last editable state; repeat to switch back');
+    }
     else if (command === 'copy-layer') copyLayer();
+    else if (command === 'copy-svg') return copySvg();
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
@@ -9930,7 +12004,15 @@ export default function Home() {
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
+    else if (command === 'link-smart-objects') return linkSmartObjectContents();
+    else if (command === 'select-linked-layers') return selectLinkedLayers();
+    else if (command === 'unlink-smart-objects') return unlinkSmartObjectContents();
+    else if (command === 'link-layers') return linkLayers();
+    else if (command === 'unlink-layers') return unlinkLayers();
+    else if (command === 'save-default-type-styles') return saveDefaultTypeStyles();
+    else if (command === 'load-default-type-styles') return loadDefaultTypeStyles();
     else if (command === 'rasterize-layer') return rasterize();
+    else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
     else if (command === 'group-layer') groupActiveLayer();
@@ -9978,6 +12060,10 @@ export default function Home() {
       setNotice(`History Brush source set to snapshot ${index.current + 1}`);
     } else if (command === 'content-aware-fill') {
       await applyContentAwareFill();
+    } else if (command === 'content-aware-move') {
+      await applyContentAwareMove();
+    } else if (command === 'content-aware-scale') {
+      await applyContentAwareScale();
     } else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
@@ -9988,6 +12074,15 @@ export default function Home() {
       setTextOrientation('horizontal');
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
+    else if (command === 'text-warp') setTextWarp();
+    else if (command === 'text-on-path') setTextOnPath();
+    else if (command === 'font-preview-size') {
+      const next = nextFontPreviewSize(fontPreviewSize);
+      setFontPreviewSize(next);
+      setNotice(`Font preview size: ${next}`);
+    }
+    else if (command === 'paste-lorem') pasteLoremIpsum();
+    else if (command === 'convert-to-shape') return convertTextToShape();
     else if (command === 'rasterize-type') {
       const layer = current().layers.find((item) => item.id === current().active);
       if (!layer || layer.kind !== 'text') {
@@ -9996,6 +12091,7 @@ export default function Home() {
       }
       return rasterize();
     }
+    else if (command === 'create-work-path') return createWorkPathFromSelection();
     else if (command === 'text-mask-horizontal')
       await applyTextMask('horizontal');
     else if (command === 'text-mask-vertical')
@@ -10065,13 +12161,17 @@ export default function Home() {
     else if (command === 'focus-area') setFocusAreaValue(true);
     else if (command === 'subject-selection') return applyAssistedSelection('subject');
     else if (command === 'sky-selection') return applyAssistedSelection('sky');
+    else if (command === 'object-selection') return applyObjectSelection();
     else if (command === 'select-and-mask') {
       if (current().selection) setSelectAndMaskValue(true);
       else setNotice('Create a selection before opening Select and Mask');
     }
     else if (command === 'mask-selection') return createMaskFromSelection();
+    else if (command === 'mask-all-objects') return maskAllObjects();
     else if (command === 'remove-background') return removeBackground();
+    else if (command === 'cookie-cutter') return createCookieCutterMask();
     else if (command === 'free-transform') beginLayerTransform();
+    else if (command === 'perspective-warp') return applyPerspectiveWarp();
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
@@ -10082,6 +12182,7 @@ export default function Home() {
     else if (command === 'create-clipping-mask') createClippingMask();
     else if (command === 'release-clipping-mask') releaseClippingMask();
     else if (command === 'reset') resetAdjustments();
+    else if (command === 'image-mode') toggleImageMode();
     else if (command === 'levels')
       setNotice('Levels controls are available in Adjust selected layer');
     else if (command === 'hue-saturation')
@@ -10103,8 +12204,18 @@ export default function Home() {
     else if (command === 'auto-color') return autoCorrect('color');
     else if (command === 'filter-clear-effect')
       chooseFilterEffect('none', 'Filter effect');
+    else if (command === 'last-filter') {
+      if (lastFilterType) {
+        const label = lastFilterType.split('-').map((part) => part[0].toUpperCase() + part.slice(1)).join(' ');
+        chooseFilterEffect(lastFilterType, `Last Filter: ${label}`);
+      } else setNotice('Choose a filter before using Last Filter');
+    }
+    else if (command === 'convert-smart-filters') return convertForSmartFilters();
+    else if (command === 'clear-smart-filters') return clearSmartFilters();
     else if (command === 'filter-average')
       chooseFilterEffect('average-blur', 'Average Blur');
+    else if (command === 'filter-blur')
+      chooseFilterEffect('blur', 'Blur');
     else if (command === 'filter-blur-more')
       chooseFilterEffect('blur-more', 'Blur More');
     else if (command === 'filter-box-blur')
@@ -10173,6 +12284,24 @@ export default function Home() {
       chooseFilterEffect('find-edges', 'Find Edges (Sobel local approximation)');
     else if (command === 'filter-emboss')
       chooseFilterEffect('emboss', 'Emboss (directional local approximation)');
+    else if (command === 'filter-solarize')
+      chooseFilterEffect('solarize', 'Solarize (local approximation)');
+    else if (command === 'filter-diffuse')
+      chooseFilterEffect('diffuse', 'Diffuse (local approximation)');
+    else if (command === 'filter-wind')
+      chooseFilterEffect('wind', 'Wind (directional local approximation)');
+    else if (command === 'filter-gradient-map')
+      chooseFilterEffect('gradient-map', 'Gradient Map (local tonal mapping)');
+    else if (command === 'filter-median')
+      chooseFilterEffect('median', 'Median (local noise reduction)');
+    else if (command === 'filter-dust-scratches')
+      chooseFilterEffect('dust-scratches', 'Dust & Scratches (local outlier cleanup)');
+    else if (command === 'filter-despeckle')
+      chooseFilterEffect('despeckle', 'Despeckle (local approximation)');
+    else if (command === 'filter-reduce-noise')
+      chooseFilterEffect('reduce-noise', 'Reduce Noise (edge-aware local approximation)');
+    else if (command === 'filter-add-noise')
+      chooseFilterEffect('add-noise', 'Add Noise (seeded local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -10187,6 +12316,8 @@ export default function Home() {
       chooseFilterEffect('ripple', 'Ripple');
     else if (command === 'filter-pinch')
       chooseFilterEffect('pinch', 'Pinch');
+    else if (command === 'filter-liquify')
+      chooseFilterEffect('liquify', 'Liquify (bounded local approximation)');
     else if (command === 'filter-polar-coordinates')
       chooseFilterEffect('polar-coordinates', 'Polar Coordinates (local approximation)');
     else if (command === 'filter-spherize')
@@ -10291,6 +12422,9 @@ export default function Home() {
       setNotice(`Action “${action.name}” replayed (${result.completed} step${result.completed === 1 ? '' : 's'})`);
     }
   };
+  useEffect(() => {
+    runCommandRef.current = runCommand;
+  });
   const menuItemDisabled = (item: MenuItem) => {
     if (item.disabled || !frame) return true;
     if (
@@ -10311,14 +12445,45 @@ export default function Home() {
     const layer = frame.layers.find((item) => item.id === frame.active);
     const locked = layer ? layerIsLocked(frame, layer) : true;
     switch (item.command) {
+      case 'last-filter':
+        return !lastFilterType || !layer || locked || !layer.visible;
+      case 'camera-raw':
+        return !layer || locked || !layer.visible ||
+          (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'undo':
         return !canUndo || quickMasking;
       case 'redo':
         return !canRedo || quickMasking;
+      case 'purge-history':
+        return quickMasking || history.current.length <= 1;
+      case 'toggle-last-state':
+        return quickMasking || (!canUndo && !canRedo);
+      case 'fade': {
+        const previous = index.current > 0 ? history.current[index.current - 1] : undefined;
+        const previousLayer = previous?.layers.find((item) => item.id === layer?.id);
+        return Boolean(
+          quickMasking ||
+          index.current <= 0 ||
+          !layer ||
+          layer.kind !== 'raster' ||
+          !layer.asset ||
+          !previousLayer ||
+          previousLayer.kind !== 'raster' ||
+          !previousLayer.asset,
+        );
+      }
       case 'copy-layer':
         return !layer;
+      case 'copy-svg':
+        return !layer || !['path', 'rectangle', 'ellipse', 'polygon'].includes(layer.kind);
       case 'copy-merged':
         return !frame;
+      case 'find-replace-text':
+        return !frame.layers.some((candidate) => candidate.kind === 'text');
+      case 'update-text-layers':
+        return !frame.layers.some((candidate) => candidate.kind === 'text');
+      case 'spellcheck':
+        return !frame.layers.some((candidate) => candidate.kind === 'text');
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
@@ -10337,6 +12502,24 @@ export default function Home() {
           }) ||
           frame.layers.length + selectedIdsForFrame(frame).length > 32
         );
+      case 'link-smart-objects':
+        return (
+          selectedLayersForFrame(frame).filter((candidate) => candidate.kind === 'smart-object').length < 2 ||
+          selectedLayersForFrame(frame).some((candidate) => layerIsLocked(frame, candidate))
+        );
+      case 'select-linked-layers':
+        return !selectedLayersForFrame(frame).some(
+          (candidate) => candidate.layerLinkId !== undefined ||
+            (candidate.kind === 'smart-object' && candidate.linkId !== undefined),
+        );
+      case 'unlink-smart-objects':
+        return !selectedLayersForFrame(frame).some(
+          (candidate) => candidate.kind === 'smart-object' && candidate.linkId !== undefined,
+        );
+      case 'link-layers':
+        return !planLinkLayers(frame, '12345678-1234-4234-8234-123456789abc').ok;
+      case 'unlink-layers':
+        return !planUnlinkLayers(frame).ok;
       case 'rename-layer':
         return !layer || locked;
       case 'layer-style':
@@ -10361,11 +12544,19 @@ export default function Home() {
         );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'mask-all-objects':
+        return !frame.layers.some((candidate) =>
+          candidate.kind === 'raster' && candidate.visible && !layerIsLocked(frame, candidate),
+        );
       case 'remove-background':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'cookie-cutter':
+        return !layer || !isVectorMaskableLayer(layer) || Boolean(layer.vectorMask) || locked || !layer.visible;
       case 'patch-tool':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'content-aware-fill':
+      case 'content-aware-move':
+      case 'content-aware-scale':
         return (
           !layer ||
           layer.kind !== 'raster' ||
@@ -10427,7 +12618,14 @@ export default function Home() {
       case 'auto-color':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'filter-average':
+      case 'filter-blur':
       case 'filter-blur-more':
+      case 'filter-sharpen':
+      case 'filter-unsharp-mask':
+      case 'filter-sharpen-more':
+      case 'filter-sharpen-edges':
+      case 'filter-smart-sharpen':
+      case 'filter-motion-blur':
       case 'filter-field-blur':
       case 'filter-box-blur':
       case 'filter-gaussian-blur':
@@ -10437,6 +12635,7 @@ export default function Home() {
       case 'filter-surface-blur':
       case 'filter-shape-blur':
       case 'filter-tilt-shift':
+      case 'filter-radial-blur':
       case 'filter-spin-blur':
       case 'filter-path-blur':
       case 'filter-mosaic':
@@ -10446,16 +12645,32 @@ export default function Home() {
       case 'filter-color-halftone':
       case 'filter-mezzotint':
       case 'filter-pointillize':
+      case 'filter-tree':
+      case 'filter-clouds':
+      case 'filter-lens-flare':
       case 'filter-picture-frame':
       case 'filter-fibers':
       case 'filter-difference-clouds':
       case 'filter-flame':
       case 'filter-deinterlace':
       case 'filter-ntsc-colors':
+      case 'filter-median':
+      case 'filter-dust-scratches':
+      case 'filter-despeckle':
+      case 'filter-reduce-noise':
+      case 'filter-add-noise':
+      case 'filter-solarize':
+      case 'filter-diffuse':
+      case 'filter-wind':
+      case 'filter-gradient-map':
+      case 'filter-find-edges':
+      case 'filter-emboss':
       case 'filter-lens-correction':
       case 'filter-displace':
       case 'filter-ripple':
+      case 'filter-pinch':
       case 'filter-polar-coordinates':
+      case 'filter-liquify':
       case 'filter-spherize':
       case 'filter-twirl':
       case 'filter-wave':
@@ -10463,6 +12678,12 @@ export default function Home() {
       case 'filter-zigzag':
       case 'filter-clear-effect':
         return !layer || locked || !layer.visible;
+      case 'convert-smart-filters':
+        return !layer || locked || !layer.visible ||
+          (layer.kind !== 'raster' && layer.kind !== 'smart-object') ||
+          isNeutralFilterEffects(layer.adjustments.filterEffects);
+      case 'clear-smart-filters':
+        return !layer || !layer.smartFilters?.length;
       case 'quick-mask':
         return !frame;
       case 'save-selection':
@@ -10479,8 +12700,18 @@ export default function Home() {
         return selectedIdsForFrame(frame).length === 0;
       case 'transform-selection':
         return !frame.selection;
+      case 'create-work-path':
+        return !frame.selection || frame.layers.length >= 32;
+      case 'define-custom-path':
+        return !layer || layer.kind !== 'path' || locked;
+      case 'update-custom-path':
+        return !layer || layer.kind !== 'path' || locked || !selectedCustomPathPresetId;
       case 'free-transform':
         return !layer || locked;
+      case 'perspective-warp':
+        return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
+      case 'matting':
+        return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'align-left':
       case 'align-center-horizontal':
       case 'align-right':
@@ -10497,13 +12728,24 @@ export default function Home() {
       case 'distribute-horizontal':
       case 'distribute-vertical': {
         const group = layer ? groupForLayer(frame, layer) : undefined;
+        const selected = selectedLayersForFrame(frame);
+        const selectedGroups = new Set(selected.flatMap((item) => item.groupId ? [item.groupId] : []));
+        const selectedGroup = selectedGroups.size === 1
+          ? frame.groups?.find((item) => item.id === [...selectedGroups][0])
+          : undefined;
+        const candidates = selected.length >= 3
+          ? selected
+          : group
+            ? frame.layers.filter((item) => item.groupId === group.id)
+            : [];
         return (
-          !group ||
-          group.locked ||
-          !group.visible ||
-          frame.layers.filter(
-            (item) => item.groupId === group.id && item.visible && !item.locked,
-          ).length < 3
+          candidates.length < 3 ||
+          selectedGroups.size > 1 ||
+          (selectedGroups.size === 1 && selected.some((item) => item.groupId !== [...selectedGroups][0])) ||
+          Boolean(selectedGroup?.locked || group?.locked) ||
+          selectedGroup?.visible === false ||
+          group?.visible === false ||
+          candidates.filter((item) => item.visible && !item.locked).length < 3
         );
       }
       case 'grow-selection':
@@ -10530,7 +12772,7 @@ export default function Home() {
         return !planLayerArrange(frame, 'back').ok;
       case 'merge-layers': {
         const selected = selectedIdsForFrame(frame);
-        if (selected.length >= 2)
+        if (selected.length >= 2 || Boolean(layer?.groupId))
           return !planSelectedLayerMerge(frame).ok;
         return !planLayerMerge(frame).ok;
       }
@@ -10539,7 +12781,18 @@ export default function Home() {
       case 'text-align-right':
       case 'text-orientation-horizontal':
       case 'text-orientation-vertical':
+      case 'text-warp':
         return !layer || layer.kind !== 'text' || locked;
+      case 'save-default-type-styles':
+        return !layer || layer.kind !== 'text' || locked;
+      case 'load-default-type-styles':
+        return !layer || layer.kind !== 'text' || locked || !defaultTypeStyle;
+      case 'text-on-path':
+        return !layer || layer.kind !== 'text' || locked || !frame.layers.some((candidate) => candidate.kind === 'path');
+      case 'paste-lorem':
+        return frame.layers.length >= 32;
+      case 'convert-to-shape':
+        return !layer || layer.kind !== 'text' || locked || !layer.visible;
       case 'rasterize-type':
         return !layer || layer.kind !== 'text' || locked;
       case 'text-mask-horizontal':
@@ -10573,6 +12826,19 @@ export default function Home() {
       default:
         return false;
     }
+  };
+  const visibleMenuItems = (menu: MenuName) => {
+    const items = MENU_DEFS[menu];
+    if (showDisabledMenuItems) return items;
+    return items.filter((item, index) => {
+      if (!item.separator) return !item.disabled;
+      const previous = items[index - 1];
+      const next = items[index + 1];
+      return Boolean(
+        previous && !previous.separator && !previous.disabled &&
+        next && !next.separator && !next.disabled,
+      );
+    });
   };
   const stopToolHold = () => {
     if (toolHoldTimer.current !== null) {
@@ -10621,6 +12887,33 @@ export default function Home() {
     setToolFlyout(flyout);
     setToolFlyoutAnchor(event.currentTarget);
   };
+  const commandSearchItems: CommandSearchItem[] = (Object.keys(MENU_DEFS) as MenuName[])
+    .flatMap((menu) => visibleMenuItems(menu)
+      .filter((item) => !item.separator && item.command !== 'search-commands')
+      .map((item) => ({
+        label: item.label,
+        menu,
+        shortcut: item.shortcut,
+        command: item.command,
+        disabled: menuItemDisabled(item),
+      })));
+  const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
+    .filter((item) => Boolean(item.shortcut));
+  const editableCommandShortcutItems = keyboardShortcutItems.filter((item, index, items) =>
+    items.findIndex((candidate) => candidate.command === item.command) === index,
+  );
+  const filterGalleryItems: FilterGalleryItem[] = FILTERS.map(([label, , first, second]) => ({
+    label,
+    command: `filter-${label.toLocaleLowerCase()}`,
+    description: 'Quick filter preset',
+    first,
+    second,
+  }));
+  const textLayers = (frame?.layers ?? []).filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text');
+  const spellcheckLayers: SpellcheckLayer[] = textLayers.map((layer) => ({
+    name: layer.name,
+    hints: findSpellingHints(layer.text),
+  }));
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -10674,7 +12967,9 @@ export default function Home() {
         onChange={(event) =>
           void importSmartObject(
             event.target.files?.[0],
-            smartObjectAction.current === 'replace',
+            smartObjectAction.current === 'replace' ||
+              smartObjectAction.current === 'replace-fit',
+            smartObjectAction.current === 'replace-fit',
           )
         }
       />
@@ -10763,6 +13058,13 @@ export default function Home() {
           }}
         />
       )}
+      {cameraRawEditing && (
+        <CameraRawDialog
+          initial={photoAdjustments}
+          close={() => setCameraRawEditing(false)}
+          apply={applyCameraRaw}
+        />
+      )}
       {colorRanging && (
         <ColorRangeDialog
           initialColor={color}
@@ -10814,6 +13116,174 @@ export default function Home() {
             setFileInfoOpen(false);
             setNotice('File info saved to the local project');
           }}
+        />
+      )}
+      {textReplaceOpen && (
+        <TextReplaceDialog
+          close={() => setTextReplaceOpen(false)}
+          apply={replaceText}
+        />
+      )}
+      {commandSearchOpen && (
+        <CommandSearchDialog
+          items={commandSearchItems}
+          close={() => setCommandSearchOpen(false)}
+          run={(command) => {
+            setCommandSearchOpen(false);
+            void runCommand(command as Command);
+          }}
+        />
+      )}
+      {keyboardShortcutsOpen && (
+        <KeyboardShortcutsDialog
+          items={editableCommandShortcutItems}
+          toolItems={TOOLS}
+          toolBindings={toolShortcutBindings}
+          applyToolBindings={(bindings) => {
+            const normalized = normalizeToolShortcutPreferences({ version: TOOL_SHORTCUTS_VERSION, bindings }, TOOLS.map((item) => item.id));
+            setToolShortcutBindings(normalized.bindings);
+            try {
+              window.localStorage.setItem('pixelforge.tool-shortcuts', JSON.stringify(normalized));
+            } catch { /* private mode */ }
+            setNotice('Custom tool shortcuts updated');
+          }}
+          commandBindings={commandShortcutBindings}
+          applyCommandBindings={(bindings) => {
+            const normalized = normalizeCommandShortcutPreferences(
+              { version: COMMAND_SHORTCUTS_VERSION, bindings },
+              commandShortcutIds,
+            );
+            setCommandShortcutBindings(normalized.bindings);
+            try {
+              window.localStorage.setItem('pixelforge.command-shortcuts', JSON.stringify(normalized));
+            } catch { /* private mode */ }
+            setNotice('Custom menu shortcuts updated');
+          }}
+          close={() => setKeyboardShortcutsOpen(false)}
+        />
+      )}
+      {filterGalleryOpen && (
+        <FilterGalleryDialog
+          items={filterGalleryItems}
+          close={() => setFilterGalleryOpen(false)}
+          apply={(command) => {
+            setFilterGalleryOpen(false);
+            void runCommand(command as Command);
+          }}
+        />
+      )}
+      {toolbarSettingsOpen && (
+        <ToolbarSettingsDialog
+          value={toolbarColumns}
+          density={toolbarDensity}
+          categories={TOOL_CATEGORIES}
+          hiddenCategories={hiddenToolCategories}
+          categoryOrder={toolbarCategoryOrder}
+          toolOrder={toolbarToolOrder}
+          close={() => setToolbarSettingsOpen(false)}
+          apply={({ columns, density, hiddenCategories, categoryOrder, toolOrder, resetFamilies }) => {
+            const nextHidden = hiddenCategories.filter((id) => id !== 'navigation');
+            setToolbarColumns(columns);
+            setToolbarDensity(density);
+            setHiddenToolCategories(nextHidden);
+            setToolbarCategoryOrder(categoryOrder);
+            setToolbarToolOrder(toolOrder);
+            setToolbarSettingsOpen(false);
+            if (resetFamilies) {
+              setToolFamilyChoices({});
+              setActiveTool('select');
+            }
+            try {
+              window.localStorage.setItem('pixelforge.toolbar-columns', columns);
+              window.localStorage.setItem('pixelforge.toolbar-density', density);
+              window.localStorage.setItem('pixelforge.toolbar-hidden-categories', JSON.stringify(nextHidden));
+              window.localStorage.setItem('pixelforge.toolbar-category-order', JSON.stringify(categoryOrder));
+              if (resetFamilies) window.localStorage.removeItem(TOOL_FAMILY_CHOICES_STORAGE_KEY);
+              window.localStorage.setItem('pixelforge.toolbar-preferences', JSON.stringify({
+                version: TOOLBAR_PREFERENCES_VERSION,
+                columns,
+                density,
+                hiddenCategories: nextHidden,
+                categoryOrder,
+                toolOrder,
+              }));
+            } catch { /* private mode */ }
+            const activeCategory = categoryForTool(tool);
+            if (activeCategory && nextHidden.includes(activeCategory)) {
+              setActiveTool('move');
+              setNotice('Toolbar updated; active hidden category reset to Move');
+            } else {
+              setNotice(`Toolbar set to ${columns === 'auto' ? 'automatic' : `${columns} columns`}`);
+            }
+          }}
+        />
+      )}
+      {updateTextLayersOpen && (
+        <UpdateTextLayersDialog
+          initialFont={textLayers[0]?.fontFamily && FONTS.includes(textLayers[0].fontFamily as (typeof FONTS)[number]) ? textLayers[0].fontFamily as (typeof FONTS)[number] : 'Arial'}
+          initialSize={textLayers[0]?.fontSize ?? fontSize}
+          count={textLayers.length}
+          close={() => setUpdateTextLayersOpen(false)}
+          apply={(font, size) => {
+            const result = updateAllTextLayers(current(), { fontFamily: font, fontSize: size });
+            setUpdateTextLayersOpen(false);
+            if (!result.updated) {
+              setNotice('No editable text layers found');
+            } else if (commit(result.frame)) {
+              setNotice(`Updated ${result.updated} editable text layer${result.updated === 1 ? '' : 's'}; undo restores the previous styles`);
+            }
+          }}
+        />
+      )}
+      {spellcheckOpen && (
+        <SpellcheckDialog layers={spellcheckLayers} close={() => setSpellcheckOpen(false)} />
+      )}
+      {missingFontsOpen && (
+        <MissingFontsDialog families={FONTS} close={() => setMissingFontsOpen(false)} />
+      )}
+      {menuSettingsOpen && (
+        <MenuSettingsDialog
+          showDisabled={showDisabledMenuItems}
+          close={() => setMenuSettingsOpen(false)}
+          apply={(showDisabled) => {
+            setShowDisabledMenuItems(showDisabled);
+            setMenuSettingsOpen(false);
+            try {
+              window.localStorage.setItem(
+                MENU_PREFERENCES_STORAGE_KEY,
+                JSON.stringify(normalizeMenuPreferences({
+                  version: 1,
+                  showDisabled,
+                })),
+              );
+            } catch { /* private mode */ }
+            setNotice(showDisabled ? 'Disabled roadmap commands are visible' : 'Disabled roadmap commands are hidden');
+          }}
+        />
+      )}
+      {colorSettingsOpen && (
+        <ColorSettingsDialog
+          value={normalizeColorProfile(frame?.colorProfile)}
+          close={() => setColorSettingsOpen(false)}
+          apply={(profile: ColorProfile) => {
+            const next = { ...current(), colorProfile: profile };
+            setColorSettingsOpen(false);
+            if (commit(next)) setNotice(`Working color profile set to ${profile === 'srgb' ? 'sRGB' : 'Display P3'}`);
+          }}
+        />
+      )}
+      {colorProfileOperation && (
+        <ColorProfileDialog
+          current={normalizeColorProfile(frame?.colorProfile)}
+          operation={colorProfileOperation}
+          close={() => setColorProfileOperation(null)}
+          apply={(profile) => applyColorProfile(profile, colorProfileOperation)}
+        />
+      )}
+      {purgeHistoryOpen && (
+        <PurgeHistoryDialog
+          close={() => setPurgeHistoryOpen(false)}
+          apply={purgeHistory}
         />
       )}
       {batchExporting && (
@@ -10907,7 +13377,7 @@ export default function Home() {
                   tabIndex={-1}
                   onKeyDown={(event) => handleMenuKeyDown(event, menuName)}
                 >
-                  {MENU_DEFS[menuName].map((item, index) =>
+                  {visibleMenuItems(menuName).map((item, index) =>
                     item.separator ? (
                       <hr key={`separator-${menuName}-${index}`} />
                     ) : (
@@ -11007,9 +13477,15 @@ export default function Home() {
           className="toolbar"
           aria-label="Tools"
           data-testid="tool-palette"
+          data-toolbar-columns={toolbarColumns}
+          data-toolbar-density={toolbarDensity}
         >
-          {TOOL_CATEGORIES.map((category) => {
-            const compactTools = compactCategoryTools(category, tool, toolFamilyChoices);
+          {TOOL_CATEGORIES
+            .filter((category) => !hiddenToolCategories.includes(category.id))
+            .sort((a, b) => toolbarCategoryOrder.indexOf(a.id) - toolbarCategoryOrder.indexOf(b.id))
+            .map((category) => {
+            const orderedTools = (toolbarToolOrder[category.id] ?? category.tools) as typeof category.tools;
+            const compactTools = compactCategoryTools({ ...category, tools: orderedTools }, tool, toolFamilyChoices);
             const layout = compactTools.length === 1 ? 'one' : compactTools.length === 2 ? 'two' : 'many';
             return (
             <section
@@ -11423,6 +13899,50 @@ export default function Home() {
                   ))}
                 </select>
               </label>
+              <div className="artboard-visibility-list" aria-label="Artboard visibility">
+                {frame.artboards.map((item) => (
+                  <label key={item.id} className="artboard-visibility-option">
+                    <input
+                      type="checkbox"
+                      aria-label={`Show ${item.name} artboard`}
+                      checked={item.visible}
+                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
+                    />
+                    <span>{item.name}</span>
+                  </label>
+                ))}
+              </div>
+              <label>
+                <span>Fit active layer</span>
+                <select
+                  aria-label="Artboard fit mode"
+                  defaultValue="cover"
+                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
+                >
+                  <option value="cover">Cover</option>
+                  <option value="contain">Contain</option>
+                  <option value="stretch">Stretch</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                data-testid="artboard-fit-active"
+                onClick={() => fitActiveLayerToArtboard('cover')}
+              >
+                Fit active layer to artboard
+              </button>
+              <button
+                type="button"
+                data-testid="artboard-replace-fit"
+                disabled={
+                  !frame.active ||
+                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
+                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
+                }
+                onClick={() => chooseSmartObjectFile(true, true)}
+              >
+                Replace smart object and fit
+              </button>
               <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
             </fieldset>
           ) : null}
@@ -11713,7 +14233,7 @@ export default function Home() {
                 preserveAspectRatio="none"
                 aria-label="Artboard viewports"
               >
-                {frame.artboards.map((artboard) => (
+                {frame.artboards.filter((artboard) => artboard.visible).map((artboard) => (
                   <g
                     key={artboard.id}
                     className={artboard.id === frame.activeArtboardId ? 'artboard-active' : 'artboard-inactive'}
@@ -11827,6 +14347,18 @@ export default function Home() {
               selectionOperation={selectionOperation}
               setSelectionOperation={setSelectionOperation}
               setSelectionFeather={setSelectionFeather}
+            />
+          )}
+          {frame && (
+            <HistoryPanel
+              history={history.current}
+              currentIndex={index.current}
+              restore={(targetIndex) => {
+                const distance = targetIndex - index.current;
+                if (!distance) return;
+                travel(distance);
+                setNotice(`History step ${targetIndex + 1} restored`);
+              }}
             />
           )}
           {frame && (
@@ -12266,12 +14798,239 @@ export default function Home() {
             tool === 'art-history-brush' ||
             tool === 'selection-brush' ||
             tool === 'quick-selection' ||
+            tool === 'gradient' ||
             tool === 'rectangle' ||
             tool === 'ellipse' ||
             tool === 'line' ||
-            tool === 'polygon') && (
+            tool === 'polygon' ||
+            tool === 'pen' ||
+            tool === 'freeform-pen' ||
+            tool === 'curvature-pen' ||
+            tool === 'direct-select') && (
             <section className="panel">
               <Title icon={Brush} text="Tool options" />
+              {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient type</span>
+                  <select
+                    aria-label="Gradient type"
+                    value={gradientMode}
+                    onChange={(event) => setGradientMode(event.target.value as 'linear' | 'radial' | 'reflected')}
+                  >
+                    <option value="linear">Linear</option>
+                    <option value="radial">Radial</option>
+                    <option value="reflected">Reflected</option>
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <div className="select-row">
+                  <label>
+                    <input
+                      aria-label="Gradient midpoint enabled"
+                      type="checkbox"
+                      checked={gradientMidpoint !== 'none'}
+                      onChange={(event) => setGradientMidpoint(event.target.checked ? '#ffffff' : 'none')}
+                    />
+                    <span>Midpoint colour</span>
+                  </label>
+                  <input
+                    aria-label="Gradient midpoint colour"
+                    type="color"
+                    value={gradientMidpoint === 'none' ? '#ffffff' : gradientMidpoint}
+                    disabled={gradientMidpoint === 'none'}
+                    onChange={(event) => setGradientMidpoint(event.target.value)}
+                  />
+                </div>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Midpoint position"
+                  value={gradientMidpointPosition}
+                  min={1}
+                  max={99}
+                  set={setGradientMidpointPosition}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && gradientMode !== 'reflected' && (
+                <div className="gradient-stops" aria-label="Gradient colour stops">
+                  <div className="select-row">
+                    <span>Additional stops</span>
+                    <button
+                      type="button"
+                      disabled={gradientStops.length >= MAX_GRADIENT_STOPS}
+                      onClick={() => {
+                        const used = new Set(gradientStops.map((stop) => stop.position));
+                        const position = [25, 50, 75].find((candidate) => !used.has(candidate)) ??
+                          Math.max(1, Math.min(99, 10 + gradientStops.length * 13));
+                        setGradientStops(normalizeGradientStops([
+                          ...gradientStops,
+                          { position, color: '#ffffff' },
+                        ]));
+                        setGradientMidpoint('none');
+                      }}
+                    >
+                      Add stop
+                    </button>
+                  </div>
+                  {gradientStops.map((stop, stopIndex) => (
+                    <div className="select-row" key={`${stop.position}-${stopIndex}`}>
+                      <input
+                        aria-label={`Gradient stop ${stopIndex + 1} position`}
+                        type="number"
+                        min={1}
+                        max={99}
+                        value={stop.position}
+                        onChange={(event) => {
+                          const position = Math.max(1, Math.min(99, Math.round(Number(event.target.value) || 1)));
+                          const next = gradientStops.map((item, index) => index === stopIndex ? { ...item, position } : item);
+                          setGradientStops(normalizeGradientStops(next));
+                        }}
+                      />
+                      <input
+                        aria-label={`Gradient stop ${stopIndex + 1} colour`}
+                        type="color"
+                        value={stop.color}
+                        onChange={(event) => setGradientStops(gradientStops.map((item, index) =>
+                          index === stopIndex ? { ...item, color: event.target.value } : item))}
+                      />
+                      <button
+                        type="button"
+                        aria-label={`Remove gradient stop ${stopIndex + 1}`}
+                        onClick={() => setGradientStops(gradientStops.filter((_, index) => index !== stopIndex))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient end</span>
+                  <select
+                    aria-label="Gradient end"
+                    value={gradientEnd}
+                    onChange={(event) => setGradientEnd(event.target.value as 'transparent' | 'background')}
+                  >
+                    <option value="transparent">Transparent</option>
+                    <option value="background">Background colour</option>
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Dither"
+                  value={gradientDither}
+                  min={0}
+                  max={100}
+                  set={setGradientDither}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Noise"
+                  value={gradientNoise}
+                  min={0}
+                  max={100}
+                  set={setGradientNoise}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <label className="check-row">
+                  <input
+                    aria-label="Reverse gradient"
+                    type="checkbox"
+                    checked={gradientReverse}
+                    onChange={(event) => setGradientReverse(event.target.checked)}
+                  />
+                  Reverse gradient
+                </label>
+              )}
+              {(tool === 'rectangle' || tool === 'ellipse' || tool === 'line' || tool === 'polygon') && customShapePresets.length > 0 && (
+                <label className="select-row">
+                  <span>Saved shape preset</span>
+                  <select
+                    aria-label="Saved shape preset"
+                    value={selectedCustomShapePresetId}
+                    onChange={(event) => {
+                      const preset = customShapePresets.find((item) => item.id === event.target.value);
+                      if (preset) applyCustomShapePreset(preset);
+                      else setSelectedCustomShapePresetId('');
+                    }}
+                  >
+                    <option value="">Choose saved preset</option>
+                    {customShapePresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label} ({preset.kind})</option>
+                    ))}
+                  </select>
+                  <button type="button" className="secondary" disabled={!selectedCustomShapePresetId} onClick={removeCustomShapePreset}>
+                    Remove
+                  </button>
+                </label>
+              )}
+              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && customPathPresets.length > 0 && (
+                <label className="select-row">
+                  <span>Saved path preset</span>
+                  <select
+                    aria-label="Saved path preset"
+                    value={selectedCustomPathPresetId}
+                    onChange={(event) => {
+                      const preset = customPathPresets.find((item) => item.id === event.target.value);
+                      if (preset) applyCustomPathPreset(preset);
+                      else setSelectedCustomPathPresetId('');
+                    }}
+                  >
+                    <option value="">Choose saved preset</option>
+                    {customPathPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={removeCustomPathPreset}>
+                    Remove
+                  </button>
+                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={updateCustomPathPreset}>
+                    Update
+                  </button>
+                </label>
+              )}
+              {tool === 'polygon' && (
+                <label className="select-row">
+                  <span>Polygon variant</span>
+                  <select
+                    aria-label="Polygon variant"
+                    value={polygonVariant}
+                    onChange={(event) => setPolygonVariant(event.target.value as ParametricShapeVariant)}
+                  >
+                    <option value="polygon">Polygon</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="star">Star</option>
+                  </select>
+                </label>
+              )}
+              {tool === 'polygon' && polygonVariant !== 'triangle' && (
+                <Slider
+                  label="Polygon sides"
+                  value={polygonSides}
+                  min={3}
+                  max={32}
+                  set={setPolygonSides}
+                  suffix=""
+                />
+              )}
+              {tool === 'polygon' && polygonVariant === 'star' && (
+                <Slider
+                  label="Star inner radius"
+                  value={Math.round(polygonInnerRadius * 100)}
+                  min={10}
+                  max={90}
+                  set={(value) => setPolygonInnerRadius(value / 100)}
+                  suffix="%"
+                />
+              )}
               {tool !== 'magic-eraser' && (
                 <Slider
                   label="Size"
@@ -12308,17 +15067,56 @@ export default function Home() {
                 tool === 'quick-selection') && (
                 <>
                   {(tool === 'brush' || tool === 'pencil') && (
+                    <>
+                      <label className="select-row">
+                        <span>Brush preset</span>
+                        <select
+                          aria-label="Brush preset"
+                          value={brushPreset}
+                          onChange={(event) =>
+                            applyBrushPreset(event.target.value as BrushPresetId)
+                          }
+                        >
+                          {BRUSH_PRESETS.map((preset) => (
+                            <option key={preset.id} value={preset.id}>
+                              {preset.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {customBrushPresets.length > 0 && (
+                        <label className="select-row">
+                          <span>Saved brush preset</span>
+                          <select
+                            aria-label="Saved brush preset"
+                            defaultValue=""
+                            onChange={(event) => {
+                              const preset = customBrushPresets.find((item) => item.id === event.target.value);
+                              if (preset) applyCustomBrushPreset(preset);
+                            }}
+                          >
+                            <option value="">Choose saved preset</option>
+                            {customBrushPresets.map((preset) => (
+                              <option key={preset.id} value={preset.id}>
+                                {preset.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                    </>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
                     <label className="select-row">
-                      <span>Brush preset</span>
+                      <span>Secondary brush tip</span>
                       <select
-                        aria-label="Brush preset"
-                        value={brushPreset}
-                        onChange={(event) =>
-                          applyBrushPreset(event.target.value as BrushPresetId)
-                        }
+                        aria-label="Secondary brush tip"
+                        value={secondaryBrushPreset}
+                        onChange={(event) => setSecondaryBrushPreset(normalizeSecondaryBrushPreset(event.target.value))}
                       >
+                        <option value="none">None</option>
                         {BRUSH_PRESETS.map((preset) => (
-                          <option key={preset.id} value={preset.id}>
+                          <option key={`secondary-${preset.id}`} value={preset.id}>
                             {preset.label}
                           </option>
                         ))}
@@ -12393,6 +15191,74 @@ export default function Home() {
                         set={setBrushSpacing}
                         suffix="%"
                       />
+                      {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+                        <>
+                          <Slider
+                            label="Smoothing"
+                            value={brushSmoothing}
+                            min={0}
+                            max={100}
+                            set={setBrushSmoothing}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Scatter"
+                            value={brushScatter}
+                            min={0}
+                            max={100}
+                            set={setBrushScatter}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Texture"
+                            value={brushTexture}
+                            min={0}
+                            max={100}
+                            set={setBrushTexture}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Dual brush"
+                            value={brushDual}
+                            min={0}
+                            max={100}
+                            set={setBrushDual}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Bristle"
+                            value={brushBristle}
+                            min={0}
+                            max={100}
+                            set={setBrushBristle}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Wet edges"
+                            value={brushWetEdges}
+                            min={0}
+                            max={100}
+                            set={setBrushWetEdges}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Build-up"
+                            value={brushBuildUp}
+                            min={0}
+                            max={100}
+                            set={setBrushBuildUp}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Flow"
+                            value={brushFlow}
+                            min={1}
+                            max={100}
+                            set={setBrushFlow}
+                            suffix="%"
+                          />
+                        </>
+                      )}
                       <Slider
                         label="Angle"
                         value={brushAngle}
@@ -12429,8 +15295,11 @@ export default function Home() {
                       </label>
                       <p className="adjust-note">
                         Tip settings apply to future local dabs. Advanced
-                        scattering, texture, dual-brush and wet-media dynamics
-                        remain staged for a later bounded renderer increment.
+                        Dual brush and Bristle are deterministic local opacity
+                        dynamics; Wet edges and Build-up are deterministic local
+                        opacity approximations, while full physical tip
+                        simulation and wet-media buildup remain staged. Scatter is a deterministic local
+                        stamp offset.
                       </p>
                     </>
                   )}
@@ -12599,6 +15468,24 @@ export default function Home() {
                           ))}
                         </select>
                       </label>
+                      {customPatternPresets.length > 0 && (
+                        <label className="select-row">
+                          <span>Saved pattern</span>
+                          <select
+                            aria-label="Saved pattern"
+                            defaultValue=""
+                            onChange={(event) => {
+                              const preset = customPatternPresets.find((item) => item.id === event.target.value);
+                              if (preset) applyCustomPatternPreset(preset);
+                            }}
+                          >
+                            <option value="">Choose saved pattern</option>
+                            {customPatternPresets.map((preset) => (
+                              <option key={preset.id} value={preset.id}>{preset.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                       <Slider
                         label="Tile size"
                         value={patternTileSize}
@@ -12672,6 +15559,13 @@ export default function Home() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
+              <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) }}>{font}</option>)}</select></label>
+              {fontAvailability === 'fallback' && (
+                <output data-testid="font-fallback-warning" className="adjust-note">
+                  “{fontFamily}” is unavailable; browser fallback rendering is active.
+                </output>
+              )}
+              <label className="select-row"><span>Preview</span><select aria-label="Font preview size" className="text-input" value={fontPreviewSize} onChange={(event) => setFontPreviewSize(normalizeFontPreviewSize(event.target.value))}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
               <Slider
                 label="Size"
                 value={fontSize}
@@ -12741,6 +15635,9 @@ export default function Home() {
             {filterEffects.type === 'spin-blur' && (
               <p>Local fixed-sample polar Spin Blur approximation. The editable centre and angular sweep are bounded; path geometry, depth and bokeh reconstruction remain planned.</p>
             )}
+            {filterEffects.type === 'radial-blur' && (
+              <p>Local Radial Blur with editable Spin or Zoom sampling. The centre and bounded sweep remain nondestructive; depth maps and bokeh reconstruction remain planned.</p>
+            )}
             {filterEffects.type === 'path-blur' && (
               <p>Local Path Blur approximation. The editable motion path and per-point speed stay in project metadata; path strobe and flash controls remain planned.</p>
             )}
@@ -12773,6 +15670,9 @@ export default function Home() {
             )}
             {filterEffects.type === 'shear' && (
               <p>Linear horizontal shear with clamped edges and unchanged alpha. Editable shear curves and wrap-around remain planned.</p>
+            )}
+            {filterEffects.type === 'liquify' && (
+              <p>Bounded local push/twist approximation with editable centre, radius and angle. The source remains immutable; Photoshop mesh, face-aware and brush-stroke semantics remain staged.</p>
             )}
             {filterEffects.type === 'polar-coordinates' && (
               <p>Bounded rectangular-to-polar remap with clamped seams and unchanged alpha. Polar-to-rectangular mode and canvas-aware seam controls remain planned.</p>
@@ -12840,6 +15740,158 @@ export default function Home() {
             {filterEffects.type === 'ntsc-colors' && (
               <p>Reduces oversaturated colors while keeping brightness and transparency. Local television-color approximation; not a broadcast compliance check.</p>
             )}
+            {filterEffects.type === 'gradient-map' && (
+              <>
+                <p>Maps alpha-safe source luminance between editable endpoint and interior colours. The source asset remains unchanged.</p>
+                <div className="select-row">
+                  <label htmlFor="gradient-map-shadow">Shadow colour</label>
+                  <input
+                    id="gradient-map-shadow"
+                    aria-label="Gradient Map shadow colour"
+                    type="color"
+                    value={filterEffects.gradientMap?.shadow ?? '#000000'}
+                    onChange={(event) => setFilterEffects({ gradientMap: { ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }), shadow: event.target.value } })}
+                  />
+                </div>
+                <div className="select-row">
+                  <label htmlFor="gradient-map-highlight">Highlight colour</label>
+                  <input
+                    id="gradient-map-highlight"
+                    aria-label="Gradient Map highlight colour"
+                    type="color"
+                    value={filterEffects.gradientMap?.highlight ?? '#ffffff'}
+                    onChange={(event) => setFilterEffects({ gradientMap: { ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }), highlight: event.target.value } })}
+                  />
+                </div>
+                <label>
+                  Gradient Map blend mode
+                  <select
+                    className="text-input"
+                    aria-label="Gradient Map blend mode"
+                    value={filterEffects.gradientMap?.blend ?? 'normal'}
+                    onChange={(event) => setFilterEffects({ gradientMap: {
+                      ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                      blend: event.target.value === 'multiply' || event.target.value === 'screen' || event.target.value === 'overlay' ? event.target.value : 'normal',
+                    } })}
+                  >
+                    <option value="normal">Normal</option>
+                    <option value="multiply">Multiply</option>
+                    <option value="screen">Screen</option>
+                    <option value="overlay">Overlay</option>
+                  </select>
+                </label>
+                <div className="filter-subsection">
+                  <div className="select-row">
+                    <span>Interior colour stops</span>
+                    <button
+                      type="button"
+                      disabled={(filterEffects.gradientMap?.stops?.length ?? 0) >= MAX_GRADIENT_STOPS}
+                      onClick={() => {
+                        const stops = filterEffects.gradientMap?.stops ?? [];
+                        const used = new Set(stops.map((stop) => stop.position));
+                        const position = [25, 50, 75].find((candidate) => !used.has(candidate)) ?? Math.max(1, Math.min(99, 10 + stops.length * 13));
+                        setFilterEffects({ gradientMap: {
+                          ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                          stops: normalizeGradientStops([...stops, { position, color: '#808080' }]),
+                        } });
+                      }}
+                    >Add stop</button>
+                  </div>
+                  {(filterEffects.gradientMap?.stops ?? []).map((stop, stopIndex) => (
+                    <div className="select-row" key={`gradient-map-stop-${stopIndex}`}>
+                      <label htmlFor={`gradient-map-stop-${stopIndex}`}>Stop {stopIndex + 1}</label>
+                      <input
+                        id={`gradient-map-stop-${stopIndex}`}
+                        aria-label={`Gradient Map stop ${stopIndex + 1} position`}
+                        className="number-input"
+                        type="number"
+                        min={1}
+                        max={99}
+                        value={stop.position}
+                        onChange={(event) => {
+                          const position = Number(event.target.value);
+                          const stops = (filterEffects.gradientMap?.stops ?? []).map((item, index) => index === stopIndex ? { ...item, position } : item);
+                          setFilterEffects({ gradientMap: {
+                            ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                            stops: normalizeGradientStops(stops),
+                          } });
+                        }}
+                      />
+                      <input
+                        aria-label={`Gradient Map stop ${stopIndex + 1} colour`}
+                        type="color"
+                        value={stop.color}
+                        onChange={(event) => setFilterEffects({ gradientMap: {
+                          ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                          stops: (filterEffects.gradientMap?.stops ?? []).map((item, index) => index === stopIndex ? { ...item, color: event.target.value } : item),
+                        } })}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setFilterEffects({ gradientMap: {
+                          ...(filterEffects.gradientMap ?? { shadow: '#000000', highlight: '#ffffff' }),
+                          stops: (filterEffects.gradientMap?.stops ?? []).filter((_, index) => index !== stopIndex),
+                        } })}
+                      >Remove</button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {filterEffects.type === 'median' && (
+              <p>Bounded median neighbourhood noise reduction. Visible source pixels are sampled without pulling RGB from transparent neighbours; radius and amount remain editable.</p>
+            )}
+            {filterEffects.type === 'dust-scratches' && (
+              <p>Bounded local outlier cleanup. Pixels farther than the threshold from their visible neighbourhood median are blended toward that median; radius, threshold and amount remain editable.</p>
+            )}
+            {filterEffects.type === 'despeckle' && (
+              <p>Bounded one-pixel local despeckle approximation using a fixed visible-neighbour median. Amount remains editable; full texture-aware and edge-preserving Photoshop behaviour remains staged.</p>
+            )}
+            {filterEffects.type === 'reduce-noise' && (
+              <p>Bounded colour-weighted neighbourhood smoothing that favours nearby similar tones. Radius, preserve-details threshold and amount remain editable; temporal and high-bit-depth parity remain staged.</p>
+            )}
+            {filterEffects.type === 'add-noise' && (
+              <>
+                <p>Seeded uniform noise is blended into visible pixels without changing alpha or transparent RGB. Amount, seed and monochromatic mode remain editable; Gaussian distribution, film grain and channel clipping parity remain staged.</p>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    aria-label="Add Noise monochromatic"
+                    checked={filterEffects.noiseMonochromatic === true}
+                    onChange={(event) => setFilterEffects({ noiseMonochromatic: event.target.checked })}
+                  />
+                  Monochromatic
+                </label>
+                <label>
+                  Distribution
+                  <select
+                    className="text-input"
+                    aria-label="Add Noise distribution"
+                    value={filterEffects.noiseDistribution ?? 'uniform'}
+                    onChange={(event) => setFilterEffects({ noiseDistribution: event.target.value === 'gaussian' ? 'gaussian' : 'uniform' })}
+                  >
+                    <option value="uniform">Uniform</option>
+                    <option value="gaussian">Gaussian</option>
+                  </select>
+                </label>
+                <label>
+                  Noise seed
+                  <input
+                    className="number-input"
+                    type="number"
+                    min={0}
+                    max={4294967295}
+                    step={1}
+                    aria-label="Add Noise seed"
+                    value={filterEffects.seed}
+                    onChange={(event) => {
+                      const parsed = Number(event.target.value);
+                      setFilterEffects({ seed: Number.isFinite(parsed) ? Math.max(0, Math.min(0xffffffff, Math.trunc(parsed))) : 0 });
+                    }}
+                  />
+                </label>
+              </>
+            )}
             {filterEffects.type === 'flame' && (
               <p>Bounded seeded warm plume approximation. Flame detail, origin and seed remain editable; Photoshop path/shape, foreground/background color, frame rendering and physically based turbulence controls remain planned.</p>
             )}
@@ -12867,7 +15919,16 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && <Slider
+                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise') && (
+                  <Slider
+                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : 'Outlier threshold'}
+                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : 12)}
+                    min={0}
+                    max={255}
+                    set={(value) => setFilterEffects({ threshold: value })}
+                  />
+                )}
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
@@ -12909,6 +15970,8 @@ export default function Home() {
                           ? 'Angular sweep'
                       : filterEffects.type === 'pinch'
                           ? 'Pinch radius'
+                      : filterEffects.type === 'liquify'
+                          ? 'Liquify radius'
                       : filterEffects.type === 'spherize'
                           ? 'Spherize radius'
                       : filterEffects.type === 'wave'
@@ -12942,9 +16005,9 @@ export default function Home() {
                       : ' px'
                   }
                 />}
-                {filterEffects.type === 'twirl' && (
+                {(filterEffects.type === 'twirl' || filterEffects.type === 'liquify') && (
                   <Slider
-                    label="Twirl angle"
+                    label={filterEffects.type === 'liquify' ? 'Liquify angle' : 'Twirl angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
@@ -12952,9 +16015,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss') && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss' || filterEffects.type === 'wind') && (
                   <Slider
-                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : 'Wave angle'}
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : filterEffects.type === 'wind' ? 'Wind angle' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
@@ -12980,6 +16043,12 @@ export default function Home() {
                       set={(value) => setFilterEffects({ centerY: value / 100 })}
                       suffix="%"
                     />
+                  </>
+                )}
+                {filterEffects.type === 'liquify' && (
+                  <>
+                    <Slider label="Liquify center X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
+                    <Slider label="Liquify center Y" value={Math.round(filterEffects.centerY * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
                   </>
                 )}
                 {filterEffects.type === 'ripple' && (
@@ -13133,6 +16202,19 @@ export default function Home() {
                 )}
                 {(filterEffects.type === 'radial-blur' || filterEffects.type === 'spin-blur') && (
                   <>
+                    {filterEffects.type === 'radial-blur' && (
+                      <label>
+                        Radial mode
+                        <select
+                          aria-label="Radial mode"
+                          value={filterEffects.radialMode ?? 'spin'}
+                          onChange={(event) => setFilterEffects({ radialMode: event.target.value === 'zoom' ? 'zoom' : 'spin' })}
+                        >
+                          <option value="spin">Spin</option>
+                          <option value="zoom">Zoom</option>
+                        </select>
+                      </label>
+                    )}
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center X' : 'Blur center X'}
                       value={Math.round(filterEffects.centerX * 100)}
@@ -13517,6 +16599,10 @@ export default function Home() {
           data-tiled-destination-bytes={tiledTelemetry?.destinationBytes ?? 0}
           data-tiled-completed={tiledProgress?.completed ?? 0}
           data-tiled-total={tiledProgress?.total ?? 0}
+          data-tiled-cache-budget={tiledCacheBudget}
+          data-tiled-cache-hits={tiledTelemetry?.cacheStats?.hits ?? 0}
+          data-tiled-cache-misses={tiledTelemetry?.cacheStats?.misses ?? 0}
+          data-tiled-cache-evictions={tiledTelemetry?.cacheStats?.evictions ?? 0}
           aria-live="polite"
         >
           {doc.rendering

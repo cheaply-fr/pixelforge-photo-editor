@@ -288,6 +288,21 @@ test('family slots remember the last chosen subtool after switching tools', asyn
   await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
 });
 
+test('family subtool choice survives a reload through the local preference envelope', async ({ page }) => {
+  await openEditor(page);
+  const lasso = page.getByRole('button', { name: 'Lasso tool', exact: true });
+  await lasso.focus();
+  await page.keyboard.press('ArrowDown');
+  await page
+    .locator('[role="menu"]:visible')
+    .getByRole('menuitem', { name: 'Magnetic Lasso', exact: true })
+    .click();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('button', { name: 'Magnetic Lasso tool', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
+});
+
 test('categories stack in one column while their tools keep the responsive grid', async ({
   page,
 }) => {
@@ -303,6 +318,7 @@ test('categories stack in one column while their tools keep the responsive grid'
         right: Math.round(rect.right),
         top: Math.round(rect.top),
         gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
+        gridClass: grid ? [...grid.classList].find((item) => item.startsWith('tool-category-grid--')) : undefined,
       };
     });
     return { rects, palette: element.getBoundingClientRect().toJSON() };
@@ -311,5 +327,32 @@ test('categories stack in one column while their tools keep the responsive grid'
   expect(new Set(layout.rects.map((rect) => rect.left)).size).toBe(1);
   expect(new Set(layout.rects.map((rect) => rect.right)).size).toBe(1);
   expect(layout.rects.every((rect, index) => index === 0 || rect.top >= layout.rects[index - 1].top)).toBe(true);
-  expect(layout.rects.every((rect) => rect.gridColumns === 3)).toBe(true);
+  expect(layout.rects.every((rect) => rect.gridColumns === (
+    rect.gridClass === 'tool-category-grid--one' ? 1 :
+      rect.gridClass === 'tool-category-grid--two' ? 2 : 3
+  ))).toBe(true);
+});
+
+test('category grids size to their compact tool count without trailing empty slots', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openEditor(page);
+  const layouts = await page.getByTestId('tool-palette').locator(':scope > .tool-category').evaluateAll((categories) =>
+    categories.map((category) => {
+      const grid = category.querySelector<HTMLElement>('.tool-category-grid');
+      const className = [...category.classList].find((item) => item.startsWith('tool-category--')) ?? '';
+      return {
+        className,
+        itemCount: grid?.children.length ?? 0,
+        columns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
+      };
+    }),
+  );
+  expect(layouts.length).toBeGreaterThan(4);
+  for (const layout of layouts) {
+    const expected = layout.className === 'tool-category--one' ? 1 : layout.className === 'tool-category--two' ? 2 : 3;
+    expect(layout.columns).toBe(expected);
+    expect(layout.itemCount).toBeGreaterThan(0);
+  }
 });

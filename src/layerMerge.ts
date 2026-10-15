@@ -1,11 +1,9 @@
 import type { Frame, Layer } from './document.ts';
 
 /**
- * The first Merge Layers contract intentionally handles an adjacent pair of
- * ungrouped layers.  Rendering a non-adjacent pair or a folder member would
- * change blend order or apply folder opacity twice without a dedicated folder
- * merge command contract, so those cases stay visibly guarded at the command
- * boundary even though ordinary folder rendering is isolated.
+ * The single-layer compatibility planner handles an adjacent pair of
+ * ungrouped layers. The command-level multi-selection planner below also
+ * supports a complete visible, unlocked folder as one isolated merge unit.
  */
 export type LayerMergePlan =
   | {
@@ -28,10 +26,9 @@ export type LayerMergePlan =
 /**
  * A merge plan for Photoshop-style multi-selection merging.
  *
- * The flat layer stack is deliberately the source of truth for ordering. A
- * merge is only safe when every selected layer is a contiguous root-level
- * source, visible, and directly editable. This keeps blend order and group
- * isolation deterministic while the folder-aware merge command is staged.
+ * The flat layer stack is the source of truth for ordering. Root selections
+ * must be contiguous; a complete folder may be non-contiguous in the flat
+ * stack because its isolated compositor surface is the merge boundary.
  */
 export type SelectedLayerMergePlan =
   | {
@@ -62,20 +59,30 @@ export type SelectedLayerMergePlan =
  */
 export function planSelectedLayerMerge(frame: Frame): SelectedLayerMergePlan {
   const rawIds = frame.selectedLayerIds ?? [frame.active];
-  if (!Array.isArray(rawIds) || rawIds.length < 2)
+  if (!Array.isArray(rawIds) || rawIds.length < 1)
     return { ok: false, reason: 'insufficient-selection' };
   const selectedIds = [...new Set(rawIds)];
+  const initiallySelected = selectedIds.map((id) => frame.layers.find((layer) => layer.id === id));
+  if (initiallySelected.some((layer) => !layer))
+    return { ok: false, reason: 'missing-selection-layer' };
+  const groupIds = new Set(initiallySelected.flatMap((layer) => layer?.groupId ? [layer.groupId] : []));
+  if (groupIds.size > 1 || (groupIds.size === 1 && initiallySelected.some((layer) => !layer?.groupId)))
+    return { ok: false, reason: 'grouped-layers' };
+  if (groupIds.size === 1) {
+    const groupId = [...groupIds][0];
+    const group = frame.groups?.find((item) => item.id === groupId);
+    if (!group || group.locked || !group.visible) return { ok: false, reason: 'grouped-layers' };
+    for (const layer of frame.layers) if (layer.groupId === groupId && !selectedIds.includes(layer.id)) selectedIds.push(layer.id);
+  }
   if (selectedIds.length < 2)
     return { ok: false, reason: 'insufficient-selection' };
   const indexes = selectedIds.map((id) => frame.layers.findIndex((layer) => layer.id === id));
   if (indexes.some((index) => index < 0))
     return { ok: false, reason: 'missing-selection-layer' };
   indexes.sort((a, b) => a - b);
-  if (indexes.some((index, offset) => offset > 0 && index !== indexes[offset - 1] + 1))
+  if (groupIds.size === 0 && indexes.some((index, offset) => offset > 0 && index !== indexes[offset - 1] + 1))
     return { ok: false, reason: 'non-contiguous-selection' };
   const selectedLayers = indexes.map((index) => frame.layers[index]);
-  if (selectedLayers.some((layer) => layer.groupId))
-    return { ok: false, reason: 'grouped-layers' };
   if (selectedLayers.some((layer) => !layer.visible))
     return { ok: false, reason: 'hidden-layer' };
   if (selectedLayers.some((layer) => layer.locked))
@@ -140,7 +147,7 @@ export function applySelectedLayerMerge(
   };
 }
 
-/** Plan the only merge shape currently safe without a folder merge contract. */
+/** Plan the legacy adjacent-pair shape used by callers without a selection. */
 export function planLayerMerge(frame: Frame): LayerMergePlan {
   const activeIndex = frame.layers.findIndex((layer) => layer.id === frame.active);
   if (activeIndex < 0) return { ok: false, reason: 'missing-active' };
@@ -171,7 +178,7 @@ export function layerMergeReason(reason: Exclude<LayerMergePlan, { ok: true }>['
     case 'active-layer-locked':
       return 'Unlock the active layer before merging';
     case 'grouped-layers':
-      return 'Ungroup layers before merging; isolated folder compositing is active, but grouped merge is staged';
+      return 'Select the complete visible, unlocked folder to merge it as one isolated unit';
   }
 }
 
@@ -187,7 +194,7 @@ export function selectedLayerMergeReason(
     case 'non-contiguous-selection':
       return 'Selected layers must be contiguous in the layer stack';
     case 'grouped-layers':
-      return 'Ungroup selected layers before merging; grouped merge is staged';
+      return 'Select every visible, unlocked layer in one folder to merge its isolated composite';
     case 'hidden-layer':
       return 'Show all selected layers before merging';
     case 'locked-layer':

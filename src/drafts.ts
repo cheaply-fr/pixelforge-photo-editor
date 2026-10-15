@@ -14,6 +14,7 @@ import {
   effectiveAdjustments,
   effectiveTextLayer,
   neutral,
+  FONTS,
   validId,
   type Assets,
   type Frame,
@@ -44,6 +45,18 @@ import {
   normalizePatternTileSize,
   type PatternId,
 } from './patternStamp.ts';
+import { isGradientStops, type GradientStop } from './gradientStops.ts';
+import { normalizeSecondaryBrushPreset } from './brushSecondary.ts';
+import {
+  normalizeCustomBrushPresets,
+  type CustomBrushPreset,
+} from './customBrushPresets.ts';
+import {
+  normalizeCustomPatternPresets,
+  type CustomPatternPreset,
+} from './customPatternPresets.ts';
+import { normalizeCustomShapePresets, type CustomShapePreset } from './customShapePresets.ts';
+import { normalizeCustomPathPresets, type CustomPathPreset } from './customPathPresets.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 import {
   createDraftBundle,
@@ -57,6 +70,8 @@ import {
   normalizeDocumentMetadata,
   type DocumentMetadata,
 } from './metadata.ts';
+import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
+import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -133,8 +148,56 @@ export type Settings = {
   pressureOpacity?: boolean;
   /** Optional deterministic local Brush preset selected in the tool panel. */
   brushPreset?: BrushPresetId;
+  /** User-authored local brush presets; pixels and remote references are never stored. */
+  customBrushPresets?: CustomBrushPreset[];
+  /** User-authored local Pattern Stamp presets; source pixels never leave the device. */
+  customPatternPresets?: CustomPatternPreset[];
+  /** User-authored local vector shape presets; geometry remains editable. */
+  customShapePresets?: CustomShapePreset[];
+  /** User-authored local editable Pen paths; source pixels never leave the device. */
+  customPathPresets?: CustomPathPreset[];
+  /** Parametric polygon variant used by the Polygon tool. */
+  polygonVariant?: 'polygon' | 'triangle' | 'star';
+  /** Parametric polygon/star side count, bounded to the editable shape range. */
+  polygonSides?: number;
+  /** Parametric star inner radius (0.1–0.9 of the outer radius). */
+  polygonInnerRadius?: number;
   /** Spacing between brush dabs as a percent of diameter. */
   spacing?: number;
+  /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
+  brushSmoothing?: number;
+  /** Deterministic brush stamp scatter amount, from 0 to 100. */
+  brushScatter?: number;
+  /** Gradient geometry for the Gradient tool. */
+  gradientMode?: 'linear' | 'radial' | 'reflected';
+  /** Gradient endpoint behaviour. */
+  gradientEnd?: 'transparent' | 'background';
+  /** Optional authored colour stop at the midpoint; `none` preserves the legacy two-stop gradient. */
+  gradientMidpoint?: string;
+  /** Position of the authored midpoint stop, from 1 to 99 percent. */
+  gradientMidpointPosition?: number;
+  /** Swap gradient start and end colours for Linear and Radial modes. */
+  gradientReverse?: boolean;
+  /** Deterministic gradient dither amount, from 0 to 100. */
+  gradientDither?: number;
+  /** Ordered authored interior gradient stops; endpoints remain controlled by the tool colours. */
+  gradientStops?: GradientStop[];
+  /** Deterministic RGB gradient noise amount, from 0 to 100. */
+  gradientNoise?: number;
+  /** Deterministic brush texture amount, from 0 to 100. */
+  brushTexture?: number;
+  /** Deterministic secondary-brush modulation amount, from 0 to 100. */
+  brushDual?: number;
+  /** Optional second brush tip used with the Dual brush amount. */
+  secondaryBrushPreset?: 'none' | BrushPresetId;
+  /** Deterministic bristle-like modulation amount, from 0 to 100. */
+  brushBristle?: number;
+  /** Deterministic wet-edge opacity amount, from 0 to 100. */
+  brushWetEdges?: number;
+  /** Deterministic centre-weighted build-up amount, from 0 to 100. */
+  brushBuildUp?: number;
+  /** Brush-family flow amount, from 1 to 100 percent. */
+  brushFlow?: number;
   /** Brush tip rotation in degrees. */
   angle?: number;
   /** Brush tip roundness (100 is circular). */
@@ -169,6 +232,12 @@ export type Settings = {
   exportTargetBytes?: number;
   text: string;
   fontSize: number;
+  /** Local/system font used when the Text tool creates a new editable layer. */
+  fontFamily?: (typeof FONTS)[number];
+  /** Preview scale used by the Text tool's bounded local font picker. */
+  fontPreviewSize?: FontPreviewSize;
+  /** Optional local default for new or existing editable text layers. */
+  defaultTypeStyle?: TypeStyle;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -309,6 +378,8 @@ function validSettings(settings: unknown): settings is Settings {
     ].includes(candidate.tool as Tool) ||
     typeof candidate.text !== 'string' ||
     candidate.text.length > 10000 ||
+    (candidate.fontFamily !== undefined && !FONTS.includes(candidate.fontFamily as (typeof FONTS)[number])) ||
+    (candidate.fontPreviewSize !== undefined && normalizeFontPreviewSize(candidate.fontPreviewSize) !== candidate.fontPreviewSize) ||
     (candidate.exportFormat !== undefined &&
       !EXPORT_FORMATS.includes(candidate.exportFormat)) ||
     (candidate.exportQuality !== undefined &&
@@ -323,6 +394,14 @@ function validSettings(settings: unknown): settings is Settings {
     !validBrushPressureSettings(candidate) ||
     !validBrushTipSettings(candidate) ||
     (candidate.brushPreset !== undefined && !validBrushPresetId(candidate.brushPreset)) ||
+    (candidate.customBrushPresets !== undefined &&
+      normalizeCustomBrushPresets(candidate.customBrushPresets).length !== candidate.customBrushPresets.length) ||
+    (candidate.customPatternPresets !== undefined &&
+      normalizeCustomPatternPresets(candidate.customPatternPresets).length !== candidate.customPatternPresets.length) ||
+    (candidate.customShapePresets !== undefined &&
+      normalizeCustomShapePresets(candidate.customShapePresets).length !== candidate.customShapePresets.length) ||
+    (candidate.customPathPresets !== undefined &&
+      normalizeCustomPathPresets(candidate.customPathPresets).length !== candidate.customPathPresets.length) ||
     (candidate.patternId !== undefined &&
       !PATTERN_IDS.includes(candidate.patternId as PatternId)) ||
     (candidate.redEyeThreshold !== undefined &&
@@ -352,6 +431,17 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.colorTolerance ?? 24, 0, 255] as [number, number, number],
     [candidate.tonalExposure ?? 50, 1, 100] as [number, number, number],
     [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],
+    [candidate.brushSmoothing ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushScatter ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushTexture ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushDual ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushBristle ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushWetEdges ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushBuildUp ?? 0, 0, 100] as [number, number, number],
+    [candidate.gradientDither ?? 0, 0, 100] as [number, number, number],
+    [candidate.gradientNoise ?? 0, 0, 100] as [number, number, number],
+    [candidate.gradientMidpointPosition ?? 50, 1, 99] as [number, number, number],
+    [candidate.brushFlow ?? 100, 1, 100] as [number, number, number],
   ];
   if (candidate.patternTileSize !== undefined) {
     try {
@@ -360,6 +450,20 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
+  if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected'].includes(candidate.gradientMode)) return false;
+  if (candidate.defaultTypeStyle !== undefined) {
+    try {
+      normalizeTypeStyle(candidate.defaultTypeStyle);
+    } catch {
+      return false;
+    }
+  }
+  if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
+  if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
+    (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
+  if (candidate.gradientReverse !== undefined && typeof candidate.gradientReverse !== 'boolean') return false;
+  if (candidate.gradientStops !== undefined && !isGradientStops(candidate.gradientStops)) return false;
+  if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;

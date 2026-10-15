@@ -38,12 +38,31 @@ test('smart objects validate as embedded source-retaining layers and report sour
 });
 
 test('smart object metadata and immutable source reference survive JSON round trip', () => {
-  const restored = JSON.parse(JSON.stringify(frame()));
+  const restored = JSON.parse(JSON.stringify(frame({ ...smart(), linkId: '00000000-0000-4000-8000-000000000099' })));
   validateFrame(restored, assets);
   assert.equal(restored.layers[0].kind, 'smart-object');
   assert.equal(restored.layers[0].asset, embeddedId);
   assert.equal(restored.layers[0].sourceName, 'product.png');
+  assert.equal(restored.layers[0].linkId, '00000000-0000-4000-8000-000000000099');
   assert.deepEqual(restored.layers[0].adjustments, neutral);
+});
+
+test('linked smart-object identities are validated without changing their editable transforms', () => {
+  const first = smart();
+  const second = { ...smart(), id: '00000000-0000-4000-8000-000000000010', matrix: [1, 0, 0, 1, 18, 4] };
+  const linked = frame(first);
+  linked.layers = [
+    { ...first, linkId: '00000000-0000-4000-8000-000000000099' },
+    { ...second, linkId: '00000000-0000-4000-8000-000000000099' },
+  ];
+  linked.active = second.id;
+  linked.selectedLayerIds = [first.id, second.id];
+  assert.doesNotThrow(() => validateFrame(linked, assets));
+  assert.deepEqual(linked.layers[1].matrix, [1, 0, 0, 1, 18, 4]);
+  assert.throws(
+    () => validateFrame(frame({ ...smart(), linkId: 'not-an-id' }), assets),
+    /Invalid layer document/,
+  );
 });
 
 test('referenced asset compaction keeps embedded smart-object source and drops unused assets', () => {

@@ -3,6 +3,9 @@
  * tools. The primitive works on RGBA byte arrays so pressure, hardness,
  * clipping, alpha compositing and clone masks can be tested without a DOM.
  */
+import { bristleCoverage, normalizeBrushBristle } from './brushBristle.ts';
+import { wetEdgesOpacity } from './brushWetEdges.ts';
+import { buildUpOpacity } from './brushBuildUp.ts';
 
 export const BRUSH_MAX_SIZE = 10000;
 export const BRUSH_MAX_DIMENSION = 16000;
@@ -41,6 +44,12 @@ export type BrushStampSettings = BrushPressureSettings & {
   opacity: number;
   pressure?: number;
   pointerType?: BrushPointerType;
+  /** Deterministic physical-filament coverage amount. */
+  bristle?: number;
+  /** Deterministic edge-weighted opacity amount. */
+  wetEdges?: number;
+  /** Deterministic centre-weighted opacity amount. */
+  buildUp?: number;
 } & BrushTipSettings;
 export type ResolvedBrushStamp = {
   pressure: number;
@@ -55,6 +64,7 @@ export type ResolvedBrushStamp = {
   roundness: number;
   flipX: boolean;
   flipY: boolean;
+  bristle: number;
 };
 export type StampBounds = { left: number; top: number; right: number; bottom: number };
 export type RadialMask = {
@@ -165,6 +175,7 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
   const pressure = normalizeBrushPressure(settings.pointerType, settings.pressure),
     flags = effectiveBrushPressureSettings(settings),
     tip = effectiveBrushTipSettings(settings),
+    bristle = normalizeBrushBristle(settings.bristle),
     size = settings.size * (flags.pressureSize ? pressure : 1),
     opacity = settings.opacity * (flags.pressureOpacity ? pressure : 1);
   return {
@@ -175,6 +186,7 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
     opacity: clamp(opacity, 0, 1),
     ...flags,
     ...tip,
+    bristle,
   };
 }
 
@@ -252,7 +264,24 @@ export function radialStampMask(request: RadialStampRequest): RadialMask {
         stamp.flipX,
         stamp.flipY,
       );
-      if (coverage > 0) data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * scale);
+      const filament = bristleCoverage(
+        px - request.x,
+        py - request.y,
+        stamp.radius,
+        request.bristle ?? 0,
+      );
+      const wetEdges = wetEdgesOpacity(
+        Math.hypot(px - request.x, py - request.y),
+        stamp.radius,
+        request.wetEdges ?? 0,
+      );
+      const buildUp = buildUpOpacity(
+        Math.hypot(px - request.x, py - request.y),
+        stamp.radius,
+        request.buildUp ?? 0,
+      );
+      if (coverage > 0 && filament > 0)
+        data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * filament * wetEdges * buildUp * scale);
     }
   }
   return { width, height, data, bounds, stamp };

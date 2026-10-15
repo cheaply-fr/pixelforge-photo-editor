@@ -26,6 +26,7 @@ project API:
 | Referenced history PNG data | approximately 32 MiB before old frames are trimmed; 64 MiB current-frame ceiling | Keep local history from growing without limit |
 | Portable `.pixelforge` project | 64 MiB of encoded assets | Keep downloads and IndexedDB writes manageable |
 | Private cloud project | 16 MiB per document, 30 projects and 256 MiB per library | Preserve the existing Marketplace API quota |
+| Tiled effect session cache | Device-aware 2–16 MiB process-local LRU (mobile capped at 4 MiB) | Reuse repeat renders without persisting pixels or allowing unbounded mobile memory |
 
 These are protection limits, not a promise that every device can edit at the
 maximum. A 16 MP RGBA surface is approximately 64 MiB before Canvas backing
@@ -58,6 +59,22 @@ Playwright report. They are useful for detecting a regression or a hang, not a
 distributional guarantee. A later release should collect repeated p50/p95
 samples on representative physical desktop and mobile devices before turning
 the candidate targets below into blocking assertions.
+
+### Latest local browser sample
+
+On 2026-10-13, the same test passed on the current Chromium 153 profiles with
+one worker. The observed values were:
+
+| Playwright project | Ready | Stroke | PNG encode |
+| --- | ---: | ---: | ---: |
+| desktop (`Desktop Chrome`) | 374.4 ms | 1,100.3 ms | 8.2 ms |
+| mobile (`Pixel 7` emulation) | 375.8 ms | 1,124.4 ms | 8.1 ms |
+
+This sample is still emulated mobile hardware and includes Playwright input
+dispatch in the stroke measurement. It proves completion under the watchdog,
+not physical-device acceptance or a support guarantee. The stroke values exceed
+the candidate 250/500 ms targets, so those targets remain unmet until the
+interaction path is measured and improved on representative devices.
 
 The test currently uses a 30-second watchdog for each operation. That is
 deliberately much looser than a user-facing budget: it catches a stalled

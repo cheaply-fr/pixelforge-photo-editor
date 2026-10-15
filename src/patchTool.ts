@@ -27,6 +27,8 @@ export type PatchStroke = {
   opacity: number;
   /** Source coordinate minus destination coordinate at pointer-down. */
   sourceOffset: PatchPoint;
+  /** Optional layer-local selection-mask asset captured at pointer-down. */
+  selectionMask?: string;
 };
 
 const finite = (value: unknown): value is number =>
@@ -89,6 +91,12 @@ export function validPatchStroke(
     !finite(offset.y) ||
     Math.abs(offset.x) > PATCH_MAX_OFFSET ||
     Math.abs(offset.y) > PATCH_MAX_OFFSET
+  )
+    return false;
+  if (
+    candidate.selectionMask !== undefined &&
+    (typeof candidate.selectionMask !== 'string' ||
+      !/^[a-z\d-]{1,160}$/i.test(candidate.selectionMask))
   )
     return false;
   return candidate.points.every((point) => validPoint(point, width, height));
@@ -213,7 +221,7 @@ export function applyPatchStrokes(
   width: number,
   height: number,
   strokes: readonly PatchStroke[] | undefined,
-  selectionMask?: ArrayLike<number>,
+  selectionMasks?: Readonly<Record<string, ArrayLike<number>>> | ArrayLike<number>,
 ): Uint8ClampedArray {
   if (
     !Number.isInteger(width) ||
@@ -226,11 +234,19 @@ export function applyPatchStrokes(
     throw new Error('Patch source must contain RGBA data');
   if (!validPatchStrokes(strokes ?? [], width, height))
     throw new Error('Patch strokes are invalid');
-  if (selectionMask && selectionMask.length !== width * height)
-    throw new Error('Patch selection mask has the wrong size');
   const output = new Uint8ClampedArray(source);
-  for (const stroke of strokes ?? [])
-    applyStroke(output, output, width, height, stroke, selectionMask);
+  for (const stroke of strokes ?? []) {
+    const selectionMask = stroke.selectionMask
+      ? selectionMasks && !Array.isArray(selectionMasks) && !ArrayBuffer.isView(selectionMasks)
+        ? (selectionMasks as Readonly<Record<string, ArrayLike<number>>>)[stroke.selectionMask]
+        : undefined
+      : Array.isArray(selectionMasks) || ArrayBuffer.isView(selectionMasks)
+        ? selectionMasks
+        : undefined;
+    if (stroke.selectionMask && (!selectionMask || selectionMask.length !== width * height))
+      throw new Error('Patch selection mask is unavailable');
+    applyStroke(output, output, width, height, stroke, selectionMask as ArrayLike<number> | undefined);
+  }
   for (let offset = 0; offset < output.length; offset += 4) {
     if (output[offset + 3] === 0)
       output[offset] = output[offset + 1] = output[offset + 2] = 0;

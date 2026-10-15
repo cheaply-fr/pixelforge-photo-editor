@@ -10,6 +10,21 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
 });
 
+test('Filter menu repeats the last nondestructive effect and stays disabled before first use', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Last Filter', exact: true })).toBeDisabled();
+  await page.getByRole('menuitem', { name: 'Gaussian Blur…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Last Filter', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Last Filter', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
+});
+
 test('Find Edges is an enabled nondestructive Stylize filter with source-safe persistence', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
@@ -39,6 +54,107 @@ test('Find Edges is an enabled nondestructive Stylize filter with source-safe pe
   await expect.poll(() => pixels(page)).toEqual(changed);
   await openProject(page, adjusted);
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('find-edges');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
+test('Solarize is an enabled nondestructive Stylize filter with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Solarize…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('solarize');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'solarize', amount: 70 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('solarize');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
+test('Diffuse is an enabled nondestructive Stylize filter with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Diffuse…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('diffuse');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'diffuse', amount: 70 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('diffuse');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
+test('Twirl is an enabled nondestructive Distort filter with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Twirl…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('twirl');
+  await expect(page.getByLabel('Twirl angle', { exact: true })).toHaveValue('75');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'twirl', angle: 75 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('twirl');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
+test('Wind is an enabled nondestructive Stylize filter with editable angle persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Wind…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('wind');
+  await expect(page.getByLabel('Wind angle', { exact: true })).toHaveValue('0');
+  await page.getByLabel('Wind angle', { exact: true }).fill('35');
+  await page.getByLabel('Wind angle', { exact: true }).press('Enter');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'wind', angle: 35 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('wind');
+  await expect(page.getByLabel('Wind angle', { exact: true })).toHaveValue('35');
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
@@ -164,6 +280,148 @@ test('linear Shear retains source assets, supports undo and round-trips editable
   await expect.poll(() => pixel(page, 4, 0)).toEqual(original);
 });
 
+test('Gradient Map keeps editable endpoints, source assets and project pixels across reload', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 2);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Gradient Map…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gradient-map');
+  await page.getByLabel('Gradient Map shadow colour', { exact: true }).fill('#001122');
+  await page.getByLabel('Gradient Map highlight colour', { exact: true }).fill('#ffeedd');
+  await page.getByLabel('Gradient Map blend mode', { exact: true }).selectOption('overlay');
+  await page.getByRole('button', { name: 'Add stop', exact: true }).click();
+  await expect(page.getByLabel('Gradient Map stop 1 position', { exact: true })).toHaveValue('25');
+  await page.getByLabel('Gradient Map stop 1 colour', { exact: true }).fill('#ff0000');
+  await expect.poll(() => pixel(page, 4, 2)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({
+    type: 'gradient-map',
+    gradientMap: { shadow: '#001122', highlight: '#ffeedd', blend: 'overlay', stops: [{ position: 25, color: '#ff0000' }] },
+  });
+  const changed = await pixel(page, 4, 2);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Gradient Map shadow colour', { exact: true })).toHaveValue('#001122');
+  await expect(page.getByLabel('Gradient Map highlight colour', { exact: true })).toHaveValue('#ffeedd');
+  await expect(page.getByLabel('Gradient Map blend mode', { exact: true })).toHaveValue('overlay');
+  await expect(page.getByLabel('Gradient Map stop 1 position', { exact: true })).toHaveValue('25');
+  await expect(page.getByLabel('Gradient Map stop 1 colour', { exact: true })).toHaveValue('#ff0000');
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 2)).toEqual(changed);
+});
+
+test('Median is a nondestructive noise filter with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Median…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('median');
+  await expect(page.getByLabel('Radius', { exact: true })).toHaveValue('2');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'median', amount: 100, radius: 2 });
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('median');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+});
+
+test('Dust & Scratches removes strong local outliers with editable persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Dust & Scratches…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('dust-scratches');
+  await expect(page.getByLabel('Radius', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Outlier threshold', { exact: true })).toHaveValue('12');
+  await page.getByLabel('Outlier threshold', { exact: true }).fill('10');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'dust-scratches', amount: 100, radius: 2, threshold: 10 });
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('dust-scratches');
+  await expect(page.getByLabel('Outlier threshold', { exact: true })).toHaveValue('10');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+});
+
+test('Despeckle applies a fixed local cleanup and persists the effect', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Despeckle', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('despeckle');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'despeckle', amount: 100, radius: 1 });
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('despeckle');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+});
+
+test('Reduce Noise exposes preserve-details control and persists nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixel(page, 4, 0);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Reduce Noise…', exact: true }).click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('reduce-noise');
+  await expect(page.getByLabel('Radius', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Preserve details', { exact: true })).toHaveValue('25');
+  await page.getByLabel('Preserve details', { exact: true }).fill('32');
+  await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'reduce-noise', amount: 100, radius: 2, threshold: 32 });
+  const changed = await pixel(page, 4, 0);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('reduce-noise');
+  await expect(page.getByLabel('Preserve details', { exact: true })).toHaveValue('32');
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
+});
+
 test('Gaussian Blur uses bounded tiled rendering and preserves the editable source', async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;
@@ -179,6 +437,10 @@ test('Gaussian Blur uses bounded tiled rendering and preserves the editable sour
   await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   const renderStatus = page.getByTestId('render-status');
+  await expect(renderStatus).toHaveAttribute('data-tiled-cache-budget', /[1-9]/);
+  await expect(renderStatus).toHaveAttribute('data-tiled-cache-hits', /\d+/);
+  await expect(renderStatus).toHaveAttribute('data-tiled-cache-misses', /[1-9]/);
+  await expect(renderStatus).toHaveAttribute('data-tiled-cache-evictions', /\d+/);
   await expect(renderStatus).toHaveAttribute('data-tiled-effect', 'gaussian-blur');
   await expect(renderStatus).toHaveAttribute('data-tiled-tile-count', /[1-9]/);
   await expect(renderStatus).toHaveAttribute('data-tiled-peak-bytes', /[1-9]/);
@@ -624,6 +886,31 @@ test('Average Blur is a global nondestructive menu effect with alpha-safe pixels
   await expect.poll(() => pixel(page, 1, 0)).toEqual(sourcePixel);
 });
 
+test('Blur is an enabled light nondestructive blur preset', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const sourcePixel = await pixel(page, 1, 0);
+
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const blur = page.getByRole('menuitem', { name: 'Blur', exact: true }).nth(1);
+  await expect(blur).toBeEnabled();
+  await blur.click();
+  await expect(page.getByText('Blur applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('blur');
+  await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
+
+  const adjusted = await downloadProject(page);
+  const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(adjustedLayer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(adjustedLayer.adjustments.filterEffects).toMatchObject({ type: 'blur', amount: 70, radius: 6 });
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await expect.poll(() => pixel(page, 1, 0)).toEqual(sourcePixel);
+});
+
 test('Blur More is an enabled stronger nondestructive blur preset', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
@@ -840,6 +1127,27 @@ test('Radial Blur is a nondestructive spin effect with editable centre', async (
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
+});
+
+test('Radial Blur Zoom mode is editable, source-safe and survives project reload', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Radial Blur…', exact: true }).click();
+  await page.getByLabel('Radial mode', { exact: true }).selectOption('zoom');
+  await page.getByLabel('Angular sweep', { exact: true }).fill('52');
+  await expect(page.getByText(/Radial Blur with editable Spin or Zoom sampling/)).toBeVisible();
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'radial-blur', radialMode: 'zoom', radius: 52 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('radial-blur');
+  await expect(page.getByLabel('Radial mode', { exact: true })).toHaveValue('zoom');
 });
 
 test('Path Blur and Spin Blur are bounded gallery effects with source-safe round trips', async ({ page }) => {
@@ -1778,4 +2086,76 @@ test('Sharpen More is a distinct enabled nondestructive Sharpen filter', async (
   expect(layer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
   expect(layer.adjustments.filterEffects).toMatchObject({ type: 'sharpen-more', radius: 7 });
+});
+
+test('Liquify is enabled as a bounded nondestructive local warp with round-trip controls', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Liquify…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Liquify (bounded local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('liquify');
+  await expect(page.getByLabel('Liquify radius', { exact: true })).toHaveValue('40');
+  await expect(page.getByLabel('Liquify center X', { exact: true })).toHaveValue('50');
+  await page.getByLabel('Liquify radius', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Liquify angle', { exact: true }).press('ArrowRight');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'liquify', radius: 41, angle: 76 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('liquify');
+  await expect(page.getByLabel('Liquify radius', { exact: true })).toHaveValue('41');
+});
+
+test('Add Noise is an enabled seeded nondestructive filter with monochromatic control', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Add Noise…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Add Noise (seeded local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel('Add Noise distribution', { exact: true })).toHaveValue('uniform');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Add Noise monochromatic', { exact: true }).check();
+  await page.getByLabel('Add Noise distribution', { exact: true }).selectOption('gaussian');
+  await page.getByLabel('Add Noise seed', { exact: true }).fill('42');
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'add-noise', noiseMonochromatic: true, noiseDistribution: 'gaussian', seed: 42 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
+  await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Add Noise distribution', { exact: true })).toHaveValue('gaussian');
+  await expect(page.getByLabel('Add Noise seed', { exact: true })).toHaveValue('42');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
+test('active filter commands fail closed for a locked layer', async ({ page }) => {
+  await importPixels(page);
+  await page.getByLabel('Lock layer', { exact: true }).check();
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Add Noise…', exact: true })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Gaussian Blur…', exact: true })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Liquify…', exact: true })).toBeDisabled();
 });

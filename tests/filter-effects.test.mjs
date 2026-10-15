@@ -36,6 +36,151 @@ test('linear shear follows the signed inverse map and retains the centre row', (
   assert.deepEqual(source, original);
 });
 
+test('Twirl uses a deterministic alpha-safe bilinear inverse map', () => {
+  const source = rgba(9, 9, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    return [x * 24, y * 24, (x + y) * 10, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'twirl', amount: 100, radius: 12, angle: 90, centerX: 0.5, centerY: 0.5 };
+  const output = applyFilterEffectsPixels(source, 9, 9, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 9, 0, 0), [17, 23, 29, 0]);
+  assert.equal(pixel(output, 9, 4, 4)[3], 255);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 9, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(isNeutralFilterEffects({ ...effect, angle: 0 }), true);
+});
+
+test('Gradient Map interpolates editable endpoints while preserving alpha and source bytes', () => {
+  const source = rgba(3, 1, (x) => x === 0 ? [0, 20, 40, 255] : x === 1 ? [128, 128, 128, 255] : [255, 240, 220, 0]);
+  const original = source.slice();
+  const effect = {
+    type: 'gradient-map', amount: 100, radius: 1,
+    gradientMap: { shadow: '#0000ff', highlight: '#ff0000' },
+  };
+  const output = applyFilterEffectsPixels(source, 3, 1, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 3, 0, 0), [17, 0, 238, 255]);
+  assert.ok(pixel(output, 3, 1, 0)[0] > 120);
+  assert.equal(pixel(output, 3, 2, 0)[3], 0);
+  assert.deepEqual(pixel(output, 3, 2, 0).slice(0, 3), [255, 240, 220]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 1, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    ...effect, gradientMap: { shadow: 'bad', highlight: '#ffffff' },
+  })), true);
+  assert.equal(validFilterEffects({
+    ...effectiveFilterEffects(effect), gradientMap: { shadow: 'bad', highlight: '#ffffff' },
+  }), false);
+});
+
+test('Gradient Map validates and interpolates ordered interior stops', () => {
+  const effect = effectiveFilterEffects({
+    type: 'gradient-map', amount: 100, radius: 1,
+    gradientMap: {
+      shadow: '#000000', highlight: '#ffffff',
+      stops: [{ position: 50, color: '#ff0000' }],
+    },
+  });
+  assert.deepEqual(effect.gradientMap?.stops, [{ position: 50, color: '#ff0000' }]);
+  assert.equal(validFilterEffects(effect), true);
+  assert.equal(validFilterEffects({
+    ...effect,
+    gradientMap: { ...effect.gradientMap, stops: [{ position: 50, color: '#fff' }] },
+  }), false);
+  const source = rgba(3, 1, (x) => x === 0 ? [0, 0, 0, 255] : x === 1 ? [128, 128, 128, 255] : [255, 255, 255, 255]);
+  const output = applyFilterEffectsPixels(source, 3, 1, effect);
+  assert.deepEqual(pixel(output, 3, 0, 0), [0, 0, 0, 255]);
+  assert.ok(pixel(output, 3, 1, 0)[0] > 120 && pixel(output, 3, 1, 0)[1] < 30 && pixel(output, 3, 1, 0)[2] < 30);
+  assert.deepEqual(pixel(output, 3, 2, 0), [255, 255, 255, 255]);
+});
+
+test('Gradient Map blend modes are bounded, deterministic, and source-safe', () => {
+  const source = rgba(2, 1, (x) => x === 0 ? [64, 128, 192, 255] : [200, 100, 20, 0]);
+  for (const blend of ['normal', 'multiply', 'screen', 'overlay']) {
+    const effect = effectiveFilterEffects({
+      type: 'gradient-map', amount: 100, radius: 1,
+      gradientMap: { shadow: '#202020', highlight: '#e0e0e0', blend },
+    });
+    const output = applyFilterEffectsPixels(source, 2, 1, effect);
+    assert.equal(validFilterEffects(effect), true);
+    assert.deepEqual(pixel(output, 2, 1, 0), [200, 100, 20, 0]);
+    assert.deepEqual(output, applyFilterEffectsPixels(source, 2, 1, effect));
+  }
+  assert.equal(validFilterEffects({
+    ...effectiveFilterEffects({ type: 'gradient-map', amount: 100, radius: 1 }),
+    gradientMap: { shadow: '#000000', highlight: '#ffffff', blend: 'hard-light' },
+  }), false);
+});
+
+test('Median reduces an isolated visible outlier without changing alpha or transparent RGB', () => {
+  const source = rgba(3, 3, (x, y) => {
+    if (x === 1 && y === 1) return [255, 0, 255, 255];
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    return [40, 80, 120, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'median', amount: 100, radius: 1 };
+  const output = applyFilterEffectsPixels(source, 3, 3, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 3, 1, 1), [40, 80, 120, 255]);
+  assert.deepEqual(pixel(output, 3, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 3, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
+test('Dust & Scratches replaces only strong local outliers and preserves source safety', () => {
+  const source = rgba(3, 3, (x, y) => {
+    if (x === 1 && y === 1) return [255, 0, 255, 255];
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    return [40, 80, 120, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'dust-scratches', amount: 100, radius: 1, threshold: 10 };
+  const output = applyFilterEffectsPixels(source, 3, 3, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 3, 1, 1), [40, 80, 120, 255]);
+  assert.deepEqual(pixel(output, 3, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 3, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(effectiveFilterEffects({ ...effect, threshold: 999 }).threshold, 255);
+});
+
+test('Despeckle applies the fixed local cleanup contract deterministically', () => {
+  const source = rgba(3, 3, (x, y) => {
+    if (x === 1 && y === 1) return [255, 0, 255, 255];
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    return [40, 80, 120, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'despeckle', amount: 100, radius: 1 };
+  const output = applyFilterEffectsPixels(source, 3, 3, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 3, 1, 1), [40, 80, 120, 255]);
+  assert.deepEqual(pixel(output, 3, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 3, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
+test('Reduce Noise smooths similar tones while preserving strong edges and source bytes', () => {
+  const source = rgba(4, 2, (x, y) => {
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    if (x < 2) return [42 + x * 8, 80 + y * 3, 120, 255];
+    return [220 + x * 4, 30 + y * 4, 40, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'reduce-noise', amount: 100, radius: 2, threshold: 32 };
+  const output = applyFilterEffectsPixels(source, 4, 2, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(pixel(output, 4, 1, 0), pixel(source, 4, 1, 0));
+  assert.ok(pixel(output, 4, 2, 0)[0] > 150);
+  assert.deepEqual(pixel(output, 4, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 4, 2, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
 test('De-Interlace supports both field parity choices and interpolation', () => {
   const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
   const first = applyFilterEffectsPixels(source, 2, 5, {
@@ -638,6 +783,26 @@ test('radial blur preserves constant colour and excludes hidden transparent colo
   }
 });
 
+test('radial blur zoom mode samples along the centre ray and remains source-safe', () => {
+  const source = rgba(17, 9, (x, y) => {
+    if (x === 0 && y === 0) return [231, 17, 83, 0];
+    return [(x * 29 + y * 7) % 256, (x * 13 + y * 19) % 256, (x * 5 + y * 23) % 256, 255];
+  });
+  const original = source.slice();
+  const spin = applyFilterEffectsPixels(source, 17, 9, {
+    type: 'radial-blur', amount: 100, radius: 48, centerX: 0.5, centerY: 0.5,
+  });
+  const zoom = applyFilterEffectsPixels(source, 17, 9, {
+    type: 'radial-blur', radialMode: 'zoom', amount: 100, radius: 48, centerX: 0.5, centerY: 0.5,
+  });
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(zoom, spin);
+  assert.equal(pixel(zoom, 17, 0, 0)[3], 0);
+  assert.deepEqual(pixel(zoom, 17, 0, 0).slice(0, 3), [231, 17, 83]);
+  assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'radial-blur', radialMode: 'zoom' })), true);
+  assert.equal(effectiveFilterEffects({ type: 'radial-blur' }).radialMode, 'spin');
+});
+
 test('radial blur identity controls and tiny canvases always return a fresh safe buffer', () => {
   const source = new Uint8ClampedArray([12, 34, 56, 127]);
   for (const effect of [
@@ -1054,6 +1219,25 @@ test('pinch uses deterministic alpha-safe bilinear sampling for subpixel maps', 
   assert.deepEqual(pixel(result, 2, 0, 0), [250, 5, 240, 0]);
 });
 
+test('liquify is a bounded source-safe push/twist remap with editable centre', () => {
+  const source = rgba(13, 9, (x, y) => {
+    if (x === 0 && y === 0) return [250, 9, 240, 0];
+    return [(x * 29 + y * 5) % 256, (x * 7 + y * 31) % 256, (x * 13 + y * 11) % 256, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'liquify', amount: 100, radius: 48, angle: 90, centerX: 0.5, centerY: 0.5 };
+  const first = applyFilterEffectsPixels(source, 13, 9, effect);
+  assert.deepEqual(first, applyFilterEffectsPixels(source, 13, 9, effect));
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(first, 13, 0, 0), pixel(source, 13, 0, 0));
+  assert.deepEqual(pixel(first, 13, 6, 4), pixel(source, 13, 6, 4));
+  assert.notDeepEqual(pixel(first, 13, 4, 4), pixel(source, 13, 4, 4));
+  assert.deepEqual(applyFilterEffectsPixels(source, 13, 9, { ...effect, amount: 0 }), source);
+  const normalized = effectiveFilterEffects({ ...effect, amount: 140, radius: 99, angle: 999, centerX: -2, centerY: 9 });
+  assert.deepEqual({ type: normalized.type, amount: normalized.amount, radius: normalized.radius, angle: normalized.angle, centerX: normalized.centerX, centerY: normalized.centerY }, { type: 'liquify', amount: 100, radius: 64, angle: 180, centerX: 0, centerY: 1 });
+  assert.equal(validFilterEffects(normalized), true);
+});
+
 test('wave is a deterministic directional remap with wavelength and alpha-safe edges', () => {
   const source = rgba(13, 9, (x, y) => {
     if (x === 0 && y === 0) return [241, 17, 233, 0];
@@ -1113,6 +1297,17 @@ test('Average Blur blends visible pixels toward one alpha-weighted global colour
   assert.deepEqual(pixel(result, 3, 1, 0), [110, 55, 30, 255]);
   assert.deepEqual(pixel(result, 3, 2, 0), [0, 0, 0, 0]);
   assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'average-blur', amount: 85, radius: 6 })), true);
+});
+
+test('Blur applies a light local box kernel with safe transparent padding', () => {
+  const source = rgba(5, 1, (x) => x === 0 ? [80, 20, 10, 0] : x === 2 ? [255, 0, 0, 255] : [0, 0, 0, 255]);
+  const original = source.slice();
+  const result = applyFilterEffectsPixels(source, 5, 1, { type: 'blur', amount: 100, radius: 6 });
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(result, 5, 0, 0), [80, 20, 10, 0]);
+  assert.ok(pixel(result, 5, 1, 0)[0] > 0);
+  assert.ok(pixel(result, 5, 2, 0)[0] < 255);
+  assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'blur', amount: 70, radius: 6 })), true);
 });
 
 test('Blur More is a stronger deterministic box blur with safe metadata', () => {
@@ -1251,4 +1446,50 @@ test('de-interlace blends strength, preserves alpha and hidden transparent RGB',
   assert.equal(pixel(output, 3, 1, 2)[3], 128);
   assert.deepEqual(pixel(output, 3, 0, 2).slice(0, 3), [255, 0, 255]);
   assert.equal(isNeutralFilterEffects({ type: 'deinterlace', amount: 100, radius: 0 }), true);
+});
+
+test('Solarize is deterministic, amount-blended, and alpha-safe', () => {
+  const source = rgba(4, 1, (x) => [x * 70, 255 - x * 50, 30, x === 0 ? 0 : 255]);
+  const original = source.slice();
+  assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'solarize', amount: 100, radius: 0 })), true);
+  const output = applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 100, radius: 0 });
+  assert.deepEqual(source, original);
+  assert.equal(output[3], 0);
+  assert.deepEqual(Array.from(output.slice(0, 3)), [0, 255, 30]);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 100, radius: 0 }));
+  assert.deepEqual(applyFilterEffectsPixels(source, 4, 1, { type: 'solarize', amount: 0, radius: 0 }), source);
+});
+
+test('Diffuse blends bounded neighbours without mutating source or alpha', () => {
+  const source = new Uint8ClampedArray([
+    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 0,
+    0, 0, 0, 255, 255, 255, 255, 255, 0, 20, 40, 128,
+  ]);
+  const before = new Uint8ClampedArray(source);
+  const value = { type: 'diffuse', amount: 100, radius: 1 };
+  assert.equal(validFilterEffects(effectiveFilterEffects(value)), true);
+  const output = applyFilterEffectsPixels(source, 3, 2, value);
+  assert.deepEqual(source, before);
+  assert.equal(output[3], 255);
+  assert.equal(output[23], 128);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 2, value));
+  assert.deepEqual(applyFilterEffectsPixels(source, 3, 2, { ...value, amount: 0 }), source);
+});
+
+test('Wind uses deterministic directional source samples and preserves alpha', () => {
+  const source = new Uint8ClampedArray([
+    10, 20, 30, 255, 80, 40, 20, 255, 180, 50, 10, 255,
+    20, 60, 90, 255, 100, 100, 100, 255, 220, 120, 40, 0,
+  ]);
+  const before = new Uint8ClampedArray(source);
+  const value = { type: 'wind', amount: 100, radius: 2, angle: 0 };
+  assert.equal(validFilterEffects(effectiveFilterEffects(value)), true);
+  const output = applyFilterEffectsPixels(source, 3, 2, value);
+  assert.deepEqual(source, before);
+  assert.equal(output[23], 0);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 2, value));
+  assert.deepEqual(applyFilterEffectsPixels(source, 3, 2, { ...value, amount: 0 }), source);
 });
