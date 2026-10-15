@@ -231,6 +231,7 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
     'filter-despeckle': 'despeckle',
     'filter-reduce-noise': 'reduce-noise',
     'filter-add-noise': 'add-noise',
+    'filter-neural-filters': 'neural-enhance',
     'filter-lens-correction': 'lens-correction',
     'filter-displace': 'displace',
     'filter-pinch': 'pinch',

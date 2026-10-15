@@ -38,6 +38,7 @@ export function filterActionParameters(
       ...(effect.fibers ? { fibers: effect.fibers } : {}),
       ...(effect.tree ? { tree: effect.tree } : {}),
       ...(effect.deinterlace ? { deinterlace: effect.deinterlace } : {}),
+      ...(effect.neuralEnhance ? { neuralEnhance: effect.neuralEnhance } : {}),
     }),
   };
 }

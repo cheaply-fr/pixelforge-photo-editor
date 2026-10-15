@@ -2156,6 +2156,43 @@ test('active filter commands fail closed for a locked layer', async ({ page }) =
   await page.getByLabel('Lock layer', { exact: true }).check();
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Add Noise…', exact: true })).toBeDisabled();
+  await expect(page.getByRole('menuitem', { name: 'Neural Filters…', exact: true })).toBeDisabled();
   await expect(page.getByRole('menuitem', { name: 'Gaussian Blur…', exact: true })).toBeDisabled();
   await expect(page.getByRole('menuitem', { name: 'Liquify…', exact: true })).toBeDisabled();
+});
+
+test('Neural Filters is an enabled local approximation with editable source-safe controls', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Neural Filters…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Neural Filters (deterministic local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('neural-enhance');
+  await expect(page.getByLabel('Luminance recovery', { exact: true })).toHaveValue('52');
+  await expect(page.getByLabel('Color balance', { exact: true })).toHaveValue('38');
+  await expect(page.getByLabel('Texture detail', { exact: true })).toHaveValue('56');
+  await expect(page.getByLabel('Neighbourhood radius', { exact: true })).toHaveValue('2');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Texture detail', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Color balance', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({
+    type: 'neural-enhance', amount: 85, radius: 2,
+    neuralEnhance: { luminance: 52, color: 39, texture: 57 },
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('neural-enhance');
+  await expect(page.getByLabel('Color balance', { exact: true })).toHaveValue('39');
+  await expect.poll(() => pixels(page)).toEqual(changed);
 });

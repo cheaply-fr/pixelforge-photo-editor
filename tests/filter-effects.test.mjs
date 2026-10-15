@@ -1493,3 +1493,42 @@ test('Wind uses deterministic directional source samples and preserves alpha', (
   assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 2, value));
   assert.deepEqual(applyFilterEffectsPixels(source, 3, 2, { ...value, amount: 0 }), source);
 });
+
+test('Neural Filters local approximation is deterministic, editable and source-safe', () => {
+  const source = rgba(5, 3, (x, y) => {
+    if (x === 0 && y === 0) return [231, 17, 91, 0];
+    return [20 + x * 42, 180 - y * 38, 30 + (x + y) * 24, 255];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'neural-enhance', amount: 85, radius: 2,
+    neuralEnhance: { luminance: 52, color: 38, texture: 56 },
+  };
+  const normalized = effectiveFilterEffects(effect);
+  assert.equal(validFilterEffects(normalized), true);
+  assert.deepEqual(normalized.neuralEnhance, effect.neuralEnhance);
+  const output = applyFilterEffectsPixels(source, 5, 3, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 5, 0, 0), [231, 17, 91, 0]);
+  assert.equal(pixel(output, 5, 1, 1)[3], 255);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 3, effect));
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 3, { ...effect, amount: 0 }), source);
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 3, {
+    ...effect,
+    neuralEnhance: { luminance: 0, color: 0, texture: 0 },
+  }), source);
+});
+
+test('Neural Filters controls produce distinct bounded results and reject malformed metadata', () => {
+  const source = rgba(7, 3, (x, y) => [35 + x * 25, 70 + y * 30, 190 - x * 12, 255]);
+  const base = { type: 'neural-enhance', amount: 100, radius: 2 };
+  const luminance = applyFilterEffectsPixels(source, 7, 3, { ...base, neuralEnhance: { luminance: 100, color: 0, texture: 0 } });
+  const color = applyFilterEffectsPixels(source, 7, 3, { ...base, neuralEnhance: { luminance: 0, color: 100, texture: 0 } });
+  const texture = applyFilterEffectsPixels(source, 7, 3, { ...base, neuralEnhance: { luminance: 0, color: 0, texture: 100 } });
+  assert.notDeepEqual(luminance, color);
+  assert.notDeepEqual(color, texture);
+  assert.equal(effectiveFilterEffects({ ...base, neuralEnhance: { luminance: -4, color: 240, texture: 11.4 } }).neuralEnhance?.luminance, 0);
+  assert.equal(effectiveFilterEffects({ ...base, neuralEnhance: { luminance: -4, color: 240, texture: 11.4 } }).neuralEnhance?.color, 100);
+  assert.equal(validFilterEffects({ ...effectiveFilterEffects(base), neuralEnhance: { luminance: 10, color: 20, texture: 30.5 } }), false);
+});
