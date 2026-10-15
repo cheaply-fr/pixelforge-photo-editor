@@ -2886,7 +2886,9 @@ function applyLensCorrection(
 ): void {
   const centreX = effect.centerX * (width - 1);
   const centreY = effect.centerY * (height - 1);
-  const influenceRadius = Math.max(1, Math.min(width, height) * 0.7 * (effect.radius / 64));
+  // Radius is expressed in source pixels so the correction can be rendered
+  // through the bounded tiled path without sampling beyond its overlap.
+  const influenceRadius = Math.max(1, Math.min(effect.radius, Math.max(width, height)));
   const strength = (effect.amount / 100) * 0.45 * (effect.lensDirection === 'outward' ? -1 : 1);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -2894,8 +2896,10 @@ function applyLensCorrection(
       if (!source[destination + 3]) continue;
       const dx = x - centreX;
       const dy = y - centreY;
-      const normalized = clamp(Math.hypot(dx, dy) / influenceRadius, 0, 1);
-      const scale = 1 - strength * normalized * normalized;
+      const normalized = Math.hypot(dx, dy) / influenceRadius;
+      if (normalized >= 1) continue;
+      const radial = normalized * normalized * (1 - normalized);
+      const scale = 1 - strength * radial;
       const sample = sourcePixelBilinear(
         source,
         width,
@@ -3491,7 +3495,13 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'wind') {
     applyWind(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
-    applyLensCorrection(data, width, height, effect, output);
+    applyLensCorrection(
+      data,
+      width,
+      height,
+      renderCenter ? { ...effect, centerX: renderCenter.x, centerY: renderCenter.y } : effect,
+      output,
+    );
   } else if (effect.type === 'adaptive-wide-angle') {
     applyAdaptiveWideAngle(
       data,

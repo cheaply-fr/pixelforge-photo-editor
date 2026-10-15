@@ -39,6 +39,7 @@ for (const type of [
   'box-blur',
   'gaussian-blur',
   'lens-blur',
+  'lens-correction',
   'motion-blur',
   'shape-blur',
   'smart-blur',
@@ -80,6 +81,7 @@ test('only bounded local blur families enter the visible tiled path', () => {
   assert.equal(isTiledNeighborhoodBlur({ type: 'box-blur', amount: 100, radius: 64 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 64 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'gaussian-blur', amount: 100, radius: 65 }), false);
+  assert.equal(isTiledNeighborhoodBlur({ type: 'lens-correction', amount: 100, radius: 4 }), true);
   assert.equal(isTiledNeighborhoodBlur({ type: 'average-blur', amount: 100, radius: 4 }), false);
   assert.equal(isTiledNeighborhoodBlur({ type: 'mosaic', amount: 100, radius: 4 }), false);
   for (const type of ['lens-blur', 'motion-blur', 'shape-blur', 'smart-blur', 'surface-blur', 'fragment'])

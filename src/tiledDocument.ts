@@ -33,6 +33,7 @@ export const TILED_NEIGHBORHOOD_EFFECT_TYPES = [
   'box-blur',
   'gaussian-blur',
   'lens-blur',
+  'lens-correction',
   'motion-blur',
   'shape-blur',
   'smart-blur',
@@ -356,7 +357,7 @@ function tileRenderCenter(
   width: number,
   height: number,
 ): { x: number; y: number } | undefined {
-  if (effect.type !== 'adaptive-wide-angle') return undefined;
+  if (effect.type !== 'adaptive-wide-angle' && effect.type !== 'lens-correction') return undefined;
   return {
     x: (effect.centerX * Math.max(0, width - 1) - tile.readX) /
       Math.max(1, tile.readWidth - 1),
