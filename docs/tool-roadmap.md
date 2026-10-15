@@ -33,6 +33,11 @@ The menu references and their complete categorized inventory are maintained in [
 
 ## Current Pixel baseline
 
+The Edit menu's **Reflection Removal…** action is active as a deterministic,
+source-safe local de-glare approximation. It has threshold and cleanup-radius
+controls, editable filter metadata, and desktop/mobile persistence coverage;
+see [`reflection-removal-effect-contract.md`](./reflection-removal-effect-contract.md).
+
 Pattern Stamp is part of the active Phase 3 retouch increment. Its bounded
 local tile model, persisted settings and acceptance gates are defined in
 [`pattern-stamp-contract.md`](./pattern-stamp-contract.md).

@@ -104,6 +104,7 @@ test('active noise and cleanup filters are replayable without aliases', async ()
     'filter-gradient-map',
     'filter-lens-correction',
     'filter-liquify',
+    'filter-reflection-removal',
   ];
   const source = createActionSet('Noise and cleanup', 'noise-action', now);
   let action = source;

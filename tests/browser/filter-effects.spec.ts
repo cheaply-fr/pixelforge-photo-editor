@@ -158,6 +158,39 @@ test('Wind is an enabled nondestructive Stylize filter with editable angle persi
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
+test('Reflection Removal is an enabled local de-glare approximation with source-safe persistence', async ({ page }) => {
+  await importReflectionPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Reflection Removal…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Reflection Removal (local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('reflection-removal');
+  await expect(page.getByLabel('Reflection threshold', { exact: true })).toHaveValue('28');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  await page.getByLabel('Reflection threshold', { exact: true }).fill('20');
+  await page.getByLabel('Reflection threshold', { exact: true }).press('Enter');
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'reflection-removal', amount: 70, radius: 4, threshold: 20 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('reflection-removal');
+  await expect(page.getByLabel('Reflection threshold', { exact: true })).toHaveValue('20');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Reflection threshold', { exact: true })).toHaveValue('20');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 async function importPixels(page: Page) {
   const encoded = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
@@ -178,6 +211,33 @@ async function importPixels(page: Page) {
   });
   await page.getByTestId('file-input').setInputFiles({
     name: 'filter-fixture.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(encoded, 'base64'),
+  });
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+}
+
+async function importReflectionPixels(page: Page) {
+  const encoded = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 9;
+    canvas.height = 5;
+    const context = canvas.getContext('2d')!;
+    const data = context.createImageData(9, 5);
+    for (let y = 0; y < 5; y += 1)
+      for (let x = 0; x < 9; x += 1) {
+        const offset = (y * 9 + x) * 4;
+        const glare = x === 4 && y === 2;
+        data.data[offset] = glare ? 255 : 42 + x;
+        data.data[offset + 1] = glare ? 255 : 76 + y;
+        data.data[offset + 2] = glare ? 255 : 112;
+        data.data[offset + 3] = x === 0 && y === 0 ? 0 : 255;
+      }
+    context.putImageData(data, 0, 0);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'reflection-fixture.png',
     mimeType: 'image/png',
     buffer: Buffer.from(encoded, 'base64'),
   });

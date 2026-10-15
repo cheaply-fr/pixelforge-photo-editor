@@ -71,6 +71,7 @@ export const FILTER_EFFECT_TYPES = [
   'despeckle',
   'reduce-noise',
   'add-noise',
+  'reflection-removal',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -375,6 +376,11 @@ export function effectiveFilterEffects(
     normalized.threshold = finite(source.threshold)
       ? clamp(Math.round(source.threshold), 0, 255)
       : type === 'reduce-noise' ? 25 : 12;
+  }
+  if (type === 'reflection-removal') {
+    normalized.threshold = finite(source.threshold)
+      ? clamp(Math.round(source.threshold), 0, 255)
+      : 28;
   }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
@@ -3171,6 +3177,66 @@ function applyDustScratches(
   }
 }
 
+/**
+ * Apply a bounded local reflection-removal approximation.
+ *
+ * Bright, low-saturation pixels that are strong local luminance outliers are
+ * blended toward a visible-neighbour median. This gives a useful de-glare
+ * baseline without claiming semantic reflection detection, inpainting or
+ * material reconstruction. The source, alpha and transparent RGB padding are
+ * never mutated.
+ */
+function applyReflectionRemoval(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const threshold = clamp(Math.round(effect.threshold ?? 28), 0, 255);
+  const luma = (r: number, g: number, b: number) => r * 0.2126 + g * 0.7152 + b * 0.0722;
+  const channels: number[][] = [[], [], []];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      channels[0].length = 0;
+      channels[1].length = 0;
+      channels[2].length = 0;
+      for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1) {
+        for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+          const sample = (sy * width + sx) * 4;
+          if (!source[sample + 3] || (sx === x && sy === y)) continue;
+          channels[0].push(source[sample]);
+          channels[1].push(source[sample + 1]);
+          channels[2].push(source[sample + 2]);
+        }
+      }
+      if (!channels[0].length) continue;
+      const medians = channels.map((channel) => {
+        channel.sort((a, b) => a - b);
+        return channel[Math.floor(channel.length / 2)] ?? 0;
+      });
+      const currentLuma = luma(source[destination], source[destination + 1], source[destination + 2]);
+      const medianLuma = luma(medians[0], medians[1], medians[2]);
+      const highlight = clamp((currentLuma - 160) / 95, 0, 1);
+      const saturation = Math.max(source[destination], source[destination + 1], source[destination + 2]) -
+        Math.min(source[destination], source[destination + 1], source[destination + 2]);
+      const neutrality = 1 - clamp(saturation / 96, 0, 1);
+      const outlier = clamp((currentLuma - medianLuma - threshold) / 80, 0, 1);
+      const mix = clamp(strength, 0, 1) * highlight * neutrality * outlier;
+      if (mix <= 0) continue;
+      output[destination] = clampByte(source[destination] + (medians[0] - source[destination]) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] + (medians[1] - source[destination + 1]) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] + (medians[2] - source[destination + 2]) * mix);
+      output[destination + 3] = alpha;
+    }
+  }
+}
+
 /** Bounded edge-aware Reduce Noise approximation using a colour-weighted kernel. */
 function applyReduceNoise(
   source: Uint8ClampedArray,
@@ -3359,6 +3425,8 @@ export function applyFilterEffectsPixels(
     applyReduceNoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'add-noise') {
     applyAddNoise(data, width, height, effect, output);
+  } else if (effect.type === 'reflection-removal') {
+    applyReflectionRemoval(data, width, height, effect, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {
