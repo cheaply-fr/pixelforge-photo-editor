@@ -78,7 +78,7 @@ test('wide editor palette expands to three columns without losing focus targets'
   const pen = page.getByRole('button', { name: 'Pen tool', exact: true });
   await pen.focus();
   await expect(pen).toBeFocused();
-  await expect(pen).toHaveAttribute('title', 'Pen (P)');
+  await expect(pen).toHaveAttribute('title', /Pen \(P\).*press and hold/i);
   await expect(
     page.getByRole('button', { name: 'Crop tool', exact: true }),
   ).toHaveAttribute('title', /press and hold/i);
@@ -104,13 +104,37 @@ test('family tools show Photoshop-style submenu arrows while singleton tools sta
     );
   }
 
-  for (const label of ['Move tool', 'Text tool', 'Pen tool']) {
+  for (const label of ['Move tool', 'Text tool']) {
     await expect(
       page.getByRole('button', { name: label, exact: true }).locator(
         '.tool-subtool-arrow',
       ),
     ).toHaveCount(0);
   }
+  await expect(
+    page.getByRole('button', { name: 'Pen tool', exact: true }).locator(
+      '.tool-subtool-arrow',
+    ),
+  ).toHaveCount(1);
+});
+
+test('Pen family exposes icon-bearing subtools and keeps one compact slot', async ({ page }) => {
+  await openEditor(page);
+  const pen = page.getByRole('button', { name: 'Pen tool', exact: true });
+  await expect(pen.locator('.tool-subtool-arrow')).toHaveCount(1);
+  await pen.focus();
+  await page.keyboard.press('ArrowDown');
+  const flyout = page.locator('[role="menu"]:visible');
+  for (const label of ['Pen', 'Freeform Pen', 'Curvature Pen']) {
+    const item = flyout.getByRole('menuitem', { name: label, exact: true });
+    await expect(item).toBeVisible();
+    await expect(item.locator('svg')).toHaveCount(1);
+    await expect(item.locator('kbd')).toHaveText('P');
+  }
+  await flyout.getByRole('menuitem', { name: 'Curvature Pen', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Curvature Pen tool', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pen tool', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Freeform Pen tool', exact: true })).toHaveCount(0);
 });
 
 test('short keyboard activation selects while directional keys and context menu open one anchored flyout', async ({
