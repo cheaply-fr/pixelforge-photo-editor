@@ -160,6 +160,11 @@ import {
 } from '../src/performanceMarks';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
+import GenerativeUpscaleDialog from '../src/GenerativeUpscaleDialog';
+import {
+  planGenerativeUpscale,
+  type GenerativeUpscaleRequest,
+} from '../src/generativeUpscale';
 import ExportDialog from '../src/ExportDialog';
 import MetadataDialog from '../src/MetadataDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
@@ -595,6 +600,7 @@ type Command =
   | 'content-aware-move'
   | 'content-aware-scale'
   | 'resize'
+  | 'generative-upscale'
   | 'canvas-size'
   | 'trim'
   | 'reveal-all'
@@ -1074,7 +1080,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Auto Color', command: 'auto-color' },
     { label: '', command: 'noop', separator: true },
     { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
-    { label: 'Generative Upscale…', command: 'noop', disabled: true },
+    { label: 'Generative Upscale…', command: 'generative-upscale' },
     { label: 'Canvas Size…', command: 'canvas-size' },
     { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
@@ -2208,6 +2214,10 @@ export default function Home() {
       height: number;
       imageSize?: Frame['imageSize'];
     } | null>(null);
+  const [generativeUpscaling, setGenerativeUpscaling] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const [canvasSizing, setCanvasSizing] = useState<{
     width: number;
     height: number;
@@ -6167,6 +6177,33 @@ export default function Home() {
     setResizing(null);
     setNotice(
       `Image resized to ${plan.width} × ${plan.height}; layers remain editable`,
+    );
+  };
+  const generativeUpscale = async (request: GenerativeUpscaleRequest) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before upscaling the document');
+      return;
+    }
+    const f = current();
+    let plan;
+    try {
+      plan = planGenerativeUpscale(f.w, f.h, request);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Upscale values are invalid');
+      return;
+    }
+    const next = await transformFrameWithMasks(
+      f,
+      [request.factor, 0, 0, request.factor, 0, 0],
+      assets.current,
+      plan.width,
+      plan.height,
+      request.method,
+    );
+    if (!commit(next)) return;
+    setGenerativeUpscaling(null);
+    setNotice(
+      `Local ${request.factor}× upscale created ${plan.width} × ${plan.height}; editable layers preserved`,
     );
   };
   const resizeCanvas = async (request: CanvasSizeRequest) => {
@@ -11997,6 +12034,8 @@ export default function Home() {
         height: current().h,
         imageSize: effectiveImageSize(current().imageSize),
       });
+    else if (command === 'generative-upscale')
+      setGenerativeUpscaling({ width: current().w, height: current().h });
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
@@ -13079,6 +13118,14 @@ export default function Home() {
           imageSize={resizing.imageSize}
           close={() => setResizing(null)}
           apply={resizeImage}
+        />
+      )}
+      {generativeUpscaling && (
+        <GenerativeUpscaleDialog
+          width={generativeUpscaling.width}
+          height={generativeUpscaling.height}
+          close={() => setGenerativeUpscaling(null)}
+          apply={generativeUpscale}
         />
       )}
       {canvasSizing && (
