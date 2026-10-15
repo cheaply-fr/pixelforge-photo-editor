@@ -785,6 +785,7 @@ type Command =
   | 'filter-difference-clouds'
   | 'filter-lens-correction'
   | 'filter-lens-flare'
+  | 'filter-vanishing-point'
   | 'filter-displace'
   | 'filter-pinch'
   | 'filter-liquify'
@@ -1249,7 +1250,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
     { label: 'Liquify…', command: 'filter-liquify' },
-    { label: 'Vanishing Point…', command: 'noop', disabled: true },
+    { label: 'Vanishing Point…', command: 'filter-vanishing-point' },
     { label: '', command: 'noop', separator: true },
     { label: 'Blur', command: 'noop', disabled: true },
     { label: 'Field Blur…', command: 'filter-field-blur' },
@@ -4598,26 +4599,26 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : `${label} failed`);
     }
   };
-  const applyPerspectiveWarp = async () => {
+  const applyPerspectiveWarp = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
-      setNotice('Select a raster or smart-object layer before using Perspective Warp');
+      setNotice(`Select a raster or smart-object layer before using ${mode}`);
       return;
     }
     if (layerIsLocked(f, layer) || !layer.visible) {
-      setNotice('Unlock and show the active layer before using Perspective Warp');
+      setNotice(`Unlock and show the active layer before using ${mode}`);
       return;
     }
     try {
       const image = await decodeAsset(assets.current[layer.asset]);
       const width = image.naturalWidth, height = image.naturalHeight;
       const defaultQuad = `10,10;${Math.max(11, width - 10)},10;${Math.max(11, width - 10)},${Math.max(11, height - 10)};10,${Math.max(11, height - 10)}`;
-      const input = window.prompt('Perspective Warp target quad (clockwise x,y; x,y; x,y; x,y)', defaultQuad);
+      const input = window.prompt(`${mode} target quad (clockwise x,y; x,y; x,y; x,y)`, defaultQuad);
       if (input === null) return;
       const points = input.split(';').map((entry) => entry.split(',').map((value) => Number(value.trim())));
       if (points.length !== 4 || points.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value)))) {
-        setNotice('Perspective Warp needs four numeric x,y points');
+        setNotice(`${mode} needs four numeric x,y points`);
         return;
       }
       const plan = planPerspectiveWarp(width, height, points.map(([x, y]) => ({ x, y })) as CropQuad);
@@ -4630,13 +4631,13 @@ export default function Home() {
       outputImage.data.set(warped);
       outputContext.putImageData(outputImage, 0, 0);
       if (current() !== f || current().active !== layer.id) {
-        setNotice('Perspective Warp cancelled because the document changed');
+        setNotice(`${mode} cancelled because the document changed`);
         return;
       }
       const asset = addAsset(assets.current, output);
-      if (editLayer({ asset })) setNotice('Perspective Warp applied locally; undo restores the source asset');
+      if (editLayer({ asset })) setNotice(`${mode} applied locally; undo restores the source asset`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not apply Perspective Warp');
+      setNotice(error instanceof Error ? error.message : `Could not apply ${mode}`);
     }
   };
   const applyPuppetWarp = async () => {
@@ -12459,6 +12460,7 @@ export default function Home() {
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
+    else if (command === 'filter-vanishing-point') return applyPerspectiveWarp('Vanishing Point');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
     else if (command === 'filter-ripple')
@@ -12858,6 +12860,7 @@ export default function Home() {
       case 'free-transform':
         return !layer || locked;
       case 'perspective-warp':
+      case 'filter-vanishing-point':
         return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'puppet-warp':
         return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
