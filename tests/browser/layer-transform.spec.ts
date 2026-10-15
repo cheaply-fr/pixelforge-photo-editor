@@ -102,6 +102,23 @@ test('Layer Transform presets rotate and flip the active layer without baking it
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   const undone = await project(page);
   expect(undone.history[undone.index].layers.at(-1)!.matrix).toEqual(rotatedLayer.matrix);
+
+  let previous = undone;
+  for (const [name, notice] of [
+    [names[1], 'Layer rotate 90° counterclockwise applied'],
+    [names[2], 'Layer rotate 180° applied'],
+    [names[4], 'Layer flip vertical applied'],
+  ] as const) {
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('menuitem', { name, exact: true }).click();
+    await expect(page.getByText(notice, { exact: true })).toBeVisible();
+    const next = await project(page);
+    expect(next.index).toBe(previous.index + 1);
+    expect(next.history.length).toBeGreaterThan(next.index);
+    expect(next.history[next.index].layers.at(-1)!.matrix).not.toEqual(previous.history[previous.index].layers.at(-1)!.matrix);
+    expect(next.history[next.index].layers.at(-1)!.asset).toBe(previous.history[previous.index].layers.at(-1)!.asset);
+    previous = next;
+  }
 });
 
 test('Layer Transform presets reject a locked active layer without changing history', async ({ page }) => {
