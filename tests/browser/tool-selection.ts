@@ -50,6 +50,11 @@ export async function selectTool(page: Page, label: string): Promise<void> {
         exact: true,
       });
       if (!(await button.count())) continue;
+      // Some Photoshop families keep a standalone tool beside the actual
+      // flyout representative (for example Selection Brush beside Quick
+      // Selection/Magic Wand). Only the arrow-bearing slot can open the
+      // anchored menu used to choose an inactive sibling.
+      if (!(await button.locator('.tool-subtool-arrow').count())) continue;
       await button.scrollIntoViewIfNeeded();
       // The context-menu path is deterministic across desktop and touch
       // projects while still exercising the same anchored ToolFlyout used by
