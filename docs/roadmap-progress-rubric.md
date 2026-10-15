@@ -379,3 +379,16 @@ Semantic object/subject detection and provider-backed segmentation remain
 staged. The focused browser coverage checks representative mask pixels, source
 asset identity, undo, lock gating and both desktop/mobile projects. See
 [`mask-all-objects-contract.md`](mask-all-objects-contract.md).
+
+## Paste Special placement increment (unreleased)
+
+**Edit → Paste Special…** now provides three local placements for the private
+layer clipboard: in-place, affine-preserving canvas centering, and
+selection-masked placement for raster/smart-object clips. Each successful
+operation creates one unlocked editable layer and one undoable history state;
+selection placement stores a nondestructive canvas-space mask and keeps the
+source asset unchanged. Pure placement coverage is 5/5 and desktop/mobile
+acceptance is 4/4 in the local candidate. Protected CI, merge, deployment and
+independent live verification are still pending for the candidate SHA. Full
+operating-system rich clipboard interchange and vector/text clipboard formats
+remain staged. See [`paste-special-contract.md`](paste-special-contract.md).
