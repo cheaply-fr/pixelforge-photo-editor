@@ -483,6 +483,7 @@ import {
   DEFAULT_FIBERS_SETTINGS,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
+  DEFAULT_VANISHING_POINT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
   isNeutralFilterEffects,
@@ -798,6 +799,7 @@ type Command =
   | 'filter-despeckle'
   | 'filter-reduce-noise'
   | 'filter-add-noise'
+  | 'filter-vanishing-point'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1235,7 +1237,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
     { label: 'Liquify…', command: 'filter-liquify' },
-    { label: 'Vanishing Point…', command: 'noop', disabled: true },
+    { label: 'Vanishing Point…', command: 'filter-vanishing-point' },
     { label: '', command: 'noop', separator: true },
     { label: 'Blur', command: 'noop', disabled: true },
     { label: 'Field Blur…', command: 'filter-field-blur' },
@@ -5534,6 +5536,12 @@ export default function Home() {
                 ...(type === 'gradient-map' ? {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
+                ...(type === 'vanishing-point' ? {
+                  centerX: 0.5,
+                  centerY: 0.5,
+                  angle: 0,
+                  vanishingPoint: { ...DEFAULT_VANISHING_POINT_SETTINGS },
+                } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
                 ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
                 amount:
@@ -5544,7 +5552,7 @@ export default function Home() {
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
                   || type === 'pointillize' || type === 'mezzotint' || type === 'fibers' || type === 'clouds' || type === 'difference-clouds' || type === 'picture-frame' || type === 'field-blur' || type === 'flame'
                     ? 85
-                  : type === 'lens-correction' || type === 'lens-flare'
+                  : type === 'lens-correction' || type === 'lens-flare' || type === 'vanishing-point'
                     ? 75
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
@@ -5560,6 +5568,8 @@ export default function Home() {
                     ? 18
                     : type === 'flame'
                       ? 16
+                    : type === 'vanishing-point'
+                      ? 18
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize' || type === 'fibers'
                     ? 10
                     : type === 'clouds'
@@ -12364,6 +12374,8 @@ export default function Home() {
       chooseFilterEffect('reduce-noise', 'Reduce Noise (edge-aware local approximation)');
     else if (command === 'filter-add-noise')
       chooseFilterEffect('add-noise', 'Add Noise (seeded local approximation)');
+    else if (command === 'filter-vanishing-point')
+      chooseFilterEffect('vanishing-point', 'Vanishing Point (local plane approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -15971,6 +15983,9 @@ export default function Home() {
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
+            {filterEffects.type === 'vanishing-point' && (
+              <p>Bounded same-sized perspective-plane remap around an editable centre. Plane orientation, depth and angle stay nondestructive; authored multi-plane grids, cloning, fills and geometric canvas expansion remain planned.</p>
+            )}
             {filterEffects.type === 'picture-frame' && (
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
@@ -16055,6 +16070,8 @@ export default function Home() {
                           ? 'Correction radius'
                       : filterEffects.type === 'lens-flare'
                           ? 'Flare size'
+                      : filterEffects.type === 'vanishing-point'
+                          ? 'Plane depth'
                       : filterEffects.type === 'emboss'
                           ? 'Emboss depth'
 
@@ -16080,9 +16097,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss' || filterEffects.type === 'wind') && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss' || filterEffects.type === 'wind' || filterEffects.type === 'vanishing-point') && (
                   <Slider
-                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : filterEffects.type === 'wind' ? 'Wind angle' : 'Wave angle'}
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : filterEffects.type === 'wind' ? 'Wind angle' : filterEffects.type === 'vanishing-point' ? 'Plane angle' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
@@ -16179,6 +16196,37 @@ export default function Home() {
                     />
                     <Slider
                       label="Correction centre Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'vanishing-point' && (
+                  <>
+                    <label>
+                      Plane orientation
+                      <select
+                        aria-label="Vanishing Point plane orientation"
+                        value={filterEffects.vanishingPoint?.plane ?? DEFAULT_VANISHING_POINT_SETTINGS.plane}
+                        onChange={(event) => setFilterEffects({ vanishingPoint: { plane: event.target.value === 'vertical' ? 'vertical' : 'horizontal' } })}
+                      >
+                        <option value="horizontal">Horizontal plane</option>
+                        <option value="vertical">Vertical plane</option>
+                      </select>
+                    </label>
+                    <Slider
+                      label="Plane centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Plane centre Y"
                       value={Math.round(filterEffects.centerY * 100)}
                       min={0}
                       max={100}

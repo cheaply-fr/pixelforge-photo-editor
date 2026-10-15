@@ -165,6 +165,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-despeckle',
   'filter-reduce-noise',
   'filter-add-noise',
+  'filter-vanishing-point',
   'filter-color-halftone',
   'filter-mezzotint',
   'filter-pointillize',

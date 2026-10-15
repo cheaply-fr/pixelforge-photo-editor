@@ -158,6 +158,48 @@ test('Wind is an enabled nondestructive Stylize filter with editable angle persi
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
+test('Vanishing Point exposes an editable local plane approximation with source-safe persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Vanishing Point…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('Vanishing Point (local plane approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('vanishing-point');
+  await expect(page.getByLabel('Vanishing Point plane orientation', { exact: true })).toHaveValue('horizontal');
+  await expect(page.getByLabel('Plane depth', { exact: true })).toHaveValue('18');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  await page.getByLabel('Vanishing Point plane orientation', { exact: true }).selectOption('vertical');
+  await page.getByLabel('Plane angle', { exact: true }).fill('25');
+  await page.getByLabel('Plane angle', { exact: true }).press('Enter');
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({
+    type: 'vanishing-point',
+    amount: 75,
+    radius: 18,
+    angle: 25,
+    vanishingPoint: { plane: 'vertical' },
+  });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('vanishing-point');
+  await expect(page.getByLabel('Vanishing Point plane orientation', { exact: true })).toHaveValue('vertical');
+  await expect(page.getByLabel('Plane angle', { exact: true })).toHaveValue('25');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect(page.getByLabel('Vanishing Point plane orientation', { exact: true })).toHaveValue('vertical');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 async function importPixels(page: Page) {
   const encoded = await page.evaluate(() => {
     const canvas = document.createElement('canvas');
