@@ -28,9 +28,12 @@ and can be activated by touch, mouse or keyboard.
 Repeated Photoshop keys continue to cycle the existing keyboard families:
 `M` marquee, `L` lasso, `W` selection, `C` crop, `G` fill, `B` paint, `U`
 shapes, `I` measurement, `E` eraser, `O` tonal, `S` stamp, and `J` healing.
-The Selection flyout presents the implemented `Selection Brush` and `Magic
-Wand` names. It does not relabel Selection Brush as Quick Selection. `W`
-cycles the two selection tools, while `L` retains the legacy lasso family.
+The Selection category keeps `Selection Brush` as an independent slot and the
+Selection flyout presents the implemented `Quick Selection` and `Magic Wand`
+names. It does not relabel Selection Brush as Quick Selection. `W` cycles the
+three implemented selection tools, while `L` retains the legacy lasso family.
+Measurement tools remain independent slots so Eyedropper, Color Sampler, Ruler,
+Note and Count are visible without being incorrectly collapsed into one family.
 
 Coverage lives in `src/toolPalette.ts`, `tests/tool-palette.test.mjs`, and the
 desktop/mobile `tests/browser/toolbar-layout.spec.ts` acceptance tests. The

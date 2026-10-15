@@ -28,12 +28,14 @@ test('categories and families resolve stable labels for common Photoshop groups'
   assert.equal(familyForTool('magic-wand'), 'w');
   assert.equal(flyoutForTool('select'), 'marquee');
   assert.equal(flyoutForTool('lasso'), 'lasso');
-  assert.equal(flyoutForTool('selection-brush'), 'selection');
+  assert.equal(flyoutForTool('selection-brush'), undefined);
+  assert.equal(flyoutForTool('quick-selection'), 'selection');
   assert.deepEqual(familyTools('s'), ['clone', 'pattern-stamp']);
   assert.deepEqual(familyTools('clone'), ['clone', 'pattern-stamp']);
   assert.deepEqual(familyTools('move'), []);
-  assert.deepEqual(flyoutTools('selection'), ['selection-brush', 'quick-selection', 'magic-wand']);
-  assert.deepEqual(flyoutTools('magic-wand'), ['selection-brush', 'quick-selection', 'magic-wand']);
+  assert.deepEqual(flyoutTools('selection'), ['quick-selection', 'magic-wand']);
+  assert.deepEqual(flyoutTools('magic-wand'), ['quick-selection', 'magic-wand']);
+  assert.deepEqual(flyoutTools('eyedropper'), []);
 });
 
 test('family cycling wraps and supports reverse keyboard navigation', () => {
@@ -54,7 +56,7 @@ test('family definitions stay aligned with repeated-key groups', () => {
 test('selection flyouts preserve Photoshop M/L/W group membership', () => {
   assert.deepEqual(flyoutTools('marquee'), ['select', 'ellipse-select', 'row-select', 'column-select']);
   assert.deepEqual(flyoutTools('lasso'), ['lasso', 'polygonal-lasso', 'magnetic-lasso']);
-  assert.deepEqual(flyoutTools('selection'), ['selection-brush', 'quick-selection', 'magic-wand']);
+  assert.deepEqual(flyoutTools('selection'), ['quick-selection', 'magic-wand']);
 });
 
 test('compact category slots show one family representative and active variant', () => {
@@ -65,6 +67,10 @@ test('compact category slots show one family representative and active variant',
   assert.deepEqual(compactCategoryTools(lasso, 'lasso', { lasso: 'magnetic-lasso' }), ['lasso']);
   const retouch = TOOL_CATEGORIES.find((category) => category.id === 'retouch');
   assert.deepEqual(compactCategoryTools(retouch), ['clone', 'heal', 'smudge', 'dodge', 'history-brush']);
+  const measure = TOOL_CATEGORIES.find((category) => category.id === 'measure');
+  assert.deepEqual(compactCategoryTools(measure), ['eyedropper', 'color-sampler', 'ruler', 'note', 'count']);
+  const selection = TOOL_CATEGORIES.find((category) => category.id === 'selection');
+  assert.deepEqual(compactCategoryTools(selection), ['selection-brush', 'quick-selection']);
 });
 
 test('every active variant keeps one visible slot per family', () => {
