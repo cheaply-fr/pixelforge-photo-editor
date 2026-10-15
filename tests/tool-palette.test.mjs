@@ -28,6 +28,8 @@ test('categories and families resolve stable labels for common Photoshop groups'
   assert.equal(familyForTool('magic-wand'), 'w');
   assert.equal(flyoutForTool('select'), 'marquee');
   assert.equal(flyoutForTool('lasso'), 'lasso');
+  assert.equal(flyoutForTool('pen'), 'pen');
+  assert.deepEqual(flyoutTools('pen'), ['pen', 'freeform-pen', 'curvature-pen']);
   assert.equal(flyoutForTool('selection-brush'), undefined);
   assert.equal(flyoutForTool('quick-selection'), 'selection');
   assert.deepEqual(familyTools('s'), ['clone', 'pattern-stamp']);
@@ -71,6 +73,9 @@ test('compact category slots show one family representative and active variant',
   assert.deepEqual(compactCategoryTools(measure), ['eyedropper', 'color-sampler', 'ruler', 'note', 'count']);
   const selection = TOOL_CATEGORIES.find((category) => category.id === 'selection');
   assert.deepEqual(compactCategoryTools(selection), ['selection-brush', 'quick-selection']);
+  const draw = TOOL_CATEGORIES.find((category) => category.id === 'draw');
+  assert.deepEqual(compactCategoryTools(draw), ['pen', 'direct-select', 'text', 'rectangle']);
+  assert.deepEqual(compactCategoryTools(draw, 'curvature-pen'), ['curvature-pen', 'direct-select', 'text', 'rectangle']);
 });
 
 test('every active variant keeps one visible slot per family', () => {

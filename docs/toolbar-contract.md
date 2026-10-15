@@ -32,6 +32,9 @@ The Selection category keeps `Selection Brush` as an independent slot and the
 Selection flyout presents the implemented `Quick Selection` and `Magic Wand`
 names. It does not relabel Selection Brush as Quick Selection. `W` cycles the
 three implemented selection tools, while `L` retains the legacy lasso family.
+The Pen, Freeform Pen and Curvature Pen variants likewise occupy one `P`
+family slot with a visible arrow and icon-bearing flyout; the active variant
+replaces that representative slot and the remembered choice survives reload.
 Measurement tools remain independent slots so Eyedropper, Color Sampler, Ruler,
 Note and Count are visible without being incorrectly collapsed into one family.
 
