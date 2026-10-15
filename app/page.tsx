@@ -1073,7 +1073,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Auto Contrast', command: 'auto-contrast' },
     { label: 'Auto Color', command: 'auto-color' },
     { label: '', command: 'noop', separator: true },
-    { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
+    // Keep one canonical resize command in the Image menu. The dialog title
+    // remains "Image Size" for Photoshop vocabulary without duplicate entries.
     { label: 'Generative Upscale…', command: 'noop', disabled: true },
     { label: 'Canvas Size…', command: 'canvas-size' },
     { label: 'Resize image…', command: 'resize' },
