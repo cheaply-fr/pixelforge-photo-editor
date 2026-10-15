@@ -56,3 +56,13 @@ test('filter Action parameters retain effect-specific geometry', () => {
     tiltShift: { focusWidth: 0.4, feather: 0.3 },
   });
 });
+
+test('filter Action parameters retain Neural Filters controls without source data', () => {
+  const parameters = filterActionParameters({
+    type: 'neural-enhance', amount: 85, radius: 2,
+    neuralEnhance: { luminance: 52, color: 38, texture: 56 },
+  });
+  assert.deepEqual(JSON.parse(parameters.filterExtra), {
+    neuralEnhance: { luminance: 52, color: 38, texture: 56 },
+  });
+});

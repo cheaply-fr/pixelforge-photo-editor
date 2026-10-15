@@ -482,6 +482,7 @@ import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_FIBERS_SETTINGS,
   DEFAULT_MEZZOTINT_SETTINGS,
+  DEFAULT_NEURAL_ENHANCE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
@@ -798,6 +799,7 @@ type Command =
   | 'filter-despeckle'
   | 'filter-reduce-noise'
   | 'filter-add-noise'
+  | 'filter-neural-filters'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1228,7 +1230,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Last Filter', command: 'last-filter' },
     { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
-    { label: 'Neural Filters…', command: 'noop', disabled: true },
+    { label: 'Neural Filters…', command: 'filter-neural-filters' },
     { label: 'Filter Gallery…', command: 'filter-gallery' },
     { label: 'Camera Raw Filter…', command: 'camera-raw' },
     { label: 'AI Denoise…', command: 'noop', disabled: true },
@@ -5534,6 +5536,9 @@ export default function Home() {
                 ...(type === 'gradient-map' ? {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
+                ...(type === 'neural-enhance' ? {
+                  neuralEnhance: { ...DEFAULT_NEURAL_ENHANCE_SETTINGS },
+                } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
                 ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
                 amount:
@@ -5546,6 +5551,8 @@ export default function Home() {
                     ? 85
                   : type === 'lens-correction' || type === 'lens-flare'
                     ? 75
+                    : type === 'neural-enhance'
+                      ? 85
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
                       : 70,
@@ -5566,6 +5573,8 @@ export default function Home() {
                       ? 16
                     : type === 'gradient-map'
                     ? 1
+                    : type === 'neural-enhance'
+                    ? 2
                     : type === 'median'
                     ? 2
                     : type === 'dust-scratches'
@@ -12274,6 +12283,8 @@ export default function Home() {
     }
     else if (command === 'convert-smart-filters') return convertForSmartFilters();
     else if (command === 'clear-smart-filters') return clearSmartFilters();
+    else if (command === 'filter-neural-filters')
+      chooseFilterEffect('neural-enhance', 'Neural Filters (deterministic local approximation)');
     else if (command === 'filter-average')
       chooseFilterEffect('average-blur', 'Average Blur');
     else if (command === 'filter-blur')
@@ -12721,6 +12732,7 @@ export default function Home() {
       case 'filter-despeckle':
       case 'filter-reduce-noise':
       case 'filter-add-noise':
+      case 'filter-neural-filters':
       case 'filter-solarize':
       case 'filter-diffuse':
       case 'filter-wind':
@@ -15727,6 +15739,9 @@ export default function Home() {
             {filterEffects.type === 'smart-sharpen' && (
               <p>Smart Sharpen uses a bounded edge-preserving reference to limit gain on flat tonal surfaces while retaining local detail. Amount and radius stay editable; threshold, halo suppression and camera-aware controls remain planned.</p>
             )}
+            {filterEffects.type === 'neural-enhance' && (
+              <p>Neural Filters uses a deterministic local approximation: visible-neighbour luminance recovery, local colour-balance correction and bounded texture reconstruction. No model, upload or network call is used; semantic subject selection and Adobe model parity remain planned.</p>
+            )}
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
             )}
@@ -15977,6 +15992,13 @@ export default function Home() {
             {filterEffects.type === 'difference-clouds' && (
               <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
             )}
+                {filterEffects.type === 'neural-enhance' && (
+                  <>
+                    <Slider label="Luminance recovery" value={filterEffects.neuralEnhance?.luminance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS.luminance} min={0} max={100} set={(value) => setFilterEffects({ neuralEnhance: { ...(filterEffects.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS), luminance: value } })} />
+                    <Slider label="Color balance" value={filterEffects.neuralEnhance?.color ?? DEFAULT_NEURAL_ENHANCE_SETTINGS.color} min={0} max={100} set={(value) => setFilterEffects({ neuralEnhance: { ...(filterEffects.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS), color: value } })} />
+                    <Slider label="Texture detail" value={filterEffects.neuralEnhance?.texture ?? DEFAULT_NEURAL_ENHANCE_SETTINGS.texture} min={0} max={100} set={(value) => setFilterEffects({ neuralEnhance: { ...(filterEffects.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS), texture: value } })} />
+                  </>
+                )}
                 <Slider
                   label="Effect amount"
                   value={filterEffects.amount}
@@ -16057,6 +16079,8 @@ export default function Home() {
                           ? 'Flare size'
                       : filterEffects.type === 'emboss'
                           ? 'Emboss depth'
+                      : filterEffects.type === 'neural-enhance'
+                          ? 'Neighbourhood radius'
 
                       : 'Radius'
                   }

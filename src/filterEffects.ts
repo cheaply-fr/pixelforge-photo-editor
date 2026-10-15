@@ -71,6 +71,7 @@ export const FILTER_EFFECT_TYPES = [
   'despeckle',
   'reduce-noise',
   'add-noise',
+  'neural-enhance',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -150,6 +151,16 @@ export type GradientMapSettings = {
   blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
 };
 
+/** Bounded controls for the offline Neural Filters local approximation. */
+export type NeuralEnhanceSettings = {
+  /** Recover local luminance separation without clipping transparent padding. */
+  luminance: number;
+  /** Reduce local colour casts while retaining channel differences. */
+  color: number;
+  /** Reintroduce bounded high-frequency texture from visible neighbours. */
+  texture: number;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -178,6 +189,12 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
 export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
   shadow: '#000000',
   highlight: '#ffffff',
+};
+
+export const DEFAULT_NEURAL_ENHANCE_SETTINGS: NeuralEnhanceSettings = {
+  luminance: 52,
+  color: 38,
+  texture: 56,
 };
 
 export type FilterEffects = {
@@ -221,6 +238,8 @@ export type FilterEffects = {
   fibers?: FibersSettings;
   tree?: TreeSettings;
   gradientMap?: GradientMapSettings;
+  /** Editable controls for the deterministic local Neural Filters approximation. */
+  neuralEnhance?: NeuralEnhanceSettings;
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
   deinterlace?: DeinterlaceSettings;
@@ -371,6 +390,14 @@ export function effectiveFilterEffects(
         : 'normal',
     };
   }
+  if (type === 'neural-enhance') {
+    const settings = source.neuralEnhance;
+    normalized.neuralEnhance = {
+      luminance: finite(settings?.luminance) ? clamp(Math.round(settings.luminance), 0, 100) : DEFAULT_NEURAL_ENHANCE_SETTINGS.luminance,
+      color: finite(settings?.color) ? clamp(Math.round(settings.color), 0, 100) : DEFAULT_NEURAL_ENHANCE_SETTINGS.color,
+      texture: finite(settings?.texture) ? clamp(Math.round(settings.texture), 0, 100) : DEFAULT_NEURAL_ENHANCE_SETTINGS.texture,
+    };
+  }
   if (type === 'dust-scratches' || type === 'reduce-noise') {
     normalized.threshold = finite(source.threshold)
       ? clamp(Math.round(source.threshold), 0, 255)
@@ -443,6 +470,13 @@ function validGradientMapSettings(value: unknown): value is GradientMapSettings 
     (settings.stops === undefined || isGradientStops(settings.stops)) &&
     (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
 }
+function validNeuralEnhanceSettings(value: unknown): value is NeuralEnhanceSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<NeuralEnhanceSettings>;
+  return finite(settings.luminance) && Number.isInteger(settings.luminance) && settings.luminance >= 0 && settings.luminance <= 100 &&
+    finite(settings.color) && Number.isInteger(settings.color) && settings.color >= 0 && settings.color <= 100 &&
+    finite(settings.texture) && Number.isInteger(settings.texture) && settings.texture >= 0 && settings.texture <= 100;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -462,6 +496,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.neuralEnhance === undefined || validNeuralEnhanceSettings(effect.neuralEnhance)) &&
     (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
@@ -3208,6 +3243,81 @@ function applyReduceNoise(
   }
 }
 
+/**
+ * Apply the offline Neural Filters local approximation.
+ *
+ * This is deliberately a deterministic image-space pipeline rather than a
+ * model invocation: visible neighbours provide a local luminance reference,
+ * colour-cast correction recentres the local channels, and a bounded
+ * high-pass residual restores texture. Transparent pixels and their hidden
+ * RGB padding are copied byte-for-byte.
+ */
+function applyNeuralEnhance(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const settings = effect.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS;
+  const luminanceGain = settings.luminance / 100;
+  const colorBalance = settings.color / 100;
+  const textureGain = settings.texture / 100;
+  const radius = Math.max(1, Math.min(4, effect.radius || 2));
+  const sourceLuminance = (r: number, g: number, b: number) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (alpha === 0) continue;
+      let count = 0;
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let sumLuminance = 0;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        const sy = Math.max(0, Math.min(height - 1, y + dy));
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const sx = Math.max(0, Math.min(width - 1, x + dx));
+          const sample = (sy * width + sx) * 4;
+          if (source[sample + 3] === 0) continue;
+          const r = source[sample];
+          const g = source[sample + 1];
+          const b = source[sample + 2];
+          sumR += r;
+          sumG += g;
+          sumB += b;
+          sumLuminance += sourceLuminance(r, g, b);
+          count += 1;
+        }
+      }
+      if (!count) continue;
+      const meanR = sumR / count;
+      const meanG = sumG / count;
+      const meanB = sumB / count;
+      const meanLuminance = sumLuminance / count;
+      const currentR = source[offset];
+      const currentG = source[offset + 1];
+      const currentB = source[offset + 2];
+      const currentLuminance = sourceLuminance(currentR, currentG, currentB);
+      const recoveredLuminance = meanLuminance + (currentLuminance - meanLuminance) * (1 + luminanceGain * 0.8);
+      const detailLuminance = (currentLuminance - meanLuminance) * textureGain * 0.85;
+      const targetLuminance = clamp(recoveredLuminance + detailLuminance, 0, 255);
+      const correctedR = currentR + (meanLuminance - meanR) * colorBalance * 0.65;
+      const correctedG = currentG + (meanLuminance - meanG) * colorBalance * 0.65;
+      const correctedB = currentB + (meanLuminance - meanB) * colorBalance * 0.65;
+      const correctedLuminance = sourceLuminance(correctedR, correctedG, correctedB);
+      const scale = correctedLuminance > 0.001 ? targetLuminance / correctedLuminance : 1;
+      const mix = clamp(strength, 0, 1);
+      output[offset] = clampByte(currentR + (correctedR * scale - currentR) * mix);
+      output[offset + 1] = clampByte(currentG + (correctedG * scale - currentG) * mix);
+      output[offset + 2] = clampByte(currentB + (correctedB * scale - currentB) * mix);
+      output[offset + 3] = alpha;
+    }
+  }
+}
+
 /** Apply a seeded uniform Add Noise approximation without touching alpha. */
 function applyAddNoise(
   source: Uint8ClampedArray,
@@ -3359,6 +3469,8 @@ export function applyFilterEffectsPixels(
     applyReduceNoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'add-noise') {
     applyAddNoise(data, width, height, effect, output);
+  } else if (effect.type === 'neural-enhance') {
+    applyNeuralEnhance(data, width, height, effect, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {
