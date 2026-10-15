@@ -97,6 +97,7 @@ test('Pointillize records as a replayable local pixelate command', async () => {
 test('active noise and cleanup filters are replayable without aliases', async () => {
   const commands = [
     'filter-add-noise',
+    'filter-neural-filters',
     'filter-median',
     'filter-dust-scratches',
     'filter-despeckle',

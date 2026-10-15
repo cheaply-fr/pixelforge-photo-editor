@@ -39,6 +39,7 @@ export function filterActionParameters(
       ...(effect.tree ? { tree: effect.tree } : {}),
       ...(effect.adaptiveWideAngle ? { adaptiveWideAngle: effect.adaptiveWideAngle } : {}),
       ...(effect.deinterlace ? { deinterlace: effect.deinterlace } : {}),
+      ...(effect.neuralEnhance ? { neuralEnhance: effect.neuralEnhance } : {}),
     }),
   };
 }

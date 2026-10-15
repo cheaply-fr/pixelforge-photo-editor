@@ -2,7 +2,9 @@
 
 This matrix distills the two user-provided toolbar references into an implementation and test plan for Pixel. The references are visual inspiration and capability requirements; Pixel uses its own interaction design, names and icons where that improves browser accessibility.
 
-The menu references and their complete categorized inventory are maintained in [`docs/menu-roadmap.md`](./menu-roadmap.md). The evidence-based high-use workflow ranking and applied-status audit are maintained in [`top-ten-tools-roadmap.md`](./top-ten-tools-roadmap.md). That document records Edit, Image, Layer, Type, Select, Filter, View and Plugins workflows, including the Image Size dialog and the Filter submenu families.
+The menu references and their complete categorized inventory are maintained in [`docs/menu-roadmap.md`](./menu-roadmap.md).
+
+**Neural Filters increment:** Filter → Neural Filters… is an enabled deterministic offline local approximation with editable luminance recovery, colour balance, texture detail and neighbourhood radius. It uses no model, upload or network call; semantic, portrait and generative model parity remains staged. See [`neural-filters-effect-contract.md`](./neural-filters-effect-contract.md). The evidence-based high-use workflow ranking and applied-status audit are maintained in [`top-ten-tools-roadmap.md`](./top-ten-tools-roadmap.md). That document records Edit, Image, Layer, Type, Select, Filter, View and Plugins workflows, including the Image Size dialog and the Filter submenu families.
 
 ## Capability families
 
