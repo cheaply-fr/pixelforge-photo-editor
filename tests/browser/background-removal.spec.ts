@@ -5,7 +5,7 @@ type Asset = { url: string; w: number; h: number };
 type Project = {
   settings: Record<string, unknown>;
   history: Array<{
-    layers: Array<{ kind: string; asset?: string; mask?: string }>;
+    layers: Array<{ id?: string; kind: string; asset?: string; mask?: string }>;
   }>;
   index: number;
   assets: Record<string, Asset>;
@@ -53,6 +53,7 @@ const importFixture = async (page: Page) => {
     buffer: Buffer.from(encoded, 'base64'),
   });
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  return encoded;
 };
 
 const sampleAsset = async (page: Page, asset: Asset, points: Array<[number, number]>) =>
@@ -125,10 +126,17 @@ test('Remove Background is disabled for locked layers and remains local', async 
 });
 
 test('Mask All Objects creates source-safe masks for every visible raster layer', async ({ page }) => {
-  await importFixture(page);
+  const encoded = await importFixture(page);
+  await page.getByTestId('layer-input').setInputFiles({
+    name: 'second-background-removal-fixture.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(encoded, 'base64'),
+  });
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   const before = await project(page);
-  const beforeLayer = before.history[before.index].layers.at(-1)!;
-  expect(beforeLayer.mask).toBeUndefined();
+  const beforeRasterLayers = before.history[before.index].layers.filter((layer) => layer.kind === 'raster');
+  expect(beforeRasterLayers.length).toBe(2);
+  expect(beforeRasterLayers.every((layer) => !layer.mask)).toBe(true);
 
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   const command = page.getByRole('menuitem', { name: 'Mask All Objects', exact: true });
@@ -137,17 +145,21 @@ test('Mask All Objects creates source-safe masks for every visible raster layer'
   await expect(page.locator('footer')).toContainText('object mask', { timeout: 10000 });
 
   const after = await project(page);
-  const afterLayer = after.history[after.index].layers.at(-1)!;
-  expect(afterLayer.asset).toBe(beforeLayer.asset);
-  expect(afterLayer.mask).toBeTruthy();
-  expect(after.assets[afterLayer.asset!]).toEqual(before.assets[beforeLayer.asset!]);
-  expect(after.assets[afterLayer.mask!]).toMatchObject({
-    w: before.assets[beforeLayer.asset!].w,
-    h: before.assets[beforeLayer.asset!].h,
-  });
-  const [edge, subject] = await sampleAsset(page, after.assets[afterLayer.mask!], [[0, 0], [2, 2]]);
-  expect(edge[3]).toBe(0);
-  expect(subject[3]).toBe(255);
+  const afterRasterLayers = after.history[after.index].layers.filter((layer) => layer.kind === 'raster');
+  expect(afterRasterLayers.length).toBe(2);
+  for (const beforeLayer of beforeRasterLayers) {
+    const afterLayer = afterRasterLayers.find((layer) => layer.id === beforeLayer.id)!;
+    expect(afterLayer.asset).toBe(beforeLayer.asset);
+    expect(afterLayer.mask).toBeTruthy();
+    expect(after.assets[afterLayer.asset!]).toEqual(before.assets[beforeLayer.asset!]);
+    expect(after.assets[afterLayer.mask!]).toMatchObject({
+      w: before.assets[beforeLayer.asset!].w,
+      h: before.assets[beforeLayer.asset!].h,
+    });
+    const [edge, subject] = await sampleAsset(page, after.assets[afterLayer.mask!], [[0, 0], [2, 2]]);
+    expect(edge[3]).toBe(0);
+    expect(subject[3]).toBe(255);
+  }
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
