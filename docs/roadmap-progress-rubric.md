@@ -392,3 +392,16 @@ acceptance is 4/4 in the local candidate. Protected CI, merge, deployment and
 independent live verification are still pending for the candidate SHA. Full
 operating-system rich clipboard interchange and vector/text clipboard formats
 remain staged. See [`paste-special-contract.md`](paste-special-contract.md).
+
+## Adaptive Wide Angle increment (unreleased)
+
+**Filter → Adaptive Wide Angle…** now applies a deterministic, bounded
+line-oriented inverse warp with editable guide angle, optical centre, amount
+and correction radius. The effect is nondestructive, keeps the source asset
+identity, preserves alpha and transparent RGB padding, and round-trips through
+local drafts and project files. Pure coverage is 5/5 and desktop/mobile browser
+acceptance is 2/2 in the local candidate; lint, typecheck and production build
+also pass. Camera profiles, line solving, chromatic aberration correction and
+geometric canvas expansion remain staged. Protected CI, merge, deployment and
+independent live verification are still pending for this candidate SHA. See
+[`adaptive-wide-angle-contract.md`](adaptive-wide-angle-contract.md).

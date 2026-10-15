@@ -45,6 +45,7 @@ export const FILTER_EFFECT_TYPES = [
   'clouds',
   'fibers',
   'difference-clouds',
+  'adaptive-wide-angle',
   'lens-correction',
   'displace',
   'pinch',
@@ -73,6 +74,63 @@ export const FILTER_EFFECT_TYPES = [
   'add-noise',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
+
+/**
+ * A bounded, layer-local Adaptive Wide Angle approximation.  Photoshop's
+ * camera profile and line solver are outside the browser-only renderer, so
+ * this effect stores the editable guide angle, optical centre and correction
+ * strength in the ordinary filter controls instead of pretending to infer a
+ * camera model.
+ */
+export function applyAdaptiveWideAnglePixels(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  value: Partial<FilterEffects> | undefined,
+): Uint8ClampedArray {
+  validateDimensions(data, width, height);
+  const effect = effectiveFilterEffects({ ...value, type: 'adaptive-wide-angle' });
+  const output = new Uint8ClampedArray(data);
+  if (effect.amount === 0 || width < 2 || height < 2) return output;
+  const cx = effect.centerX * (width - 1);
+  const cy = effect.centerY * (height - 1);
+  const angle = (effect.angle * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  // Radius limits how far the authored correction reaches; amount remains the
+  // user-facing strength.  Keep the warp below one half of the image extent.
+  const reach = Math.max(1, Math.min(width, height) * (0.2 + 0.8 * (effect.radius / 64)));
+  const strength = (effect.amount / 100) * 0.58;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!data[destination + 3]) continue;
+      const dx = x - cx;
+      const dy = y - cy;
+      const ux = dx / reach;
+      const uy = dy / reach;
+      const rx = ux * cos + uy * sin;
+      const ry = -ux * sin + uy * cos;
+      const distance = Math.min(1, Math.hypot(rx, ry));
+      const falloff = distance * distance;
+      // A line-oriented inverse warp: the farther a point is from the guide
+      // centre, the more its cross-axis component is corrected.  Rotation by
+      // `angle` makes the same controls useful for vertical and diagonal lines.
+      const warp = strength * falloff;
+      const correctedX = rx * (1 - warp * (0.52 + Math.min(1, Math.abs(ry)) * 0.38));
+      const correctedY = ry * (1 - warp * 0.18);
+      const sampleX = cx + (correctedX * cos - correctedY * sin) * reach;
+      const sampleY = cy + (correctedX * sin + correctedY * cos) * reach;
+      const sample = sourcePixelBilinear(data, width, height, sampleX, sampleY);
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = data[destination + 3];
+    }
+  }
+  return output;
+}
 
 /** One layer-local point in a persisted, bounded motion-blur path. */
 export type BlurPathPoint = {
@@ -3397,6 +3455,8 @@ export function applyFilterEffectsPixels(
     applyDiffuse(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'wind') {
     applyWind(data, width, height, effect, output, strength);
+  } else if (effect.type === 'adaptive-wide-angle') {
+    output.set(applyAdaptiveWideAnglePixels(data, width, height, effect));
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
