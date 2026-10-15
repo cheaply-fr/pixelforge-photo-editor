@@ -55,6 +55,15 @@ undo, reload, project round-trip and guard coverage is in
 `tests/browser/type-style-presets.spec.ts`. Provider fonts and full OpenType
 style libraries remain staged.
 
+The current OpenType increment adds `Type → OpenType` and selected text-layer
+controls for standard/discretionary ligatures, contextual alternates, kerning
+and small caps. Settings are versioned layer metadata, browser Canvas 2D
+typography requests, and source-safe desktop/mobile project round trips. Pure
+coverage is in `tests/open-type.test.mjs`; browser coverage is in
+`tests/browser/open-type.spec.ts`. Variable-font axes, language-specific and
+vertical shaping, type-on-path alternates, font embedding and provider-backed
+style libraries remain staged; see [`open-type-contract.md`](./open-type-contract.md).
+
 The current Camera Raw increment adds `Filter → Camera Raw Filter…` as a
 distinct bounded local correction. Highlights, Shadows, Temperature, Tint and
 Clarity remain editable metadata and compose with existing exposure/vibrance

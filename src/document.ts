@@ -46,6 +46,7 @@ import { validColorProfile, type ColorProfile } from './colorProfile.ts';
 import { applyColorModePixels, normalizeColorMode, type ColorMode } from './colorMode.ts';
 import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { normalizeTextPathBinding, layoutTextOnPath, mapTextPathPoints, flattenTextPath, type TextPathBinding } from './textOnPath.ts';
+import { normalizeOpenType, validOpenType, type OpenTypeSettings } from './openType.ts';
 import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
@@ -289,6 +290,8 @@ export type Layer = Common &
         warp?: TextWarp;
         /** Optional editable attachment to a vector path layer. */
         textPath?: TextPathBinding;
+        /** Optional portable OpenType presentation flags. */
+        openType?: OpenTypeSettings;
       }
     | {
         kind: 'rectangle';
@@ -1252,6 +1255,7 @@ export function effectiveTextLayer<T extends Layer>(
     letterSpacing: value.letterSpacing ?? 0,
     orientation: value.orientation ?? 'horizontal',
     warp: normalizeTextWarp(value.warp),
+    openType: normalizeOpenType(value.openType),
     ...(normalizeTextPathBinding(value.textPath)
       ? { textPath: normalizeTextPathBinding(value.textPath) }
       : {}),
@@ -1512,7 +1516,8 @@ export function validateFrame(
           (layer.orientation ?? 'horizontal') as TextOrientation,
         ) ||
         (layer.warp !== undefined && !isTextWarp(layer.warp)) ||
-        (layer.textPath !== undefined && !normalizeTextPathBinding(layer.textPath))
+        (layer.textPath !== undefined && !normalizeTextPathBinding(layer.textPath)) ||
+        (layer.openType !== undefined && !validOpenType(layer.openType))
       )
         return fail();
     } else if (
@@ -2698,6 +2703,21 @@ export async function renderFrame(
     if (layer.kind === 'text') {
       context.fillStyle = layer.color;
       context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
+      const openType = normalizeOpenType(layer.openType),
+        typography = context as CanvasRenderingContext2D & {
+          fontKerning?: string;
+          fontVariantLigatures?: string;
+          fontFeatureSettings?: string;
+          fontVariantCaps?: string;
+        };
+      typography.fontKerning = openType.kerning;
+      typography.fontVariantLigatures = openType.ligatures
+        ? openType.discretionaryLigatures
+          ? 'common-ligatures discretionary-ligatures'
+          : 'common-ligatures'
+        : 'none';
+      typography.fontFeatureSettings = `${openType.contextualAlternates ? '"calt"' : '"calt" 0'}, ${openType.discretionaryLigatures ? '"dlig"' : '"dlig" 0'}`;
+      typography.fontVariantCaps = openType.smallCaps ? 'small-caps' : 'normal';
       context.textBaseline = 'top';
       const binding = normalizeTextPathBinding(layer.textPath),
         pathLayer = binding
