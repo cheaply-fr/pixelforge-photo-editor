@@ -819,6 +819,7 @@ type Command =
   | 'filter-ai-sharpen'
   | 'filter-add-noise'
   | 'filter-neural-filters'
+  | 'filter-reflection-removal'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -1050,7 +1051,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
     { label: 'Generative Fill…', command: 'noop', disabled: true },
     { label: 'Generate Image…', command: 'noop', disabled: true },
-    { label: 'Reflection Removal…', command: 'noop', disabled: true },
+    { label: 'Reflection Removal…', command: 'filter-reflection-removal' },
     { label: 'Remove Background…', command: 'remove-background' },
     { label: 'Cookie Cutter Mask…', command: 'cookie-cutter' },
     { label: '', command: 'noop', separator: true },
@@ -5627,6 +5628,7 @@ export default function Home() {
                 } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
                 ...(type === 'reduce-noise' ? { threshold: 25 } : type === 'ai-denoise' ? { threshold: 18 } : type === 'ai-sharpen' ? { threshold: 22 } : {}),
+                ...(type === 'reflection-removal' ? { threshold: 28 } : {}),
                 amount:
                   type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise' || type === 'ai-denoise' || type === 'ai-sharpen'
                     ? 100
@@ -5653,6 +5655,8 @@ export default function Home() {
                     ? 18
                     : type === 'flame'
                       ? 16
+                    : type === 'reflection-removal'
+                      ? 4
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize' || type === 'fibers'
                     ? 10
                     : type === 'clouds'
@@ -12576,6 +12580,8 @@ export default function Home() {
       chooseFilterEffect('ai-sharpen', 'AI Sharpen (private local approximation)');
     else if (command === 'filter-add-noise')
       chooseFilterEffect('add-noise', 'Add Noise (seeded local approximation)');
+    else if (command === 'filter-reflection-removal')
+      chooseFilterEffect('reflection-removal', 'Reflection Removal (local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
@@ -16239,6 +16245,9 @@ export default function Home() {
             {filterEffects.type === 'find-edges' && (
               <p>Deterministic Sobel luminance edges blended nondestructively with the source. Alpha and transparent padding remain unchanged; semantic edge tracing and vector extraction remain separate roadmap work.</p>
             )}
+            {filterEffects.type === 'reflection-removal' && (
+              <p>Local de-glare approximation: bright, low-saturation luminance outliers blend toward a visible-neighbour median. It does not infer reflections, materials or scene semantics; source pixels remain editable.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
@@ -16264,10 +16273,10 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise' || filterEffects.type === 'ai-denoise' || filterEffects.type === 'ai-sharpen') && (
+                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise' || filterEffects.type === 'ai-denoise' || filterEffects.type === 'ai-sharpen' || filterEffects.type === 'reflection-removal') && (
                   <Slider
-                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : filterEffects.type === 'ai-denoise' ? 'Edge protection' : filterEffects.type === 'ai-sharpen' ? 'Edge threshold' : 'Outlier threshold'}
-                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : filterEffects.type === 'ai-denoise' ? 18 : filterEffects.type === 'ai-sharpen' ? 22 : 12)}
+                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : filterEffects.type === 'ai-denoise' ? 'Edge protection' : filterEffects.type === 'ai-sharpen' ? 'Edge threshold' : filterEffects.type === 'reflection-removal' ? 'Reflection threshold' : 'Outlier threshold'}
+                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : filterEffects.type === 'ai-denoise' ? 18 : filterEffects.type === 'ai-sharpen' ? 22 : filterEffects.type === 'reflection-removal' ? 28 : 12)}
                     min={0}
                     max={255}
                     set={(value) => setFilterEffects({ threshold: value })}
@@ -16337,6 +16346,8 @@ export default function Home() {
                           ? 'Correction radius'
                       : filterEffects.type === 'lens-flare'
                           ? 'Flare size'
+                      : filterEffects.type === 'reflection-removal'
+                          ? 'Cleanup radius'
                       : filterEffects.type === 'emboss'
                           ? 'Emboss depth'
                       : filterEffects.type === 'neural-enhance'

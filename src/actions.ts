@@ -168,6 +168,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-ai-sharpen',
   'filter-add-noise',
   'filter-neural-filters',
+  'filter-reflection-removal',
   'filter-color-halftone',
   'filter-mezzotint',
   'filter-pointillize',
