@@ -663,6 +663,7 @@ type Command =
   | 'combine-shapes-exclude'
   | 'flatten'
   | 'text-tool'
+  | 'open-type'
   | 'text-align-left'
   | 'text-align-center'
   | 'text-align-right'
@@ -1175,7 +1176,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Vertical Type', command: 'text-orientation-vertical' },
     { label: 'Horizontal Type Mask', command: 'text-mask-horizontal' },
     { label: 'Vertical Type Mask', command: 'text-mask-vertical' },
-    { label: 'OpenType', command: 'noop', disabled: true },
+    { label: 'OpenType', command: 'open-type' },
     { label: 'Create Work Path', command: 'create-work-path' },
     { label: 'Convert to Shape', command: 'convert-to-shape' },
     { label: 'Rasterize Type Layer', command: 'rasterize-type' },
@@ -12121,6 +12122,9 @@ export default function Home() {
       await applyContentAwareMove();
     } else if (command === 'content-aware-scale') {
       await applyContentAwareScale();
+    } else if (command === 'open-type') {
+      setTool('text');
+      setNotice('OpenType controls are available in the selected text layer inspector');
     } else if (command === 'text-tool') {
       setTool('text');
       setNotice('Text tool selected');
@@ -12842,6 +12846,7 @@ export default function Home() {
       case 'text-orientation-horizontal':
       case 'text-orientation-vertical':
       case 'text-warp':
+      case 'open-type':
         return !layer || layer.kind !== 'text' || locked;
       case 'save-default-type-styles':
         return !layer || layer.kind !== 'text' || locked;

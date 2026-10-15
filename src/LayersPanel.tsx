@@ -18,6 +18,7 @@ import {
   type LayerArrangeMode,
 } from './layerArrange';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
+import { normalizeOpenType } from './openType';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 import {
   clippingCandidateBase,
@@ -841,6 +842,70 @@ export default function LayersPanel({
             />
             Bold
           </label>
+          <fieldset className="layer-fieldset">
+            <legend>OpenType</legend>
+            {(() => {
+              const openType = normalizeOpenType(layer.openType);
+              return (
+                <>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="OpenType ligatures"
+                      checked={openType.ligatures}
+                      disabled={layerLocked}
+                      onChange={(e) => edit({ openType: { ...openType, ligatures: e.target.checked } })}
+                    />
+                    Standard ligatures
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="OpenType discretionary ligatures"
+                      checked={openType.discretionaryLigatures}
+                      disabled={layerLocked}
+                      onChange={(e) => edit({ openType: { ...openType, discretionaryLigatures: e.target.checked } })}
+                    />
+                    Discretionary ligatures
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="OpenType contextual alternates"
+                      checked={openType.contextualAlternates}
+                      disabled={layerLocked}
+                      onChange={(e) => edit({ openType: { ...openType, contextualAlternates: e.target.checked } })}
+                    />
+                    Contextual alternates
+                  </label>
+                  <label className="layer-field">
+                    Kerning
+                    <select
+                      aria-label="OpenType kerning"
+                      value={openType.kerning}
+                      disabled={layerLocked}
+                      onChange={(e) => edit({ openType: { ...openType, kerning: e.target.value as 'auto' | 'normal' | 'none' } })}
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="normal">Normal</option>
+                      <option value="none">None</option>
+                    </select>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="OpenType small caps"
+                      checked={openType.smallCaps}
+                      disabled={layerLocked}
+                      onChange={(e) => edit({ openType: { ...openType, smallCaps: e.target.checked } })}
+                    />
+                    Small caps
+                  </label>
+                </>
+              );
+            })()}
+            <p className="adjust-note">Browser font shaping applies these portable flags when supported; no font files leave the device.</p>
+          </fieldset>
           <label className="layer-field">
             Text color
             <input
