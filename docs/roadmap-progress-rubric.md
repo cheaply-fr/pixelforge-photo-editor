@@ -368,3 +368,14 @@ document pixels and project files remain unchanged; malformed preferences fail
 closed to the default capability-map view. Pure coverage is 832/832 and the
 desktop/mobile acceptance is 2/2; lint, typecheck and production build pass
 locally. See [`menu-preferences-contract.md`](menu-preferences-contract.md).
+
+## Mask All Objects increment
+
+**Layer → Mask All Objects** now applies the bounded offline edge-connected
+background proxy to every visible unlocked raster layer in one undoable commit.
+It stores canvas-sized nondestructive masks, keeps source assets and alpha
+unchanged, and disables itself when all raster layers are hidden or locked.
+Semantic object/subject detection and provider-backed segmentation remain
+staged. The focused browser coverage checks representative mask pixels, source
+asset identity, undo, lock gating and both desktop/mobile projects. See
+[`mask-all-objects-contract.md`](mask-all-objects-contract.md).

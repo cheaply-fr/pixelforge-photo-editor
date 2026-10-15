@@ -693,6 +693,7 @@ type Command =
   | 'object-selection'
   | 'select-and-mask'
   | 'mask-selection'
+  | 'mask-all-objects'
   | 'remove-background'
   | 'cookie-cutter'
   | 'invert-layer-mask'
@@ -1106,6 +1107,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
     { label: 'Layer Mask', command: 'mask-selection' },
+    { label: 'Mask All Objects', command: 'mask-all-objects' },
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
     { label: 'Disable Layer Mask', command: 'toggle-layer-mask' },
     { label: 'Remove Layer Mask', command: 'remove-layer-mask' },
@@ -5012,6 +5014,57 @@ export default function Home() {
           ? error.message
           : 'Background removal could not be applied',
       );
+    }
+  };
+  const maskAllObjects = async () => {
+    const f = current();
+    const tolerance = colorTolerance;
+    const targets = f.layers.filter(
+      (layer): layer is Extract<Layer, { kind: 'raster' }> =>
+        layer.kind === 'raster' && layer.visible && !layerIsLocked(f, layer),
+    );
+    if (!targets.length) {
+      setNotice('Show and unlock at least one raster layer before masking objects');
+      return;
+    }
+    try {
+      const masks = new Map<string, HTMLCanvasElement>();
+      for (const layer of targets) {
+        const image = await decodeAsset(assets.current[layer.asset]);
+        const source = surface(image.naturalWidth, image.naturalHeight);
+        const context = source.getContext('2d');
+        if (!context) throw new Error('Object mask canvas is unavailable');
+        context.drawImage(image, 0, 0);
+        const result = createBackgroundMask(source, tolerance);
+        const maskCanvas = surface(f.w, f.h);
+        const maskContext = maskCanvas.getContext('2d');
+        if (!maskContext) throw new Error('Object mask output is unavailable');
+        maskContext.imageSmoothingEnabled = false;
+        maskContext.save();
+        maskContext.setTransform(...layer.matrix);
+        maskContext.drawImage(result.canvas, 0, 0);
+        maskContext.restore();
+        masks.set(layer.id, maskCanvas);
+      }
+      if (current() !== f) {
+        setNotice('The document changed while object masks were calculated');
+        return;
+      }
+      const maskAssets = new Map<string, string>();
+      for (const [layerId, canvas] of masks)
+        maskAssets.set(layerId, addAsset(assets.current, canvas));
+      const layers = f.layers.map((layer) => {
+        const mask = maskAssets.get(layer.id);
+        return mask
+          ? { ...layer, mask, maskEnabled: true, maskInverted: false }
+          : layer;
+      });
+      if (commit({ ...f, layers }))
+        setNotice(
+          `${targets.length} object mask${targets.length === 1 ? '' : 's'} created locally (edge-connected proxy)`,
+        );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Object masks could not be applied');
     }
   };
   const applyContentAwareFill = async () => {
@@ -12114,6 +12167,7 @@ export default function Home() {
       else setNotice('Create a selection before opening Select and Mask');
     }
     else if (command === 'mask-selection') return createMaskFromSelection();
+    else if (command === 'mask-all-objects') return maskAllObjects();
     else if (command === 'remove-background') return removeBackground();
     else if (command === 'cookie-cutter') return createCookieCutterMask();
     else if (command === 'free-transform') beginLayerTransform();
@@ -12490,6 +12544,10 @@ export default function Home() {
         );
       case 'mask-selection':
         return !layer || layer.kind !== 'raster' || locked || !frame.selection;
+      case 'mask-all-objects':
+        return !frame.layers.some((candidate) =>
+          candidate.kind === 'raster' && candidate.visible && !layerIsLocked(frame, candidate),
+        );
       case 'remove-background':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'cookie-cutter':

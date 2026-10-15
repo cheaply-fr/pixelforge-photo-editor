@@ -124,6 +124,44 @@ test('Remove Background is disabled for locked layers and remains local', async 
   await expect(page.getByRole('menuitem', { name: 'Remove Background…', exact: true })).toBeDisabled();
 });
 
+test('Mask All Objects creates source-safe masks for every visible raster layer', async ({ page }) => {
+  await importFixture(page);
+  const before = await project(page);
+  const beforeLayer = before.history[before.index].layers.at(-1)!;
+  expect(beforeLayer.mask).toBeUndefined();
+
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Mask All Objects', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.locator('footer')).toContainText('object mask', { timeout: 10000 });
+
+  const after = await project(page);
+  const afterLayer = after.history[after.index].layers.at(-1)!;
+  expect(afterLayer.asset).toBe(beforeLayer.asset);
+  expect(afterLayer.mask).toBeTruthy();
+  expect(after.assets[afterLayer.asset!]).toEqual(before.assets[beforeLayer.asset!]);
+  expect(after.assets[afterLayer.mask!]).toMatchObject({
+    w: before.assets[beforeLayer.asset!].w,
+    h: before.assets[beforeLayer.asset!].h,
+  });
+  const [edge, subject] = await sampleAsset(page, after.assets[afterLayer.mask!], [[0, 0], [2, 2]]);
+  expect(edge[3]).toBe(0);
+  expect(subject[3]).toBe(255);
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const undone = await project(page);
+  expect(undone.history[undone.index].layers.at(-1)?.mask).toBeUndefined();
+});
+
+test('Mask All Objects is disabled when every raster layer is locked', async ({ page }) => {
+  await importFixture(page);
+  await page.getByLabel('Lock layer', { exact: true }).check();
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Mask All Objects', exact: true })).toBeDisabled();
+});
+
 test('Remove Background segments native raster bounds before mapping a translated layer mask', async ({ page }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
