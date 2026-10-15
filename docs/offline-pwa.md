@@ -2,7 +2,7 @@
 
 PixelForge now ships an installable progressive web app shell. The manifest is
 served from `/manifest.webmanifest` and uses the PixelForge mark at 192 and 512
-pixels. Production builds register `/sw.js` after the first page load; local
+pixels. Production builds register `/sw.js` as soon as the shell renders; local
 development does not register the worker, so Vite hot reload remains isolated
 from the production cache.
 

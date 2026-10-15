@@ -176,6 +176,7 @@ import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
+import PasteSpecialDialog from '../src/PasteSpecialDialog';
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -357,6 +358,10 @@ import {
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
+import {
+  pastePlacementMatrix,
+  type PasteSpecialMode,
+} from '../src/pasteSpecial';
 import {
   normalizeToolShortcutPreferences,
   toolShortcutMatches,
@@ -617,6 +622,7 @@ type Command =
   | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
+  | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
   | 'stroke-selection'
@@ -774,6 +780,7 @@ type Command =
   | 'filter-clouds'
   | 'filter-fibers'
   | 'filter-difference-clouds'
+  | 'filter-adaptive-wide-angle'
   | 'filter-lens-correction'
   | 'filter-lens-flare'
   | 'filter-displace'
@@ -1009,6 +1016,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Paste Special…', command: 'paste-special' },
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
@@ -1233,6 +1241,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Camera Raw Filter…', command: 'camera-raw' },
     { label: 'AI Denoise…', command: 'noop', disabled: true },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
+    { label: 'Adaptive Wide Angle…', command: 'filter-adaptive-wide-angle' },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
     { label: 'Liquify…', command: 'filter-liquify' },
     { label: 'Vanishing Point…', command: 'noop', disabled: true },
@@ -2202,6 +2211,7 @@ export default function Home() {
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [batchActionId, setBatchActionId] = useState<string>(),
     [fileInfoOpen, setFileInfoOpen] = useState(false),
+    [pasteSpecialOpen, setPasteSpecialOpen] = useState(false),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -5546,6 +5556,8 @@ export default function Home() {
                     ? 85
                   : type === 'lens-correction' || type === 'lens-flare'
                     ? 75
+                  : type === 'adaptive-wide-angle'
+                    ? 72
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
                       : 70,
@@ -5576,6 +5588,8 @@ export default function Home() {
                     ? 2
                     : type === 'lens-correction'
                       ? 64
+                    : type === 'adaptive-wide-angle'
+                      ? 48
                     : type === 'lens-flare'
                       ? 36
                     : type === 'pinch' || type === 'liquify'
@@ -7053,10 +7067,11 @@ export default function Home() {
     clipboardLayer.current = null;
     setHasClipboard(false);
   };
-  const pasteLayer = () => {
+  const pasteLayerSpecial = async (mode: PasteSpecialMode = 'in-place') => {
     const copied = clipboardLayer.current;
     if (!copied) {
       setNotice('Copy a layer before pasting');
+      setPasteSpecialOpen(false);
       return;
     }
     const f = current();
@@ -7067,6 +7082,37 @@ export default function Home() {
     ) {
       clearClipboard();
       setNotice('The copied layer is no longer available in this document');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    if (mode === 'into-selection' && !f.selection) {
+      setNotice('Create a selection before pasting into it');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    if (mode === 'into-selection' && !isMaskableLayer(copied)) {
+      setNotice('Paste into Selection requires an image or smart-object layer');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    let matrix = copied.matrix;
+    let mask: string | undefined;
+    try {
+      matrix = pastePlacementMatrix(
+        copied.matrix,
+        layerLocalBounds(copied, assets.current),
+        { width: f.w, height: f.h },
+        mode,
+      );
+      if (mode === 'into-selection' && f.selection) {
+        mask = addAsset(
+          assets.current,
+          await renderSelection(f.selection, f.w, f.h, assets.current),
+        );
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Paste placement failed');
+      setPasteSpecialOpen(false);
       return;
     }
     const copiedGroup = copied.groupId
@@ -7077,13 +7123,24 @@ export default function Home() {
       id: crypto.randomUUID(),
       name: `${copied.name} copy`.slice(0, 160),
       locked: false,
+      matrix,
+      ...(mask ? { mask, maskEnabled: true, maskInverted: false } : {}),
       ...(copiedGroup && !copiedGroup.locked
         ? { groupId: copiedGroup.id }
         : { groupId: undefined }),
     } as Layer;
-    addLayer(pasted);
-    setNotice('Layer pasted');
+    if (addLayer(pasted)) {
+      setPasteSpecialOpen(false);
+      setNotice(
+        mode === 'center'
+          ? 'Layer pasted at canvas centre'
+          : mode === 'into-selection'
+            ? 'Layer pasted into the selection with a nondestructive mask'
+            : 'Layer pasted in place',
+      );
+    }
   };
+  const pasteLayer = () => void pasteLayerSpecial('in-place');
   const cutLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -12054,6 +12111,7 @@ export default function Home() {
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'stroke-selection') return strokeSelection();
@@ -12370,6 +12428,8 @@ export default function Home() {
       chooseFilterEffect('ntsc-colors', 'NTSC Colors');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
+    else if (command === 'filter-adaptive-wide-angle')
+      chooseFilterEffect('adaptive-wide-angle', 'Adaptive Wide Angle (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
     else if (command === 'filter-displace')
@@ -12550,6 +12610,8 @@ export default function Home() {
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
         return !hasClipboard || frame.layers.length >= 32;
+      case 'paste-special':
+        return !hasClipboard || frame.layers.length >= 32;
       case 'new-layer':
         return frame.layers.length >= 32;
       case 'clear-layer':
@@ -12728,6 +12790,7 @@ export default function Home() {
       case 'filter-find-edges':
       case 'filter-emboss':
       case 'filter-lens-correction':
+      case 'filter-adaptive-wide-angle':
       case 'filter-displace':
       case 'filter-ripple':
       case 'filter-pinch':
@@ -13143,6 +13206,13 @@ export default function Home() {
           initialColor={color}
           close={() => setFillLayerDialog(false)}
           apply={addSolidFillLayer}
+        />
+      )}
+      {pasteSpecialOpen && (
+        <PasteSpecialDialog
+          hasSelection={Boolean(frame?.selection)}
+          close={() => setPasteSpecialOpen(false)}
+          apply={(mode) => void pasteLayerSpecial(mode)}
         />
       )}
       {focusAreaValue && (
@@ -15778,6 +15848,9 @@ export default function Home() {
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
+            {filterEffects.type === 'adaptive-wide-angle' && (
+              <p>Bounded line-oriented wide-angle correction with editable guide angle and optical centre. Camera profiles, line solving and chromatic aberration correction remain planned.</p>
+            )}
             {filterEffects.type === 'lens-flare' && (
               <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
             )}
@@ -16051,7 +16124,7 @@ export default function Home() {
                           ? 'Displace wavelength'
                       : filterEffects.type === 'field-blur'
                           ? 'Fallback blur radius'
-                      : filterEffects.type === 'lens-correction'
+                      : filterEffects.type === 'lens-correction' || filterEffects.type === 'adaptive-wide-angle'
                           ? 'Correction radius'
                       : filterEffects.type === 'lens-flare'
                           ? 'Flare size'
@@ -16080,9 +16153,9 @@ export default function Home() {
                     suffix="°"
                   />
                 )}
-                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss' || filterEffects.type === 'wind') && (
+                {(filterEffects.type === 'wave' || filterEffects.type === 'shear' || filterEffects.type === 'displace' || filterEffects.type === 'path-blur' || filterEffects.type === 'emboss' || filterEffects.type === 'wind' || filterEffects.type === 'adaptive-wide-angle') && (
                   <Slider
-                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : filterEffects.type === 'wind' ? 'Wind angle' : 'Wave angle'}
+                    label={filterEffects.type === 'shear' ? 'Shear direction' : filterEffects.type === 'displace' ? 'Displace direction' : filterEffects.type === 'path-blur' ? 'Path direction' : filterEffects.type === 'emboss' ? 'Light angle' : filterEffects.type === 'wind' ? 'Wind angle' : filterEffects.type === 'adaptive-wide-angle' ? 'Guide angle' : 'Wave angle'}
                     value={filterEffects.angle}
                     min={-180}
                     max={180}
@@ -16179,6 +16252,26 @@ export default function Home() {
                     />
                     <Slider
                       label="Correction centre Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'adaptive-wide-angle' && (
+                  <>
+                    <Slider
+                      label="Optical centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Optical centre Y"
                       value={Math.round(filterEffects.centerY * 100)}
                       min={0}
                       max={100}
