@@ -185,26 +185,30 @@ test('brush pressure controls are accessible, opt-in, persisted, and backward-co
   await selectTool(page, 'Brush');
   await expect(page.getByLabel('Pressure affects size', { exact: true })).not.toBeChecked();
   await expect(page.getByLabel('Pressure affects opacity', { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel('Pressure curve', { exact: true })).toHaveValue('linear');
   await page.getByLabel('Size', { exact: true }).fill('44');
   await page.getByLabel('Hardness', { exact: true }).fill('0');
   await page.getByLabel('Opacity', { exact: true }).fill('63');
   await page.getByLabel('Pressure affects size', { exact: true }).check();
   await page.getByLabel('Pressure affects opacity', { exact: true }).check();
+  await page.getByLabel('Pressure curve', { exact: true }).selectOption('soft');
   await saved(page);
   const out = await project(page);
-  expect(out.settings).toMatchObject({ size: 44, hardness: 0, brushOpacity: 63, pressureSize: true, pressureOpacity: true });
+  expect(out.settings).toMatchObject({ size: 44, hardness: 0, brushOpacity: 63, pressureSize: true, pressureOpacity: true, pressureCurve: 'soft' });
   await page.reload();
   await expect(page.getByLabel('Size', { exact: true })).toHaveValue('44');
   await expect(page.getByLabel('Hardness', { exact: true })).toHaveValue('0');
   await expect(page.getByLabel('Opacity', { exact: true })).toHaveValue('63');
   await expect(page.getByLabel('Pressure affects size', { exact: true })).toBeChecked();
   await expect(page.getByLabel('Pressure affects opacity', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Pressure curve', { exact: true })).toHaveValue('soft');
 
   // Drafts created before pressure controls existed omit both optional keys;
   // importing one must preserve the document and use the safe off defaults.
   const legacy = JSON.parse(JSON.stringify(out)) as typeof out;
   delete legacy.settings.pressureSize;
   delete legacy.settings.pressureOpacity;
+  delete legacy.settings.pressureCurve;
   await page.getByTestId('project-input').setInputFiles({
     name: 'legacy-pressure.pixelforge',
     mimeType: 'application/json',
@@ -213,6 +217,7 @@ test('brush pressure controls are accessible, opt-in, persisted, and backward-co
   await expect(page.locator('footer')).toContainText('Project opened with editable layers and history');
   await expect(page.getByLabel('Pressure affects size', { exact: true })).not.toBeChecked();
   await expect(page.getByLabel('Pressure affects opacity', { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel('Pressure curve', { exact: true })).toHaveValue('linear');
 
   const invalid = JSON.parse(JSON.stringify(legacy)) as typeof out;
   invalid.settings.pressureSize = 'enabled' as unknown as boolean;
@@ -317,6 +322,36 @@ test('pressure size and opacity flags operate independently on committed pixels'
   expect(Math.abs(opacityHighMetrics.span - opacityLowMetrics.span)).toBeLessThanOrEqual(2);
   expect(opacityHighMetrics.center).toBeGreaterThan(opacityLowMetrics.center + 80);
   expect(opacityLowMetrics.center).toBeGreaterThan(20);
+});
+
+test('pressure curves change pen response and survive project reload', async ({ page }) => {
+  await newTransparentPaintLayer(page);
+  await selectTool(page, 'Brush');
+  await page.getByLabel('Size', { exact: true }).fill('80');
+  await page.getByLabel('Hardness', { exact: true }).fill('100');
+  await page.getByLabel('Opacity', { exact: true }).fill('100');
+  await page.getByLabel('Pressure affects size', { exact: true }).check();
+  await page.getByLabel('Pressure curve', { exact: true }).selectOption('soft');
+  await pointerStroke(page, 0.25, 0.26);
+  const soft = await project(page);
+  const softAsset = soft.assets[soft.history[soft.index].layers.at(-1)!.asset!];
+  const softMetrics = await radialMetrics(page, softAsset, 0.26, 0.5, 48);
+
+  await newTransparentPaintLayer(page);
+  await selectTool(page, 'Brush');
+  await page.getByLabel('Size', { exact: true }).fill('80');
+  await page.getByLabel('Hardness', { exact: true }).fill('100');
+  await page.getByLabel('Opacity', { exact: true }).fill('100');
+  await page.getByLabel('Pressure affects size', { exact: true }).check();
+  await page.getByLabel('Pressure curve', { exact: true }).selectOption('firm');
+  await pointerStroke(page, 0.25, 0.74);
+  const firm = await project(page);
+  const firmAsset = firm.assets[firm.history[firm.index].layers.at(-1)!.asset!];
+  const firmMetrics = await radialMetrics(page, firmAsset, 0.74, 0.5, 48);
+  expect(softMetrics.span).toBeGreaterThan(firmMetrics.span + 12);
+  await expect(page.getByLabel('Pressure curve', { exact: true })).toHaveValue('firm');
+  await page.reload();
+  await expect(page.getByLabel('Pressure curve', { exact: true })).toHaveValue('firm');
 });
 
 test('hardness zero produces a soft edge and pencil remains a hard-edge tool', async ({ page }) => {

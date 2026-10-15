@@ -15,6 +15,7 @@ export type CustomBrushPreset = {
   flipY: boolean;
   pressureSize: boolean;
   pressureOpacity: boolean;
+  pressureCurve?: 'linear' | 'soft' | 'firm';
   brushSmoothing: number;
   brushScatter: number;
   brushTexture: number;
@@ -40,6 +41,7 @@ export function validCustomBrushPreset(value: unknown): value is CustomBrushPres
     finite(candidate.roundness, 1, 100) &&
     typeof candidate.flipX === 'boolean' && typeof candidate.flipY === 'boolean' &&
     typeof candidate.pressureSize === 'boolean' && typeof candidate.pressureOpacity === 'boolean' &&
+    (candidate.pressureCurve === undefined || ['linear', 'soft', 'firm'].includes(candidate.pressureCurve)) &&
     finite(candidate.brushSmoothing, 0, 100) && finite(candidate.brushScatter, 0, 100) &&
     finite(candidate.brushTexture, 0, 100) && finite(candidate.brushDual, 0, 100) && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) === (candidate.secondaryBrushPreset ?? 'none') &&
     finite(candidate.brushBristle, 0, 100) && finite(candidate.brushWetEdges ?? 0, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100)

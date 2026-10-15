@@ -344,6 +344,11 @@ import {
   type BrushMode,
 } from '../src/brush';
 import {
+  BRUSH_PRESSURE_CURVES,
+  normalizeBrushPressureCurve,
+  type BrushPressureCurve,
+} from '../src/brushPressure';
+import {
   BRUSH_PRESETS,
   brushPresetById,
   type BrushPresetId,
@@ -1455,6 +1460,7 @@ type StampCanvasOptions = {
   pressure?: number;
   pressureSize?: boolean;
   pressureOpacity?: boolean;
+  pressureCurve?: BrushPressureCurve;
   spacing?: number;
   scatter?: number;
   texture?: number;
@@ -1529,6 +1535,7 @@ const stampCanvas = (
     pressure: options.pressure,
     pressureSize: options.pressureSize,
     pressureOpacity: options.pressureOpacity,
+    pressureCurve: options.pressureCurve,
     bristle: options.bristle,
     wetEdges: options.wetEdges,
     buildUp: options.buildUp,
@@ -1561,6 +1568,7 @@ const stampCanvas = (
       pressure: options.pressure,
       pressureSize: secondary.pressureSize,
       pressureOpacity: secondary.pressureOpacity,
+      pressureCurve: options.pressureCurve,
       bristle: options.bristle,
       wetEdges: options.wetEdges,
       buildUp: options.buildUp,
@@ -1599,6 +1607,7 @@ const stampCanvasSegment = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      pressureCurve: options.pressureCurve,
       spacing: options.spacing,
       angle: options.angle,
       roundness: options.roundness,
@@ -1649,6 +1658,7 @@ const patternCanvas = (
     pressure?: number;
     pressureSize?: boolean;
     pressureOpacity?: boolean;
+    pressureCurve?: BrushPressureCurve;
     spacing?: number;
     angle?: number;
     roundness?: number;
@@ -1682,6 +1692,7 @@ const patternCanvas = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      pressureCurve: options.pressureCurve,
       spacing: options.spacing,
       angle: options.angle,
       roundness: options.roundness,
@@ -2088,6 +2099,7 @@ export default function Home() {
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
+    [pressureCurve, setPressureCurve] = useState<BrushPressureCurve>('linear'),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
@@ -2459,6 +2471,7 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    pressureCurve,
     brushPreset,
     customBrushPresets,
     customPatternPresets,
@@ -2536,6 +2549,7 @@ export default function Home() {
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
+    setPressureCurve(normalizeBrushPressureCurve(s.pressureCurve));
     setBrushPreset(s.brushPreset ?? 'round-hard');
     setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
@@ -2599,6 +2613,7 @@ export default function Home() {
     setHardness,
     setPressureSize,
     setPressureOpacity,
+    setPressureCurve,
     setBrushPreset,
     setCustomBrushPresets,
     setCustomPatternPresets,
@@ -2671,6 +2686,7 @@ export default function Home() {
     setBrushFlipY(preset.flipY ?? false);
     setPressureSize(preset.pressureSize);
     setPressureOpacity(preset.pressureOpacity);
+    setPressureCurve(normalizeBrushPressureCurve(preset.pressureCurve));
     setNotice(`Brush preset “${preset.label}” applied`);
   };
   const applyCustomBrushPreset = (preset: CustomBrushPreset) => {
@@ -2683,6 +2699,7 @@ export default function Home() {
     setBrushFlipY(preset.flipY);
     setPressureSize(preset.pressureSize);
     setPressureOpacity(preset.pressureOpacity);
+    setPressureCurve(normalizeBrushPressureCurve(preset.pressureCurve));
     setBrushSmoothing(preset.brushSmoothing);
     setBrushScatter(preset.brushScatter);
     setBrushTexture(preset.brushTexture);
@@ -2713,6 +2730,7 @@ export default function Home() {
         flipY: brushFlipY,
         pressureSize,
         pressureOpacity,
+        pressureCurve,
         brushSmoothing,
         brushScatter,
         brushTexture,
@@ -5868,6 +5886,7 @@ export default function Home() {
         hardness,
         pressureSize,
         pressureOpacity,
+        pressureCurve,
         brushPreset,
         customBrushPresets,
         customPatternPresets,
@@ -5971,6 +5990,7 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    pressureCurve,
     brushPreset,
     customBrushPresets,
     customPatternPresets,
@@ -9396,6 +9416,7 @@ export default function Home() {
             pressure: point.pressure,
             pressureSize,
             pressureOpacity,
+            pressureCurve,
             spacing: brushSpacing,
             angle: brushAngle,
             roundness: brushRoundness,
@@ -9468,6 +9489,7 @@ export default function Home() {
                 pressure: point.pressure,
                 pressureSize,
                 pressureOpacity,
+                pressureCurve,
                 spacing: brushSpacing,
                 angle: brushAngle,
                 roundness: brushRoundness,
@@ -9856,6 +9878,7 @@ export default function Home() {
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
+              pressureCurve,
               spacing: brushSpacing,
               scatter: brushScatter,
               texture: brushTexture,
@@ -10097,6 +10120,7 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize,
         pressureOpacity,
+        pressureCurve,
         spacing: brushSpacing,
         angle: brushAngle,
         roundness: brushRoundness,
@@ -10121,6 +10145,7 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize,
           pressureOpacity,
+          pressureCurve,
           spacing: brushSpacing,
           angle: brushAngle,
           roundness: brushRoundness,
@@ -10999,6 +11024,7 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
           pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+          pressureCurve,
           spacing: brushSpacing,
           scatter: brushScatter,
           texture: brushTexture,
@@ -11337,6 +11363,7 @@ export default function Home() {
             pressure: g.lastPressure ?? pressure(e),
             pressureSize,
             pressureOpacity,
+            pressureCurve,
             spacing: brushSpacing,
             angle: brushAngle,
             roundness: brushRoundness,
@@ -15511,6 +15538,33 @@ export default function Home() {
                         </p>
                       </>
                     )}
+                  {(tool === 'brush' ||
+                    tool === 'pencil' ||
+                    tool === 'eraser' ||
+                    tool === 'clone' ||
+                    tool === 'heal' ||
+                    tool === 'pattern-stamp') && (
+                    <label className="select-row">
+                      <span>Pressure curve</span>
+                      <select
+                        aria-label="Pressure curve"
+                        value={pressureCurve}
+                        onChange={(event) =>
+                          setPressureCurve(normalizeBrushPressureCurve(event.target.value))
+                        }
+                      >
+                        {BRUSH_PRESSURE_CURVES.map((curve) => (
+                          <option key={curve} value={curve}>
+                            {curve === 'linear'
+                              ? 'Linear'
+                              : curve === 'soft'
+                                ? 'Soft (more response)'
+                                : 'Firm (less response)'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {(tool === 'color-replace' ||
                     tool === 'background-eraser' ||
                     tool === 'magic-eraser' ||

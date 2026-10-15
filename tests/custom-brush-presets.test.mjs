@@ -16,6 +16,7 @@ const values = {
   flipY: true,
   pressureSize: true,
   pressureOpacity: false,
+  pressureCurve: 'soft',
   brushSmoothing: 20,
   brushScatter: 4,
   brushTexture: 6,
@@ -41,6 +42,7 @@ test('custom brush preset normalization rejects malformed, duplicate and oversiz
   assert.deepEqual(normalized, [first, second]);
   assert.equal(normalizeCustomBrushPresets(Array.from({ length: 40 }, (_, index) => ({ ...first, id: `${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000001` }))).length, 32);
   assert.throws(() => createCustomBrushPreset('bad', 'x', values), /invalid/);
+  assert.throws(() => createCustomBrushPreset('00000000-0000-4000-8000-000000000004', 'Bad curve', { ...values, pressureCurve: 'invalid' }), /invalid/);
 });
 
 test('custom brush preset migration defaults newly added dynamics safely', () => {

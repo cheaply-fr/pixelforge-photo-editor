@@ -6,6 +6,12 @@
 import { bristleCoverage, normalizeBrushBristle } from './brushBristle.ts';
 import { wetEdgesOpacity } from './brushWetEdges.ts';
 import { buildUpOpacity } from './brushBuildUp.ts';
+import {
+  mapBrushPressure,
+  normalizeBrushPressureCurve,
+  validBrushPressureCurve,
+  type BrushPressureCurve,
+} from './brushPressure.ts';
 
 export const BRUSH_MAX_SIZE = 10000;
 export const BRUSH_MAX_DIMENSION = 16000;
@@ -21,6 +27,8 @@ export type BrushPressureSettings = {
   pressureSize?: boolean;
   /** Defaults to false; pressure modulation is opt-in and explicit. */
   pressureOpacity?: boolean;
+  /** Bounded response curve for enabled pen/touch pressure mappings. */
+  pressureCurve?: BrushPressureCurve;
 };
 /** Bounded brush-tip geometry controls shared by raster brush tools. */
 export type BrushTipSettings = {
@@ -59,6 +67,7 @@ export type ResolvedBrushStamp = {
   opacity: number;
   pressureSize: boolean;
   pressureOpacity: boolean;
+  pressureCurve: BrushPressureCurve;
   spacing: number;
   angle: number;
   roundness: number;
@@ -121,13 +130,15 @@ export function validBrushPressureSettings(value: unknown): value is BrushPressu
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as BrushPressureSettings;
   return (candidate.pressureSize === undefined || typeof candidate.pressureSize === 'boolean') &&
-    (candidate.pressureOpacity === undefined || typeof candidate.pressureOpacity === 'boolean');
+    (candidate.pressureOpacity === undefined || typeof candidate.pressureOpacity === 'boolean') &&
+    (candidate.pressureCurve === undefined || validBrushPressureCurve(candidate.pressureCurve));
 }
 
 export function effectiveBrushPressureSettings(value: BrushPressureSettings | undefined): Required<BrushPressureSettings> {
   return {
     pressureSize: value?.pressureSize ?? false,
     pressureOpacity: value?.pressureOpacity ?? false,
+    pressureCurve: normalizeBrushPressureCurve(value?.pressureCurve),
   };
 }
 
@@ -176,8 +187,9 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
     flags = effectiveBrushPressureSettings(settings),
     tip = effectiveBrushTipSettings(settings),
     bristle = normalizeBrushBristle(settings.bristle),
-    size = settings.size * (flags.pressureSize ? pressure : 1),
-    opacity = settings.opacity * (flags.pressureOpacity ? pressure : 1);
+    response = mapBrushPressure(pressure, flags.pressureCurve),
+    size = settings.size * (flags.pressureSize ? response : 1),
+    opacity = settings.opacity * (flags.pressureOpacity ? response : 1);
   return {
     pressure,
     size: Math.max(0.0001, size),
