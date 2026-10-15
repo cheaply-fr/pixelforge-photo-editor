@@ -789,6 +789,7 @@ type Command =
   | 'filter-fibers'
   | 'filter-difference-clouds'
   | 'filter-lens-correction'
+  | 'filter-adaptive-wide-angle'
   | 'filter-lens-flare'
   | 'filter-vanishing-point'
   | 'filter-displace'
@@ -1254,6 +1255,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'AI Denoise…', command: 'noop', disabled: true },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
+    { label: 'Adaptive Wide Angle…', command: 'filter-adaptive-wide-angle' },
     { label: 'Liquify…', command: 'filter-liquify' },
     { label: 'Vanishing Point…', command: 'filter-vanishing-point' },
     { label: '', command: 'noop', separator: true },
@@ -5609,6 +5611,11 @@ export default function Home() {
                 ...(type === 'gradient-map' ? {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
+                ...(type === 'adaptive-wide-angle' ? {
+                  centerX: 0.5,
+                  centerY: 0.5,
+                  adaptiveWideAngle: { horizontal: 50, vertical: 50 },
+                } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
                 ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
                 amount:
@@ -5619,7 +5626,7 @@ export default function Home() {
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
                   || type === 'pointillize' || type === 'mezzotint' || type === 'fibers' || type === 'clouds' || type === 'difference-clouds' || type === 'picture-frame' || type === 'field-blur' || type === 'flame'
                     ? 85
-                  : type === 'lens-correction' || type === 'lens-flare'
+                  : type === 'lens-correction' || type === 'adaptive-wide-angle' || type === 'lens-flare'
                     ? 75
                     : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
@@ -5649,7 +5656,7 @@ export default function Home() {
                     ? 1
                     : type === 'reduce-noise'
                     ? 2
-                    : type === 'lens-correction'
+                    : type === 'lens-correction' || type === 'adaptive-wide-angle'
                       ? 64
                     : type === 'lens-flare'
                       ? 36
@@ -12485,6 +12492,8 @@ export default function Home() {
       chooseFilterEffect('ntsc-colors', 'NTSC Colors');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
+    else if (command === 'filter-adaptive-wide-angle')
+      chooseFilterEffect('adaptive-wide-angle', 'Adaptive Wide Angle (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
     else if (command === 'filter-vanishing-point') return applyPerspectiveWarp('Vanishing Point');
@@ -12844,6 +12853,7 @@ export default function Home() {
       case 'filter-find-edges':
       case 'filter-emboss':
       case 'filter-lens-correction':
+      case 'filter-adaptive-wide-angle':
       case 'filter-displace':
       case 'filter-ripple':
       case 'filter-pinch':
@@ -16204,7 +16214,7 @@ export default function Home() {
                           ? 'Displace wavelength'
                       : filterEffects.type === 'field-blur'
                           ? 'Fallback blur radius'
-                      : filterEffects.type === 'lens-correction'
+                      : filterEffects.type === 'lens-correction' || filterEffects.type === 'adaptive-wide-angle'
                           ? 'Correction radius'
                       : filterEffects.type === 'lens-flare'
                           ? 'Flare size'
@@ -16336,6 +16346,43 @@ export default function Home() {
                       min={0}
                       max={100}
                       set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'adaptive-wide-angle' && (
+                  <>
+                    <p>Bounded anisotropic wide-angle correction with editable line-preservation biases. The authored centre stays fixed and transparent padding remains untouched; Photoshop constraint drawing and camera calibration remain staged.</p>
+                    <Slider
+                      label="Correction centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Correction centre Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Horizontal line bias"
+                      value={filterEffects.adaptiveWideAngle?.horizontal ?? 50}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ adaptiveWideAngle: { ...(filterEffects.adaptiveWideAngle ?? { horizontal: 50, vertical: 50 }), horizontal: value } })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Vertical line bias"
+                      value={filterEffects.adaptiveWideAngle?.vertical ?? 50}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ adaptiveWideAngle: { ...(filterEffects.adaptiveWideAngle ?? { horizontal: 50, vertical: 50 }), vertical: value } })}
                       suffix="%"
                     />
                   </>

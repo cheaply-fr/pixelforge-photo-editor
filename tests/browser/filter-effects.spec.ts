@@ -25,6 +25,37 @@ test('Filter menu repeats the last nondestructive effect and stays disabled befo
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
 });
 
+test('Adaptive Wide Angle keeps editable anisotropic geometry across reload', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'Adaptive Wide Angle…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('adaptive-wide-angle');
+  await expect(page.getByLabel('Horizontal line bias', { exact: true })).toHaveValue('50');
+  await expect(page.getByLabel('Vertical line bias', { exact: true })).toHaveValue('50');
+  await page.getByLabel('Horizontal line bias', { exact: true }).press('ArrowRight');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
+  expect(layer.adjustments.filterEffects).toMatchObject({
+    type: 'adaptive-wide-angle',
+    adaptiveWideAngle: { horizontal: 51, vertical: 50 },
+  });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('adaptive-wide-angle');
+  await expect(page.getByLabel('Horizontal line bias', { exact: true })).toHaveValue('51');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 test('Find Edges is an enabled nondestructive Stylize filter with source-safe persistence', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

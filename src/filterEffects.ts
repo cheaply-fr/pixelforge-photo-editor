@@ -46,6 +46,7 @@ export const FILTER_EFFECT_TYPES = [
   'fibers',
   'difference-clouds',
   'lens-correction',
+  'adaptive-wide-angle',
   'displace',
   'pinch',
   'liquify',
@@ -150,6 +151,14 @@ export type GradientMapSettings = {
   blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
 };
 
+/** Bounded anisotropic geometry controls for Adaptive Wide Angle. */
+export type AdaptiveWideAngleSettings = {
+  /** Horizontal line-preservation bias in the 0..100 range. */
+  horizontal: number;
+  /** Vertical line-preservation bias in the 0..100 range. */
+  vertical: number;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -178,6 +187,11 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
 export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
   shadow: '#000000',
   highlight: '#ffffff',
+};
+
+export const DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS: AdaptiveWideAngleSettings = {
+  horizontal: 50,
+  vertical: 50,
 };
 
 export type FilterEffects = {
@@ -221,6 +235,8 @@ export type FilterEffects = {
   fibers?: FibersSettings;
   tree?: TreeSettings;
   gradientMap?: GradientMapSettings;
+  /** Editable anisotropic geometry controls for Adaptive Wide Angle. */
+  adaptiveWideAngle?: AdaptiveWideAngleSettings;
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
   deinterlace?: DeinterlaceSettings;
@@ -371,6 +387,17 @@ export function effectiveFilterEffects(
         : 'normal',
     };
   }
+  if (type === 'adaptive-wide-angle') {
+    const settings = source.adaptiveWideAngle;
+    normalized.adaptiveWideAngle = {
+      horizontal: finite(settings?.horizontal)
+        ? clamp(Math.round(settings.horizontal), 0, 100)
+        : DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS.horizontal,
+      vertical: finite(settings?.vertical)
+        ? clamp(Math.round(settings.vertical), 0, 100)
+        : DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS.vertical,
+    };
+  }
   if (type === 'dust-scratches' || type === 'reduce-noise') {
     normalized.threshold = finite(source.threshold)
       ? clamp(Math.round(source.threshold), 0, 255)
@@ -443,6 +470,12 @@ function validGradientMapSettings(value: unknown): value is GradientMapSettings 
     (settings.stops === undefined || isGradientStops(settings.stops)) &&
     (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
 }
+function validAdaptiveWideAngleSettings(value: unknown): value is AdaptiveWideAngleSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<AdaptiveWideAngleSettings>;
+  return finite(settings.horizontal) && Number.isInteger(settings.horizontal) && settings.horizontal >= 0 && settings.horizontal <= 100 &&
+    finite(settings.vertical) && Number.isInteger(settings.vertical) && settings.vertical >= 0 && settings.vertical <= 100;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -462,6 +495,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.adaptiveWideAngle === undefined || validAdaptiveWideAngleSettings(effect.adaptiveWideAngle)) &&
     (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
@@ -2879,6 +2913,57 @@ function applyLensCorrection(
 }
 
 /**
+ * Apply a bounded Adaptive Wide Angle approximation.
+ *
+ * The renderer uses separate horizontal and vertical radial fields plus a
+ * small cross-axis term. This keeps the effect distinct from Lens Correction:
+ * changing either line-preservation bias produces a different anisotropic map
+ * while the authored centre remains fixed. It is intentionally local and
+ * source-safe; Photoshop's constraint drawing and camera calibration remain
+ * outside this browser-only contract.
+ */
+function applyAdaptiveWideAngle(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const centreX = effect.centerX * (width - 1);
+  const centreY = effect.centerY * (height - 1);
+  const influenceRadius = Math.max(1, Math.min(width, height) * 0.5 * (effect.radius / 32));
+  const strength = clamp(effect.amount, 0, 100) / 100 * 0.34;
+  const settings = effect.adaptiveWideAngle ?? DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS;
+  const horizontalBias = 0.55 + settings.horizontal / 100 * 0.9;
+  const verticalBias = 0.55 + settings.vertical / 100 * 0.9;
+  const crossBias = (settings.vertical - settings.horizontal) / 100 * strength * 0.16;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const normalized = clamp(Math.hypot(dx, dy) / influenceRadius, 0, 1);
+      const radial = normalized * normalized;
+      const xScale = 1 - strength * radial * horizontalBias * (0.84 + Math.abs(dy) / Math.max(1, height) * 0.32);
+      const yScale = 1 - strength * radial * verticalBias * (0.84 + Math.abs(dx) / Math.max(1, width) * 0.32);
+      const sample = sourcePixelBilinear(
+        source,
+        width,
+        height,
+        centreX + dx * xScale + dy * crossBias * radial,
+        centreY + dy * yScale + dx * crossBias * radial,
+      );
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
+/**
  * Apply a bounded, nondestructive Unsharp Mask.
  *
  * The blur radius and amount stay in filter metadata. The source alpha and
@@ -3399,6 +3484,8 @@ export function applyFilterEffectsPixels(
     applyWind(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
+  } else if (effect.type === 'adaptive-wide-angle') {
+    applyAdaptiveWideAngle(data, width, height, effect, output);
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
 

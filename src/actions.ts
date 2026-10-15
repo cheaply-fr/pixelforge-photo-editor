@@ -188,6 +188,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-find-edges',
   'filter-emboss',
   'filter-lens-correction',
+  'filter-adaptive-wide-angle',
   'filter-displace',
   'filter-pinch',
   'filter-liquify',

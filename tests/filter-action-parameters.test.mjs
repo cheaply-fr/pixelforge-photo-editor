@@ -55,4 +55,11 @@ test('filter Action parameters retain effect-specific geometry', () => {
   assert.deepEqual(JSON.parse(tiltParameters.filterExtra), {
     tiltShift: { focusWidth: 0.4, feather: 0.3 },
   });
+  const adaptiveParameters = filterActionParameters({
+    type: 'adaptive-wide-angle',
+    adaptiveWideAngle: { horizontal: 72, vertical: 28 },
+  });
+  assert.deepEqual(JSON.parse(adaptiveParameters.filterExtra), {
+    adaptiveWideAngle: { horizontal: 72, vertical: 28 },
+  });
 });
