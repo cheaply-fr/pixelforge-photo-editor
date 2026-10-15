@@ -4,6 +4,8 @@ This matrix distills the two user-provided toolbar references into an implementa
 
 The menu references and their complete categorized inventory are maintained in [`docs/menu-roadmap.md`](./menu-roadmap.md). The evidence-based high-use workflow ranking and applied-status audit are maintained in [`top-ten-tools-roadmap.md`](./top-ten-tools-roadmap.md). That document records Edit, Image, Layer, Type, Select, Filter, View and Plugins workflows, including the Image Size dialog and the Filter submenu families.
 
+The current Filter increment also enables `Filter → Vanishing Point…` as a bounded, same-sized local perspective-plane remap with editable centre, horizontal/vertical orientation, depth and angle. Its source/alpha contract and explicit Photoshop parity limits are documented in [`vanishing-point-effect-contract.md`](./vanishing-point-effect-contract.md).
+
 ## Capability families
 
 | Family | Reference capabilities | Pixel implementation stages | Required acceptance evidence |

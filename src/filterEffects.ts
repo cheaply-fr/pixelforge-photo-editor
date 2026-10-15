@@ -71,6 +71,7 @@ export const FILTER_EFFECT_TYPES = [
   'despeckle',
   'reduce-noise',
   'add-noise',
+  'vanishing-point',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -150,6 +151,11 @@ export type GradientMapSettings = {
   blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
 };
 
+/** Bounded plane orientation for the local Vanishing Point approximation. */
+export type VanishingPointSettings = {
+  plane: 'horizontal' | 'vertical';
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -178,6 +184,10 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
 export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
   shadow: '#000000',
   highlight: '#ffffff',
+};
+
+export const DEFAULT_VANISHING_POINT_SETTINGS: VanishingPointSettings = {
+  plane: 'horizontal',
 };
 
 export type FilterEffects = {
@@ -221,6 +231,8 @@ export type FilterEffects = {
   fibers?: FibersSettings;
   tree?: TreeSettings;
   gradientMap?: GradientMapSettings;
+  /** Editable orientation for the bounded local Vanishing Point approximation. */
+  vanishingPoint?: VanishingPointSettings;
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
   deinterlace?: DeinterlaceSettings;
@@ -371,6 +383,11 @@ export function effectiveFilterEffects(
         : 'normal',
     };
   }
+  if (type === 'vanishing-point') {
+    normalized.vanishingPoint = {
+      plane: source.vanishingPoint?.plane === 'vertical' ? 'vertical' : DEFAULT_VANISHING_POINT_SETTINGS.plane,
+    };
+  }
   if (type === 'dust-scratches' || type === 'reduce-noise') {
     normalized.threshold = finite(source.threshold)
       ? clamp(Math.round(source.threshold), 0, 255)
@@ -443,6 +460,11 @@ function validGradientMapSettings(value: unknown): value is GradientMapSettings 
     (settings.stops === undefined || isGradientStops(settings.stops)) &&
     (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
 }
+function validVanishingPointSettings(value: unknown): value is VanishingPointSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<VanishingPointSettings>;
+  return settings.plane === 'horizontal' || settings.plane === 'vertical';
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -462,6 +484,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.vanishingPoint === undefined || validVanishingPointSettings(effect.vanishingPoint)) &&
     (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
@@ -2477,6 +2500,62 @@ function applyDistort(
 }
 
 /**
+ * Apply a bounded local Vanishing Point plane approximation.
+ *
+ * A real Photoshop Vanishing Point session has authored perspective planes,
+ * cloning and content-aware fills. This renderer keeps the useful first step:
+ * an editable same-sized perspective-plane remap around a selected centre.
+ * The inverse projective scale converges one axis toward that centre, uses
+ * only immutable source pixels, and preserves alpha/transparent padding.
+ */
+function applyVanishingPoint(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const strength = clamp(effect.amount, 0, 100) / 100;
+  const depth = clamp(effect.radius, 1, 64) / 64 * 0.8;
+  const radians = (effect.angle * Math.PI) / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  const centreX = effect.centerX * (width - 1);
+  const centreY = effect.centerY * (height - 1);
+  const plane = effect.vanishingPoint?.plane ?? DEFAULT_VANISHING_POINT_SETTINGS.plane;
+  const halfWidth = Math.max(1, (width - 1) * 0.5);
+  const halfHeight = Math.max(1, (height - 1) * 0.5);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const rotatedX = dx * cosine + dy * sine;
+      const rotatedY = -dx * sine + dy * cosine;
+      const along = plane === 'vertical' ? rotatedY : rotatedX;
+      const across = plane === 'vertical' ? rotatedX : rotatedY;
+      const extent = plane === 'vertical' ? halfHeight : halfWidth;
+      const normalizedAlong = clamp(along / extent, -1, 1);
+      const denominator = clamp(1 + normalizedAlong * depth * strength, 0.25, 1.75);
+      const sourceAlong = along;
+      const sourceAcross = across / denominator;
+      const sourceRotatedX = plane === 'vertical' ? sourceAcross : sourceAlong;
+      const sourceRotatedY = plane === 'vertical' ? sourceAlong : sourceAcross;
+      const sampleX = centreX + sourceRotatedX * cosine - sourceRotatedY * sine;
+      const sampleY = centreY + sourceRotatedX * sine + sourceRotatedY * cosine;
+      const sample = sourcePixelBilinear(source, width, height, sampleX, sampleY);
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = alpha;
+    }
+  }
+}
+
+/**
  * Apply a bounded directional wave displacement. The wave travels along the
  * editable angle and displaces pixels on its perpendicular axis. Every
  * destination samples the immutable source with premultiplied-alpha
@@ -3359,6 +3438,8 @@ export function applyFilterEffectsPixels(
     applyReduceNoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'add-noise') {
     applyAddNoise(data, width, height, effect, output);
+  } else if (effect.type === 'vanishing-point') {
+    applyVanishingPoint(data, width, height, effect, output);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {

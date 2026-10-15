@@ -55,4 +55,11 @@ test('filter Action parameters retain effect-specific geometry', () => {
   assert.deepEqual(JSON.parse(tiltParameters.filterExtra), {
     tiltShift: { focusWidth: 0.4, feather: 0.3 },
   });
+  const vanishingParameters = filterActionParameters({
+    type: 'vanishing-point', amount: 75, radius: 18, angle: 12,
+    centerX: 0.3, centerY: 0.7, vanishingPoint: { plane: 'vertical' },
+  });
+  assert.deepEqual(JSON.parse(vanishingParameters.filterExtra), {
+    vanishingPoint: { plane: 'vertical' },
+  });
 });

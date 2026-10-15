@@ -53,6 +53,40 @@ test('Twirl uses a deterministic alpha-safe bilinear inverse map', () => {
   assert.equal(isNeutralFilterEffects({ ...effect, angle: 0 }), true);
 });
 
+test('Vanishing Point is a deterministic plane remap with editable orientation', () => {
+  const source = rgba(9, 5, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    return [x * 22, y * 38, (x + y) * 12, 255];
+  });
+  const original = source.slice();
+  const horizontal = {
+    type: 'vanishing-point', amount: 75, radius: 18, angle: 0,
+    centerX: 0.5, centerY: 0.5, vanishingPoint: { plane: 'horizontal' },
+  };
+  const output = applyFilterEffectsPixels(source, 9, 5, horizontal);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 9, 0, 0), [17, 23, 29, 0]);
+  assert.deepEqual(pixel(output, 9, 4, 2), pixel(source, 9, 4, 2));
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 5, horizontal));
+  const vertical = applyFilterEffectsPixels(source, 9, 5, {
+    ...horizontal,
+    vanishingPoint: { plane: 'vertical' },
+    angle: 25,
+  });
+  assert.notDeepEqual(vertical, output);
+  assert.equal(validFilterEffects(effectiveFilterEffects(horizontal)), true);
+  assert.equal(validFilterEffects(effectiveFilterEffects({
+    ...horizontal,
+    vanishingPoint: { plane: 'diagonal' },
+  })), true);
+  assert.equal(validFilterEffects({
+    ...effectiveFilterEffects(horizontal),
+    vanishingPoint: { plane: 'diagonal' },
+  }), false);
+  assert.deepEqual(pixel(vertical, 9, 0, 0), [17, 23, 29, 0]);
+});
+
 test('Gradient Map interpolates editable endpoints while preserving alpha and source bytes', () => {
   const source = rgba(3, 1, (x) => x === 0 ? [0, 20, 40, 255] : x === 1 ? [128, 128, 128, 255] : [255, 240, 220, 0]);
   const original = source.slice();
