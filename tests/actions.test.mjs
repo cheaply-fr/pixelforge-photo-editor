@@ -101,6 +101,7 @@ test('active noise and cleanup filters are replayable without aliases', async ()
     'filter-dust-scratches',
     'filter-despeckle',
     'filter-reduce-noise',
+    'filter-ai-sharpen',
     'filter-gradient-map',
     'filter-lens-correction',
     'filter-liquify',

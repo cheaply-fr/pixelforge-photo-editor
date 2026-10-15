@@ -2064,6 +2064,42 @@ test('Smart Sharpen is an enabled edge-aware nondestructive Sharpen filter', asy
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
 
+test('AI Sharpen is an enabled local approximation with editable source-safe persistence', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'AI Sharpen…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('AI Sharpen (deterministic local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ai-sharpen');
+  await expect(page.getByText('AI Sharpen is a deterministic local approximation that enhances multi-scale detail without downloading a model or sending pixels over the network. Detail gain, noise suppression and radius stay editable; model-backed reconstruction and semantic edge recovery remain planned.', { exact: true })).toBeVisible();
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  await page.getByLabel('Detail gain', { exact: true }).fill('82');
+  await page.getByLabel('Detail gain', { exact: true }).press('Enter');
+  await page.getByLabel('Noise suppression', { exact: true }).fill('28');
+  await page.getByLabel('Noise suppression', { exact: true }).press('Enter');
+  await page.getByRole('region', { name: 'Filter effects' }).getByLabel('Sharpen radius', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  expect(changed).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({
+    type: 'ai-sharpen', radius: 4,
+    aiSharpen: { detail: 82, noiseSuppression: 28 },
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ai-sharpen');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 test('Sharpen More is a distinct enabled nondestructive Sharpen filter', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);

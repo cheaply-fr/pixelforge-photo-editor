@@ -28,6 +28,16 @@ test('filter Action parameters retain effect-specific thresholds', () => {
   assert.equal(filterActionParameters({ type: 'reduce-noise', threshold: 999 }).threshold, 255);
 });
 
+test('filter Action parameters retain bounded AI Sharpen controls', () => {
+  const parameters = filterActionParameters({
+    type: 'ai-sharpen', amount: 100, radius: 4,
+    aiSharpen: { detail: 73, noiseSuppression: 21 },
+  });
+  assert.deepEqual(JSON.parse(parameters.filterExtra), {
+    aiSharpen: { detail: 73, noiseSuppression: 21 },
+  });
+});
+
 test('filter Action parameters retain bounded Gradient Map appearance', () => {
   assert.deepEqual(filterActionParameters({
     type: 'gradient-map',

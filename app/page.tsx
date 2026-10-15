@@ -484,6 +484,7 @@ import {
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
+  DEFAULT_AI_SHARPEN_SETTINGS,
   effectiveFilterEffects,
   isNeutralFilterEffects,
   neutralFilterEffects,
@@ -751,6 +752,7 @@ type Command =
   | 'filter-sharpen-more'
   | 'filter-sharpen-edges'
   | 'filter-smart-sharpen'
+  | 'filter-ai-sharpen'
   | 'filter-lens-blur'
   | 'filter-iris-blur'
   | 'filter-smart-blur'
@@ -1232,7 +1234,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Filter Gallery…', command: 'filter-gallery' },
     { label: 'Camera Raw Filter…', command: 'camera-raw' },
     { label: 'AI Denoise…', command: 'noop', disabled: true },
-    { label: 'AI Sharpen…', command: 'noop', disabled: true },
+    { label: 'AI Sharpen…', command: 'filter-ai-sharpen' },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
     { label: 'Liquify…', command: 'filter-liquify' },
     { label: 'Vanishing Point…', command: 'noop', disabled: true },
@@ -5536,8 +5538,9 @@ export default function Home() {
                 } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
                 ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
+                ...(type === 'ai-sharpen' ? { aiSharpen: { ...DEFAULT_AI_SHARPEN_SETTINGS } } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise' || type === 'ai-sharpen'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -5574,6 +5577,8 @@ export default function Home() {
                     ? 1
                     : type === 'reduce-noise'
                     ? 2
+                    : type === 'ai-sharpen'
+                      ? 3
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
@@ -12294,6 +12299,8 @@ export default function Home() {
       chooseFilterEffect('sharpen-edges', 'Sharpen Edges (edge-weighted nondestructive)');
     else if (command === 'filter-smart-sharpen')
       chooseFilterEffect('smart-sharpen', 'Smart Sharpen (edge-aware nondestructive)');
+    else if (command === 'filter-ai-sharpen')
+      chooseFilterEffect('ai-sharpen', 'AI Sharpen (deterministic local approximation)');
     else if (command === 'filter-lens-blur')
       chooseFilterEffect('lens-blur', 'Lens Blur (local approximation)');
     else if (command === 'filter-iris-blur')
@@ -12687,6 +12694,7 @@ export default function Home() {
       case 'filter-sharpen-more':
       case 'filter-sharpen-edges':
       case 'filter-smart-sharpen':
+      case 'filter-ai-sharpen':
       case 'filter-motion-blur':
       case 'filter-field-blur':
       case 'filter-box-blur':
@@ -15727,6 +15735,9 @@ export default function Home() {
             {filterEffects.type === 'smart-sharpen' && (
               <p>Smart Sharpen uses a bounded edge-preserving reference to limit gain on flat tonal surfaces while retaining local detail. Amount and radius stay editable; threshold, halo suppression and camera-aware controls remain planned.</p>
             )}
+            {filterEffects.type === 'ai-sharpen' && (
+              <p>AI Sharpen is a deterministic local approximation that enhances multi-scale detail without downloading a model or sending pixels over the network. Detail gain, noise suppression and radius stay editable; model-backed reconstruction and semantic edge recovery remain planned.</p>
+            )}
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
             )}
@@ -15993,6 +16004,26 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
+                {filterEffects.type === 'ai-sharpen' && (
+                  <>
+                    <Slider
+                      label="Detail gain"
+                      value={filterEffects.aiSharpen?.detail ?? DEFAULT_AI_SHARPEN_SETTINGS.detail}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ aiSharpen: { ...(filterEffects.aiSharpen ?? DEFAULT_AI_SHARPEN_SETTINGS), detail: value } })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Noise suppression"
+                      value={filterEffects.aiSharpen?.noiseSuppression ?? DEFAULT_AI_SHARPEN_SETTINGS.noiseSuppression}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ aiSharpen: { ...(filterEffects.aiSharpen ?? DEFAULT_AI_SHARPEN_SETTINGS), noiseSuppression: value } })}
+                      suffix="%"
+                    />
+                  </>
+                )}
                 {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && <Slider
                   label={
                     filterEffects.type === 'fibers'
@@ -16057,6 +16088,8 @@ export default function Home() {
                           ? 'Flare size'
                       : filterEffects.type === 'emboss'
                           ? 'Emboss depth'
+                      : filterEffects.type === 'ai-sharpen'
+                          ? 'Sharpen radius'
 
                       : 'Radius'
                   }
