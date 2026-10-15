@@ -49,7 +49,9 @@ function pathForVector(layer: ExportableVector): PathModel | undefined {
 function vectorRule(layer: ExportableVector): string {
   const path = pathForVector(layer);
   if (!path) return '';
-  const d = serializePathData(path).replace(/'/g, "\\'");
+  const d = serializePathData(path)
+    .replaceAll('\\', '\\\\')
+    .replaceAll("'", "\\'");
   const fill = path.fill ? color(path.fillColor) : 'transparent';
   const stroke = path.stroke ? `${px(path.strokeWidth)} solid ${color(path.strokeColor)}` : 'none';
   const clip = path.fill ? `\n  clip-path: path('${d}');` : '';
