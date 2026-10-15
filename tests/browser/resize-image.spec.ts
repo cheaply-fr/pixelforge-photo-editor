@@ -100,6 +100,12 @@ const project = async (page: Page) => {
 
 test.beforeEach(async ({ page }) => beforeEachEditor(page));
 
+test('Image menu exposes one canonical resize entry without a duplicate alias', async ({ page }) => {
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Resize image…', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('menuitem', { name: 'Image Size…', exact: true })).toHaveCount(0);
+});
+
 test('Image Size opens from the menu with safe defaults and a responsive dialog', async ({
   page,
 }) => {
