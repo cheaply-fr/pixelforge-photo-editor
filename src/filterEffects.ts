@@ -22,6 +22,7 @@ export const FILTER_EFFECT_TYPES = [
   'sharpen-more',
   'sharpen-edges',
   'smart-sharpen',
+  'ai-sharpen',
   'lens-blur',
   'iris-blur',
   'smart-blur',
@@ -150,6 +151,14 @@ export type GradientMapSettings = {
   blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
 };
 
+/** Controls for the deterministic on-device AI Sharpen approximation. */
+export type AiSharpenSettings = {
+  /** Edge/detail gain, 0..100. */
+  detail: number;
+  /** Suppress low-contrast noise before applying edge gain, 0..100. */
+  noiseSuppression: number;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -178,6 +187,11 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
 export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
   shadow: '#000000',
   highlight: '#ffffff',
+};
+
+export const DEFAULT_AI_SHARPEN_SETTINGS: AiSharpenSettings = {
+  detail: 58,
+  noiseSuppression: 42,
 };
 
 export type FilterEffects = {
@@ -223,6 +237,8 @@ export type FilterEffects = {
   gradientMap?: GradientMapSettings;
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
+  /** Detail/noise controls for the deterministic local AI Sharpen approximation. */
+  aiSharpen?: AiSharpenSettings;
   deinterlace?: DeinterlaceSettings;
 };
 
@@ -376,6 +392,17 @@ export function effectiveFilterEffects(
       ? clamp(Math.round(source.threshold), 0, 255)
       : type === 'reduce-noise' ? 25 : 12;
   }
+  if (type === 'ai-sharpen') {
+    const settings = source.aiSharpen;
+    normalized.aiSharpen = {
+      detail: finite(settings?.detail)
+        ? clamp(Math.round(settings.detail), 0, 100)
+        : DEFAULT_AI_SHARPEN_SETTINGS.detail,
+      noiseSuppression: finite(settings?.noiseSuppression)
+        ? clamp(Math.round(settings.noiseSuppression), 0, 100)
+        : DEFAULT_AI_SHARPEN_SETTINGS.noiseSuppression,
+    };
+  }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
@@ -443,6 +470,12 @@ function validGradientMapSettings(value: unknown): value is GradientMapSettings 
     (settings.stops === undefined || isGradientStops(settings.stops)) &&
     (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
 }
+function validAiSharpenSettings(value: unknown): value is AiSharpenSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<AiSharpenSettings>;
+  return finite(settings.detail) && Number.isInteger(settings.detail) && settings.detail >= 0 && settings.detail <= 100 &&
+    finite(settings.noiseSuppression) && Number.isInteger(settings.noiseSuppression) && settings.noiseSuppression >= 0 && settings.noiseSuppression <= 100;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -462,6 +495,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.aiSharpen === undefined || validAiSharpenSettings(effect.aiSharpen)) &&
     (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
@@ -3003,6 +3037,73 @@ function applySmartSharpen(
 }
 
 /**
+ * Deterministic, on-device AI Sharpen approximation.
+ *
+ * Two local scales estimate a detail signal. Low-contrast signals are
+ * suppressed as noise, while stronger edges receive bounded gain. This is a
+ * local approximation only: no model is downloaded and no pixel data leaves
+ * the device.
+ */
+function applyAiSharpen(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const detail = clamp(Math.round(effect.aiSharpen?.detail ?? DEFAULT_AI_SHARPEN_SETTINGS.detail), 0, 100) / 100;
+  const suppression = clamp(Math.round(effect.aiSharpen?.noiseSuppression ?? DEFAULT_AI_SHARPEN_SETTINGS.noiseSuppression), 0, 100) / 100;
+  const mix = clamp(strength, 0, 1);
+  const luma = (r: number, g: number, b: number) => r * 0.299 + g * 0.587 + b * 0.114;
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    if (!source[destination + 3]) continue;
+    const baseR = source[destination], baseG = source[destination + 1], baseB = source[destination + 2];
+    let fineR = 0, fineG = 0, fineB = 0, fineWeight = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const spatial = Math.exp(-(Math.hypot(sx - x, sy - y) ** 2) / (2 * Math.max(1, radius * radius)));
+        fineR += source[sample] * spatial;
+        fineG += source[sample + 1] * spatial;
+        fineB += source[sample + 2] * spatial;
+        fineWeight += spatial;
+      }
+    if (!fineWeight) continue;
+    const broadRadius = Math.min(8, Math.max(radius + 1, radius * 2));
+    let broadR = 0, broadG = 0, broadB = 0, broadWeight = 0;
+    for (let sy = Math.max(0, y - broadRadius); sy <= Math.min(height - 1, y + broadRadius); sy += 1)
+      for (let sx = Math.max(0, x - broadRadius); sx <= Math.min(width - 1, x + broadRadius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const spatial = Math.exp(-(Math.hypot(sx - x, sy - y) ** 2) / (2 * Math.max(1, broadRadius * broadRadius)));
+        broadR += source[sample] * spatial;
+        broadG += source[sample + 1] * spatial;
+        broadB += source[sample + 2] * spatial;
+        broadWeight += spatial;
+      }
+    if (!broadWeight) continue;
+    const fine = [fineR / fineWeight, fineG / fineWeight, fineB / fineWeight];
+    const broad = [broadR / broadWeight, broadG / broadWeight, broadB / broadWeight];
+    const signal = [
+      (baseR - fine[0]) * 0.7 + (fine[0] - broad[0]) * 0.3,
+      (baseG - fine[1]) * 0.7 + (fine[1] - broad[1]) * 0.3,
+      (baseB - fine[2]) * 0.7 + (fine[2] - broad[2]) * 0.3,
+    ];
+    const signalLuma = Math.abs(luma(signal[0], signal[1], signal[2]));
+    const threshold = 1.5 + suppression * 18;
+    const noiseGate = signalLuma <= threshold ? signalLuma / Math.max(1, threshold) * 0.35 : 1;
+    const gain = mix * (0.35 + detail * 1.65) * noiseGate;
+    output[destination] = clampByte(baseR + signal[0] * gain);
+    output[destination + 1] = clampByte(baseG + signal[1] * gain);
+    output[destination + 2] = clampByte(baseB + signal[2] * gain);
+  }
+}
+
+/**
  * Apply a bounded Tilt-Shift focal-band blur.
  *
  * `centerX`/`centerY` locate the middle of the focus line and `angle` rotates
@@ -3283,6 +3384,8 @@ export function applyFilterEffectsPixels(
     applySharpenEdges(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-sharpen') {
     applySmartSharpen(data, width, height, effect.radius, output, effect.amount);
+  } else if (effect.type === 'ai-sharpen') {
+    applyAiSharpen(data, width, height, effect, output, strength);
   } else if (effect.type === 'smart-blur') {
     applySmartBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'surface-blur') {

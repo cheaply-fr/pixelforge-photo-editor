@@ -371,6 +371,39 @@ test('Smart Sharpen is edge-aware, deterministic and source-safe', () => {
   })), true);
 });
 
+test('AI Sharpen normalizes editable settings and rejects invalid metadata', () => {
+  const effect = effectiveFilterEffects({
+    type: 'ai-sharpen', amount: 100, radius: 3,
+    aiSharpen: { detail: 120, noiseSuppression: -9 },
+  });
+  assert.deepEqual(effect.aiSharpen, { detail: 100, noiseSuppression: 0 });
+  assert.equal(validFilterEffects(effect), true);
+  assert.equal(validFilterEffects({ ...effect, aiSharpen: { detail: 10, noiseSuppression: Number.NaN } }), false);
+  assert.deepEqual(effectiveFilterEffects({ type: 'ai-sharpen' }).aiSharpen, { detail: 58, noiseSuppression: 42 });
+});
+
+test('AI Sharpen is deterministic, source-safe, alpha-safe and distinct from Smart Sharpen', () => {
+  const source = rgba(9, 5, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    const edge = x < 4 ? 30 : 220;
+    return [edge + y * 2, 80 + x, 90, 255];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'ai-sharpen', amount: 100, radius: 3,
+    aiSharpen: { detail: 78, noiseSuppression: 16 },
+  };
+  const output = applyFilterEffectsPixels(source, 9, 5, effect);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 9, 0, 0), [17, 23, 29, 0]);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 5, effect));
+  assert.notDeepEqual(output, applyFilterEffectsPixels(source, 9, 5, { ...effect, aiSharpen: { detail: 12, noiseSuppression: 90 } }));
+  assert.notDeepEqual(output, applyFilterEffectsPixels(source, 9, 5, { ...effect, type: 'smart-sharpen' }));
+  assert.deepEqual(applyFilterEffectsPixels(source, 9, 5, { ...effect, amount: 0 }), source);
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
 test('linear shear interpolates fractional shifts and clamps image edges', () => {
   const source = rgba(9, 5, (x) => [x * 20, 0, 0, 255]);
   const output = applyFilterEffectsPixels(source, 9, 5, {

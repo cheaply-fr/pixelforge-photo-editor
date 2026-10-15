@@ -37,6 +37,7 @@ export function filterActionParameters(
       ...(effect.mezzotint ? { mezzotint: effect.mezzotint } : {}),
       ...(effect.fibers ? { fibers: effect.fibers } : {}),
       ...(effect.tree ? { tree: effect.tree } : {}),
+      ...(effect.aiSharpen ? { aiSharpen: effect.aiSharpen } : {}),
       ...(effect.deinterlace ? { deinterlace: effect.deinterlace } : {}),
     }),
   };

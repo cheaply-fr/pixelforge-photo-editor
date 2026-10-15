@@ -198,6 +198,7 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
     'filter-sharpen-more': 'sharpen-more',
     'filter-sharpen-edges': 'sharpen-edges',
     'filter-smart-sharpen': 'smart-sharpen',
+    'filter-ai-sharpen': 'ai-sharpen',
     'filter-motion-blur': 'motion-blur',
     'filter-radial-blur': 'radial-blur',
     'filter-spin-blur': 'spin-blur',
