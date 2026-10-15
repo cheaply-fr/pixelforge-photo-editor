@@ -148,6 +148,25 @@ test('Dust & Scratches replaces only strong local outliers and preserves source 
   assert.equal(effectiveFilterEffects({ ...effect, threshold: 999 }).threshold, 255);
 });
 
+test('Reflection Removal reduces a bright neutral local glare while preserving source and alpha', () => {
+  const source = rgba(5, 5, (x, y) => {
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    if (x === 2 && y === 2) return [255, 255, 255, 255];
+    return [42 + x, 76 + y, 112, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'reflection-removal', amount: 100, radius: 2, threshold: 20 };
+  const output = applyFilterEffectsPixels(source, 5, 5, effect);
+  assert.deepEqual(source, original);
+  assert.ok(pixel(output, 5, 2, 2)[0] < 255);
+  assert.ok(pixel(output, 5, 2, 2)[1] < 255);
+  assert.ok(pixel(output, 5, 2, 2)[2] < 255);
+  assert.deepEqual(pixel(output, 5, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 5, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(effectiveFilterEffects({ ...effect, threshold: 999 }).threshold, 255);
+});
+
 test('Despeckle applies the fixed local cleanup contract deterministically', () => {
   const source = rgba(3, 3, (x, y) => {
     if (x === 1 && y === 1) return [255, 0, 255, 255];

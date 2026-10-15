@@ -10,6 +10,12 @@ The File menu now includes **Batch export history…** and **Batch export images
 
 The import boundary also classifies SVG as conditional browser rasterization and PDF as explicitly unsupported before decoding. SVG opens only as a flattened editable raster with vector paths, external resources, fonts and source metadata omitted; PDF directs the user to render a page to PNG or JPEG. These are capability disclosures, not editable SVG/PDF round-trip support.
 
+The Edit menu now exposes **Reflection Removal…** as a bounded local de-glare
+approximation that blends bright, low-saturation luminance outliers toward a
+visible-neighbour median. It preserves source assets and alpha bytes, survives
+undo/reload/project and action/batch replay, and states its semantic limits in
+[`reflection-removal-effect-contract.md`](./reflection-removal-effect-contract.md).
+
 The Edit menu now exposes **Menus…** for a bounded local workspace preference
 that hides explicitly disabled roadmap entries while keeping working commands,
 command search and document data unchanged; see
