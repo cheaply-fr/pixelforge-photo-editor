@@ -82,6 +82,7 @@ import {
   inversePoint,
   localSize,
   multiply,
+  layerTransformMatrix,
   neutral,
   rasterFrame,
   replaceColorStroke,
@@ -100,6 +101,7 @@ import {
   type Frame,
   type Matrix,
   type Selection,
+  type SelectionTransform,
   type SelectionOperation,
   type SelectionPart,
   type TextAlign,
@@ -714,6 +716,11 @@ type Command =
   | 'create-clipping-mask'
   | 'release-clipping-mask'
   | 'free-transform'
+  | 'layer-rotate-90-cw'
+  | 'layer-rotate-90-ccw'
+  | 'layer-rotate-180'
+  | 'layer-flip-horizontal'
+  | 'layer-flip-vertical'
   | 'perspective-warp'
   | 'puppet-warp'
   | 'quick-mask'
@@ -1040,7 +1047,11 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       shortcut: 'Ctrl+T',
       command: 'free-transform',
     },
-    { label: 'Transform', command: 'noop', disabled: true },
+    { label: 'Transform → Rotate 90° Clockwise', command: 'layer-rotate-90-cw' },
+    { label: 'Transform → Rotate 90° Counterclockwise', command: 'layer-rotate-90-ccw' },
+    { label: 'Transform → Rotate 180°', command: 'layer-rotate-180' },
+    { label: 'Transform → Flip Horizontal', command: 'layer-flip-horizontal' },
+    { label: 'Transform → Flip Vertical', command: 'layer-flip-vertical' },
     { label: 'Perspective Warp…', command: 'perspective-warp' },
     { label: 'Puppet Warp…', command: 'puppet-warp' },
     { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
@@ -4544,6 +4555,47 @@ export default function Home() {
       );
     } finally {
       setLayerTransforming(false);
+    }
+  };
+  const applyLayerTransformPreset = (
+    label: string,
+    values: Pick<SelectionTransform, 'angle' | 'flipX' | 'flipY'>,
+  ) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before transforming a layer');
+      return;
+    }
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) {
+      setNotice('Select a layer before transforming it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before transforming it');
+      return;
+    }
+    try {
+      const bounds = layerLocalBounds(layer, assets.current) as LayerTransformBounds;
+      const delta = layerTransformMatrix(bounds, layer.matrix, {
+        offsetX: 0,
+        offsetY: 0,
+        scaleX: 100,
+        scaleY: 100,
+        skewX: 0,
+        skewY: 0,
+        angle: values.angle,
+        flipX: values.flipX,
+        flipY: values.flipY,
+      });
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...item, matrix: multiply(delta, layer.matrix) } : item,
+        ),
+      })) setNotice(`${label} applied`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `${label} failed`);
     }
   };
   const applyPerspectiveWarp = async () => {
@@ -12257,6 +12309,16 @@ export default function Home() {
     else if (command === 'remove-background') return removeBackground();
     else if (command === 'cookie-cutter') return createCookieCutterMask();
     else if (command === 'free-transform') beginLayerTransform();
+    else if (command === 'layer-rotate-90-cw')
+      return applyLayerTransformPreset('Layer rotate 90° clockwise', { angle: 90, flipX: false, flipY: false });
+    else if (command === 'layer-rotate-90-ccw')
+      return applyLayerTransformPreset('Layer rotate 90° counterclockwise', { angle: -90, flipX: false, flipY: false });
+    else if (command === 'layer-rotate-180')
+      return applyLayerTransformPreset('Layer rotate 180°', { angle: 180, flipX: false, flipY: false });
+    else if (command === 'layer-flip-horizontal')
+      return applyLayerTransformPreset('Layer flip horizontal', { angle: 0, flipX: true, flipY: false });
+    else if (command === 'layer-flip-vertical')
+      return applyLayerTransformPreset('Layer flip vertical', { angle: 0, flipX: false, flipY: true });
     else if (command === 'perspective-warp') return applyPerspectiveWarp();
     else if (command === 'puppet-warp') return applyPuppetWarp();
     else if (command === 'invert-layer-mask') invertLayerMask();

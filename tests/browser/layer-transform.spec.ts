@@ -68,3 +68,51 @@ test('Free Transform rejects malformed values without mutating the draft', async
     before.history[before.index].layers.at(-1)!.matrix,
   );
 });
+
+test('Layer Transform presets rotate and flip the active layer without baking its source', async ({ page }) => {
+  const names = [
+    'Transform → Rotate 90° Clockwise',
+    'Transform → Rotate 90° Counterclockwise',
+    'Transform → Rotate 180°',
+    'Transform → Flip Horizontal',
+    'Transform → Flip Vertical',
+  ];
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  for (const name of names) await expect(page.getByRole('menuitem', { name, exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: names[0], exact: true }).click();
+  await expect(page.getByText('Layer rotate 90° clockwise applied', { exact: true })).toBeVisible();
+  const rotated = await project(page);
+  const rotatedLayer = rotated.history[rotated.index].layers.at(-1)!;
+  expect(rotatedLayer.matrix).not.toEqual([1, 0, 0, 1, 0, 0]);
+  expect(rotatedLayer.asset).toBeTruthy();
+
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const reloaded = await project(page);
+  expect(reloaded.history[reloaded.index].layers.at(-1)!.matrix).toEqual(rotatedLayer.matrix);
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: names[3], exact: true }).click();
+  await expect(page.getByText('Layer flip horizontal applied', { exact: true })).toBeVisible();
+  const flipped = await project(page);
+  expect(flipped.history[flipped.index].layers.at(-1)!.matrix).not.toEqual(rotatedLayer.matrix);
+  expect(flipped.history[flipped.index].layers.at(-1)!.asset).toBe(rotatedLayer.asset);
+
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const undone = await project(page);
+  expect(undone.history[undone.index].layers.at(-1)!.matrix).toEqual(rotatedLayer.matrix);
+});
+
+test('Layer Transform presets reject a locked active layer without changing history', async ({ page }) => {
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Lock Layers…', exact: true }).click();
+  await expect(page.getByText('Selected layers locked', { exact: true })).toBeVisible();
+  const locked = await project(page);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Transform → Flip Vertical', exact: true }).click();
+  await expect(page.getByText('Unlock this layer before transforming it', { exact: true })).toBeVisible();
+  const after = await project(page);
+  expect(after.history.length).toBe(locked.history.length);
+  expect(after.history[after.index].layers.at(-1)!.matrix).toEqual(locked.history[locked.index].layers.at(-1)!.matrix);
+});
