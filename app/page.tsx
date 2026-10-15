@@ -183,6 +183,7 @@ import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
+import PasteSpecialDialog from '../src/PasteSpecialDialog';
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -370,6 +371,10 @@ import {
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
+import {
+  pastePlacementMatrix,
+  type PasteSpecialMode,
+} from '../src/pasteSpecial';
 import {
   normalizeToolShortcutPreferences,
   toolShortcutMatches,
@@ -632,6 +637,7 @@ type Command =
   | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
+  | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
   | 'stroke-selection'
@@ -1037,6 +1043,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Paste Special…', command: 'paste-special' },
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
@@ -2245,6 +2252,7 @@ export default function Home() {
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [batchActionId, setBatchActionId] = useState<string>(),
     [fileInfoOpen, setFileInfoOpen] = useState(false),
+    [pasteSpecialOpen, setPasteSpecialOpen] = useState(false),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -7210,10 +7218,11 @@ export default function Home() {
     clipboardLayer.current = null;
     setHasClipboard(false);
   };
-  const pasteLayer = () => {
+  const pasteLayerSpecial = async (mode: PasteSpecialMode = 'in-place') => {
     const copied = clipboardLayer.current;
     if (!copied) {
       setNotice('Copy a layer before pasting');
+      setPasteSpecialOpen(false);
       return;
     }
     const f = current();
@@ -7224,6 +7233,37 @@ export default function Home() {
     ) {
       clearClipboard();
       setNotice('The copied layer is no longer available in this document');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    if (mode === 'into-selection' && !f.selection) {
+      setNotice('Create a selection before pasting into it');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    if (mode === 'into-selection' && !isMaskableLayer(copied)) {
+      setNotice('Paste into Selection requires an image or smart-object layer');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    let matrix = copied.matrix;
+    let mask: string | undefined;
+    try {
+      matrix = pastePlacementMatrix(
+        copied.matrix,
+        layerLocalBounds(copied, assets.current),
+        { width: f.w, height: f.h },
+        mode,
+      );
+      if (mode === 'into-selection' && f.selection) {
+        mask = addAsset(
+          assets.current,
+          await renderSelection(f.selection, f.w, f.h, assets.current),
+        );
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Paste placement failed');
+      setPasteSpecialOpen(false);
       return;
     }
     const copiedGroup = copied.groupId
@@ -7234,13 +7274,24 @@ export default function Home() {
       id: crypto.randomUUID(),
       name: `${copied.name} copy`.slice(0, 160),
       locked: false,
+      matrix,
+      ...(mask ? { mask, maskEnabled: true, maskInverted: false } : {}),
       ...(copiedGroup && !copiedGroup.locked
         ? { groupId: copiedGroup.id }
         : { groupId: undefined }),
     } as Layer;
-    addLayer(pasted);
-    setNotice('Layer pasted');
+    if (addLayer(pasted)) {
+      setPasteSpecialOpen(false);
+      setNotice(
+        mode === 'center'
+          ? 'Layer pasted at canvas centre'
+          : mode === 'into-selection'
+            ? 'Layer pasted into the selection with a nondestructive mask'
+            : 'Layer pasted in place',
+      );
+    }
   };
+  const pasteLayer = () => void pasteLayerSpecial('in-place');
   const cutLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -12292,6 +12343,7 @@ export default function Home() {
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'stroke-selection') return strokeSelection();
@@ -12809,6 +12861,8 @@ export default function Home() {
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
+        return !hasClipboard || frame.layers.length >= 32;
+      case 'paste-special':
         return !hasClipboard || frame.layers.length >= 32;
       case 'new-layer':
         return frame.layers.length >= 32;
@@ -13431,6 +13485,13 @@ export default function Home() {
           initialColor={color}
           close={() => setFillLayerDialog(false)}
           apply={addSolidFillLayer}
+        />
+      )}
+      {pasteSpecialOpen && (
+        <PasteSpecialDialog
+          hasSelection={Boolean(frame?.selection)}
+          close={() => setPasteSpecialOpen(false)}
+          apply={(mode) => void pasteLayerSpecial(mode)}
         />
       )}
       {focusAreaValue && (
