@@ -484,6 +484,7 @@ import {
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
+  DEFAULT_AI_DENOISE_SETTINGS,
   effectiveFilterEffects,
   isNeutralFilterEffects,
   neutralFilterEffects,
@@ -797,6 +798,7 @@ type Command =
   | 'filter-dust-scratches'
   | 'filter-despeckle'
   | 'filter-reduce-noise'
+  | 'filter-ai-denoise'
   | 'filter-add-noise'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
@@ -1231,7 +1233,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Neural Filters…', command: 'noop', disabled: true },
     { label: 'Filter Gallery…', command: 'filter-gallery' },
     { label: 'Camera Raw Filter…', command: 'camera-raw' },
-    { label: 'AI Denoise…', command: 'noop', disabled: true },
+    { label: 'AI Denoise…', command: 'filter-ai-denoise' },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
     { label: 'Liquify…', command: 'filter-liquify' },
@@ -5536,8 +5538,9 @@ export default function Home() {
                 } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
                 ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
+                ...(type === 'ai-denoise' ? { aiDenoise: { ...DEFAULT_AI_DENOISE_SETTINGS } } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise' || type === 'ai-denoise'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -5574,6 +5577,8 @@ export default function Home() {
                     ? 1
                     : type === 'reduce-noise'
                     ? 2
+                    : type === 'ai-denoise'
+                      ? 3
                     : type === 'lens-correction'
                       ? 64
                     : type === 'lens-flare'
@@ -12362,6 +12367,8 @@ export default function Home() {
       chooseFilterEffect('despeckle', 'Despeckle (local approximation)');
     else if (command === 'filter-reduce-noise')
       chooseFilterEffect('reduce-noise', 'Reduce Noise (edge-aware local approximation)');
+    else if (command === 'filter-ai-denoise')
+      chooseFilterEffect('ai-denoise', 'AI Denoise (deterministic local approximation)');
     else if (command === 'filter-add-noise')
       chooseFilterEffect('add-noise', 'Add Noise (seeded local approximation)');
     else if (command === 'filter-deinterlace')
@@ -12720,6 +12727,7 @@ export default function Home() {
       case 'filter-dust-scratches':
       case 'filter-despeckle':
       case 'filter-reduce-noise':
+      case 'filter-ai-denoise':
       case 'filter-add-noise':
       case 'filter-solarize':
       case 'filter-diffuse':
@@ -15915,6 +15923,9 @@ export default function Home() {
             {filterEffects.type === 'reduce-noise' && (
               <p>Bounded colour-weighted neighbourhood smoothing that favours nearby similar tones. Radius, preserve-details threshold and amount remain editable; temporal and high-bit-depth parity remain staged.</p>
             )}
+            {filterEffects.type === 'ai-denoise' && (
+              <p>Deterministic on-device denoise approximation using a two-scale edge-aware kernel. No model is downloaded and no pixels leave the device; detail protection, chroma smoothing, radius and amount remain editable. Adobe AI model parity remains staged.</p>
+            )}
             {filterEffects.type === 'add-noise' && (
               <>
                 <p>Seeded uniform noise is blended into visible pixels without changing alpha or transparent RGB. Amount, seed and monochromatic mode remain editable; Gaussian distribution, film grain and channel clipping parity remain staged.</p>
@@ -15993,6 +16004,26 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
+                {filterEffects.type === 'ai-denoise' && (
+                  <>
+                    <Slider
+                      label="Detail protection"
+                      value={filterEffects.aiDenoise?.detail ?? DEFAULT_AI_DENOISE_SETTINGS.detail}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ aiDenoise: { ...(filterEffects.aiDenoise ?? DEFAULT_AI_DENOISE_SETTINGS), detail: value } })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Chroma smoothing"
+                      value={filterEffects.aiDenoise?.chroma ?? DEFAULT_AI_DENOISE_SETTINGS.chroma}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ aiDenoise: { ...(filterEffects.aiDenoise ?? DEFAULT_AI_DENOISE_SETTINGS), chroma: value } })}
+                      suffix="%"
+                    />
+                  </>
+                )}
                 {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && <Slider
                   label={
                     filterEffects.type === 'fibers'
@@ -16055,6 +16086,8 @@ export default function Home() {
                           ? 'Correction radius'
                       : filterEffects.type === 'lens-flare'
                           ? 'Flare size'
+                      : filterEffects.type === 'ai-denoise'
+                          ? 'Denoise radius'
                       : filterEffects.type === 'emboss'
                           ? 'Emboss depth'
 
