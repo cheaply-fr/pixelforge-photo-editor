@@ -44,13 +44,20 @@ for (const type of [
   'smart-blur',
   'surface-blur',
   'fragment',
+  'adaptive-wide-angle',
 ]) {
   test(`tiled ${type} matches the full-frame pixel oracle at seams`, async () => {
     const width = 520;
     const height = 300;
     const sourcePixels = pixels(width, height);
     const destination = new Uint8ClampedArray(sourcePixels.length);
-    const effect = { type, amount: 100, radius: 8, angle: 27, seed: 17 };
+    const effect = {
+      type, amount: 100, radius: 8, angle: 27, seed: 17,
+      centerX: 0.33, centerY: 0.68,
+      ...(type === 'adaptive-wide-angle'
+        ? { adaptiveWideAngle: { horizontal: 80, vertical: 20 } }
+        : {}),
+    };
     const expected = applyFilterEffectsPixels(sourcePixels, width, height, effect);
     const result = await renderTiledNeighborhoodEffect(
       width,
@@ -77,6 +84,7 @@ test('only bounded local blur families enter the visible tiled path', () => {
   assert.equal(isTiledNeighborhoodBlur({ type: 'mosaic', amount: 100, radius: 4 }), false);
   for (const type of ['lens-blur', 'motion-blur', 'shape-blur', 'smart-blur', 'surface-blur', 'fragment'])
     assert.equal(isTiledNeighborhoodBlur({ type, amount: 100, radius: 4 }), true);
+  assert.equal(isTiledNeighborhoodBlur({ type: 'adaptive-wide-angle', amount: 100, radius: 4 }), true);
 });
 
 test('tiled cache keys include revision/effect and cached output is cloned', async () => {

@@ -38,6 +38,7 @@ export const TILED_NEIGHBORHOOD_EFFECT_TYPES = [
   'smart-blur',
   'surface-blur',
   'fragment',
+  'adaptive-wide-angle',
 ] as const satisfies readonly FilterEffectType[];
 export type TiledNeighborhoodEffectType =
   (typeof TILED_NEIGHBORHOOD_EFFECT_TYPES)[number];
@@ -348,6 +349,22 @@ function keyFor(
   ].join(':');
 }
 
+/** Convert a global adaptive centre into the expanded tile's local space. */
+function tileRenderCenter(
+  effect: FilterEffects,
+  tile: Tile,
+  width: number,
+  height: number,
+): { x: number; y: number } | undefined {
+  if (effect.type !== 'adaptive-wide-angle') return undefined;
+  return {
+    x: (effect.centerX * Math.max(0, width - 1) - tile.readX) /
+      Math.max(1, tile.readWidth - 1),
+    y: (effect.centerY * Math.max(0, height - 1) - tile.readY) /
+      Math.max(1, tile.readHeight - 1),
+  };
+}
+
 /**
  * Render an effect through a source provider and a destination sink.
  *
@@ -412,6 +429,7 @@ export async function renderTiledNeighborhoodEffect(
           tile.readWidth,
           tile.readHeight,
           effect,
+          tileRenderCenter(effect, tile, width, height),
         );
         assertAbort(options.signal, options.isCancelled);
         assertPixels(rendered, tile.readWidth, tile.readHeight, 'Tiled effect output');

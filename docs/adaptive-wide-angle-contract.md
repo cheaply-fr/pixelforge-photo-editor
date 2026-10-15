@@ -10,7 +10,9 @@ The renderer applies separate horizontal and vertical radial fields and a
 small cross-axis term, using alpha-aware bilinear source sampling. The source
 asset and transparent RGB padding remain unchanged; only visible output pixels
 are rendered through the effect. Reapplying the same metadata is deterministic,
-and changing either bias changes the geometry map.
+and changing either bias changes the geometry map. Radius is bounded in source
+pixels, so large documents can use the visible tiled renderer with expanded
+source overlap while preserving full-frame pixels at tile seams.
 
 This is a bounded browser-local approximation. It does not claim Photoshop's
 constraint drawing, camera calibration, lens profiles, full perspective mesh,

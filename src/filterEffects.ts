@@ -2931,7 +2931,9 @@ function applyAdaptiveWideAngle(
 ): void {
   const centreX = effect.centerX * (width - 1);
   const centreY = effect.centerY * (height - 1);
-  const influenceRadius = Math.max(1, Math.min(width, height) * 0.5 * (effect.radius / 32));
+  // Radius is expressed in source pixels so a tiled render can expand by a
+  // bounded overlap and reproduce the full-frame result at tile seams.
+  const influenceRadius = Math.max(1, Math.min(effect.radius, Math.max(width, height)));
   const strength = clamp(effect.amount, 0, 100) / 100 * 0.34;
   const settings = effect.adaptiveWideAngle ?? DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS;
   const horizontalBias = 0.55 + settings.horizontal / 100 * 0.9;
@@ -2943,10 +2945,15 @@ function applyAdaptiveWideAngle(
       if (!source[destination + 3]) continue;
       const dx = x - centreX;
       const dy = y - centreY;
-      const normalized = clamp(Math.hypot(dx, dy) / influenceRadius, 0, 1);
-      const radial = normalized * normalized;
-      const xScale = 1 - strength * radial * horizontalBias * (0.84 + Math.abs(dy) / Math.max(1, height) * 0.32);
-      const yScale = 1 - strength * radial * verticalBias * (0.84 + Math.abs(dx) / Math.max(1, width) * 0.32);
+      const normalized = Math.hypot(dx, dy) / influenceRadius;
+      if (normalized >= 1) continue;
+      // Fade to the source at the bounded local edge. Keeping the map local
+      // makes the maximum source displacement fit inside tile overlap.
+      const radial = normalized * normalized * (1 - normalized);
+      const xScale = 1 - strength * radial * horizontalBias *
+        (0.84 + clamp(Math.abs(dy) / influenceRadius, 0, 1) * 0.32);
+      const yScale = 1 - strength * radial * verticalBias *
+        (0.84 + clamp(Math.abs(dx) / influenceRadius, 0, 1) * 0.32);
       const sample = sourcePixelBilinear(
         source,
         width,
@@ -3334,6 +3341,7 @@ export function applyFilterEffectsPixels(
   width: number,
   height: number,
   value: Partial<FilterEffects> | undefined,
+  renderCenter?: { x: number; y: number },
 ): Uint8ClampedArray {
   validateDimensions(data, width, height);
   const effect = effectiveFilterEffects(value);
@@ -3485,7 +3493,15 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'lens-correction') {
     applyLensCorrection(data, width, height, effect, output);
   } else if (effect.type === 'adaptive-wide-angle') {
-    applyAdaptiveWideAngle(data, width, height, effect, output);
+    applyAdaptiveWideAngle(
+      data,
+      width,
+      height,
+      renderCenter
+        ? { ...effect, centerX: renderCenter.x, centerY: renderCenter.y }
+        : effect,
+      output,
+    );
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
 
