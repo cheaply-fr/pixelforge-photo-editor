@@ -55,4 +55,11 @@ test('filter Action parameters retain effect-specific geometry', () => {
   assert.deepEqual(JSON.parse(tiltParameters.filterExtra), {
     tiltShift: { focusWidth: 0.4, feather: 0.3 },
   });
+  const aiParameters = filterActionParameters({
+    type: 'ai-denoise', amount: 100, radius: 4,
+    aiDenoise: { detail: 22, chroma: 91 },
+  });
+  assert.deepEqual(JSON.parse(aiParameters.filterExtra), {
+    aiDenoise: { detail: 22, chroma: 91 },
+  });
 });

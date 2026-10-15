@@ -70,6 +70,7 @@ export const FILTER_EFFECT_TYPES = [
   'dust-scratches',
   'despeckle',
   'reduce-noise',
+  'ai-denoise',
   'add-noise',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
@@ -150,6 +151,14 @@ export type GradientMapSettings = {
   blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
 };
 
+/** Controls for the deterministic on-device AI Denoise approximation. */
+export type AiDenoiseSettings = {
+  /** Preserve fine luminance structure, 0..100. */
+  detail: number;
+  /** Increase chroma smoothing independently from luminance smoothing, 0..100. */
+  chroma: number;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -178,6 +187,11 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
 export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
   shadow: '#000000',
   highlight: '#ffffff',
+};
+
+export const DEFAULT_AI_DENOISE_SETTINGS: AiDenoiseSettings = {
+  detail: 50,
+  chroma: 65,
 };
 
 export type FilterEffects = {
@@ -223,6 +237,8 @@ export type FilterEffects = {
   gradientMap?: GradientMapSettings;
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
+  /** Detail/chroma controls for the deterministic local AI Denoise approximation. */
+  aiDenoise?: AiDenoiseSettings;
   deinterlace?: DeinterlaceSettings;
 };
 
@@ -376,6 +392,17 @@ export function effectiveFilterEffects(
       ? clamp(Math.round(source.threshold), 0, 255)
       : type === 'reduce-noise' ? 25 : 12;
   }
+  if (type === 'ai-denoise') {
+    const settings = source.aiDenoise;
+    normalized.aiDenoise = {
+      detail: finite(settings?.detail)
+        ? clamp(Math.round(settings.detail), 0, 100)
+        : DEFAULT_AI_DENOISE_SETTINGS.detail,
+      chroma: finite(settings?.chroma)
+        ? clamp(Math.round(settings.chroma), 0, 100)
+        : DEFAULT_AI_DENOISE_SETTINGS.chroma,
+    };
+  }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
 }
@@ -443,6 +470,12 @@ function validGradientMapSettings(value: unknown): value is GradientMapSettings 
     (settings.stops === undefined || isGradientStops(settings.stops)) &&
     (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
 }
+function validAiDenoiseSettings(value: unknown): value is AiDenoiseSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<AiDenoiseSettings>;
+  return finite(settings.detail) && Number.isInteger(settings.detail) && settings.detail >= 0 && settings.detail <= 100 &&
+    finite(settings.chroma) && Number.isInteger(settings.chroma) && settings.chroma >= 0 && settings.chroma <= 100;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -462,6 +495,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.aiDenoise === undefined || validAiDenoiseSettings(effect.aiDenoise)) &&
     (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
@@ -3208,6 +3242,92 @@ function applyReduceNoise(
   }
 }
 
+/**
+ * Deterministic, on-device AI Denoise approximation.
+ *
+ * This is intentionally a bounded two-scale bilateral smoother rather than a
+ * network-backed model. It keeps the metadata editable and reproducible while
+ * giving flat areas stronger chroma cleanup and textured areas more detail
+ * protection. Alpha and transparent RGB padding are never touched.
+ */
+function applyAiDenoise(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const detail = clamp(Math.round(effect.aiDenoise?.detail ?? DEFAULT_AI_DENOISE_SETTINGS.detail), 0, 100) / 100;
+  const chroma = clamp(Math.round(effect.aiDenoise?.chroma ?? DEFAULT_AI_DENOISE_SETTINGS.chroma), 0, 100) / 100;
+  const mix = clamp(strength, 0, 1);
+  const luma = (r: number, g: number, b: number) => r * 0.299 + g * 0.587 + b * 0.114;
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    if (!source[destination + 3]) continue;
+    const baseR = source[destination], baseG = source[destination + 1], baseB = source[destination + 2];
+    const baseLuma = luma(baseR, baseG, baseB);
+    let fineR = 0, fineG = 0, fineB = 0, fineWeight = 0, variance = 0;
+    const detailSigma = 8 + detail * 96;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const sampleLuma = luma(source[sample], source[sample + 1], source[sample + 2]);
+        const distance = Math.hypot(sx - x, sy - y);
+        const spatial = Math.exp(-(distance * distance) / (2 * Math.max(1, radius * radius)));
+        const edge = Math.exp(-((sampleLuma - baseLuma) ** 2) / (2 * detailSigma * detailSigma));
+        const weight = spatial * edge;
+        fineR += source[sample] * weight;
+        fineG += source[sample + 1] * weight;
+        fineB += source[sample + 2] * weight;
+        variance += (sampleLuma - baseLuma) ** 2 * weight;
+        fineWeight += weight;
+      }
+    if (!fineWeight) continue;
+    const coarseRadius = Math.min(8, Math.max(radius + 1, radius * 2));
+    let coarseR = 0, coarseG = 0, coarseB = 0, coarseWeight = 0;
+    const coarseSigma = 18 + detail * 140;
+    for (let sy = Math.max(0, y - coarseRadius); sy <= Math.min(height - 1, y + coarseRadius); sy += 1)
+      for (let sx = Math.max(0, x - coarseRadius); sx <= Math.min(width - 1, x + coarseRadius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const sampleLuma = luma(source[sample], source[sample + 1], source[sample + 2]);
+        const distance = Math.hypot(sx - x, sy - y);
+        const spatial = Math.exp(-(distance * distance) / (2 * Math.max(1, coarseRadius * coarseRadius)));
+        const edge = Math.exp(-((sampleLuma - baseLuma) ** 2) / (2 * coarseSigma * coarseSigma));
+        const weight = spatial * edge;
+        coarseR += source[sample] * weight;
+        coarseG += source[sample + 1] * weight;
+        coarseB += source[sample + 2] * weight;
+        coarseWeight += weight;
+      }
+    if (!coarseWeight) continue;
+    const fineMean = [fineR / fineWeight, fineG / fineWeight, fineB / fineWeight];
+    const coarseMean = [coarseR / coarseWeight, coarseG / coarseWeight, coarseB / coarseWeight];
+    const flatness = clamp(1 - (variance / fineWeight) / 2200, 0, 1);
+    const coarseRatio = clamp((0.15 + flatness * 0.65) * (1 - detail * 0.45), 0, 1);
+    const target = [
+      fineMean[0] * (1 - coarseRatio) + coarseMean[0] * coarseRatio,
+      fineMean[1] * (1 - coarseRatio) + coarseMean[1] * coarseRatio,
+      fineMean[2] * (1 - coarseRatio) + coarseMean[2] * coarseRatio,
+    ];
+    const lumaMix = mix * (0.25 + (1 - detail) * 0.55);
+    const chromaMix = mix * (0.45 + chroma * 0.55);
+    const targetLuma = luma(target[0], target[1], target[2]);
+    const adjustedLuma = baseLuma + (targetLuma - baseLuma) * lumaMix;
+    const channel = (base: number, targetChannel: number) => {
+      const targetChroma = targetChannel - targetLuma;
+      const baseChroma = base - baseLuma;
+      return clampByte(adjustedLuma + baseChroma + (targetChroma - baseChroma) * chromaMix);
+    };
+    output[destination] = channel(baseR, target[0]);
+    output[destination + 1] = channel(baseG, target[1]);
+    output[destination + 2] = channel(baseB, target[2]);
+  }
+}
+
 /** Apply a seeded uniform Add Noise approximation without touching alpha. */
 function applyAddNoise(
   source: Uint8ClampedArray,
@@ -3357,6 +3477,8 @@ export function applyFilterEffectsPixels(
     applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
   } else if (effect.type === 'reduce-noise') {
     applyReduceNoise(data, width, height, effect, output, strength);
+  } else if (effect.type === 'ai-denoise') {
+    applyAiDenoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'add-noise') {
     applyAddNoise(data, width, height, effect, output);
   } else if (effect.type === 'mezzotint') {

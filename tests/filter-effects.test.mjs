@@ -181,6 +181,55 @@ test('Reduce Noise smooths similar tones while preserving strong edges and sourc
   assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
 });
 
+test('AI Denoise normalizes bounded metadata and round-trips its controls', () => {
+  const effect = effectiveFilterEffects({
+    type: 'ai-denoise', amount: 100, radius: 99,
+    aiDenoise: { detail: -12, chroma: 144 },
+  });
+  assert.deepEqual(effect.aiDenoise, { detail: 0, chroma: 100 });
+  assert.equal(effect.radius, 64);
+  assert.equal(validFilterEffects(effect), true);
+  assert.equal(validFilterEffects({ ...effect, aiDenoise: { detail: 1.5, chroma: 50 } }), false);
+  assert.deepEqual(effectiveFilterEffects(JSON.parse(JSON.stringify(effect))), effect);
+});
+
+test('AI Denoise is deterministic, source-safe, alpha-safe and distinct from Reduce Noise', () => {
+  const source = rgba(7, 5, (x, y) => {
+    if (x === 0 && y === 0) return [17, 23, 29, 0];
+    const edge = x < 3 ? [42, 78, 118] : [218, 34, 48];
+    const noise = ((x * 17 + y * 29) % 9) - 4;
+    return [edge[0] + noise * 3, edge[1] + noise * 2, edge[2] + noise, 255];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'ai-denoise', amount: 100, radius: 3,
+    aiDenoise: { detail: 35, chroma: 85 },
+  };
+  const output = applyFilterEffectsPixels(source, 7, 5, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 7, 5, effect));
+  assert.deepEqual(pixel(output, 7, 0, 0), [17, 23, 29, 0]);
+  assert.equal(pixel(output, 7, 3, 2)[3], 255);
+  const reduced = applyFilterEffectsPixels(source, 7, 5, {
+    type: 'reduce-noise', amount: 100, radius: 3, threshold: 25,
+  });
+  assert.notDeepEqual(output, reduced);
+});
+
+test('AI Denoise detail and chroma controls change the rendered result', () => {
+  const source = rgba(5, 5, (x, y) => [x * 40 + (y % 2) * 19, y * 35 + (x % 2) * 13, 90 + ((x + y) % 3) * 20, 255]);
+  const protectedDetail = applyFilterEffectsPixels(source, 5, 5, {
+    type: 'ai-denoise', amount: 100, radius: 3, aiDenoise: { detail: 100, chroma: 0 },
+  });
+  const smoothed = applyFilterEffectsPixels(source, 5, 5, {
+    type: 'ai-denoise', amount: 100, radius: 3, aiDenoise: { detail: 0, chroma: 100 },
+  });
+  assert.notDeepEqual(protectedDetail, smoothed);
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 5, { type: 'ai-denoise', amount: 0, radius: 3 }), source);
+  assert.equal(isNeutralFilterEffects({ type: 'ai-denoise', amount: 0, radius: 3 }), true);
+});
+
 test('De-Interlace supports both field parity choices and interpolation', () => {
   const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
   const first = applyFilterEffectsPixels(source, 2, 5, {
