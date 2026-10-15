@@ -509,6 +509,11 @@ import {
 } from '../src/cropTools';
 import { planPerspectiveWarp, warpPerspectiveRgba as warpLayerPerspectiveRgba } from '../src/perspectiveWarp';
 import {
+  planPuppetWarp,
+  warpPuppetRgba,
+  type PuppetPin,
+} from '../src/puppetWarp';
+import {
   createArtboard,
   sanitizeArtboardLayerMembership,
   setArtboardVisibility,
@@ -707,6 +712,7 @@ type Command =
   | 'release-clipping-mask'
   | 'free-transform'
   | 'perspective-warp'
+  | 'puppet-warp'
   | 'quick-mask'
   | 'save-selection'
   | 'load-selection'
@@ -1033,7 +1039,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     },
     { label: 'Transform', command: 'noop', disabled: true },
     { label: 'Perspective Warp…', command: 'perspective-warp' },
-    { label: 'Puppet Warp', command: 'noop', disabled: true },
+    { label: 'Puppet Warp…', command: 'puppet-warp' },
     { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
     { label: '', command: 'noop', separator: true },
     { label: 'Define Brush Preset…', command: 'define-brush-preset' },
@@ -4574,6 +4580,57 @@ export default function Home() {
       if (editLayer({ asset })) setNotice('Perspective Warp applied locally; undo restores the source asset');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not apply Perspective Warp');
+    }
+  };
+  const applyPuppetWarp = async () => {
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
+      setNotice('Select a raster or smart-object layer before using Puppet Warp');
+      return;
+    }
+    if (layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Unlock and show the active layer before using Puppet Warp');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]);
+      const width = image.naturalWidth, height = image.naturalHeight;
+      const defaultPins = `${Math.round(width * 0.5)},${Math.round(height * 0.5)},0,0`;
+      const input = window.prompt(
+        'Puppet Warp pins (x,y,dx,dy; up to 8 layer-local pins)',
+        defaultPins,
+      );
+      if (input === null) return;
+      const pins = input.split(';').map((entry) => {
+        const values = entry.split(',').map((value) => Number(value.trim()));
+        if (values.length !== 4 || values.some((value) => !Number.isFinite(value)))
+          throw new Error('Puppet Warp needs x,y,dx,dy values for each pin');
+        return { x: values[0], y: values[1], dx: values[2], dy: values[3], influence: Math.max(1, Math.round(Math.min(width, height) * 0.35)) } satisfies PuppetPin;
+      });
+      if (!pins.length || pins.length > 8) {
+        setNotice('Puppet Warp accepts one to eight pins');
+        return;
+      }
+      const plan = planPuppetWarp(width, height, pins);
+      const source = surface(width, height), sourceContext = source.getContext('2d');
+      if (!sourceContext) throw new Error('Puppet Warp source canvas is unavailable');
+      sourceContext.drawImage(image, 0, 0);
+      const pixels = sourceContext.getImageData(0, 0, width, height).data;
+      const warped = warpPuppetRgba(pixels, width, height, plan);
+      const output = surface(width, height), outputContext = output.getContext('2d');
+      if (!outputContext) throw new Error('Puppet Warp output canvas is unavailable');
+      const outputImage = outputContext.createImageData(width, height);
+      outputImage.data.set(warped);
+      outputContext.putImageData(outputImage, 0, 0);
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('Puppet Warp cancelled because the document changed');
+        return;
+      }
+      const asset = addAsset(assets.current, output);
+      if (editLayer({ asset })) setNotice('Puppet Warp applied locally; undo restores the source asset');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not apply Puppet Warp');
     }
   };
   const applySelectionRefinement = async (radius: number) => {
@@ -12172,6 +12229,7 @@ export default function Home() {
     else if (command === 'cookie-cutter') return createCookieCutterMask();
     else if (command === 'free-transform') beginLayerTransform();
     else if (command === 'perspective-warp') return applyPerspectiveWarp();
+    else if (command === 'puppet-warp') return applyPuppetWarp();
     else if (command === 'invert-layer-mask') invertLayerMask();
     else if (command === 'toggle-layer-mask') toggleLayerMask();
     else if (command === 'remove-layer-mask') clearMask();
@@ -12709,6 +12767,8 @@ export default function Home() {
       case 'free-transform':
         return !layer || locked;
       case 'perspective-warp':
+        return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
+      case 'puppet-warp':
         return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'matting':
         return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
