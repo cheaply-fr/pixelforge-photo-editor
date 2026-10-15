@@ -73,6 +73,24 @@ test('Keyboard Shortcuts can persist and invoke a custom menu command chord', as
   await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('92');
 });
 
+test('Keyboard Shortcuts can bind a menu command that has no built-in shortcut', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Keyboard Shortcuts…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Keyboard Shortcuts' });
+  const levels = dialog.getByLabel('Levels… custom command shortcut', { exact: true });
+  await expect(levels).toBeVisible();
+  await levels.fill('shift+8');
+  await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
+  await page.keyboard.press('Shift+8');
+  await expect(page.locator('footer > span').first()).toContainText('Levels controls are available');
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.keyboard.press('Shift+8');
+  await expect(page.locator('footer > span').first()).toContainText('Levels controls are available');
+});
+
 
 test('Keyboard Shortcuts can reset all custom bindings before applying', async ({ page }) => {
   await page.goto('/editor?new=1');

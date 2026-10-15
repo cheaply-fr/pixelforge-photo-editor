@@ -2005,6 +2005,7 @@ export default function Home() {
     pendingMenuFocus = useRef<Record<MenuName, 'first' | 'last' | undefined>>(
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
+    commandDisabledRef = useRef<Record<string, boolean>>({}),
     smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new');
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
@@ -2039,7 +2040,7 @@ export default function Home() {
   const initialToolShortcutPreferences = readToolShortcutPreferences();
   const commandShortcutIds = Array.from(new Set(
     (Object.values(MENU_DEFS) as MenuItem[][]).flatMap((items) =>
-      items.filter((item) => item.shortcut && item.command !== 'noop').map((item) => item.command),
+      items.filter((item) => !item.separator && item.command !== 'noop').map((item) => item.command),
     ),
   ));
   const initialCommandShortcutPreferences = readCommandShortcutPreferences(commandShortcutIds);
@@ -11812,6 +11813,11 @@ export default function Home() {
         commandShortcutMatches(binding, e),
       )?.[0] as Command | undefined;
       if (customCommand) {
+        if (commandDisabledRef.current[customCommand]) {
+          e.preventDefault();
+          setNotice('That menu command is disabled for the current document');
+          return;
+        }
         e.preventDefault();
         runCommandRef.current?.(customCommand);
         return;
@@ -12962,9 +12968,17 @@ export default function Home() {
         command: item.command,
         disabled: menuItemDisabled(item),
       })));
+  useEffect(() => {
+    commandDisabledRef.current = Object.fromEntries(
+      commandSearchItems.map((item) => [item.command, Boolean(item.disabled)]),
+    );
+  }, [commandSearchItems]);
   const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
     .filter((item) => Boolean(item.shortcut));
   const editableCommandShortcutItems = keyboardShortcutItems.filter((item, index, items) =>
+    items.findIndex((candidate) => candidate.command === item.command) === index,
+  );
+  const editableCommandItems = commandSearchItems.filter((item, index, items) =>
     items.findIndex((candidate) => candidate.command === item.command) === index,
   );
   const filterGalleryItems: FilterGalleryItem[] = FILTERS.map(([label, , first, second]) => ({
@@ -13212,6 +13226,7 @@ export default function Home() {
             } catch { /* private mode */ }
             setNotice('Custom tool shortcuts updated');
           }}
+          commandItems={editableCommandItems}
           commandBindings={commandShortcutBindings}
           applyCommandBindings={(bindings) => {
             const normalized = normalizeCommandShortcutPreferences(
