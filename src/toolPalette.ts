@@ -54,18 +54,19 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   p: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 
-/** Pointer/touch flyouts use Photoshop's visible tool families.  Selection
- * Brush stays in the L keyboard family for backward compatibility, while its
- * compact flyout lives beside Magic Wand under the W-style Selection group. */
+/** Pointer/touch flyouts use Photoshop's visible tool families. Selection
+ * Brush stays in the L keyboard family for backward compatibility, but remains
+ * an independent toolbar slot beside the W-style Selection flyout. */
 export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = {
   marquee: ['select', 'ellipse-select', 'row-select', 'column-select'],
   lasso: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
-  selection: ['selection-brush', 'quick-selection', 'magic-wand'],
+  // Selection Brush is an independent toolbar tool. Quick Selection and
+  // Magic Wand share the Photoshop-style W flyout.
+  selection: ['quick-selection', 'magic-wand'],
   crop: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'],
   fill: ['gradient', 'fill'],
-  paint: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
+  brush: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   shape: ['rectangle', 'ellipse', 'line', 'polygon'],
-  measure: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   eraser: ['eraser', 'background-eraser', 'magic-eraser'],
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],

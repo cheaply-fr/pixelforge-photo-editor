@@ -69,7 +69,11 @@ test('wide editor palette expands to three columns without losing focus targets'
     };
   });
   expect(layout.columns).toBe(3);
-  expect(layout.xPositions.length).toBe(3);
+  // Categories with exactly two independent tools intentionally use a
+  // two-column grid inside the three-column palette, so their second column
+  // can sit between the global grid tracks without creating a missing tool.
+  expect(layout.xPositions.length).toBeGreaterThanOrEqual(3);
+  expect(layout.xPositions.length).toBeLessThanOrEqual(4);
 
   const pen = page.getByRole('button', { name: 'Pen tool', exact: true });
   await pen.focus();
@@ -241,17 +245,17 @@ test('M/L/W flyouts retain Photoshop tool names and shortcuts', async ({ page })
   await page.keyboard.press('Escape');
 
   const selectionBrush = page.getByRole('button', { name: 'Selection Brush tool', exact: true });
-  await selectionBrush.focus();
+  await expect(selectionBrush.locator('.tool-subtool-arrow')).toHaveCount(0);
+  await selectionBrush.click();
+  const quickParent = page.getByRole('button', { name: 'Quick Selection tool', exact: true });
+  await quickParent.focus();
   await page.keyboard.press('ArrowDown');
   flyout = page.locator('[role="menu"]:visible');
-  const selection = flyout.getByRole('menuitem', { name: 'Selection Brush', exact: true });
   const quick = flyout.getByRole('menuitem', { name: 'Quick Selection', exact: true });
   const wand = flyout.getByRole('menuitem', { name: 'Magic Wand', exact: true });
-  await expect(selection).toBeVisible();
   await expect(quick).toBeVisible();
   await expect(wand).toBeVisible();
   await expect(quick.locator('svg')).toBeVisible();
-  await expect(selection.locator('kbd')).toHaveText('W');
   await expect(quick.locator('kbd')).toHaveText('W');
   await expect(wand.locator('kbd')).toHaveText('W');
 });
@@ -267,6 +271,16 @@ test('family variants occupy one category slot without duplicate toolbar ids', a
   expect(ids).toContain('selection-brush');
   expect(ids).toContain('lasso');
   expect(ids).not.toContain('polygonal-lasso');
+});
+
+test('measure tools and Selection Brush keep independent toolbar slots', async ({ page }) => {
+  await openEditor(page);
+  for (const label of ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Count', 'Selection Brush']) {
+    await expect(page.getByRole('button', { name: `${label} tool`, exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole('button', { name: 'Eyedropper tool', exact: true }).locator('.tool-subtool-arrow')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Selection Brush tool', exact: true }).locator('.tool-subtool-arrow')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Quick Selection tool', exact: true }).locator('.tool-subtool-arrow')).toHaveCount(1);
 });
 
 test('family slots remember the last chosen subtool after switching tools', async ({ page }) => {
