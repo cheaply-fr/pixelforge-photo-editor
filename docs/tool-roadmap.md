@@ -265,7 +265,7 @@ provider-backed, linked-source and full Photoshop filter-graph semantics remain
 staged.
 
 
-The vector interoperability increment adds `Layer → Copy SVG` for path, rectangle, ellipse and polygon layers. It serializes transformed geometry through the existing path model, preserves fill/stroke/even-odd metadata, writes to the browser clipboard without mutating the draft, and rejects unsupported raster/text sources. Pure serialization and desktop/mobile clipboard tests are included; font embedding, styles and Photoshop document graphs remain staged.
+The vector interoperability increment adds `Layer → Copy SVG` for path, rectangle, ellipse and polygon layers. It serializes transformed geometry through the existing path model, preserves fill/stroke/even-odd metadata, writes to the browser clipboard without mutating the draft, and rejects unsupported raster/text sources. Pure serialization and desktop/mobile clipboard tests are included; font embedding, styles and Photoshop document graphs remain staged. `Layer → Copy CSS` now provides a separate deterministic handoff for editable text and vector layers, retaining text metrics, opacity, transforms and bounded shape geometry while rejecting raster-bearing layers; see [`css-export-contract.md`](./css-export-contract.md). CSS handoff is not a Photoshop document export and does not claim font embedding, raster or authored-stroke parity.
 
 
 **Edit → Fade…** is active as a bounded post-operation raster opacity blend with source-safe history and desktop/mobile round-trip coverage. Vector, locked, mismatched and adjustment-only states remain staged behind the contract in [`fade-contract.md`](./fade-contract.md).

@@ -306,6 +306,7 @@ import {
 } from '../src/pathBooleans';
 import { pathContours, transformPath } from '../src/paths';
 import { pathToSvg } from '../src/svgExport';
+import { cloneLayerCss } from '../src/cssExport';
 import { traceAlphaContours } from '../src/alphaContours';
 import { shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
@@ -636,6 +637,7 @@ type Command =
   | 'matting'
   | 'duplicate-layer'
   | 'copy-svg'
+  | 'copy-css'
   | 'delete-layer'
   | 'rename-layer'
   | 'layer-style'
@@ -1103,6 +1105,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       command: 'duplicate-layer',
     },
     { label: 'Copy SVG', command: 'copy-svg' },
+    { label: 'Copy CSS', command: 'copy-css' },
     { label: 'Delete Layer', command: 'delete-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Quick Export document as PNG', command: 'png' },
@@ -7013,6 +7016,21 @@ export default function Home() {
       setNotice('Could not serialize this layer as SVG');
     }
   };
+  const copyCss = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !['text', 'rectangle', 'ellipse', 'line', 'polygon', 'path'].includes(layer.kind)) {
+      setNotice('Select an editable text or vector layer before copying CSS');
+      return;
+    }
+    try {
+      const css = cloneLayerCss(layer, f.w, f.h);
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(css);
+      setNotice('CSS copied from the editable layer');
+    } catch {
+      setNotice('Could not serialize this layer as CSS');
+    }
+  };
   const copyMerged = async () => {
     const beforeFrame = current();
     const beforeIndex = index.current;
@@ -12057,6 +12075,7 @@ export default function Home() {
     }
     else if (command === 'copy-layer') copyLayer();
     else if (command === 'copy-svg') return copySvg();
+    else if (command === 'copy-css') return copyCss();
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
