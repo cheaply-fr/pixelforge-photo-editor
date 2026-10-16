@@ -36,6 +36,11 @@ its focused desktop/mobile acceptance passes **2/2** and its pure coverage is
 included in the full suite. These menu-family surfaces do not claim full
 Photoshop adjustment-dialog or profile-aware analysis parity.
 
+Protected run `38963588498` passes for the exact candidate `a8eae77`, covering
+lint, typecheck, build, the full pure suite and desktop/mobile Playwright
+coverage. The production job was skipped because the candidate is still on
+open PR #149; deployment and live-acceptance credit therefore remain unearned.
+
 The preceding local candidate `2629cc5` adds `Edit → Generate Image…` as
 a bounded offline abstract renderer that inserts a deterministic gradient,
 stripes, dots or noise raster layer while enforcing prompt, dimension, pixel

@@ -46,6 +46,14 @@ gates; production still reports the previously verified revision
 `6515b45affed0a39113f9134fb8ebecf2f5935d2d` until a protected main-branch
 deployment completes.
 
+The latest protected validation run `38963588498` now passes for the exact
+candidate `a8eae77`, including lint, typecheck, production build, pure tests
+and the complete desktop/mobile Playwright suite. Its production deploy job
+was correctly skipped because PR #149 is not a main-branch push. This earns
+protected-CI evidence for the histogram and adjustment-family increments;
+production and live acceptance remain separate gates on the existing deployed
+revision.
+
 The local candidate source commit `2254afd` includes the bounded nondestructive
 Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
 enabled `Filter → Neural Filters…` approximation and the enabled
