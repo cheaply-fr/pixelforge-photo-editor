@@ -528,5 +528,11 @@ other interchange outputs and runs on the main thread because it is a binary
 container encoder rather than an `image/*` browser MIME path. Pure tests cover
 the PDF header, catalog/page/image objects, JPEG embedding and malformed bounds;
 desktop/mobile tests cover the dialog disclosure, download signature and
-absence of quality/target-size controls. Layered PDF import and editable PDF
-round trips remain staged; keep the `.pixelforge` project for editing.
+absence of quality/target-size controls. The matching import boundary now
+accepts only a bounded one-page DeviceRGB 8-bit JPEG image XObject, decodes it
+locally and publishes one flattened editable raster; parser tests cover image
+extraction, truncation, duplicate-image and dimension guards, and browser
+acceptance exports a real PDF then imports it back. General multi-page PDF,
+vector/text/font/profile/metadata support and editable PDF round trips remain
+staged; keep the `.pixelforge` project for editing. See
+[`pdf-import-contract.md`](pdf-import-contract.md).

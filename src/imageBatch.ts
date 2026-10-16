@@ -8,6 +8,7 @@ import {
 import { encodeImageWithWorker } from './workerEncode.ts';
 import { describeImportFormat } from './importFormats.ts';
 import { decodePsdComposite } from './psd.ts';
+import { decodePdfComposite } from './pdf.ts';
 import { decodeTiffComposite } from './tiff.ts';
 import { applyBatchActionToCanvas, publicBatchActionDescriptor, runBatchActionQueue } from './batchActions.ts';
 import { bindActionParameters, type ActionParameterValues, type ActionSet } from './actions.ts';
@@ -141,6 +142,46 @@ export async function decodeBatchImage(source: BatchImageSource): Promise<HTMLCa
     imageData.data.set(decoded.pixels);
     context.putImageData(imageData, 0, 0);
     return canvas;
+  }
+  if (format.format === 'pdf') {
+    const bytes = new Uint8Array(await source.file.arrayBuffer());
+    const decoded = decodePdfComposite(bytes);
+    const jpeg = new Blob([decoded.jpeg.buffer as ArrayBuffer], { type: 'image/jpeg' });
+    const imageBitmapFactory = globalThis.createImageBitmap;
+    if (typeof imageBitmapFactory === 'function') {
+      const bitmap = await imageBitmapFactory(jpeg);
+      try {
+        if (bitmap.width !== decoded.width || bitmap.height !== decoded.height)
+          throw new Error('PDF image dimensions do not match its page declaration.');
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Image decoding is unavailable in this browser.');
+        context.drawImage(bitmap, 0, 0);
+        return canvas;
+      } finally {
+        bitmap.close();
+      }
+    }
+    const url = URL.createObjectURL(jpeg);
+    try {
+      const image = new Image();
+      image.decoding = 'async';
+      image.src = url;
+      await image.decode();
+      if (image.naturalWidth !== decoded.width || image.naturalHeight !== decoded.height)
+        throw new Error('PDF image dimensions do not match its page declaration.');
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Image decoding is unavailable in this browser.');
+      context.drawImage(image, 0, 0);
+      return canvas;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
   const imageBitmapFactory = globalThis.createImageBitmap;
   if (typeof imageBitmapFactory === 'function') {

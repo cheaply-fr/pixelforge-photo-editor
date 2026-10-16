@@ -295,6 +295,7 @@ import {
   importFailureMessage,
 } from '../src/importFormats';
 import { decodePsdComposite } from '../src/psd';
+import { decodePdfComposite } from '../src/pdf';
 import { decodeTiffComposite } from '../src/tiff';
 import { renderSelection } from '../src/selections';
 import {
@@ -8062,6 +8063,23 @@ export default function Home() {
       context.putImageData(imageData, 0, 0);
       return canvas;
     }
+    if (importInfo.format === 'pdf') {
+      const bytes = new Uint8Array(await selected.arrayBuffer());
+      const decoded = decodePdfComposite(bytes);
+      const url = URL.createObjectURL(new Blob([decoded.jpeg.buffer as ArrayBuffer], { type: 'image/jpeg' }));
+      const image = new Image();
+      try {
+        image.src = url;
+        await image.decode();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      if (image.naturalWidth !== decoded.width || image.naturalHeight !== decoded.height)
+        throw new Error('PDF image dimensions do not match its page declaration.');
+      const canvas = surface(decoded.width, decoded.height);
+      canvas.getContext('2d')!.drawImage(image, 0, 0);
+      return canvas;
+    }
     const url = URL.createObjectURL(selected);
     const image = new Image();
     try {
@@ -8121,6 +8139,8 @@ export default function Home() {
           ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
           : importInfo.format === 'tiff'
             ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
+            : importInfo.format === 'pdf'
+              ? `PDF imported as a flattened single-page raster${asLayer ? ' layer' : ''}; page structure, vectors, text and PDF metadata omitted`
             : importInfo.format === 'svg'
               ? `SVG rasterized as a flattened raster${asLayer ? ' layer' : ''}; vector data and external resources omitted`
           : asLayer
@@ -8129,7 +8149,7 @@ export default function Home() {
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'pdf' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -8219,6 +8239,8 @@ export default function Home() {
             ? 'HEIC/HEIF embedded as a flattened raster smart object; source metadata omitted'
             : importInfo.format === 'tiff'
               ? 'TIFF embedded as a flattened raster smart object; source metadata omitted'
+              : importInfo.format === 'pdf'
+                ? 'PDF embedded as a flattened single-page raster smart object; page structure, vectors, text and PDF metadata omitted'
               : importInfo.format === 'svg'
                 ? 'SVG embedded as a flattened raster smart object; vector data and external resources omitted'
               : 'Embedded smart object added',
@@ -8226,7 +8248,7 @@ export default function Home() {
       }
     } catch (error) {
       setNotice(
-        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'pdf' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -13726,7 +13748,7 @@ export default function Home() {
         data-testid="layer-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => void load(e.target.files?.[0], true)}
       />
       <input
@@ -13734,7 +13756,7 @@ export default function Home() {
         data-testid="smart-object-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(event) =>
           void importSmartObject(
             event.target.files?.[0],
@@ -13765,7 +13787,7 @@ export default function Home() {
         data-testid="batch-image-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
@@ -14149,7 +14171,7 @@ export default function Home() {
         data-testid="file-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => load(e.target.files?.[0])}
       />
       {screenMode !== 'standard' && (

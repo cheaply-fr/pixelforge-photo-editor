@@ -71,6 +71,32 @@ test('multi-input batch can package flattened PDF pages without lossy controls',
   expect(archive.includes(Buffer.from('%PDF-1.4'))).toBe(true);
 });
 
+test('multi-input batch can decode a PixelForge single-page PDF composite', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByLabel('Export format').selectOption('pdf');
+  const pendingPdf = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download image', exact: true }).click();
+  const pdfDownload = await pendingPdf;
+  const pdfPath = await pdfDownload.path();
+  const pdfBytes = await (await import('node:fs/promises')).readFile(pdfPath!);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export images…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles({
+    name: 'round-trip.pdf',
+    mimeType: 'application/pdf',
+    buffer: pdfBytes,
+  });
+  await page.getByRole('button', { name: 'Build batch ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const download = await pending;
+  expect(await download.failure()).toBeNull();
+});
+
 
 test('multi-input batch keeps valid outputs and reports invalid files', async ({ page }) => {
   await page.goto('/editor?new=1');

@@ -135,10 +135,10 @@ export function describeImportFormat(
     return {
       format: 'pdf',
       label: 'PDF',
-      capability: 'unsupported',
-      tryDecode: false,
+      capability: 'conditional',
+      tryDecode: true,
       disclosure:
-        'PDF import is not supported yet. Render the required page to PNG or JPEG first; page structure, vectors, text and PDF metadata are not retained.',
+        'PDF import reads a bounded single-page JPEG composite as a flattened editable raster; page structure, vectors, text, profiles and PDF metadata are not retained.',
     };
   }
   if (
@@ -192,6 +192,9 @@ export function importFailureMessage(info: ImportFormatInfo): string {
   }
   if (info.format === 'heic') {
     return 'HEIC/HEIF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
+  }
+  if (info.format === 'pdf') {
+    return 'This PDF is not a supported single-page JPEG composite. Render the required page to PNG or JPEG; page structure, vectors, text and PDF metadata are not retained.';
   }
   if (info.format === 'tiff') {
     return 'This TIFF is not a supported 8-bit chunky RGB/grayscale composite. Export a flattened PNG or JPEG; the current draft is unchanged.';

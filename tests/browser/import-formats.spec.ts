@@ -196,13 +196,31 @@ test('rasterizes SVG with an explicit vector-loss disclosure', async ({ page }) 
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
 });
 
-test('rejects PDF before decoding with an explicit page-rendering hint', async ({ page }) => {
+test('imports a single-page JPEG PDF composite as a flattened raster', async ({ page }) => {
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByLabel('Export format').selectOption('pdf');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download image', exact: true }).click();
+  const download = await pending;
+  const path = await download.path();
+  const bytes = await (await import('node:fs/promises')).readFile(path!);
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'round-trip.pdf',
+    mimeType: 'application/pdf',
+    buffer: bytes,
+  });
+  await expect(page.getByText('PDF imported as a flattened single-page raster; page structure, vectors, text and PDF metadata omitted', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');
+});
+
+test('keeps the draft unchanged when a PDF is not a supported JPEG composite', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'proof.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.7\n'),
   });
-  await expect(page.getByText('PDF import is not supported yet.', { exact: false })).toBeVisible();
+  await expect(page.getByText('This PDF is not a supported single-page JPEG composite.', { exact: false })).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');
 });
