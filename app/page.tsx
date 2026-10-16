@@ -187,6 +187,8 @@ import PasteSpecialDialog from '../src/PasteSpecialDialog';
 import GenerativeFillDialog, {
   type GenerativeFillRequest,
 } from '../src/GenerativeFillDialog';
+import PromptToEditDialog from '../src/PromptToEditDialog';
+import { parsePromptToEdit, PROMPT_TO_EDIT_MAX_PROMPT } from '../src/promptToEdit';
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -620,6 +622,7 @@ type Command =
   | 'content-aware-move'
   | 'content-aware-scale'
   | 'generative-fill'
+  | 'prompt-to-edit'
   | 'resize'
   | 'generative-upscale'
   | 'canvas-size'
@@ -1068,7 +1071,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Stroke…', command: 'stroke-selection' },
     { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
     { label: 'Content-Aware Move…', command: 'content-aware-move' },
-    { label: 'Prompt to Edit…', command: 'noop', disabled: true },
+    { label: 'Prompt to Edit…', command: 'prompt-to-edit' },
     { label: 'Generative Fill…', command: 'generative-fill' },
     { label: 'Generate Image…', command: 'noop', disabled: true },
     { label: 'Reflection Removal…', command: 'filter-reflection-removal' },
@@ -2261,6 +2264,7 @@ export default function Home() {
     [fileInfoOpen, setFileInfoOpen] = useState(false),
     [pasteSpecialOpen, setPasteSpecialOpen] = useState(false),
     [generativeFillOpen, setGenerativeFillOpen] = useState(false),
+    [promptToEditOpen, setPromptToEditOpen] = useState(false),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -5379,6 +5383,47 @@ export default function Home() {
       }
     } catch {
       setNotice('Generative Fill could not be applied; the draft is unchanged');
+    }
+  };
+  const applyPromptToEdit = (value: string) => {
+    const parsed = parsePromptToEdit(value.slice(0, PROMPT_TO_EDIT_MAX_PROMPT + 1));
+    if (!parsed.ok) {
+      setNotice(parsed.reason);
+      return;
+    }
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !layer.visible) {
+      setNotice('Select a visible layer before using Prompt to Edit');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Prompt to Edit');
+      return;
+    }
+    if (parsed.plan.reset) {
+      resetAdjustments();
+      setPromptToEditOpen(false);
+      setNotice('Prompt to Edit reset the selected layer adjustments locally');
+      return;
+    }
+    const patch = parsed.plan.patch;
+    const changed = adjust({
+      ...(patch.brightness === undefined ? {} : { brightness: patch.brightness }),
+      ...(patch.contrast === undefined ? {} : { contrast: patch.contrast }),
+      ...(patch.saturation === undefined ? {} : { saturation: patch.saturation }),
+      ...(patch.hue === undefined ? {} : { hue: patch.hue }),
+      ...(patch.blur === undefined ? {} : { blur: patch.blur }),
+      ...(patch.photoAdjustments
+        ? { photoAdjustments: { ...photoAdjustments, ...patch.photoAdjustments } }
+        : {}),
+      ...(patch.sharpenNoise
+        ? { sharpenNoise: { ...sharpenNoise, ...patch.sharpenNoise } }
+        : {}),
+    });
+    if (changed) {
+      setPromptToEditOpen(false);
+      setNotice(`Prompt to Edit applied locally: ${parsed.plan.summary}`);
     }
   };
   const applyContentAwareMove = async () => {
@@ -12369,6 +12414,8 @@ export default function Home() {
       setGenerativeUpscaling({ width: current().w, height: current().h });
     else if (command === 'generative-fill')
       setGenerativeFillOpen(true);
+    else if (command === 'prompt-to-edit')
+      setPromptToEditOpen(true);
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
@@ -13041,6 +13088,8 @@ export default function Home() {
           !frame.selection ||
           (layer.contentAwareFills?.filter((fill) => fill.mode === 'texture').length ?? 0) >= GENERATIVE_FILL_MAX_OPERATIONS
         );
+      case 'prompt-to-edit':
+        return !layer || !layer.visible || locked;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -13520,6 +13569,12 @@ export default function Home() {
         <GenerativeFillDialog
           close={() => setGenerativeFillOpen(false)}
           apply={(request) => void applyGenerativeFill(request)}
+        />
+      )}
+      {promptToEditOpen && (
+        <PromptToEditDialog
+          close={() => setPromptToEditOpen(false)}
+          apply={applyPromptToEdit}
         />
       )}
       {canvasSizing && (
