@@ -14,19 +14,22 @@ NTSC Colors has a documented local Y'IQ composite-envelope contract, editable no
 
 The latest local candidate adds bounded tiled Lens Correction parity, editable
 Layer Styles Color Overlay, bounded nested Smart Objects, Gradient Overlay,
-clipped Inner Shadow, Bevel/Emboss, Pattern Overlay, AI Denoise, AI Sharpen
-and Neural Filters local approximations. Lens Correction has pure full-frame/
-tile parity plus desktop/mobile round-trip coverage; the Layer Styles, nested
-Smart Object and filter slices have pure validation/pixel coverage plus
-desktop/mobile lock, undo, reload and project round-trip coverage. The local
-candidate passes 859/859 pure tests and 132/132 Filter effects browser cases,
+clipped Inner Shadow, Bevel/Emboss, Pattern Overlay, AI Denoise, AI Sharpen,
+Neural Filters, Reflection Removal and Generative Upscale local
+approximations. Lens Correction has pure full-frame/tile parity plus
+desktop/mobile round-trip coverage; the Layer Styles, nested Smart Object and
+filter slices have pure validation/pixel coverage plus desktop/mobile lock,
+undo, reload and project round-trip coverage. Generative Upscale adds a
+bounded offline 2x/4x editable resampling dialog with a 16-megapixel budget
+and desktop/mobile apply, undo, cancel and reload coverage. The local
+candidate passes 864/864 pure tests and 8/8 Generative Upscale browser cases,
 with static/typecheck/build checks locally.
-The remote PR #149 head is `9f18e75`; its protected validation run is
+The remote PR #149 head is `908f905`; its protected validation run is
 still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
 
-The local candidate commit `9f18e75` includes the bounded nondestructive
+The local candidate commit `908f905` includes the bounded nondestructive
 Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
 enabled `Filter → Neural Filters…` approximation and the enabled
 `Edit → Reflection Removal…` approximation. Pattern Overlay repeats checker,
@@ -44,9 +47,12 @@ texture detail and radius; it uses no model, upload or network call, and
 semantic Adobe model parity remains staged. Reflection Removal is a private
 local de-glare approximation that targets bright, low-saturation local
 outliers with editable threshold and cleanup radius; semantic reflection
-inference and material reconstruction remain staged. Pure coverage is 860/860;
+inference and material reconstruction remain staged. Pure coverage is 864/864;
 the full Filter effects browser file previously passed 132/132 desktop/mobile
 cases, and the new Reflection Removal desktop/mobile cases pass 2/2.
+Generative Upscale is an offline 2x/4x resampling workflow with a 16-megapixel
+budget, source-safe alpha handling and no provider-backed semantic generation;
+its focused desktop/mobile cases pass 8/8.
 Static/typecheck/build checks pass locally with the existing chunk-size and
 dynamic-import warnings. Protected CI, deployment and live acceptance remain
 separate gates.
