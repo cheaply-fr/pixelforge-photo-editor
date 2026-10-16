@@ -50,8 +50,10 @@ pixels, undo, reload and portable project round trips. The focused Smart Object
 suite passes **10/10**. The follow-up Gradient Overlay style adds editable start/end colours, opacity,
 angle and reversal while retaining source pixels. The next Inner Shadow style
 adds bounded offsets, distance and blur, clips to source alpha and retains the
-source asset. The combined Layer Styles desktop/mobile suite passes **12/12**,
-the Smart Object suite passes **10/10**, and the pure suite passes **852/852**;
+source asset. The next Bevel/Emboss style adds directional highlight/shadow
+edge shading with bounded angle, depth and blur. The combined Layer Styles
+desktop/mobile suite passes **14/14**, the Smart Object suite passes **10/10**,
+and the pure suite passes **853/853**;
 typecheck, lint and build pass locally. These changes remain local evidence
 until protected CI, deployment and live revision checks complete.
 

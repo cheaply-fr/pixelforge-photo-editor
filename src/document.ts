@@ -714,6 +714,7 @@ export const commonLayer = (name: string): Common => ({
   styles: {
     dropShadow: { ...neutralLayerStyles.dropShadow },
     innerShadow: { ...neutralLayerStyles.innerShadow },
+    bevelEmboss: { ...neutralLayerStyles.bevelEmboss },
     outline: { ...neutralLayerStyles.outline },
     colorOverlay: { ...neutralLayerStyles.colorOverlay },
     gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
@@ -2563,6 +2564,7 @@ export async function renderFrame(
               styles: {
                 dropShadow: { ...neutralLayerStyles.dropShadow },
                 innerShadow: { ...neutralLayerStyles.innerShadow },
+                bevelEmboss: { ...neutralLayerStyles.bevelEmboss },
                 outline: { ...neutralLayerStyles.outline },
                 colorOverlay: { ...neutralLayerStyles.colorOverlay },
                 gradientOverlay: { ...neutralLayerStyles.gradientOverlay },

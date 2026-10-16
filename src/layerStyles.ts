@@ -22,6 +22,16 @@ export type InnerShadowStyle = {
   distance: number;
 };
 
+export type BevelEmbossStyle = {
+  enabled: boolean;
+  highlightColor: string;
+  shadowColor: string;
+  opacity: number;
+  angle: number;
+  depth: number;
+  blur: number;
+};
+
 export type OutlineStyle = {
   enabled: boolean;
   color: string;
@@ -47,6 +57,7 @@ export type GradientOverlayStyle = {
 export type LayerStyles = {
   dropShadow: DropShadowStyle;
   innerShadow: InnerShadowStyle;
+  bevelEmboss: BevelEmbossStyle;
   outline: OutlineStyle;
   colorOverlay: ColorOverlayStyle;
   gradientOverlay: GradientOverlayStyle;
@@ -69,6 +80,15 @@ export const neutralLayerStyles: LayerStyles = {
     offsetY: 4,
     blur: 8,
     distance: 4,
+  },
+  bevelEmboss: {
+    enabled: false,
+    highlightColor: '#ffffff',
+    shadowColor: '#000000',
+    opacity: 0.5,
+    angle: 45,
+    depth: 4,
+    blur: 0,
   },
   outline: {
     enabled: false,
@@ -100,6 +120,7 @@ const hex = (value: unknown): value is string =>
 export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): LayerStyles {
   const shadow = value?.dropShadow;
   const innerShadow = value?.innerShadow;
+  const bevelEmboss = value?.bevelEmboss;
   const outline = value?.outline;
   const colorOverlay = value?.colorOverlay;
   const gradientOverlay = value?.gradientOverlay;
@@ -146,6 +167,31 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
       enabled: typeof innerShadow?.enabled === 'boolean'
         ? innerShadow.enabled
         : neutralLayerStyles.innerShadow.enabled,
+    },
+    bevelEmboss: {
+      ...neutralLayerStyles.bevelEmboss,
+      ...bevelEmboss,
+      highlightColor: hex(bevelEmboss?.highlightColor)
+        ? bevelEmboss!.highlightColor
+        : neutralLayerStyles.bevelEmboss.highlightColor,
+      shadowColor: hex(bevelEmboss?.shadowColor)
+        ? bevelEmboss!.shadowColor
+        : neutralLayerStyles.bevelEmboss.shadowColor,
+      opacity: finite(bevelEmboss?.opacity, 0, 1)
+        ? bevelEmboss!.opacity
+        : neutralLayerStyles.bevelEmboss.opacity,
+      angle: finite(bevelEmboss?.angle, -180, 180)
+        ? bevelEmboss!.angle
+        : neutralLayerStyles.bevelEmboss.angle,
+      depth: finite(bevelEmboss?.depth, 1, 32)
+        ? bevelEmboss!.depth
+        : neutralLayerStyles.bevelEmboss.depth,
+      blur: finite(bevelEmboss?.blur, 0, 32)
+        ? bevelEmboss!.blur
+        : neutralLayerStyles.bevelEmboss.blur,
+      enabled: typeof bevelEmboss?.enabled === 'boolean'
+        ? bevelEmboss.enabled
+        : neutralLayerStyles.bevelEmboss.enabled,
     },
     outline: {
       ...neutralLayerStyles.outline,
@@ -202,6 +248,7 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
   const candidate = value as Partial<LayerStyles>;
   const shadow = candidate.dropShadow,
     innerShadow = candidate.innerShadow,
+    bevelEmboss = candidate.bevelEmboss,
     outline = candidate.outline,
     gradientOverlay = candidate.gradientOverlay;
   return Boolean(
@@ -223,6 +270,17 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
         finite(innerShadow.offsetY, -256, 256) &&
         finite(innerShadow.blur, 0, 64) &&
         finite(innerShadow.distance, 1, 32)
+      )) &&
+      (bevelEmboss === undefined || (
+        bevelEmboss &&
+        typeof bevelEmboss === 'object' &&
+        typeof bevelEmboss.enabled === 'boolean' &&
+        hex(bevelEmboss.highlightColor) &&
+        hex(bevelEmboss.shadowColor) &&
+        finite(bevelEmboss.opacity, 0, 1) &&
+        finite(bevelEmboss.angle, -180, 180) &&
+        finite(bevelEmboss.depth, 1, 32) &&
+        finite(bevelEmboss.blur, 0, 32)
       )) &&
       outline &&
       typeof outline === 'object' &&
@@ -252,7 +310,7 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
 
 export function isNeutralLayerStyles(value: Partial<LayerStyles> | undefined): boolean {
   const styles = effectiveLayerStyles(value);
-  return !styles.dropShadow.enabled && !styles.innerShadow.enabled && !styles.outline.enabled &&
+  return !styles.dropShadow.enabled && !styles.innerShadow.enabled && !styles.bevelEmboss.enabled && !styles.outline.enabled &&
     !styles.colorOverlay.enabled && !styles.gradientOverlay.enabled;
 }
 
@@ -424,6 +482,54 @@ export function applyLayerStylesPixels(
         const amount = softened[sy * sourceWidth + sx] *
           (source[destination + 3] / 255) * styles.innerShadow.opacity;
         over(output, destination, r, g, b, amount);
+      }
+  }
+  if (styles.bevelEmboss.enabled) {
+    const depth = Math.round(styles.bevelEmboss.depth);
+    const blur = Math.round(styles.bevelEmboss.blur);
+    const angle = (styles.bevelEmboss.angle * Math.PI) / 180;
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    const padding = depth + blur + 1;
+    const sourceX = Math.max(0, bounds.minX - padding);
+    const sourceY = Math.max(0, bounds.minY - padding);
+    const sourceRight = Math.min(width - 1, bounds.maxX + padding);
+    const sourceBottom = Math.min(height - 1, bounds.maxY + padding);
+    const sourceWidth = sourceRight - sourceX + 1;
+    const sourceHeight = sourceBottom - sourceY + 1;
+    const highlight = new Uint8ClampedArray(sourceWidth * sourceHeight);
+    const shadow = new Uint8ClampedArray(sourceWidth * sourceHeight);
+    const sample = (x: number, y: number) =>
+      x >= 0 && x < width && y >= 0 && y < height ? alpha[y * width + x] : 0;
+    for (let y = 0; y < sourceHeight; y += 1)
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const gx = sourceX + x, gy = sourceY + y;
+        const own = sample(gx, gy);
+        if (own === 0) continue;
+        const towardLight = sample(
+          Math.round(gx - dx * depth),
+          Math.round(gy - dy * depth),
+        );
+        const awayFromLight = sample(
+          Math.round(gx + dx * depth),
+          Math.round(gy + dy * depth),
+        );
+        const index = y * sourceWidth + x;
+        highlight[index] = Math.max(0, towardLight - awayFromLight);
+        shadow[index] = Math.max(0, awayFromLight - towardLight);
+      }
+    const softenedHighlight = blurAlpha(highlight, sourceWidth, sourceHeight, blur);
+    const softenedShadow = blurAlpha(shadow, sourceWidth, sourceHeight, blur);
+    const [highlightR, highlightG, highlightB] = color(styles.bevelEmboss.highlightColor);
+    const [shadowR, shadowG, shadowB] = color(styles.bevelEmboss.shadowColor);
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const destination = (y * width + x) * 4;
+        const sourceAlpha = source[destination + 3];
+        if (sourceAlpha === 0) continue;
+        const index = (y - sourceY) * sourceWidth + (x - sourceX);
+        const scale = (sourceAlpha / 255) * styles.bevelEmboss.opacity;
+        over(output, destination, highlightR, highlightG, highlightB, softenedHighlight[index] * scale);
+        over(output, destination, shadowR, shadowG, shadowB, softenedShadow[index] * scale);
       }
   }
   if (styles.colorOverlay.enabled) {

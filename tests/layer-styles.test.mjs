@@ -44,12 +44,14 @@ test('Layer Style metadata is bounded and legacy values normalize safely', () =>
   });
   assert.deepEqual(value.colorOverlay, neutralLayerStyles.colorOverlay);
   assert.deepEqual(value.gradientOverlay, neutralLayerStyles.gradientOverlay);
+  assert.deepEqual(value.bevelEmboss, neutralLayerStyles.bevelEmboss);
   assert.equal(validLayerStyles(value), true);
   assert.equal(validLayerStyles({ ...value, outline: { ...value.outline, width: 0 } }), false);
   assert.equal(validLayerStyles({ ...value, dropShadow: { ...value.dropShadow, color: 'red' } }), false);
   assert.equal(validLayerStyles({ ...value, colorOverlay: { ...value.colorOverlay, opacity: 2 } }), false);
   assert.equal(validLayerStyles({ ...value, gradientOverlay: { ...value.gradientOverlay, angle: 181 } }), false);
   assert.equal(validLayerStyles({ ...value, innerShadow: { ...value.innerShadow, distance: 0 } }), false);
+  assert.equal(validLayerStyles({ ...value, bevelEmboss: { ...value.bevelEmboss, depth: 0 } }), false);
   assert.equal(isNeutralLayerStyles(undefined), true);
 });
 
@@ -146,4 +148,26 @@ test('Inner Shadow stays inside the source alpha and leaves the centre unchanged
   assert.deepEqual(pixel(output, 5, 2, 2), [255, 255, 255, 255]);
   assert.deepEqual(pixel(output, 5, 1, 1), [0, 0, 0, 255]);
   assert.deepEqual(pixel(output, 5, 0, 0), [0, 0, 0, 0]);
+});
+
+test('Bevel and Emboss shades directional alpha edges without mutating source bytes', () => {
+  const source = new Uint8ClampedArray(5 * 3 * 4);
+  for (let y = 0; y < 3; y += 1)
+    for (let x = 1; x <= 3; x += 1)
+      source.set([128, 128, 128, 255], (y * 5 + x) * 4);
+  const original = source.slice();
+  const output = applyLayerStylesPixels(source, 5, 3, {
+    bevelEmboss: {
+      ...neutralLayerStyles.bevelEmboss,
+      enabled: true,
+      opacity: 1,
+      angle: 0,
+      depth: 1,
+      blur: 0,
+    },
+  });
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 5, 1, 1), [0, 0, 0, 255]);
+  assert.deepEqual(pixel(output, 5, 3, 1), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(output, 5, 2, 1), [128, 128, 128, 255]);
 });

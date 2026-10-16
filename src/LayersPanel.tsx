@@ -142,6 +142,9 @@ export default function LayersPanel({
   const updateInnerShadow = (
     patch: Partial<LayerStyles['innerShadow']>,
   ) => updateStyles({ innerShadow: { ...styles.innerShadow, ...patch } });
+  const updateBevelEmboss = (
+    patch: Partial<LayerStyles['bevelEmboss']>,
+  ) => updateStyles({ bevelEmboss: { ...styles.bevelEmboss, ...patch } });
   const updateOutline = (patch: Partial<LayerStyles['outline']>) =>
     updateStyles({ outline: { ...styles.outline, ...patch } });
   const updateColorOverlay = (
@@ -744,6 +747,85 @@ export default function LayersPanel({
             value={Math.round(styles.innerShadow.distance)}
             onChange={(event) =>
               updateInnerShadow({ distance: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable bevel emboss"
+            checked={styles.bevelEmboss.enabled}
+            onChange={(event) =>
+              updateBevelEmboss({ enabled: event.target.checked })
+            }
+          />
+          Bevel &amp; emboss
+        </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Bevel highlight
+            <input
+              aria-label="Bevel highlight color"
+              type="color"
+              value={styles.bevelEmboss.highlightColor}
+              onChange={(event) =>
+                updateBevelEmboss({ highlightColor: event.target.value })
+              }
+            />
+          </label>
+          <label className="layer-field">
+            Bevel shadow
+            <input
+              aria-label="Bevel shadow color"
+              type="color"
+              value={styles.bevelEmboss.shadowColor}
+              onChange={(event) =>
+                updateBevelEmboss({ shadowColor: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label className="layer-field">
+          Bevel opacity {Math.round(styles.bevelEmboss.opacity * 100)}%
+          <input
+            aria-label="Bevel opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.bevelEmboss.opacity * 100)}
+            onChange={(event) =>
+              updateBevelEmboss({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <div className="layer-position">
+          <NumberField
+            label="Bevel angle"
+            value={styles.bevelEmboss.angle}
+            min={-180}
+            max={180}
+            disabled={layerLocked}
+            apply={(value) => updateBevelEmboss({ angle: value })}
+          />
+          <NumberField
+            label="Bevel depth"
+            value={styles.bevelEmboss.depth}
+            min={1}
+            max={32}
+            disabled={layerLocked}
+            apply={(value) => updateBevelEmboss({ depth: value })}
+          />
+        </div>
+        <label className="layer-field">
+          Bevel blur {Math.round(styles.bevelEmboss.blur)} px
+          <input
+            aria-label="Bevel blur"
+            type="range"
+            min="0"
+            max="32"
+            value={Math.round(styles.bevelEmboss.blur)}
+            onChange={(event) =>
+              updateBevelEmboss({ blur: Number(event.target.value) })
             }
           />
         </label>
