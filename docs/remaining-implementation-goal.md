@@ -24,8 +24,8 @@ bounded offline 2x/4x editable resampling dialog with a 16-megapixel budget
 and desktop/mobile apply, undo, cancel and reload coverage. The local
 candidate passes 864/864 pure tests and 8/8 Generative Upscale browser cases,
 with static/typecheck/build checks locally.
-The remote PR #149 head is `908f905`; its protected validation run is
-still in progress, so CI/deploy and the live revision remain separate gates,
+Remote PR #149 includes source commit `908f905`; its protected validation run
+for the current documentation head is still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
 
