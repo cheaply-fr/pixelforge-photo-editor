@@ -10,6 +10,14 @@ Replace the provisional completion percentages with a documented weighted rubric
 
 ## Recently shipped milestone
 
+The current unmerged candidate adds the Photoshop-style Retouch `R` flyout
+for source-safe Blur and Sharpen brush strokes. Each tool has bounded local
+blur/high-pass kernels, Size/Hardness/Flow controls, selection clipping,
+alpha/source safety, undo/reload/project persistence and locked-layer guards;
+pure and desktop/mobile browser coverage is in `tests/retouch.test.mjs` and
+`tests/browser/retouch-tools.spec.ts`. Protected CI, merge, deployment and
+live verification remain pending for this candidate.
+
 NTSC Colors has a documented local Y'IQ composite-envelope contract, editable nondestructive UI, unit coverage, and desktop/mobile browser coverage for worker/fallback rendering, locks, source retention, undo/redo, draft reload, portable projects and PNG pixels. Protected CI, PR review/merge, deployment and independent live-revision plus DNS/TLS verification completed in the main workflow for `0fc1857d07d08083b960a34dc77c6f6b2ecb3bde`; `/release.json` and `/api/readyz.json` report that exact revision. The local approximation does not claim broadcast compliance or Photoshop parity.
 
 The latest local candidate adds bounded tiled Lens Correction parity, editable

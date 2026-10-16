@@ -5,6 +5,7 @@ import {
   Bookmark,
   Crop,
   Download,
+  Droplets,
   Eraser,
   FileImage,
   Copy,
@@ -473,6 +474,7 @@ import {
   type PathModel,
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
+import { applyRetouchStroke } from '../src/retouch';
 import {
   DEFAULT_HISTORY_BRUSH,
   DEFAULT_ART_HISTORY_BRUSH,
@@ -929,6 +931,8 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
   { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
+  { id: 'blur', label: 'Blur', icon: Droplets, key: 'R' },
+  { id: 'sharpen', label: 'Sharpen', icon: Sparkles, key: 'R' },
   { id: 'pen', label: 'Pen', icon: Pencil, key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: Pencil, key: 'P' },
   { id: 'curvature-pen', label: 'Curvature Pen', icon: Pencil, key: 'P' },
@@ -1020,7 +1024,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
   o: ['dodge', 'burn', 'sponge'],
-  r: ['rotate-view', 'smudge'],
+  r: ['rotate-view', 'smudge', 'blur', 'sharpen'],
   s: ['clone', 'pattern-stamp'],
   y: ['history-brush', 'art-history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
@@ -8988,6 +8992,8 @@ export default function Home() {
         'burn',
         'sponge',
         'gradient',
+        'blur',
+        'sharpen',
         'mixer-brush',
         'history-brush',
         'art-history-brush',
@@ -9476,6 +9482,70 @@ export default function Home() {
         } catch {
           gesture.current = null;
           setNotice('Could not prepare Smudge tool');
+        }
+      })();
+      await g.pending;
+      return;
+    }
+    if (tool === 'blur' || tool === 'sharpen') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+        setNotice(`Select a visible, unlocked raster layer before ${tool === 'blur' ? 'blurring' : 'sharpening'}`);
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        moved: false,
+        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]),
+            source = surface(image.naturalWidth, image.naturalHeight),
+            buffer = surface(image.naturalWidth, image.naturalHeight),
+            sourceContext = source.getContext('2d')!,
+            bufferContext = buffer.getContext('2d')!;
+          sourceContext.drawImage(image, 0, 0);
+          bufferContext.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          g.source = source;
+          g.buffer = buffer;
+          g.selectionMask = await selectionMaskForLayer(f.selection, f, layer, assets.current, image.naturalWidth, image.naturalHeight);
+          if (gesture.current !== g) return;
+          let from = g.start;
+          for (const queued of g.queued || []) {
+            const result = applyRetouchStroke(
+              new Uint8ClampedArray(sourceContext.getImageData(0, 0, source.width, source.height).data),
+              new Uint8ClampedArray(bufferContext.getImageData(0, 0, buffer.width, buffer.height).data),
+              {
+                width: buffer.width,
+                height: buffer.height,
+                x1: from.x,
+                y1: from.y,
+                x2: queued.x,
+                y2: queued.y,
+                size: localSize(layer.matrix, size),
+                hardness,
+                flow: brushOpacity / 100,
+                mode: tool,
+                selectionMask: g.selectionMask,
+              },
+            );
+            bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+            g.changed = Boolean(g.changed || result.changed);
+            from = queued;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice(`Could not prepare ${tool === 'blur' ? 'Blur' : 'Sharpen'} tool`);
         }
       })();
       await g.pending;
@@ -10643,6 +10713,32 @@ export default function Home() {
       });
       g.changed = Boolean(g.changed || changed);
       void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
+    }
+    if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.source && g.layer) {
+      const sourceContext = g.source.getContext('2d')!,
+        bufferContext = g.buffer.getContext('2d')!,
+        result = applyRetouchStroke(
+          new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
+          new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
+          {
+            width: g.buffer.width,
+            height: g.buffer.height,
+            x1: g.last.x,
+            y1: g.last.y,
+            x2: local.x,
+            y2: local.y,
+            size: localSize(g.layer.matrix, size),
+            hardness,
+            flow: brushOpacity / 100,
+            mode: g.tool,
+            selectionMask: g.selectionMask,
+          },
+        );
+      bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+      g.changed = Boolean(g.changed || result.changed);
+      void paint(g.frame, { [g.layer.id]: g.buffer });
       g.last = local;
       return;
     }
@@ -11887,6 +11983,39 @@ export default function Home() {
         })
       )
         setNotice('Smudge stroke applied');
+    } else if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.layer && g.source) {
+      let changed = Boolean(g.changed);
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y)) {
+        const sourceContext = g.source.getContext('2d')!,
+          bufferContext = g.buffer.getContext('2d')!,
+          result = applyRetouchStroke(
+            new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
+            new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
+            {
+              width: g.buffer.width,
+              height: g.buffer.height,
+              x1: g.last.x,
+              y1: g.last.y,
+              x2: local.x,
+              y2: local.y,
+              size: localSize(g.layer.matrix, size),
+              hardness,
+              flow: brushOpacity / 100,
+              mode: g.tool,
+              selectionMask: g.selectionMask,
+            },
+          );
+        bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+        changed = result.changed || changed;
+      }
+      if (!changed) {
+        void paint(f);
+        setNotice(`No ${g.tool === 'blur' ? 'Blur' : 'Sharpen'} change applied`);
+        return;
+      }
+      const asset = addAsset(assets.current, g.buffer);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
+        setNotice(`${g.tool === 'blur' ? 'Blur' : 'Sharpen'} stroke applied`);
     } else if (
       (g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') &&
       g.buffer &&
@@ -15478,6 +15607,8 @@ export default function Home() {
             tool === 'burn' ||
             tool === 'sponge' ||
             tool === 'smudge' ||
+            tool === 'blur' ||
+            tool === 'sharpen' ||
             tool === 'clone' ||
             tool === 'heal' ||
             tool === 'spot-heal' ||
@@ -15745,6 +15876,8 @@ export default function Home() {
                 tool === 'burn' ||
                 tool === 'sponge' ||
                 tool === 'smudge' ||
+                tool === 'blur' ||
+                tool === 'sharpen' ||
                 tool === 'clone' ||
                 tool === 'heal' ||
                 tool === 'spot-heal' ||
@@ -15834,6 +15967,14 @@ export default function Home() {
                       for edge-connected backdrop removal.
                     </p>
                   )}
+                  {(tool === 'blur' || tool === 'sharpen') && (
+                    <p className="adjust-note">
+                      {tool === 'blur'
+                        ? 'Blurs pixels under the brush using a bounded local average.'
+                        : 'Sharpens local luminance detail with a bounded source-safe high-pass brush.'}
+                      {' '}Source pixels remain immutable and each stroke is undoable; use Filter for full-layer effects.
+                    </p>
+                  )}
                   {tool === 'patch' && (
                     <p className="adjust-note">
                       Click a source area, then drag over a destination. Patch
@@ -15856,7 +15997,9 @@ export default function Home() {
                         tool === 'dodge' ||
                         tool === 'burn' ||
                         tool === 'sponge' ||
-                        tool === 'smudge'
+                        tool === 'smudge' ||
+                        tool === 'blur' ||
+                        tool === 'sharpen'
                           ? 'Flow'
                           : 'Opacity'
                       }

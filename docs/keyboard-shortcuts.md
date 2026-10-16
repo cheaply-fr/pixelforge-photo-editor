@@ -23,7 +23,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `C` | Crop |
 | `E` | Eraser |
 | `O` | Cycle Dodge, Burn and Sponge (Shift reverses) |
-| `R` | Cycle Rotate View and Smudge (Shift reverses) |
+| `R` | Cycle Rotate View, Smudge, Blur and Sharpen (Shift reverses) |
 | `T` | Text |
 | `U` | Cycle Rectangle and Ellipse |
 | `M` | Cycle rectangular, elliptical, single-row and single-column marquee |
@@ -86,4 +86,6 @@ the Photoshop-style command inventory remains usable without a pointer.
 Shortcuts operate on the current local draft and remain available without an
 account. The foreground/background pair is included in draft and project-file
 settings, with `#ffffff` used for older drafts that do not contain a background
-color.
+color. `R` cycles the current Rotate View/retouch family; the retouch flyout
+groups Smudge, Blur and Sharpen with their visible icons and remembered active
+variant.

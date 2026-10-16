@@ -11,7 +11,7 @@ export type PaletteToolId =
   | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
   | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush' | 'art-history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
-  | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'pen'
+  | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'blur' | 'sharpen' | 'pen'
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
   | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
@@ -30,7 +30,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
   { id: 'selection', label: 'Selection', tools: ['selection-brush', 'quick-selection', 'magic-wand'] },
   { id: 'crop', label: 'Crop & Slice', tools: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'] },
-  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
+  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
   { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
@@ -51,6 +51,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   s: ['clone', 'pattern-stamp'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   y: ['history-brush', 'art-history-brush'],
+  r: ['smudge', 'blur', 'sharpen'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 
@@ -71,6 +72,7 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],
   healing: ['heal', 'spot-heal', 'patch', 'red-eye'],
+  retouch: ['smudge', 'blur', 'sharpen'],
   history: ['history-brush', 'art-history-brush'],
   mask: ['mask-brush', 'mask-eraser', 'adjustment-brush'],
   // Pen variants share one Photoshop-style hold/keyboard flyout. The active

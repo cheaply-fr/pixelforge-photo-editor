@@ -82,8 +82,8 @@ test('v1 and v2 JSON project files remain importable through the v3 reader', asy
   assert.equal(reopened.history[0].layers[0].kind, 'raster');
 });
 
-test('mask refinement tools remain valid portable project settings', async () => {
-  for (const tool of ['mask-brush', 'mask-eraser']) {
+test('new raster tools remain valid portable project settings', async () => {
+  for (const tool of ['mask-brush', 'mask-eraser', 'blur', 'sharpen']) {
     const source = { ...draft(), settings: { ...settings, tool } };
     const reopened = await readPortableBundle(await writePortableBundle(source));
     assert.equal(reopened.settings.tool, tool);

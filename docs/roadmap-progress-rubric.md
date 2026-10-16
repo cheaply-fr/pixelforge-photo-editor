@@ -79,6 +79,15 @@ explicit packed-track, no-placeholder and touch-target assertions. This is
 local UI evidence only; the protected run for the candidate remains the
 release gate.
 
+The current local candidate adds source-safe Blur and Sharpen brush tools to
+the Retouch category. Smudge, Blur and Sharpen share the Photoshop `R` family
+flyout with a bottom-right arrow and visible subtool icons; each exposes Size,
+Hardness and Flow, clips to the active selection, preserves source/alpha bytes,
+guards locked layers, commits one undoable raster asset and survives reload and
+portable project export. Pure retouch coverage is **3/3**, and the focused
+desktop/mobile browser suite is **6/6**. The candidate is not merged or
+deployed, so protected CI and live evidence remain separate gates.
+
 The protected Playwright gate now defaults to two isolated workers on CI, with
 `PLAYWRIGHT_WORKERS` as an override. This brings the full browser run inside
 the workflow budget while preserving the same test inventory; each worker owns

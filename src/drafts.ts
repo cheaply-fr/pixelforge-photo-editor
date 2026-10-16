@@ -111,6 +111,8 @@ export type Tool =
   | 'burn'
   | 'sponge'
   | 'smudge'
+  | 'blur'
+  | 'sharpen'
   | 'text'
   | 'pen'
   | 'freeform-pen'
@@ -358,6 +360,8 @@ function validSettings(settings: unknown): settings is Settings {
       'burn',
       'sponge',
       'smudge',
+      'blur',
+      'sharpen',
       'text',
       'pen',
       'freeform-pen',

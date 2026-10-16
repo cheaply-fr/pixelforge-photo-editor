@@ -29,11 +29,14 @@ test('categories and families resolve stable labels for common Photoshop groups'
   assert.equal(flyoutForTool('select'), 'marquee');
   assert.equal(flyoutForTool('lasso'), 'lasso');
   assert.equal(flyoutForTool('pen'), 'pen');
+  assert.equal(flyoutForTool('blur'), 'retouch');
+  assert.deepEqual(flyoutTools('retouch'), ['smudge', 'blur', 'sharpen']);
   assert.deepEqual(flyoutTools('pen'), ['pen', 'freeform-pen', 'curvature-pen']);
   assert.equal(flyoutForTool('selection-brush'), undefined);
   assert.equal(flyoutForTool('quick-selection'), 'selection');
   assert.deepEqual(familyTools('s'), ['clone', 'pattern-stamp']);
   assert.deepEqual(familyTools('clone'), ['clone', 'pattern-stamp']);
+  assert.deepEqual(familyTools('r'), ['smudge', 'blur', 'sharpen']);
   assert.deepEqual(familyTools('move'), []);
   assert.deepEqual(flyoutTools('selection'), ['quick-selection', 'magic-wand']);
   assert.deepEqual(flyoutTools('magic-wand'), ['quick-selection', 'magic-wand']);
