@@ -24,22 +24,18 @@ The remote PR #149 head remains `ef1e272`; protected CI/deploy and the live
 revision remain separate gates, and production still reports the previously
 verified revision until those gates complete.
 
-The local candidate commit `0e08b94` adds a bounded nondestructive Pattern
-Overlay style. It repeats checker, stripes, dots, grid or diagonal tiles with
-editable colours, opacity and tile size while retaining the immutable source
-asset. Pure pixel/validation and desktop/mobile project round-trip coverage
-are present locally; this commit has no protected CI, deployment or
-live-acceptance evidence because GitHub rejected the push without the OAuth
-`workflow` scope.
-
-The next local candidate adds `Filter → AI Denoise…` as a private deterministic
-Y’CbCr bilateral approximation. Its editable radius, edge-protection
-threshold and amount are persisted in filter metadata and Action recipes;
-alpha, transparent RGB and source assets remain safe, and the UI discloses
-that model-backed RAW or temporal denoising is not enabled. Pure and
-desktop/mobile persistence tests are part of the local candidate. Protected
-CI, deployment and live acceptance remain unverified because the branch still
-cannot be pushed without GitHub OAuth `workflow` scope.
+The local candidate commit `4955cb8` includes the bounded nondestructive
+Pattern Overlay style and `Filter → AI Denoise…`. Pattern Overlay repeats
+checker, stripes, dots, grid or diagonal tiles with editable colours, opacity
+and tile size while retaining the immutable source asset. AI Denoise is a
+private deterministic Y’CbCr bilateral approximation with editable radius,
+edge-protection threshold and amount; alpha, transparent RGB, source assets
+and Action defaults remain safe, and the UI discloses that model-backed RAW or
+temporal denoising is not enabled. Pure pixel/validation and desktop/mobile
+project round-trip coverage are present locally: 855/855 pure tests and
+999/1002 browser tests with 3 intentional skips. This commit has no protected
+CI, deployment or live-acceptance evidence because GitHub rejected the push
+without the OAuth `workflow` scope.
 
 ## Remaining roadmap stages
 
