@@ -20,29 +20,25 @@ Object slices have pure validation/pixel coverage plus desktop/mobile lock,
 undo, reload and project round-trip coverage. The local candidate passes
 854/854 pure tests, 997/1000 browser tests with 3 intentional skips, and the
 static/typecheck/build checks locally.
-The remote PR #149 head remains `ef1e272`; protected CI/deploy and the live
-revision remain separate gates, and production still reports the previously
-verified revision until those gates complete.
+The remote PR #149 head remains `7b714278`; its protected validation run is
+still in progress, so CI/deploy and the live revision remain separate gates,
+and production still reports the previously verified revision until those
+gates complete.
 
-The local candidate commit `4955cb8` includes the bounded nondestructive
-Pattern Overlay style and `Filter → AI Denoise…`. Pattern Overlay repeats
-checker, stripes, dots, grid or diagonal tiles with editable colours, opacity
-and tile size while retaining the immutable source asset. AI Denoise is a
-private deterministic Y’CbCr bilateral approximation with editable radius,
-edge-protection threshold and amount; alpha, transparent RGB, source assets
-and Action defaults remain safe, and the UI discloses that model-backed RAW or
-temporal denoising is not enabled. Pure pixel/validation and desktop/mobile
-project round-trip coverage are present locally: 855/855 pure tests and
-999/1002 browser tests with 3 intentional skips. This commit has no protected
-CI, deployment or live-acceptance evidence because GitHub rejected the push
-without the OAuth `workflow` scope.
-
-The next local candidate additionally enables `Filter → AI Sharpen…` as a
-private deterministic luminance-detail approximation with editable radius,
-edge threshold and amount. It retains source/alpha safety and discloses that
-model-backed RAW priors and deconvolution remain staged. Its pure and
-desktop/mobile tests are pending in this worktree; protected CI, deployment
-and live acceptance remain separate gates.
+The local candidate commit `0b3e018` includes the bounded nondestructive
+Pattern Overlay style, `Filter → AI Denoise…` and `Filter → AI Sharpen…`.
+Pattern Overlay repeats checker, stripes, dots, grid or diagonal tiles with
+editable colours, opacity and tile size while retaining the immutable source
+asset. AI Denoise is a private deterministic Y’CbCr bilateral approximation
+with editable radius, edge-protection threshold and amount; alpha,
+transparent RGB, source assets and Action defaults remain safe, and the UI
+discloses that model-backed RAW or temporal denoising is not enabled. AI
+Sharpen is a private deterministic luminance-detail approximation with
+editable radius, edge threshold and amount; it retains source/alpha safety and
+discloses that model-backed RAW priors and deconvolution remain staged. Pure
+and desktop/mobile persistence tests are present locally: 856/856 pure tests
+and the AI Sharpen desktop/mobile cases pass 2/2. Protected CI, deployment and
+live acceptance remain separate gates.
 
 ## Remaining roadmap stages
 
