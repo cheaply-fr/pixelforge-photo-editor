@@ -32,6 +32,15 @@ are present locally; this commit has no protected CI, deployment or
 live-acceptance evidence because GitHub rejected the push without the OAuth
 `workflow` scope.
 
+The next local candidate adds `Filter → AI Denoise…` as a private deterministic
+Y’CbCr bilateral approximation. Its editable radius, edge-protection
+threshold and amount are persisted in filter metadata and Action recipes;
+alpha, transparent RGB and source assets remain safe, and the UI discloses
+that model-backed RAW or temporal denoising is not enabled. Pure and
+desktop/mobile persistence tests are part of the local candidate. Protected
+CI, deployment and live acceptance remain unverified because the branch still
+cannot be pushed without GitHub OAuth `workflow` scope.
+
 ## Remaining roadmap stages
 
 1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. **Nested local Smart Objects are now active:** root-level selections can be wrapped in a bounded recursive child `Frame`, rendered through the normal source-safe pipeline, validated to four levels, and retained by recursive asset compaction with Layer-panel and menu entry points. A nested frame remains a local editable data model; separate smart-object document windows, linked cloud assets and full asset compaction across external providers remain staged.

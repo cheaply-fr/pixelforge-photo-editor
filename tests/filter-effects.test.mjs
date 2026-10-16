@@ -181,6 +181,29 @@ test('Reduce Noise smooths similar tones while preserving strong edges and sourc
   assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
 });
 
+test('AI Denoise reduces chroma speckle while protecting luminance edges and source safety', () => {
+  const source = rgba(5, 3, (x, y) => {
+    if (x === 0 && y === 0) return [23, 37, 51, 0];
+    if (x < 2) return [82 + ((x + y) % 2) * 18, 88 - ((x * 3 + y) % 2) * 14, 124 + ((x + y) % 2) * 16, 255];
+    return [218 + ((x + y) % 2) * 10, 180 + ((x * 5 + y) % 2) * 14, 150 + ((x + y) % 2) * 9, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'ai-denoise', amount: 100, radius: 2, threshold: 24 };
+  const output = applyFilterEffectsPixels(source, 5, 3, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 5, 0, 0), [23, 37, 51, 0]);
+  assert.equal(pixel(output, 5, 2, 1)[3], 255);
+  const leftOffset = (1 * 5 + 1) * 4;
+  const rightOffset = (1 * 5 + 2) * 4;
+  const leftLuma = output[leftOffset] * 0.299 + output[leftOffset + 1] * 0.587 + output[leftOffset + 2] * 0.114;
+  const rightLuma = output[rightOffset] * 0.299 + output[rightOffset + 1] * 0.587 + output[rightOffset + 2] * 0.114;
+  assert.ok(rightLuma - leftLuma > 70, 'the strong luminance edge should remain protected');
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 3, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(effectiveFilterEffects({ type: 'ai-denoise' }).threshold, 18);
+});
+
 test('De-Interlace supports both field parity choices and interpolation', () => {
   const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
   const first = applyFilterEffectsPixels(source, 2, 5, {

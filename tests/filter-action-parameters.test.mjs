@@ -26,6 +26,8 @@ test('filter Action parameters fail closed to bounded defaults', () => {
 test('filter Action parameters retain effect-specific thresholds', () => {
   assert.equal(filterActionParameters({ type: 'dust-scratches', threshold: 9 }).threshold, 9);
   assert.equal(filterActionParameters({ type: 'reduce-noise', threshold: 999 }).threshold, 255);
+  assert.equal(filterActionParameters({ type: 'ai-denoise' }).threshold, 18);
+  assert.equal(filterActionParameters({ type: 'ai-denoise', threshold: 42 }).threshold, 42);
 });
 
 test('filter Action parameters retain bounded Gradient Map appearance', () => {

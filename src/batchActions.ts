@@ -230,6 +230,7 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
     'filter-dust-scratches': 'dust-scratches',
     'filter-despeckle': 'despeckle',
     'filter-reduce-noise': 'reduce-noise',
+    'filter-ai-denoise': 'ai-denoise',
     'filter-add-noise': 'add-noise',
     'filter-lens-correction': 'lens-correction',
     'filter-adaptive-wide-angle': 'adaptive-wide-angle',

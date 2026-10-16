@@ -71,6 +71,7 @@ export const FILTER_EFFECT_TYPES = [
   'dust-scratches',
   'despeckle',
   'reduce-noise',
+  'ai-denoise',
   'add-noise',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
@@ -398,10 +399,10 @@ export function effectiveFilterEffects(
         : DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS.vertical,
     };
   }
-  if (type === 'dust-scratches' || type === 'reduce-noise') {
+  if (type === 'dust-scratches' || type === 'reduce-noise' || type === 'ai-denoise') {
     normalized.threshold = finite(source.threshold)
       ? clamp(Math.round(source.threshold), 0, 255)
-      : type === 'reduce-noise' ? 25 : 12;
+      : type === 'reduce-noise' ? 25 : type === 'ai-denoise' ? 18 : 12;
   }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
@@ -3304,6 +3305,70 @@ function applyReduceNoise(
   }
 }
 
+/**
+ * Apply a bounded local AI Denoise approximation. The renderer does not call
+ * a remote model: it uses a two-domain bilateral pass in Y'CbCr space, which
+ * removes chroma speckle more strongly than luminance detail while keeping
+ * high-contrast edges protected by a luminance range weight. The operation is
+ * deterministic, source-safe and alpha-preserving; model-backed denoising,
+ * RAW-aware priors and temporal frame analysis remain outside this contract.
+ */
+function applyAiDenoise(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 6);
+  const preserve = clamp(Math.round(effect.threshold ?? 18), 1, 255);
+  const mix = clamp(strength, 0, 1);
+  const toYuv = (red: number, green: number, blue: number) => {
+    const y = red * 0.299 + green * 0.587 + blue * 0.114;
+    return [y, red - y, blue - y] as const;
+  };
+  const toRgb = (luma: number, chromaR: number, chromaB: number) => {
+    const red = luma + chromaR;
+    const blue = luma + chromaB;
+    const green = (luma - red * 0.299 - blue * 0.114) / 0.587;
+    return [red, green, blue] as const;
+  };
+  const spatialScale = Math.max(1, radius * radius * 0.7);
+  const rangeScale = Math.max(4, preserve * 0.8);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    const alpha = source[destination + 3];
+    if (!alpha) continue;
+    const base = toYuv(source[destination], source[destination + 1], source[destination + 2]);
+    let sumY = 0, sumCr = 0, sumCb = 0, weight = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const candidate = toYuv(source[sample], source[sample + 1], source[sample + 2]);
+        const spatial = Math.exp(-((sx - x) ** 2 + (sy - y) ** 2) / spatialScale);
+        const range = Math.exp(-Math.abs(candidate[0] - base[0]) / rangeScale);
+        const sampleWeight = spatial * range;
+        sumY += candidate[0] * sampleWeight;
+        sumCr += candidate[1] * sampleWeight;
+        sumCb += candidate[2] * sampleWeight;
+        weight += sampleWeight;
+      }
+    if (!weight) continue;
+    const lumaMix = mix * 0.65;
+    const chromaMix = Math.min(1, mix * 1.25);
+    const nextY = base[0] + ((sumY / weight) - base[0]) * lumaMix;
+    const nextCr = base[1] + ((sumCr / weight) - base[1]) * chromaMix;
+    const nextCb = base[2] + ((sumCb / weight) - base[2]) * chromaMix;
+    const result = toRgb(nextY, nextCr, nextCb);
+    output[destination] = clampByte(result[0]);
+    output[destination + 1] = clampByte(result[1]);
+    output[destination + 2] = clampByte(result[2]);
+    output[destination + 3] = alpha;
+  }
+}
+
 /** Apply a seeded uniform Add Noise approximation without touching alpha. */
 function applyAddNoise(
   source: Uint8ClampedArray,
@@ -3454,6 +3519,8 @@ export function applyFilterEffectsPixels(
     applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
   } else if (effect.type === 'reduce-noise') {
     applyReduceNoise(data, width, height, effect, output, strength);
+  } else if (effect.type === 'ai-denoise') {
+    applyAiDenoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'add-noise') {
     applyAddNoise(data, width, height, effect, output);
   } else if (effect.type === 'mezzotint') {

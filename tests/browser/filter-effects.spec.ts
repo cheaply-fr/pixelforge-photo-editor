@@ -453,6 +453,37 @@ test('Reduce Noise exposes preserve-details control and persists nondestructivel
   await expect.poll(() => pixel(page, 4, 0)).toEqual(changed);
 });
 
+test('AI Denoise exposes private local controls and persists nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'AI Denoise…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ai-denoise');
+  await expect(page.getByText('Private local AI Denoise approximation: a deterministic Y\'CbCr bilateral pass that removes chroma speckle while protecting luminance edges. No image is uploaded and model-backed RAW or temporal denoising remains staged.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Radius', { exact: true })).toHaveValue('3');
+  await expect(page.getByLabel('Edge protection', { exact: true })).toHaveValue('18');
+  await page.getByLabel('Edge protection', { exact: true }).fill('32');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'ai-denoise', amount: 100, radius: 3, threshold: 32 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ai-denoise');
+  await expect(page.getByLabel('Edge protection', { exact: true })).toHaveValue('32');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
 test('Gaussian Blur uses bounded tiled rendering and preserves the editable source', async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __PIXELFORGE_FORCE_WORKER__?: boolean }).__PIXELFORGE_FORCE_WORKER__ = true;

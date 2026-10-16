@@ -293,6 +293,13 @@ The noise family now also includes `Filter → Noise → Despeckle`, a fixed-rad
 
 The Noise family now also includes `Filter → Noise → Reduce Noise…`, a bounded colour-weighted local filter with an editable preserve-details threshold. Pure and desktop/mobile tests cover representative smoothing, edge retention, transparent-RGB safety, source retention and project persistence.
 
+The advanced-correction increment now also includes `Filter → AI Denoise…` as
+a private deterministic Y’CbCr bilateral approximation with editable radius,
+edge-protection threshold and amount. Pure and desktop/mobile tests cover
+chroma smoothing, luminance-edge retention, transparent-RGB/source safety,
+Action defaults and project reload. Model-backed RAW and temporal denoising
+remain staged behind explicit privacy and capability contracts.
+
 The current geometry increment adds `Filter → Distort → Twirl…`. It uses a
 bounded quadratically tapered rotational inverse map with premultiplied-alpha
 bilinear sampling, preserving source bytes and transparent edge RGB. Pure and

@@ -19,7 +19,7 @@ export function filterActionParameters(
     centerX: effect.centerX,
     centerY: effect.centerY,
     seed: effect.seed,
-    threshold: effect.threshold ?? 25,
+    threshold: effect.threshold ?? (effect.type === 'ai-denoise' ? 18 : 25),
     noiseMonochromatic: effect.noiseMonochromatic === true,
     noiseDistribution: effect.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform',
     gradientShadow: effect.gradientMap?.shadow ?? '#000000',

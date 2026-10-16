@@ -814,6 +814,7 @@ type Command =
   | 'filter-dust-scratches'
   | 'filter-despeckle'
   | 'filter-reduce-noise'
+  | 'filter-ai-denoise'
   | 'filter-add-noise'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
@@ -1254,7 +1255,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Neural Filters…', command: 'noop', disabled: true },
     { label: 'Filter Gallery…', command: 'filter-gallery' },
     { label: 'Camera Raw Filter…', command: 'camera-raw' },
-    { label: 'AI Denoise…', command: 'noop', disabled: true },
+    { label: 'AI Denoise…', command: 'filter-ai-denoise' },
     { label: 'AI Sharpen…', command: 'noop', disabled: true },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
     { label: 'Adaptive Wide Angle…', command: 'filter-adaptive-wide-angle' },
@@ -5619,9 +5620,9 @@ export default function Home() {
                   adaptiveWideAngle: { horizontal: 50, vertical: 50 },
                 } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
-                ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
+                ...(type === 'reduce-noise' ? { threshold: 25 } : type === 'ai-denoise' ? { threshold: 18 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise' || type === 'ai-denoise'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
@@ -5658,6 +5659,8 @@ export default function Home() {
                     ? 1
                     : type === 'reduce-noise'
                     ? 2
+                    : type === 'ai-denoise'
+                      ? 3
                     : type === 'lens-correction' || type === 'adaptive-wide-angle'
                       ? 64
                     : type === 'lens-flare'
@@ -12553,6 +12556,8 @@ export default function Home() {
       chooseFilterEffect('despeckle', 'Despeckle (local approximation)');
     else if (command === 'filter-reduce-noise')
       chooseFilterEffect('reduce-noise', 'Reduce Noise (edge-aware local approximation)');
+    else if (command === 'filter-ai-denoise')
+      chooseFilterEffect('ai-denoise', 'AI Denoise (private local approximation)');
     else if (command === 'filter-add-noise')
       chooseFilterEffect('add-noise', 'Add Noise (seeded local approximation)');
     else if (command === 'filter-deinterlace')
@@ -12921,6 +12926,7 @@ export default function Home() {
       case 'filter-dust-scratches':
       case 'filter-despeckle':
       case 'filter-reduce-noise':
+      case 'filter-ai-denoise':
       case 'filter-add-noise':
       case 'filter-solarize':
       case 'filter-diffuse':
@@ -16155,6 +16161,9 @@ export default function Home() {
             {filterEffects.type === 'reduce-noise' && (
               <p>Bounded colour-weighted neighbourhood smoothing that favours nearby similar tones. Radius, preserve-details threshold and amount remain editable; temporal and high-bit-depth parity remain staged.</p>
             )}
+            {filterEffects.type === 'ai-denoise' && (
+              <p>Private local AI Denoise approximation: a deterministic Y&apos;CbCr bilateral pass that removes chroma speckle while protecting luminance edges. No image is uploaded and model-backed RAW or temporal denoising remains staged.</p>
+            )}
             {filterEffects.type === 'add-noise' && (
               <>
                 <p>Seeded uniform noise is blended into visible pixels without changing alpha or transparent RGB. Amount, seed and monochromatic mode remain editable; Gaussian distribution, film grain and channel clipping parity remain staged.</p>
@@ -16224,10 +16233,10 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise') && (
+                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise' || filterEffects.type === 'ai-denoise') && (
                   <Slider
-                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : 'Outlier threshold'}
-                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : 12)}
+                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : filterEffects.type === 'ai-denoise' ? 'Edge protection' : 'Outlier threshold'}
+                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : filterEffects.type === 'ai-denoise' ? 18 : 12)}
                     min={0}
                     max={255}
                     set={(value) => setFilterEffects({ threshold: value })}
