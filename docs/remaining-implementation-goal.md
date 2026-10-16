@@ -20,7 +20,7 @@ Object slices have pure validation/pixel coverage plus desktop/mobile lock,
 undo, reload and project round-trip coverage. The local candidate passes
 854/854 pure tests, 997/1000 browser tests with 3 intentional skips, and the
 static/typecheck/build checks locally.
-The remote PR #149 head remains `7b714278`; its protected validation run is
+The remote PR #149 head is `a2517b7`; its protected validation run is
 still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
