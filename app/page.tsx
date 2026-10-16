@@ -189,6 +189,12 @@ import GenerativeFillDialog, {
 } from '../src/GenerativeFillDialog';
 import PromptToEditDialog from '../src/PromptToEditDialog';
 import { parsePromptToEdit } from '../src/promptToEdit';
+import GenerateImageDialog from '../src/GenerateImageDialog';
+import {
+  normalizeGenerateImageRequest,
+  renderGeneratedImage,
+  type GenerateImageRequest,
+} from '../src/generateImage';
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -623,6 +629,7 @@ type Command =
   | 'content-aware-scale'
   | 'generative-fill'
   | 'prompt-to-edit'
+  | 'generate-image'
   | 'resize'
   | 'generative-upscale'
   | 'canvas-size'
@@ -1073,7 +1080,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Content-Aware Move…', command: 'content-aware-move' },
     { label: 'Prompt to Edit…', command: 'prompt-to-edit' },
     { label: 'Generative Fill…', command: 'generative-fill' },
-    { label: 'Generate Image…', command: 'noop', disabled: true },
+    { label: 'Generate Image…', command: 'generate-image' },
     { label: 'Reflection Removal…', command: 'filter-reflection-removal' },
     { label: 'Remove Background…', command: 'remove-background' },
     { label: 'Cookie Cutter Mask…', command: 'cookie-cutter' },
@@ -2265,6 +2272,7 @@ export default function Home() {
     [pasteSpecialOpen, setPasteSpecialOpen] = useState(false),
     [generativeFillOpen, setGenerativeFillOpen] = useState(false),
     [promptToEditOpen, setPromptToEditOpen] = useState(false),
+    [generateImageOpen, setGenerateImageOpen] = useState(false),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -5424,6 +5432,41 @@ export default function Home() {
     if (changed) {
       setPromptToEditOpen(false);
       setNotice(`Prompt to Edit applied locally: ${parsed.plan.summary}`);
+    }
+  };
+  const applyGenerateImage = (value: GenerateImageRequest) => {
+    const parsed = normalizeGenerateImageRequest(value);
+    if (!parsed.ok) {
+      setNotice(parsed.reason);
+      return;
+    }
+    const f = current();
+    if (f.layers.length >= 32) {
+      setNotice('32-layer limit reached; remove a layer before generating an image');
+      return;
+    }
+    try {
+      const image = surface(parsed.request.width, parsed.request.height);
+      const context = image.getContext('2d');
+      if (!context) throw new Error('Generate Image canvas is unavailable');
+      const pixels = context.createImageData(parsed.request.width, parsed.request.height);
+      pixels.data.set(renderGeneratedImage(parsed.request));
+      context.putImageData(pixels, 0, 0);
+      const layer: Layer = {
+        ...commonLayer('Generated Image'),
+        kind: 'raster',
+        asset: addAsset(assets.current, image),
+        matrix: translateMatrix(identity(), {
+          x: (f.w - parsed.request.width) / 2,
+          y: (f.h - parsed.request.height) / 2,
+        }),
+      };
+      if (addLayer(layer)) {
+        setGenerateImageOpen(false);
+        setNotice(`Local abstract image generated (${parsed.request.style}); the new raster layer remains editable`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Generate Image failed; the document is unchanged');
     }
   };
   const applyContentAwareMove = async () => {
@@ -12416,6 +12459,8 @@ export default function Home() {
       setGenerativeFillOpen(true);
     else if (command === 'prompt-to-edit')
       setPromptToEditOpen(true);
+    else if (command === 'generate-image')
+      setGenerateImageOpen(true);
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
@@ -13090,6 +13135,8 @@ export default function Home() {
         );
       case 'prompt-to-edit':
         return !layer || !layer.visible || locked;
+      case 'generate-image':
+        return frame.layers.length >= 32;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -13575,6 +13622,12 @@ export default function Home() {
         <PromptToEditDialog
           close={() => setPromptToEditOpen(false)}
           apply={applyPromptToEdit}
+        />
+      )}
+      {generateImageOpen && (
+        <GenerateImageDialog
+          close={() => setGenerateImageOpen(false)}
+          apply={applyGenerateImage}
         />
       )}
       {canvasSizing && (
