@@ -204,6 +204,25 @@ test('AI Denoise reduces chroma speckle while protecting luminance edges and sou
   assert.equal(effectiveFilterEffects({ type: 'ai-denoise' }).threshold, 18);
 });
 
+test('AI Sharpen enhances luminance detail while preserving flat fields, alpha and source safety', () => {
+  const source = rgba(5, 5, (x, y) => {
+    if (x === 0 && y === 0) return [17, 29, 41, 0];
+    if (x === 2 && y === 2) return [190, 182, 174, 255];
+    return [70, 76, 82, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'ai-sharpen', amount: 100, radius: 2, threshold: 4 };
+  const output = applyFilterEffectsPixels(source, 5, 5, effect);
+  assert.deepEqual(source, original);
+  assert.ok(pixel(output, 5, 2, 2)[0] > pixel(source, 5, 2, 2)[0]);
+  assert.deepEqual(pixel(output, 5, 0, 0), [17, 29, 41, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 5, effect));
+  const flat = rgba(3, 3, () => [100, 100, 100, 255]);
+  assert.deepEqual(applyFilterEffectsPixels(flat, 3, 3, effect), flat);
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(effectiveFilterEffects({ type: 'ai-sharpen' }).threshold, 22);
+});
+
 test('De-Interlace supports both field parity choices and interpolation', () => {
   const source = rgba(2, 5, (x, y) => [y * 40 + x, y * 20, 90, 255]);
   const first = applyFilterEffectsPixels(source, 2, 5, {

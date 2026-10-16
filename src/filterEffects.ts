@@ -72,6 +72,7 @@ export const FILTER_EFFECT_TYPES = [
   'despeckle',
   'reduce-noise',
   'ai-denoise',
+  'ai-sharpen',
   'add-noise',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
@@ -399,10 +400,10 @@ export function effectiveFilterEffects(
         : DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS.vertical,
     };
   }
-  if (type === 'dust-scratches' || type === 'reduce-noise' || type === 'ai-denoise') {
+  if (type === 'dust-scratches' || type === 'reduce-noise' || type === 'ai-denoise' || type === 'ai-sharpen') {
     normalized.threshold = finite(source.threshold)
       ? clamp(Math.round(source.threshold), 0, 255)
-      : type === 'reduce-noise' ? 25 : type === 'ai-denoise' ? 18 : 12;
+      : type === 'reduce-noise' ? 25 : type === 'ai-denoise' ? 18 : type === 'ai-sharpen' ? 22 : 12;
   }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
@@ -3369,6 +3370,55 @@ function applyAiDenoise(
   }
 }
 
+/**
+ * Apply a bounded local AI Sharpen approximation. The renderer uses a
+ * luminance-only high-frequency detail pass with a spatially weighted
+ * neighbourhood and an edge threshold. It is intentionally local and
+ * deterministic; model-backed semantic sharpening, RAW priors and camera
+ * deconvolution remain outside this contract.
+ */
+function applyAiSharpen(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 6);
+  const threshold = clamp(Math.round(effect.threshold ?? 22), 0, 255);
+  const mix = clamp(strength, 0, 1);
+  const luma = (red: number, green: number, blue: number) => red * 0.299 + green * 0.587 + blue * 0.114;
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    const alpha = source[destination + 3];
+    if (!alpha) continue;
+    const baseY = luma(source[destination], source[destination + 1], source[destination + 2]);
+    let sum = 0, weight = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const sampleWeight = 1 / (1 + Math.hypot(sx - x, sy - y));
+        sum += luma(source[sample], source[sample + 1], source[sample + 2]) * sampleWeight;
+        weight += sampleWeight;
+      }
+    if (!weight) continue;
+    const detail = baseY - sum / weight;
+    if (Math.abs(detail) <= threshold) continue;
+    const nextY = baseY + detail * mix * 1.8;
+    const chromaR = source[destination] - baseY;
+    const chromaB = source[destination + 2] - baseY;
+    const nextRed = nextY + chromaR;
+    const nextBlue = nextY + chromaB;
+    const nextGreen = (nextY - nextRed * 0.299 - nextBlue * 0.114) / 0.587;
+    output[destination] = clampByte(nextRed);
+    output[destination + 1] = clampByte(nextGreen);
+    output[destination + 2] = clampByte(nextBlue);
+    output[destination + 3] = alpha;
+  }
+}
+
 /** Apply a seeded uniform Add Noise approximation without touching alpha. */
 function applyAddNoise(
   source: Uint8ClampedArray,
@@ -3521,6 +3571,8 @@ export function applyFilterEffectsPixels(
     applyReduceNoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'ai-denoise') {
     applyAiDenoise(data, width, height, effect, output, strength);
+  } else if (effect.type === 'ai-sharpen') {
+    applyAiSharpen(data, width, height, effect, output, strength);
   } else if (effect.type === 'add-noise') {
     applyAddNoise(data, width, height, effect, output);
   } else if (effect.type === 'mezzotint') {

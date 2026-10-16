@@ -300,6 +300,13 @@ chroma smoothing, luminance-edge retention, transparent-RGB/source safety,
 Action defaults and project reload. Model-backed RAW and temporal denoising
 remain staged behind explicit privacy and capability contracts.
 
+The same increment now includes `Filter → AI Sharpen…` as a private
+deterministic luminance-detail approximation with editable radius, edge
+threshold and amount. Pure and desktop/mobile tests cover high-frequency edge
+enhancement, flat-field identity, transparent-RGB/source safety, Action
+defaults and project reload. Model-backed RAW priors, deconvolution and
+camera-aware sharpening remain staged.
+
 The current geometry increment adds `Filter → Distort → Twirl…`. It uses a
 bounded quadratically tapered rotational inverse map with premultiplied-alpha
 bilinear sampling, preserving source bytes and transparent edge RGB. Pure and

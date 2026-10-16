@@ -357,7 +357,7 @@ test('Median is a nondestructive noise filter with editable persistence', async 
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Median…', exact: true }).click();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('median');
-  await expect(page.getByLabel('Radius', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('2');
   await expect.poll(() => pixel(page, 4, 0)).not.toEqual(original);
   const adjusted = await downloadProject(page);
   const layer = adjusted.history[adjusted.index].layers.at(-1)!;
@@ -479,6 +479,37 @@ test('AI Denoise exposes private local controls and persists nondestructively', 
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ai-denoise');
   await expect(page.getByLabel('Edge protection', { exact: true })).toHaveValue('32');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+  await openProject(page, adjusted);
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});
+
+test('AI Sharpen exposes private local controls and persists nondestructively', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'AI Sharpen…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ai-sharpen');
+  await expect(page.getByText('Private local AI Sharpen approximation: a deterministic luminance-detail pass that protects flat tones with an edge threshold. No image is uploaded and model-backed RAW priors or deconvolution remain staged.', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Edge threshold', { exact: true })).toHaveValue('22');
+  await page.getByLabel('Edge threshold', { exact: true }).fill('8');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'ai-sharpen', amount: 100, radius: 2, threshold: 8 });
+  const changed = await pixels(page);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ai-sharpen');
+  await expect(page.getByLabel('Edge threshold', { exact: true })).toHaveValue('8');
   await expect.poll(() => pixels(page)).toEqual(changed);
   await openProject(page, adjusted);
   await expect.poll(() => pixels(page)).toEqual(changed);

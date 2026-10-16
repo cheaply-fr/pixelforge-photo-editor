@@ -37,6 +37,13 @@ project round-trip coverage are present locally: 855/855 pure tests and
 CI, deployment or live-acceptance evidence because GitHub rejected the push
 without the OAuth `workflow` scope.
 
+The next local candidate additionally enables `Filter → AI Sharpen…` as a
+private deterministic luminance-detail approximation with editable radius,
+edge threshold and amount. It retains source/alpha safety and discloses that
+model-backed RAW priors and deconvolution remain staged. Its pure and
+desktop/mobile tests are pending in this worktree; protected CI, deployment
+and live acceptance remain separate gates.
+
 ## Remaining roadmap stages
 
 1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. **Nested local Smart Objects are now active:** root-level selections can be wrapped in a bounded recursive child `Frame`, rendered through the normal source-safe pipeline, validated to four levels, and retained by recursive asset compaction with Layer-panel and menu entry points. A nested frame remains a local editable data model; separate smart-object document windows, linked cloud assets and full asset compaction across external providers remain staged.
