@@ -38,6 +38,15 @@ deployment or live-acceptance credit. Production remains on the previously
 verified revision until those gates complete. See
 [`generate-image-contract.md`](./generate-image-contract.md).
 
+The toolbar layout hardening now lets one-slot categories consume one global
+track, two-slot categories consume two tracks, and larger categories retain a
+full row. This removes the large blank regions introduced when family slots
+were added while preserving family deduplication, visible subtool icons and
+hold-to-open behavior. The desktop/mobile toolbar suite passes **26/26** with
+explicit packed-track, no-placeholder and touch-target assertions. This is
+local UI evidence only; the protected run for the candidate remains the
+release gate.
+
 Lens Correction now uses a bounded source-pixel influence radius and forwards
 the tile-local authored centre through the renderer. `lens-correction` is in
 the explicit tiled neighbourhood allow-list, and its full-frame oracle matches

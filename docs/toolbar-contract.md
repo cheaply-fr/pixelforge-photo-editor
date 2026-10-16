@@ -4,12 +4,14 @@ The left palette keeps every implemented tool reachable in a compact two-column
 layout, expanding to three columns on wide editor viewports. Tools are grouped
 under Navigate, Measure, Marquee, Lasso, Selection, Crop & Slice, Retouch,
 Paint & Fill, and Draw & Type headings. Category grids use the same two/three
-column geometry as the palette, so each category stays aligned at desktop and
-wide desktop breakpoints. Each repeated-key/flyout family occupies one compact
-category slot; the active variant replaces that slot's label and icon while the
-other variants remain in the press-and-hold menu. This removes duplicate
-toolbar buttons without hiding a tool or changing its persisted `Tool`
-identifier.
+column geometry as the palette. One-slot categories occupy one global track,
+two-slot categories occupy two tracks, and larger categories span the row; this
+packs sparse categories together without placeholder cells or large blank
+regions while preserving readable headings and touch targets. Each
+repeated-key/flyout family occupies one compact category slot; the active
+variant replaces that slot's label and icon while the other variants remain in
+the press-and-hold menu. This removes duplicate toolbar buttons without hiding
+a tool or changing its persisted `Tool` identifier.
 
 Tool buttons with Photoshop-style subtools expose `aria-haspopup="menu"` and a
 stable `id`. There is one flyout at a time, rendered against the viewport so

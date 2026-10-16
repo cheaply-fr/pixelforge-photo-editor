@@ -69,11 +69,11 @@ test('wide editor palette expands to three columns without losing focus targets'
     };
   });
   expect(layout.columns).toBe(3);
-  // Categories with exactly two independent tools intentionally use a
-  // two-column grid inside the three-column palette, so their second column
-  // can sit between the global grid tracks without creating a missing tool.
+  // Compact one-slot categories can share a row with another category, while
+  // two-slot categories retain two global tracks. The packed layout therefore
+  // exposes up to five distinct button x positions without placeholder cells.
   expect(layout.xPositions.length).toBeGreaterThanOrEqual(3);
-  expect(layout.xPositions.length).toBeLessThanOrEqual(4);
+  expect(layout.xPositions.length).toBeLessThanOrEqual(5);
 
   const pen = page.getByRole('button', { name: 'Pen tool', exact: true });
   await pen.focus();
@@ -341,7 +341,7 @@ test('family subtool choice survives a reload through the local preference envel
   await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
 });
 
-test('categories stack in one column while their tools keep the responsive grid', async ({
+test('compact categories pack across tracks while larger categories keep full rows', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
@@ -351,10 +351,13 @@ test('categories stack in one column while their tools keep the responsive grid'
     const rects = categories.map((category) => {
       const rect = category.getBoundingClientRect();
       const grid = category.querySelector<HTMLElement>('.tool-category-grid');
+      const className = [...category.classList].find((item) => item.startsWith('tool-category--')) ?? '';
       return {
         left: Math.round(rect.left),
         right: Math.round(rect.right),
         top: Math.round(rect.top),
+        className,
+        gridColumn: getComputedStyle(category).gridColumn,
         gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
         gridClass: grid ? [...grid.classList].find((item) => item.startsWith('tool-category-grid--')) : undefined,
       };
@@ -362,13 +365,20 @@ test('categories stack in one column while their tools keep the responsive grid'
     return { rects, palette: element.getBoundingClientRect().toJSON() };
   });
   expect(layout.rects.length).toBeGreaterThan(4);
-  expect(new Set(layout.rects.map((rect) => rect.left)).size).toBe(1);
-  expect(new Set(layout.rects.map((rect) => rect.right)).size).toBe(1);
+  expect(new Set(layout.rects.map((rect) => rect.left)).size).toBeGreaterThan(1);
   expect(layout.rects.every((rect, index) => index === 0 || rect.top >= layout.rects[index - 1].top)).toBe(true);
   expect(layout.rects.every((rect) => rect.gridColumns === (
     rect.gridClass === 'tool-category-grid--one' ? 1 :
       rect.gridClass === 'tool-category-grid--two' ? 2 : 3
   ))).toBe(true);
+  expect(layout.rects.every((rect) => {
+    const expected = rect.className === 'tool-category--one' ? 'span 1'
+      : rect.className === 'tool-category--two' ? 'span 2' : '1 / -1';
+    return rect.gridColumn === expected;
+  })).toBe(true);
+  const packed = layout.rects.filter((rect) => rect.className.endsWith('--one'));
+  expect(packed.length).toBeGreaterThan(1);
+  expect(new Set(packed.map((rect) => rect.top)).size).toBeLessThan(packed.length);
 });
 
 test('category grids size to their compact tool count without trailing empty slots', async ({

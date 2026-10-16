@@ -92,6 +92,15 @@ Static/typecheck/build checks pass locally with the existing chunk-size and
 dynamic-import warnings. Protected CI, deployment and live acceptance remain
 separate gates.
 
+The current toolbar hardening packs sparse one-slot and two-slot categories
+across the available two/three-column tracks instead of forcing every category
+to consume a full row. Larger categories retain full-width rows, family
+representatives remain deduplicated, and the existing hold-to-open flyouts keep
+their visible Lucide icons and arrows. Desktop/mobile toolbar acceptance now
+covers the packed geometry in addition to the 26-case family, icon, keyboard,
+touch, persistence and no-placeholder suite. This is local candidate evidence
+until the protected workflow, deployment and live revision checks complete.
+
 ## Remaining roadmap stages
 
 1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. **Nested local Smart Objects are now active:** root-level selections can be wrapped in a bounded recursive child `Frame`, rendered through the normal source-safe pipeline, validated to four levels, and retained by recursive asset compaction with Layer-panel and menu entry points. A nested frame remains a local editable data model; separate smart-object document windows, linked cloud assets and full asset compaction across external providers remain staged.
