@@ -25,10 +25,20 @@ export type ColorOverlayStyle = {
   opacity: number;
 };
 
+export type GradientOverlayStyle = {
+  enabled: boolean;
+  startColor: string;
+  endColor: string;
+  opacity: number;
+  angle: number;
+  reverse: boolean;
+};
+
 export type LayerStyles = {
   dropShadow: DropShadowStyle;
   outline: OutlineStyle;
   colorOverlay: ColorOverlayStyle;
+  gradientOverlay: GradientOverlayStyle;
 };
 
 export const neutralLayerStyles: LayerStyles = {
@@ -51,6 +61,14 @@ export const neutralLayerStyles: LayerStyles = {
     color: '#ffffff',
     opacity: 1,
   },
+  gradientOverlay: {
+    enabled: false,
+    startColor: '#000000',
+    endColor: '#ffffff',
+    opacity: 1,
+    angle: 0,
+    reverse: false,
+  },
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -63,6 +81,7 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
   const shadow = value?.dropShadow;
   const outline = value?.outline;
   const colorOverlay = value?.colorOverlay;
+  const gradientOverlay = value?.gradientOverlay;
   return {
     dropShadow: {
       ...neutralLayerStyles.dropShadow,
@@ -109,6 +128,28 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
         ? colorOverlay.enabled
         : neutralLayerStyles.colorOverlay.enabled,
     },
+    gradientOverlay: {
+      ...neutralLayerStyles.gradientOverlay,
+      ...gradientOverlay,
+      startColor: hex(gradientOverlay?.startColor)
+        ? gradientOverlay!.startColor
+        : neutralLayerStyles.gradientOverlay.startColor,
+      endColor: hex(gradientOverlay?.endColor)
+        ? gradientOverlay!.endColor
+        : neutralLayerStyles.gradientOverlay.endColor,
+      opacity: finite(gradientOverlay?.opacity, 0, 1)
+        ? gradientOverlay!.opacity
+        : neutralLayerStyles.gradientOverlay.opacity,
+      angle: finite(gradientOverlay?.angle, -180, 180)
+        ? gradientOverlay!.angle
+        : neutralLayerStyles.gradientOverlay.angle,
+      reverse: typeof gradientOverlay?.reverse === 'boolean'
+        ? gradientOverlay.reverse
+        : neutralLayerStyles.gradientOverlay.reverse,
+      enabled: typeof gradientOverlay?.enabled === 'boolean'
+        ? gradientOverlay.enabled
+        : neutralLayerStyles.gradientOverlay.enabled,
+    },
   };
 }
 
@@ -116,7 +157,8 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<LayerStyles>;
   const shadow = candidate.dropShadow,
-    outline = candidate.outline;
+    outline = candidate.outline,
+    gradientOverlay = candidate.gradientOverlay;
   return Boolean(
     shadow &&
       typeof shadow === 'object' &&
@@ -138,13 +180,24 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
         typeof candidate.colorOverlay.enabled === 'boolean' &&
         hex(candidate.colorOverlay.color) &&
         finite(candidate.colorOverlay.opacity, 0, 1)
+      )) &&
+      (gradientOverlay === undefined || (
+        gradientOverlay &&
+        typeof gradientOverlay === 'object' &&
+        typeof gradientOverlay.enabled === 'boolean' &&
+        hex(gradientOverlay.startColor) &&
+        hex(gradientOverlay.endColor) &&
+        finite(gradientOverlay.opacity, 0, 1) &&
+        finite(gradientOverlay.angle, -180, 180) &&
+        typeof gradientOverlay.reverse === 'boolean'
       )),
   );
 }
 
 export function isNeutralLayerStyles(value: Partial<LayerStyles> | undefined): boolean {
   const styles = effectiveLayerStyles(value);
-  return !styles.dropShadow.enabled && !styles.outline.enabled && !styles.colorOverlay.enabled;
+  return !styles.dropShadow.enabled && !styles.outline.enabled &&
+    !styles.colorOverlay.enabled && !styles.gradientOverlay.enabled;
 }
 
 function color(value: string): [number, number, number] {
@@ -277,6 +330,34 @@ export function applyLayerStylesPixels(
       for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
         const i = (y * width + x) * 4;
         over(output, i, r, g, b, source[i + 3] * styles.colorOverlay.opacity);
+      }
+  }
+  if (styles.gradientOverlay.enabled) {
+    const [startR, startG, startB] = color(styles.gradientOverlay.startColor);
+    const [endR, endG, endB] = color(styles.gradientOverlay.endColor);
+    const angle = (styles.gradientOverlay.angle * Math.PI) / 180;
+    const dx = Math.cos(angle), dy = Math.sin(angle);
+    const corners = [
+      0,
+      (width - 1) * dx,
+      (height - 1) * dy,
+      (width - 1) * dx + (height - 1) * dy,
+    ];
+    const min = Math.min(...corners), span = Math.max(1, Math.max(...corners) - min);
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const i = (y * width + x) * 4;
+        let t = ((x * dx + y * dy) - min) / span;
+        if (styles.gradientOverlay.reverse) t = 1 - t;
+        t = Math.max(0, Math.min(1, t));
+        over(
+          output,
+          i,
+          startR + (endR - startR) * t,
+          startG + (endG - startG) * t,
+          startB + (endB - startB) * t,
+          source[i + 3] * styles.gradientOverlay.opacity,
+        );
       }
   }
   return output;

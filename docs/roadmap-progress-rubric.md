@@ -24,7 +24,7 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increments (`0caef75`)
+## Latest local increments (`2b20107` plus Gradient Overlay)
 
 Lens Correction now uses a bounded source-pixel influence radius and forwards
 the tile-local authored centre through the renderer. `lens-correction` is in
@@ -47,9 +47,12 @@ contract: selected root-level layers can be wrapped in a recursive child
 and retained by recursive asset compaction. Layer-panel and Layer-menu entry
 points are covered by desktop/mobile acceptance, including representative
 pixels, undo, reload and portable project round trips. The focused Smart Object
-suite passes **10/10**, the pure suite passes **850/850**, and typecheck, lint
-and build pass locally. This candidate is still local evidence until protected
-CI, deployment and live revision checks complete.
+suite passes **10/10**. The follow-up Gradient Overlay style adds editable
+start/end colours, opacity, angle and reversal while retaining source pixels;
+its desktop/mobile round-trip suite passes **10/10**. The combined pure suite
+passes **851/851**, and typecheck, lint and build pass locally. These changes
+remain local evidence until protected CI, deployment and live revision checks
+complete.
 
 ## Current baseline
 

@@ -144,6 +144,9 @@ export default function LayersPanel({
   const updateColorOverlay = (
     patch: Partial<LayerStyles['colorOverlay']>,
   ) => updateStyles({ colorOverlay: { ...styles.colorOverlay, ...patch } });
+  const updateGradientOverlay = (
+    patch: Partial<LayerStyles['gradientOverlay']>,
+  ) => updateStyles({ gradientOverlay: { ...styles.gradientOverlay, ...patch } });
   const selectedLayers = frame.layers.filter((item) => selectedIds.has(item.id));
   const selectedGroupIds = new Set(selectedLayers.flatMap((item) => item.groupId ? [item.groupId] : []));
   const distributionGroup = selectedGroupIds.size === 1
@@ -743,6 +746,75 @@ export default function LayersPanel({
             }
           />
         </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable gradient overlay"
+            checked={styles.gradientOverlay.enabled}
+            onChange={(event) =>
+              updateGradientOverlay({ enabled: event.target.checked })
+            }
+          />
+          Gradient overlay
+        </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Gradient start
+            <input
+              aria-label="Gradient overlay start color"
+              type="color"
+              value={styles.gradientOverlay.startColor}
+              onChange={(event) =>
+                updateGradientOverlay({ startColor: event.target.value })
+              }
+            />
+          </label>
+          <label className="layer-field">
+            Gradient end
+            <input
+              aria-label="Gradient overlay end color"
+              type="color"
+              value={styles.gradientOverlay.endColor}
+              onChange={(event) =>
+                updateGradientOverlay({ endColor: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label className="layer-field">
+          Gradient opacity {Math.round(styles.gradientOverlay.opacity * 100)}%
+          <input
+            aria-label="Gradient overlay opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.gradientOverlay.opacity * 100)}
+            onChange={(event) =>
+              updateGradientOverlay({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <div className="layer-position">
+          <NumberField
+            label="Gradient angle"
+            value={styles.gradientOverlay.angle}
+            min={-180}
+            max={180}
+            disabled={layerLocked}
+            apply={(value) => updateGradientOverlay({ angle: value })}
+          />
+          <label>
+            <input
+              type="checkbox"
+              aria-label="Reverse gradient overlay"
+              checked={styles.gradientOverlay.reverse}
+              onChange={(event) =>
+                updateGradientOverlay({ reverse: event.target.checked })
+              }
+            />
+            Reverse
+          </label>
+        </div>
       </fieldset>
       <div className="layer-position">
         <NumberField

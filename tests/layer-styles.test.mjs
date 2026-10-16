@@ -43,10 +43,12 @@ test('Layer Style metadata is bounded and legacy values normalize safely', () =>
     width: neutralLayerStyles.outline.width,
   });
   assert.deepEqual(value.colorOverlay, neutralLayerStyles.colorOverlay);
+  assert.deepEqual(value.gradientOverlay, neutralLayerStyles.gradientOverlay);
   assert.equal(validLayerStyles(value), true);
   assert.equal(validLayerStyles({ ...value, outline: { ...value.outline, width: 0 } }), false);
   assert.equal(validLayerStyles({ ...value, dropShadow: { ...value.dropShadow, color: 'red' } }), false);
   assert.equal(validLayerStyles({ ...value, colorOverlay: { ...value.colorOverlay, opacity: 2 } }), false);
+  assert.equal(validLayerStyles({ ...value, gradientOverlay: { ...value.gradientOverlay, angle: 181 } }), false);
   assert.equal(isNeutralLayerStyles(undefined), true);
 });
 
@@ -92,4 +94,31 @@ test('Layer Style pixels are deterministic, source-safe and alpha-preserving', (
     applyLayerStylesPixels(source, 5, 5, undefined),
     source,
   );
+});
+
+test('Gradient Overlay interpolates endpoints, respects angle/reverse and preserves source bytes', () => {
+  const source = new Uint8ClampedArray(4 * 2 * 4);
+  source.set([255, 255, 255, 255], 0);
+  source.set([255, 255, 255, 255], 12);
+  const original = source.slice();
+  const style = {
+    gradientOverlay: {
+      ...neutralLayerStyles.gradientOverlay,
+      enabled: true,
+      startColor: '#0000ff',
+      endColor: '#ff0000',
+      opacity: 1,
+      angle: 0,
+      reverse: false,
+    },
+  };
+  const first = applyLayerStylesPixels(source, 4, 2, style);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(first, 4, 0, 0), [0, 0, 255, 255]);
+  assert.deepEqual(pixel(first, 4, 3, 0), [255, 0, 0, 255]);
+  const reversed = applyLayerStylesPixels(source, 4, 2, {
+    gradientOverlay: { ...style.gradientOverlay, reverse: true },
+  });
+  assert.deepEqual(pixel(reversed, 4, 0, 0), [255, 0, 0, 255]);
+  assert.deepEqual(pixel(reversed, 4, 3, 0), [0, 0, 255, 255]);
 });
