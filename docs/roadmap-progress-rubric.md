@@ -24,18 +24,21 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increments (`44d2bf5`)
+## Latest local increments (`2629cc5`)
 
-The current local candidate is `948c963`. It adds `Edit → Generate Image…` as
+The current local candidate is `2629cc5`. It adds `Edit → Generate Image…` as
 a bounded offline abstract renderer that inserts a deterministic gradient,
 stripes, dots or noise raster layer while enforcing prompt, dimension, pixel
 and layer limits. The pure normalisation/render cases pass **3/3** and the
 desktop/mobile dialog, editable-layer, dimension, reload and empty-input cases
-pass **4/4**. The full local suite is **880/880**; typecheck, lint, build and
-the toolbar regression suite (**26/26**) also pass. PR #149's protected run
-for this exact SHA is still in progress, so this evidence does not earn CI,
-deployment or live-acceptance credit. Production remains on the previously
-verified revision until those gates complete. See
+pass **4/4**. The full local pure suite is **880/880**, and the complete local
+desktop/mobile Playwright run is **1,025/1,025** after aligning two stale menu
+expectations with the now-enabled Generative Fill command. Typecheck, lint,
+build and the toolbar regression suite (**26/26**) also pass. Protected run
+`38948652002` passed for this exact SHA, including the complete browser suite;
+deployment and live-acceptance credit remain unearned because PR #149 is still
+open. Production remains on the previously verified revision until those gates
+complete. See
 [`generate-image-contract.md`](./generate-image-contract.md).
 
 The toolbar layout hardening now lets one-slot categories consume one global
@@ -46,6 +49,12 @@ hold-to-open behavior. The desktop/mobile toolbar suite passes **26/26** with
 explicit packed-track, no-placeholder and touch-target assertions. This is
 local UI evidence only; the protected run for the candidate remains the
 release gate.
+
+The protected Playwright gate now defaults to two isolated workers on CI, with
+`PLAYWRIGHT_WORKERS` as an override. This brings the full browser run inside
+the workflow budget while preserving the same test inventory; each worker owns
+an independent browser context and IndexedDB draft. This is a test-execution
+reliability change, not a product-capability claim.
 
 Lens Correction now uses a bounded source-pixel influence radius and forwards
 the tile-local authored centre through the renderer. `lens-correction` is in

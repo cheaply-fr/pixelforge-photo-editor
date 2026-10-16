@@ -35,12 +35,15 @@ browser cases. It also adds Generate Image as a bounded offline abstract
 renderer with 3/3 pure cases and 4/4 desktop/mobile browser cases covering
 editable raster insertion, dimension persistence, reload and empty-input
 failure. Static/typecheck/build checks pass locally.
-Remote PR #149 now includes source through `948c963` (with Generate Image at
-`2254afd`, Prompt to Edit at `0fdecce`, Generative Fill at
-`77b0996` and Generative Upscale at `908f905`); its protected validation run
-for the current documentation head is still in progress, so CI/deploy and the live revision remain separate gates,
-and production still reports the previously verified revision until those
-gates complete.
+Remote PR #149 now includes source through `2629cc5` (with the menu-test
+alignment at `4e192d7` and the protected Playwright worker-budget fix at
+`2629cc5`). Protected validation run `38948652002` completed successfully for
+that exact SHA: lint, typecheck, build, 880 pure tests and the complete
+desktop/mobile Playwright suite passed. The run did not deploy because this is
+an open pull-request branch, so deployment and live revision remain separate
+gates; production still reports the previously verified revision
+`6515b45affed0a39113f9134fb8ebecf2f5935d2d` until a protected main-branch
+deployment completes.
 
 The local candidate source commit `2254afd` includes the bounded nondestructive
 Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
