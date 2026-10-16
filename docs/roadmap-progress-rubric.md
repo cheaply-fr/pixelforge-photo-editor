@@ -24,7 +24,7 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increments (`2629cc5`)
+## Latest local increments (`3e00174`)
 
 The current local candidate is `2629cc5`. It adds `Edit → Generate Image…` as
 a bounded offline abstract renderer that inserts a deterministic gradient,
@@ -34,8 +34,9 @@ desktop/mobile dialog, editable-layer, dimension, reload and empty-input cases
 pass **4/4**. The full local pure suite is **880/880**, and the complete local
 desktop/mobile Playwright run is **1,025/1,025** after aligning two stale menu
 expectations with the now-enabled Generative Fill command. Typecheck, lint,
-build and the toolbar regression suite (**26/26**) also pass. Protected run
-`38948652002` passed for this exact SHA, including the complete browser suite;
+build and the toolbar regression suite (**26/26**) also pass. Protected runs
+`38948652002` (source head) and `38952991183` (documentation head) passed,
+including the complete browser suite;
 deployment and live-acceptance credit remain unearned because PR #149 is still
 open. Production remains on the previously verified revision until those gates
 complete. See
