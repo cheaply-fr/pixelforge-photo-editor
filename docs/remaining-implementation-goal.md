@@ -12,6 +12,16 @@ Replace the provisional completion percentages with a documented weighted rubric
 
 NTSC Colors has a documented local Y'IQ composite-envelope contract, editable nondestructive UI, unit coverage, and desktop/mobile browser coverage for worker/fallback rendering, locks, source retention, undo/redo, draft reload, portable projects and PNG pixels. Protected CI, PR review/merge, deployment and independent live-revision plus DNS/TLS verification completed in the main workflow for `0fc1857d07d08083b960a34dc77c6f6b2ecb3bde`; `/release.json` and `/api/readyz.json` report that exact revision. The local approximation does not claim broadcast compliance or Photoshop parity.
 
+The latest local candidate adds bounded tiled Lens Correction parity and an
+editable Layer Styles Color Overlay. Lens Correction has pure full-frame/tile
+parity plus desktop/mobile round-trip coverage; Color Overlay has pure pixel
+and validation coverage plus desktop/mobile lock, undo, reload and project
+round-trip coverage. The candidate passes 848/848 pure tests, 126/126 Filter
+browser checks, 8/8 Layer Styles checks and the static/build checks locally.
+It is pushed as `0caef75` on PR #149; protected CI/deploy and the live revision
+remain separate gates, and production still reports the previously verified
+revision until those gates complete.
+
 ## Remaining roadmap stages
 
 1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. Linked/nested smart-object semantics and full asset compaction remain staged; audit every existing implementation against its real behavior and regression contract.
