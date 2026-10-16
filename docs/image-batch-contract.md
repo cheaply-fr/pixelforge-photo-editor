@@ -2,7 +2,7 @@
 
 PixelForge can process a selected set of local image files without an account or
 network request. Each file is decoded into a temporary canvas, rendered as a
-flattened PNG, JPEG or WebP, and placed in one ZIP archive. The editable draft
+flattened PNG, JPEG, WebP or bounded PSD composite, and placed in one ZIP archive. The editable draft
 and the original `File` objects remain in the browser and are never copied into
 the archive.
 
@@ -15,7 +15,8 @@ The batch operation is deliberately bounded for phones and anonymous use:
   discard source pixels.
 * JPEG receives the selected quality and composites transparency over white.
   PNG preserves alpha; WebP preserves alpha where the browser supports its
-  encoder. Unsupported encoders produce a per-file failure.
+  encoder. PSD stores a flattened 8-bit RGB-plus-alpha composite without layers,
+  masks, profiles or metadata. Unsupported encoders produce a per-file failure.
 
 Each source is attempted independently. A decode or encode failure is recorded
 with the source's display name and a short reason, while successful files remain

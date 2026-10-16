@@ -57,6 +57,9 @@ function encodeFallback(image: HTMLCanvasElement, format: ExportFormat, quality:
 export async function encodeImageWithWorker(image: HTMLCanvasElement, format: ExportFormat, quality: number, options: WorkerEncodeOptions = {}): Promise<Blob> {
   if (!EXPORT_FORMATS.includes(format) || !validExportQuality(quality))
     throw new Error('Choose a supported format and quality from 1 to 100.');
+  // PSD has a small binary encoder rather than a browser image MIME type, so
+  // keep that path on the main thread. The worker remains an image/* encoder.
+  if (format === 'psd') return encodeImage(image, format, quality);
   const plan = planTiles(image.width, image.height, { tileSize: options.tileSize });
   const schedule = scheduleTiles(plan);
   // Validate the bounded schedule before any worker or fallback allocation.

@@ -503,3 +503,17 @@ safety, locked-layer guards, undo, reload and portable-project round trips are
 covered by pure and desktop/mobile tests. Blend-mode compositing,
 channel-specific high-bit-depth processing and exact Photoshop parity remain
 staged; see [`high-pass-effect-contract.md`](high-pass-effect-contract.md).
+
+## Flattened PSD export increment
+
+The Export dialog now offers **PSD — flattened composite**. It writes a
+bounded version-1 8-bit RGB PSD with separate R, G, B and alpha planes from the
+rendered artboard. The encoder is deterministic, source-safe and limited to
+16 megapixels/30,000-pixel dimensions; empty color-mode, image-resource and
+layer/mask sections make the loss boundary explicit. PSD previews use the
+rendered PNG preview because browsers do not display PSD blobs. Pure tests
+round-trip the emitted bytes through the bounded PSD composite decoder and
+cover planar ordering, signatures and malformed dimensions; desktop/mobile
+export acceptance checks the download signature, disclosure and absence of
+quality/target-size controls. Layered PSD/PSB, profiles, metadata and editable
+document round trips remain staged; keep the `.pixelforge` project for editing.

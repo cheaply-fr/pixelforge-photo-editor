@@ -156,9 +156,10 @@ export default function ImageBatchDialog({
             <option value="png">PNG — lossless</option>
             <option value="jpeg">JPEG — smaller, opaque</option>
             <option value="webp">WebP — smaller, transparent</option>
+            <option value="psd">PSD — flattened composite</option>
           </select>
         </label>
-        {format !== 'png' && (
+        {format !== 'png' && format !== 'psd' && (
           <label>
             Quality
             <output>{quality}%</output>

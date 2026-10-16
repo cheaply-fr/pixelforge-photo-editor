@@ -156,6 +156,41 @@ test('PNG JPEG and WebP exports report bytes, quality and persist preferences', 
   );
 });
 
+test('PSD export downloads a bounded flattened composite with explicit loss disclosure', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute(
+    'aria-busy',
+    'false',
+  );
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByLabel('Export format').selectOption('psd');
+  await expect(
+    page.getByText('flattened 8-bit RGB composite', { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Export quality')).toHaveCount(0);
+  await expect(page.getByLabel('Target size (KB)')).toHaveCount(0);
+  const size = page.getByLabel('Encoded file size');
+  await expect(size).toHaveAttribute('data-bytes', /\d+/, {
+    timeout: 15_000,
+  });
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download image', exact: true }).click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toBe('coastline-edit.psd');
+  const path = await download.path();
+  const bytes = await (await import('node:fs/promises')).readFile(path!);
+  expect(bytes.subarray(0, 4).toString('hex')).toBe('38425053');
+  expect(bytes.readUInt16BE(4)).toBe(1);
+  expect(bytes.readUInt16BE(12)).toBe(4);
+  expect(bytes.readUInt16BE(22)).toBe(8);
+  expect(bytes.readUInt16BE(24)).toBe(3);
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText(
+    'Saved on this device',
+  );
+});
+
 test('lossy exports honor a persisted target-size budget without metadata', async ({
   page,
 }) => {
@@ -1756,6 +1791,24 @@ test('batch history export packages flattened snapshots with a privacy manifest'
   const afterExport = await project(page);
   expect(afterExport.history).toHaveLength(2);
   expect(afterExport.index).toBe(1);
+});
+
+test('batch history export can package flattened PSD composites without quality controls', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export history…', exact: true }).click();
+  await page.getByLabel('Batch export format', { exact: true }).selectOption('psd');
+  await expect(page.getByLabel('Batch export quality', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Build batch ZIP', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Batch export progress', exact: true })).toContainText('1 snapshots');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP', exact: true }).click();
+  const path = await (await pending).path();
+  const bytes = await (await import('node:fs/promises')).readFile(path!);
+  expect(bytes.includes(Buffer.from('8BPS'))).toBe(true);
 });
 
 test('Escape cancels a running batch without mutating history', async ({ page }) => {

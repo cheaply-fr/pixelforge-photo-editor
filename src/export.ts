@@ -1,4 +1,6 @@
-export const EXPORT_FORMATS = ['png', 'jpeg', 'webp'] as const;
+import { encodePsdComposite } from './psdExport.ts';
+
+export const EXPORT_FORMATS = ['png', 'jpeg', 'webp', 'psd'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 /** Target-size controls are intentionally bounded so an invalid draft cannot
  * trigger an unbounded encoder/search loop or claim an impossible guarantee. */
@@ -10,6 +12,7 @@ export const exportLabels: Record<ExportFormat, string> = {
   png: 'PNG',
   jpeg: 'JPEG',
   webp: 'WebP',
+  psd: 'PSD',
 };
 
 /** Convert a user document name into a portable, non-ambiguous archive stem. */
@@ -50,6 +53,7 @@ export async function encodeImage(
 ): Promise<Blob> {
   if (!EXPORT_FORMATS.includes(format) || !validExportQuality(quality))
     throw new Error('Choose a supported format and quality from 1 to 100.');
+  if (format === 'psd') return encodePsdComposite(image);
   let output = image;
   if (format === 'jpeg') {
     output = image.ownerDocument.createElement('canvas');
@@ -99,9 +103,9 @@ export async function encodeImageForTarget(
   format: ExportFormat,
   targetBytes: number,
 ): Promise<TargetEncodeResult> {
-  if (format === 'png')
+  if (format !== 'jpeg' && format !== 'webp')
     throw new Error(
-      'Target-size export requires JPEG or WebP; PNG quality is lossless.',
+      'Target-size export requires JPEG or WebP; PNG is lossless and PSD is a flattened composite.',
     );
   if (!validExportTargetBytes(targetBytes))
     throw new Error('Choose a target between 1 KB and 64 MB.');
