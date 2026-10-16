@@ -16294,6 +16294,7 @@ export default function Home() {
                           filterEffects.type === 'sharpen-edges' ||
                           filterEffects.type === 'smart-sharpen' ||
                           filterEffects.type === 'ai-sharpen' ||
+                          filterEffects.type === 'median' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||
