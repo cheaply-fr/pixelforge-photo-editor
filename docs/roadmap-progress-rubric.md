@@ -26,7 +26,7 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 
 ## Latest local increments (`44d2bf5`)
 
-The current local candidate is `f06364e`. It adds `Edit → Generate Image…` as
+The current local candidate is `948c963`. It adds `Edit → Generate Image…` as
 a bounded offline abstract renderer that inserts a deterministic gradient,
 stripes, dots or noise raster layer while enforcing prompt, dimension, pixel
 and layer limits. The pure normalisation/render cases pass **3/3** and the

@@ -35,8 +35,8 @@ browser cases. It also adds Generate Image as a bounded offline abstract
 renderer with 3/3 pure cases and 4/4 desktop/mobile browser cases covering
 editable raster insertion, dimension persistence, reload and empty-input
 failure. Static/typecheck/build checks pass locally.
-Remote PR #149 includes source commit `2254afd` (with Prompt to Edit at
-`0fdecce`, Generative Fill at
+Remote PR #149 now includes source through `948c963` (with Generate Image at
+`2254afd`, Prompt to Edit at `0fdecce`, Generative Fill at
 `77b0996` and Generative Upscale at `908f905`); its protected validation run
 for the current documentation head is still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
