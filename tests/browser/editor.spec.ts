@@ -879,20 +879,23 @@ test('Photoshop menu families expose working commands and label planned actions'
     page.getByRole('menuitem', { name: /^Copy Layer/ }),
   ).toBeEnabled();
   await expect(page.getByRole('menuitem', { name: /^Fill/ })).toBeEnabled();
-  const generativeFill = page.getByRole('menuitem', {
-    name: /^Generative Fill/,
-  });
-  await expect(generativeFill).toBeDisabled();
-  await expect(generativeFill).toHaveAttribute(
-    'title',
-    'Planned for a later roadmap stage',
-  );
   await expect(
     page.getByRole('menuitem', { name: /^Cut Layer/ }),
   ).toBeDisabled();
   await expect(
     page.getByRole('menuitem', { name: /^Paste Layer/ }),
   ).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  const plannedAnalysis = page.getByRole('menuitem', {
+    name: 'Analysis',
+    exact: true,
+  });
+  await expect(plannedAnalysis).toBeDisabled();
+  await expect(plannedAnalysis).toHaveAttribute(
+    'title',
+    'Planned for a later roadmap stage',
+  );
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await expect(

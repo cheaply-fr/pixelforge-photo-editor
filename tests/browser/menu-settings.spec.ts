@@ -16,10 +16,13 @@ test('Menus hides disabled roadmap entries and persists the workspace preference
   page,
 }) => {
   const edit = page.getByRole('button', { name: 'Edit', exact: true });
-  await edit.click();
+  const plugins = page.getByRole('button', { name: 'Plugins', exact: true });
+  await plugins.click();
   await expect(
-    page.getByRole('menuitem', { name: 'Generative Fill…', exact: true }),
+    page.getByRole('menuitem', { name: 'No plugins installed', exact: true }),
   ).toBeVisible();
+  await page.keyboard.press('Escape');
+  await edit.click();
   await page.getByRole('menuitem', { name: 'Menus…', exact: true }).click();
 
   const dialog = page.getByRole('dialog', { name: 'Menus' });
@@ -31,23 +34,28 @@ test('Menus hides disabled roadmap entries and persists the workspace preference
     .getByRole('button', { name: 'Apply menu settings', exact: true })
     .click();
 
-  await edit.click();
+  await plugins.click();
   await expect(
-    page.getByRole('menuitem', { name: 'Generative Fill…', exact: true }),
+    page.getByRole('menuitem', { name: 'No plugins installed', exact: true }),
   ).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await edit.click();
   await expect(
     page.getByRole('menuitem', { name: 'Menus…', exact: true }),
   ).toBeVisible();
+  await page.keyboard.press('Escape');
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute(
     'aria-busy',
     'false',
   );
-  await edit.click();
+  await plugins.click();
   await expect(
-    page.getByRole('menuitem', { name: 'Generative Fill…', exact: true }),
+    page.getByRole('menuitem', { name: 'No plugins installed', exact: true }),
   ).toHaveCount(0);
 
+  await page.keyboard.press('Escape');
+  await edit.click();
   await page.getByRole('menuitem', { name: 'Menus…', exact: true }).click();
   await page
     .getByRole('dialog', { name: 'Menus' })
@@ -57,8 +65,8 @@ test('Menus hides disabled roadmap entries and persists the workspace preference
     .getByRole('dialog', { name: 'Menus' })
     .getByRole('button', { name: 'Apply menu settings', exact: true })
     .click();
-  await edit.click();
+  await plugins.click();
   await expect(
-    page.getByRole('menuitem', { name: 'Generative Fill…', exact: true }),
+    page.getByRole('menuitem', { name: 'No plugins installed', exact: true }),
   ).toBeVisible();
 });
