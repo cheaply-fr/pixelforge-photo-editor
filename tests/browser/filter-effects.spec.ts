@@ -2349,3 +2349,33 @@ test('Neural Filters is an enabled local approximation with editable source-safe
   await expect(page.getByLabel('Color balance', { exact: true })).toHaveValue('39');
   await expect.poll(() => pixels(page)).toEqual(changed);
 });
+
+test('High Pass is an enabled nondestructive Other filter with editable radius', async ({ page }) => {
+  await importPixels(page);
+  const before = await downloadProject(page);
+  const sourceLayer = before.history[before.index].layers.at(-1)!;
+  const sourceAsset = sourceLayer.asset!;
+  const original = await pixels(page);
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  const command = page.getByRole('menuitem', { name: 'High Pass…', exact: true });
+  await expect(command).toBeEnabled();
+  await command.click();
+  await expect(page.getByText('High Pass (nondestructive local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('high-pass');
+  await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('85');
+  await expect(page.getByLabel('High Pass radius', { exact: true })).toHaveValue('3');
+  await expect.poll(() => pixels(page)).not.toEqual(original);
+  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  await page.getByLabel('High Pass radius', { exact: true }).press('ArrowRight');
+  const changed = await pixels(page);
+  const adjusted = await downloadProject(page);
+  const layer = adjusted.history[adjusted.index].layers.at(-1)!;
+  expect(layer.asset).toBe(sourceAsset);
+  expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'high-pass', amount: 85, radius: 4 });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('high-pass');
+  await expect(page.getByLabel('High Pass radius', { exact: true })).toHaveValue('4');
+  await expect.poll(() => pixels(page)).toEqual(changed);
+});

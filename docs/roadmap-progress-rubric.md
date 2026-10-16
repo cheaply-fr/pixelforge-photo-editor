@@ -494,3 +494,12 @@ Semantic object/subject detection and provider-backed segmentation remain
 staged. The focused browser coverage checks representative mask pixels, source
 asset identity, undo, lock gating and both desktop/mobile projects. See
 [`mask-all-objects-contract.md`](mask-all-objects-contract.md).
+
+## High Pass filter increment
+
+`Filter → Other → High Pass…` is now enabled as a bounded neutral-grey local
+edge residual. Editable amount/radius metadata, source/alpha/transparent-RGB
+safety, locked-layer guards, undo, reload and portable-project round trips are
+covered by pure and desktop/mobile tests. Blend-mode compositing,
+channel-specific high-bit-depth processing and exact Photoshop parity remain
+staged; see [`high-pass-effect-contract.md`](high-pass-effect-contract.md).

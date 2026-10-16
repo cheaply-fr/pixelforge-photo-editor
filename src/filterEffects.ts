@@ -18,6 +18,7 @@ export const FILTER_EFFECT_TYPES = [
   'box-blur',
   'gaussian-blur',
   'sharpen',
+  'high-pass',
   'unsharp-mask',
   'sharpen-more',
   'sharpen-edges',
@@ -3632,6 +3633,34 @@ function applyAddNoise(
   }
 }
 
+/**
+ * Render a bounded Photoshop-style High Pass residual. The result is a
+ * neutral-grey edge map whose detail is derived from the difference between
+ * the source and a Gaussian reference. Alpha and transparent RGB remain
+ * source-owned, so the effect stays safe for layered documents.
+ */
+function applyHighPass(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const reference = new Uint8ClampedArray(source);
+  applyGaussianBlur(source, width, height, radius, reference, 1);
+  const strength = clamp(amount / 100, 0, 1);
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const alpha = source[offset + 3];
+    if (alpha === 0) continue;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const detail = source[offset + channel] - reference[offset + channel];
+      output[offset + channel] = clampByte(128 + detail * strength * 2);
+    }
+    output[offset + 3] = alpha;
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
@@ -3664,6 +3693,8 @@ export function applyFilterEffectsPixels(
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'sharpen') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
+  } else if (effect.type === 'high-pass') {
+    applyHighPass(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'unsharp-mask') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'sharpen-more') {

@@ -799,6 +799,7 @@ type Command =
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
   | 'filter-sharpen'
+  | 'filter-high-pass'
   | 'filter-unsharp-mask'
   | 'filter-sharpen-more'
   | 'filter-sharpen-edges'
@@ -1374,6 +1375,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
+    { label: 'Other', command: 'noop', disabled: true },
+    { label: 'High Pass…', command: 'filter-high-pass' },
     { label: '', command: 'noop', separator: true },
     { label: 'Clear local filter effect', command: 'filter-clear-effect' },
     { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
@@ -5856,7 +5859,7 @@ export default function Home() {
                     ? 75
                     : type === 'neural-enhance'
                       ? 85
-                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
+                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'high-pass' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
                       : 70,
                 radius:
@@ -5870,6 +5873,8 @@ export default function Home() {
                     ? 18
                     : type === 'flame'
                       ? 16
+                    : type === 'high-pass'
+                      ? 3
                     : type === 'reflection-removal'
                       ? 4
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize' || type === 'fibers'
@@ -12938,6 +12943,8 @@ export default function Home() {
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
     else if (command === 'filter-sharpen')
       chooseFilterEffect('sharpen', 'Sharpen (nondestructive)');
+    else if (command === 'filter-high-pass')
+      chooseFilterEffect('high-pass', 'High Pass (nondestructive local approximation)');
     else if (command === 'filter-unsharp-mask')
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-sharpen-more')
@@ -13366,6 +13373,7 @@ export default function Home() {
       case 'filter-blur':
       case 'filter-blur-more':
       case 'filter-sharpen':
+      case 'filter-high-pass':
       case 'filter-unsharp-mask':
       case 'filter-sharpen-more':
       case 'filter-sharpen-edges':
@@ -16523,6 +16531,9 @@ export default function Home() {
             {filterEffects.type === 'smart-sharpen' && (
               <p>Smart Sharpen uses a bounded edge-preserving reference to limit gain on flat tonal surfaces while retaining local detail. Amount and radius stay editable; threshold, halo suppression and camera-aware controls remain planned.</p>
             )}
+            {filterEffects.type === 'high-pass' && (
+              <p>High Pass renders a neutral-grey local edge residual from a bounded Gaussian reference. Amount and radius remain editable; blend-mode compositing, channel-specific controls and high-bit-depth parity remain planned.</p>
+            )}
             {filterEffects.type === 'neural-enhance' && (
               <p>Neural Filters uses a deterministic local approximation: visible-neighbour luminance recovery, local colour-balance correction and bounded texture reconstruction. No model, upload or network call is used; semantic subject selection and Adobe model parity remain planned.</p>
             )}
@@ -16823,6 +16834,7 @@ export default function Home() {
                       ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
+                          filterEffects.type === 'high-pass' ||
                           filterEffects.type === 'sharpen' ||
                           filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'sharpen-more' ||
@@ -16838,7 +16850,7 @@ export default function Home() {
                           filterEffects.type === 'motion-blur' ||
                           filterEffects.type === 'path-blur' ||
                           filterEffects.type === 'tilt-shift'
-                          ? 'Blur radius'
+                          ? filterEffects.type === 'high-pass' ? 'High Pass radius' : 'Blur radius'
                       : filterEffects.type === 'fragment'
                           ? 'Fragment offset'
                       : filterEffects.type === 'picture-frame'
