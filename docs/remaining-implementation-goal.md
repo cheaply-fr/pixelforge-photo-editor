@@ -17,19 +17,20 @@ Layer Styles Color Overlay, bounded nested Smart Objects, Gradient Overlay,
 clipped Inner Shadow, Bevel/Emboss and Pattern Overlay styles. Lens Correction has pure full-frame/tile parity
 plus desktop/mobile round-trip coverage; the Layer Styles and nested Smart
 Object slices have pure validation/pixel coverage plus desktop/mobile lock,
-undo, reload and project round-trip coverage. The candidate passes 853/853
-pure tests, 126/126 Filter browser checks, 10/10 Smart Object checks, 14/14
-Layer Styles checks and the static/build checks locally.
-It is pushed as `44d2bf5` on PR #149; protected CI/deploy and the live revision
-remain separate gates, and production still reports the previously verified
-revision until those gates complete.
+undo, reload and project round-trip coverage. The local candidate passes
+854/854 pure tests, 997/1000 browser tests with 3 intentional skips, and the
+static/typecheck/build checks locally.
+The remote PR #149 head remains `ef1e272`; protected CI/deploy and the live
+revision remain separate gates, and production still reports the previously
+verified revision until those gates complete.
 
-The current working-tree follow-up adds a bounded nondestructive Pattern
-Overlay style. It repeats local checker, stripes, dots, grid or diagonal tiles
-with editable colours, opacity and tile size while retaining the immutable
-source asset. Pure pixel/validation coverage and desktop/mobile project
-round-trip coverage are present locally; it remains uncommitted and therefore
-has no protected CI, deployment or live-acceptance evidence yet.
+The local candidate commit `0e08b94` adds a bounded nondestructive Pattern
+Overlay style. It repeats checker, stripes, dots, grid or diagonal tiles with
+editable colours, opacity and tile size while retaining the immutable source
+asset. Pure pixel/validation and desktop/mobile project round-trip coverage
+are present locally; this commit has no protected CI, deployment or
+live-acceptance evidence because GitHub rejected the push without the OAuth
+`workflow` scope.
 
 ## Remaining roadmap stages
 
