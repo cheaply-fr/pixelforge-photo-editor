@@ -581,6 +581,7 @@ import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
 import HistogramDialog from '../src/HistogramDialog';
 import { buildHistogram, type HistogramData } from '../src/histogram';
+import AdjustmentsDialog, { type AdjustmentCommand } from '../src/AdjustmentsDialog';
 import MenuSettingsDialog from '../src/MenuSettingsDialog';
 import {
   MENU_PREFERENCES_STORAGE_KEY,
@@ -870,7 +871,8 @@ type Command =
   | 'font-preview-size'
   | 'missing-fonts'
   | 'image-mode'
-  | 'image-analysis';
+  | 'image-analysis'
+  | 'image-adjustments';
 
 type MenuItem = {
   label: string;
@@ -1120,7 +1122,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   ],
   Image: [
     { label: 'Mode', command: 'image-mode' },
-    { label: 'Adjustments', command: 'reset', disabled: true },
+    { label: 'Adjustments', command: 'image-adjustments' },
     { label: 'Levels…', command: 'levels' },
     { label: 'Curves…', command: 'curves' },
     { label: 'Hue/Saturation…', command: 'hue-saturation' },
@@ -2234,6 +2236,7 @@ export default function Home() {
     [showDisabledMenuItems, setShowDisabledMenuItems] = useState(() => initialMenuPreferences.showDisabled),
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
     [analysisData, setAnalysisData] = useState<HistogramData | null>(null),
+    [adjustmentsOpen, setAdjustmentsOpen] = useState(false),
     [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
     [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
     [toolbarDensity, setToolbarDensity] = useState<ToolbarDensity>(() => initialToolbarPreferences.density),
@@ -12450,6 +12453,10 @@ export default function Home() {
       await openHistogram();
       return;
     }
+    if (command === 'image-adjustments') {
+      setAdjustmentsOpen(true);
+      return;
+    }
     if (
       quickMasking &&
       ![
@@ -13819,6 +13826,15 @@ export default function Home() {
         <HistogramDialog
           data={analysisData}
           close={() => setAnalysisData(null)}
+        />
+      )}
+      {adjustmentsOpen && (
+        <AdjustmentsDialog
+          close={() => setAdjustmentsOpen(false)}
+          choose={(command: AdjustmentCommand) => {
+            setAdjustmentsOpen(false);
+            void runCommand(command);
+          }}
         />
       )}
       {toolbarSettingsOpen && (

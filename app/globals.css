@@ -171,6 +171,11 @@
 .histogram-stats dt { color:#9fa8b5; font-size:11px; }
 .histogram-stats dd { margin:4px 0 0; color:#f3f5f7; font-size:13px; font-variant-numeric:tabular-nums; }
 @media(max-width:620px){.histogram-stats{grid-template-columns:repeat(2,minmax(0,1fr));}.histogram-chart{height:150px;}}
+.adjustments-dialog { width:min(520px,calc(100vw - 32px)); }
+.adjustments-options { display:grid; gap:8px; margin-top:14px; }
+.adjustments-options button { display:grid; gap:4px; padding:11px 12px; border:1px solid #3b414b; border-radius:8px; background:#1c2129; color:#f3f5f7; text-align:left; cursor:pointer; }
+.adjustments-options button:hover,.adjustments-options button:focus-visible { border-color:#ff7858; background:#29252a; }
+.adjustments-options small { color:#9fa8b5; font-size:11px; line-height:1.35; }
 .history-panel{display:grid;gap:8px}.history-panel .panel-title small{color:#9aa1ad;font-size:10px;font-variant-numeric:tabular-nums}.history-list{display:grid;gap:4px;max-height:240px;margin:0;padding:0 2px 0 0;overflow:auto;list-style:none}.history-entry button{display:grid;width:100%;gap:3px;padding:8px 9px;border:1px solid #343a47;border-radius:7px;background:#1d2028;color:#dce0e8;text-align:left;cursor:pointer}.history-entry button:not(:disabled):hover{border-color:#ff7858;background:#29252a}.history-entry.current button{border-color:#ff7655;background:#34251f;color:#fff}.history-entry button:disabled{cursor:default;opacity:.7}.history-entry-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:700}.history-entry small{color:#969eab;font-size:9px}.history-empty,.history-note{margin:0;color:#9299a6;font-size:10px;line-height:1.45}.history-note{padding-top:2px;border-top:1px solid #2c313b}
 @media(max-width:680px) { .docbar input { width:clamp(60px,22vw,120px); } }
 @media(max-width:680px) { .crop-preview-controls { top:6px; gap:5px; padding:5px 6px; font-size:9px; } .crop-preview-controls span { max-width:130px; overflow:hidden; text-overflow:ellipsis; } .crop-preview-controls button { min-height:27px; padding-inline:7px; } .slice-preview-controls input { width:86px; } }

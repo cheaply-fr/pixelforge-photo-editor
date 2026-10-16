@@ -116,6 +116,17 @@ a local analysis approximation; profile-aware histogram caches, print
 proofing and advanced provider-backed analysis remain staged. Protected CI,
 merge, deployment and live revision verification are still required.
 
+The current menu-family increment enables `Image → Adjustments` as an
+accessible local chooser for Levels, Curves, Hue/Saturation, Color Balance and
+Sharpen and Noise. Each selection routes through the existing nondestructive
+inspector command and preserves its individual lock, pixel, undo and round-trip
+contracts; no second adjustment implementation or provider call is introduced.
+Pure adjustment suites remain authoritative, while
+`tests/browser/adjustments-menu.spec.ts` covers the chooser on desktop and
+mobile. Full Photoshop adjustment-dialog parity and colour-management depth
+remain staged; protected CI, merge, deployment and live revision verification
+are still required.
+
 ## Remaining roadmap stages
 
 1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. **Nested local Smart Objects are now active:** root-level selections can be wrapped in a bounded recursive child `Frame`, rendered through the normal source-safe pipeline, validated to four levels, and retained by recursive asset compaction with Layer-panel and menu entry points. A nested frame remains a local editable data model; separate smart-object document windows, linked cloud assets and full asset compaction across external providers remain staged.
