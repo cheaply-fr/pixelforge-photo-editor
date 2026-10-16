@@ -12,15 +12,15 @@ Replace the provisional completion percentages with a documented weighted rubric
 
 NTSC Colors has a documented local Y'IQ composite-envelope contract, editable nondestructive UI, unit coverage, and desktop/mobile browser coverage for worker/fallback rendering, locks, source retention, undo/redo, draft reload, portable projects and PNG pixels. Protected CI, PR review/merge, deployment and independent live-revision plus DNS/TLS verification completed in the main workflow for `0fc1857d07d08083b960a34dc77c6f6b2ecb3bde`; `/release.json` and `/api/readyz.json` report that exact revision. The local approximation does not claim broadcast compliance or Photoshop parity.
 
-The latest local candidate adds bounded tiled Lens Correction parity, an
-editable Layer Styles Color Overlay, bounded nested Smart Objects and a
-Gradient Overlay style. Lens Correction has pure full-frame/tile parity plus
-desktop/mobile round-trip coverage; the Layer Styles and nested Smart Object
-slices have pure validation/pixel coverage plus desktop/mobile lock, undo,
-reload and project round-trip coverage. The candidate passes 851/851 pure
-tests, 126/126 Filter browser checks, 10/10 Smart Object checks, 10/10 Layer
-Styles checks and the static/build checks locally.
-It is pushed as `780bda5` on PR #149; protected CI/deploy and the live revision
+The latest local candidate adds bounded tiled Lens Correction parity, editable
+Layer Styles Color Overlay, bounded nested Smart Objects, Gradient Overlay and
+clipped Inner Shadow styles. Lens Correction has pure full-frame/tile parity
+plus desktop/mobile round-trip coverage; the Layer Styles and nested Smart
+Object slices have pure validation/pixel coverage plus desktop/mobile lock,
+undo, reload and project round-trip coverage. The candidate passes 852/852
+pure tests, 126/126 Filter browser checks, 10/10 Smart Object checks, 12/12
+Layer Styles checks and the static/build checks locally.
+It is pushed as `44d2bf5` on PR #149; protected CI/deploy and the live revision
 remain separate gates, and production still reports the previously verified
 revision until those gates complete.
 

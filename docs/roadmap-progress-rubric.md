@@ -24,7 +24,7 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increments (`21c3b3a` plus Inner Shadow)
+## Latest local increments (`44d2bf5`)
 
 Lens Correction now uses a bounded source-pixel influence radius and forwards
 the tile-local authored centre through the renderer. `lens-correction` is in
