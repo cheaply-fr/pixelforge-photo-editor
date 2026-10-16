@@ -1,3 +1,5 @@
+import { validPatternId, type PatternId } from './patternStamp.ts';
+
 /**
  * Bounded, nondestructive layer decorations.  These values intentionally live
  * beside layer metadata instead of being baked into an asset so moving,
@@ -54,6 +56,15 @@ export type GradientOverlayStyle = {
   reverse: boolean;
 };
 
+export type PatternOverlayStyle = {
+  enabled: boolean;
+  pattern: PatternId;
+  foregroundColor: string;
+  backgroundColor: string;
+  opacity: number;
+  tileSize: number;
+};
+
 export type LayerStyles = {
   dropShadow: DropShadowStyle;
   innerShadow: InnerShadowStyle;
@@ -61,6 +72,7 @@ export type LayerStyles = {
   outline: OutlineStyle;
   colorOverlay: ColorOverlayStyle;
   gradientOverlay: GradientOverlayStyle;
+  patternOverlay: PatternOverlayStyle;
 };
 
 export const neutralLayerStyles: LayerStyles = {
@@ -109,6 +121,14 @@ export const neutralLayerStyles: LayerStyles = {
     angle: 0,
     reverse: false,
   },
+  patternOverlay: {
+    enabled: false,
+    pattern: 'checker',
+    foregroundColor: '#000000',
+    backgroundColor: '#ffffff',
+    opacity: 1,
+    tileSize: 32,
+  },
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -124,6 +144,7 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
   const outline = value?.outline;
   const colorOverlay = value?.colorOverlay;
   const gradientOverlay = value?.gradientOverlay;
+  const patternOverlay = value?.patternOverlay;
   return {
     dropShadow: {
       ...neutralLayerStyles.dropShadow,
@@ -240,6 +261,28 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
         ? gradientOverlay.enabled
         : neutralLayerStyles.gradientOverlay.enabled,
     },
+    patternOverlay: {
+      ...neutralLayerStyles.patternOverlay,
+      ...patternOverlay,
+      pattern: validPatternId(patternOverlay?.pattern)
+        ? patternOverlay!.pattern
+        : neutralLayerStyles.patternOverlay.pattern,
+      foregroundColor: hex(patternOverlay?.foregroundColor)
+        ? patternOverlay!.foregroundColor
+        : neutralLayerStyles.patternOverlay.foregroundColor,
+      backgroundColor: hex(patternOverlay?.backgroundColor)
+        ? patternOverlay!.backgroundColor
+        : neutralLayerStyles.patternOverlay.backgroundColor,
+      opacity: finite(patternOverlay?.opacity, 0, 1)
+        ? patternOverlay!.opacity
+        : neutralLayerStyles.patternOverlay.opacity,
+      tileSize: finite(patternOverlay?.tileSize, 4, 128) && Number.isInteger(patternOverlay!.tileSize)
+        ? patternOverlay!.tileSize
+        : neutralLayerStyles.patternOverlay.tileSize,
+      enabled: typeof patternOverlay?.enabled === 'boolean'
+        ? patternOverlay.enabled
+        : neutralLayerStyles.patternOverlay.enabled,
+    },
   };
 }
 
@@ -250,7 +293,8 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
     innerShadow = candidate.innerShadow,
     bevelEmboss = candidate.bevelEmboss,
     outline = candidate.outline,
-    gradientOverlay = candidate.gradientOverlay;
+    gradientOverlay = candidate.gradientOverlay,
+    patternOverlay = candidate.patternOverlay;
   return Boolean(
     shadow &&
       typeof shadow === 'object' &&
@@ -304,6 +348,17 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
         finite(gradientOverlay.opacity, 0, 1) &&
         finite(gradientOverlay.angle, -180, 180) &&
         typeof gradientOverlay.reverse === 'boolean'
+      )) &&
+      (patternOverlay === undefined || (
+        patternOverlay &&
+        typeof patternOverlay === 'object' &&
+        typeof patternOverlay.enabled === 'boolean' &&
+        validPatternId(patternOverlay.pattern) &&
+        hex(patternOverlay.foregroundColor) &&
+        hex(patternOverlay.backgroundColor) &&
+        finite(patternOverlay.opacity, 0, 1) &&
+        finite(patternOverlay.tileSize, 4, 128) &&
+        Number.isInteger(patternOverlay.tileSize)
       )),
   );
 }
@@ -311,7 +366,7 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
 export function isNeutralLayerStyles(value: Partial<LayerStyles> | undefined): boolean {
   const styles = effectiveLayerStyles(value);
   return !styles.dropShadow.enabled && !styles.innerShadow.enabled && !styles.bevelEmboss.enabled && !styles.outline.enabled &&
-    !styles.colorOverlay.enabled && !styles.gradientOverlay.enabled;
+    !styles.colorOverlay.enabled && !styles.gradientOverlay.enabled && !styles.patternOverlay.enabled;
 }
 
 function color(value: string): [number, number, number] {
@@ -392,7 +447,9 @@ export function applyLayerStylesPixels(
 ): Uint8ClampedArray {
   const styles = effectiveLayerStyles(value);
   if (isNeutralLayerStyles(styles) || width <= 0 || height <= 0) return source.slice();
-  const output = new Uint8ClampedArray(source.length), alpha = new Uint8ClampedArray(width * height);
+  // Start from a detached source copy so transparent pixels retain their
+  // hidden RGB bytes even when a style only touches painted bounds.
+  const output = source.slice(), alpha = new Uint8ClampedArray(width * height);
   for (let i = 0; i < alpha.length; i += 1) alpha[i] = source[i * 4 + 3];
   const bounds = alphaBounds(source, width, height);
   if (!bounds) return source.slice();
@@ -566,6 +623,32 @@ export function applyLayerStylesPixels(
           startB + (endB - startB) * t,
           source[i + 3] * styles.gradientOverlay.opacity,
         );
+      }
+  }
+  if (styles.patternOverlay.enabled) {
+    const [foregroundR, foregroundG, foregroundB] = color(styles.patternOverlay.foregroundColor);
+    const [backgroundR, backgroundG, backgroundB] = color(styles.patternOverlay.backgroundColor);
+    const foreground = [foregroundR, foregroundG, foregroundB];
+    const background = [backgroundR, backgroundG, backgroundB];
+    const size = styles.patternOverlay.tileSize;
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const i = (y * width + x) * 4;
+        const tileX = ((x % size) + size) % size;
+        const tileY = ((y % size) + size) % size;
+        const third = Math.max(1, Math.floor(size / 3));
+        const half = Math.max(1, Math.floor(size / 2));
+        const useForeground = styles.patternOverlay.pattern === 'checker'
+          ? (Math.floor(tileX / half) + Math.floor(tileY / half)) % 2 === 0
+          : styles.patternOverlay.pattern === 'stripes'
+            ? Math.floor((tileX + tileY) / third) % 2 === 0
+            : styles.patternOverlay.pattern === 'diagonal'
+              ? (tileX + tileY) % size < half
+              : styles.patternOverlay.pattern === 'grid'
+                ? tileX < 2 || tileY < 2
+                : (tileX - half) * (tileX - half) + (tileY - half) * (tileY - half) <= Math.max(1, Math.floor(size * 0.18)) ** 2;
+        const pattern = useForeground ? foreground : background;
+        over(output, i, pattern[0], pattern[1], pattern[2], source[i + 3] * styles.patternOverlay.opacity);
       }
   }
   return output;

@@ -718,6 +718,7 @@ export const commonLayer = (name: string): Common => ({
     outline: { ...neutralLayerStyles.outline },
     colorOverlay: { ...neutralLayerStyles.colorOverlay },
     gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
+    patternOverlay: { ...neutralLayerStyles.patternOverlay },
   },
 });
 export function multiply(a: Matrix, b: Matrix): Matrix {
@@ -2568,6 +2569,7 @@ export async function renderFrame(
                 outline: { ...neutralLayerStyles.outline },
                 colorOverlay: { ...neutralLayerStyles.colorOverlay },
                 gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
+                patternOverlay: { ...neutralLayerStyles.patternOverlay },
               },
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),

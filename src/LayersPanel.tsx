@@ -18,6 +18,7 @@ import {
   type LayerArrangeMode,
 } from './layerArrange';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
+import { PATTERN_IDS, type PatternId } from './patternStamp';
 import { normalizeOpenType } from './openType';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 import {
@@ -153,6 +154,9 @@ export default function LayersPanel({
   const updateGradientOverlay = (
     patch: Partial<LayerStyles['gradientOverlay']>,
   ) => updateStyles({ gradientOverlay: { ...styles.gradientOverlay, ...patch } });
+  const updatePatternOverlay = (
+    patch: Partial<LayerStyles['patternOverlay']>,
+  ) => updateStyles({ patternOverlay: { ...styles.patternOverlay, ...patch } });
   const selectedLayers = frame.layers.filter((item) => selectedIds.has(item.id));
   const selectedGroupIds = new Set(selectedLayers.flatMap((item) => item.groupId ? [item.groupId] : []));
   const distributionGroup = selectedGroupIds.size === 1
@@ -977,6 +981,83 @@ export default function LayersPanel({
             Reverse
           </label>
         </div>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable pattern overlay"
+            checked={styles.patternOverlay.enabled}
+            onChange={(event) =>
+              updatePatternOverlay({ enabled: event.target.checked })
+            }
+          />
+          Pattern overlay
+        </label>
+        <label className="layer-field">
+          Pattern
+          <select
+            aria-label="Pattern overlay pattern"
+            value={styles.patternOverlay.pattern}
+            onChange={(event) =>
+              updatePatternOverlay({ pattern: event.target.value as PatternId })
+            }
+          >
+            {PATTERN_IDS.map((pattern) => (
+              <option key={pattern} value={pattern}>
+                {pattern[0].toUpperCase() + pattern.slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Pattern foreground
+            <input
+              aria-label="Pattern overlay foreground"
+              type="color"
+              value={styles.patternOverlay.foregroundColor}
+              onChange={(event) =>
+                updatePatternOverlay({ foregroundColor: event.target.value })
+              }
+            />
+          </label>
+          <label className="layer-field">
+            Pattern background
+            <input
+              aria-label="Pattern overlay background"
+              type="color"
+              value={styles.patternOverlay.backgroundColor}
+              onChange={(event) =>
+                updatePatternOverlay({ backgroundColor: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label className="layer-field">
+          Pattern opacity {Math.round(styles.patternOverlay.opacity * 100)}%
+          <input
+            aria-label="Pattern overlay opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.patternOverlay.opacity * 100)}
+            onChange={(event) =>
+              updatePatternOverlay({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <label className="layer-field">
+          Pattern tile size {Math.round(styles.patternOverlay.tileSize)} px
+          <input
+            aria-label="Pattern overlay tile size"
+            type="range"
+            min="4"
+            max="128"
+            value={Math.round(styles.patternOverlay.tileSize)}
+            onChange={(event) =>
+              updatePatternOverlay({ tileSize: Number(event.target.value) })
+            }
+          />
+        </label>
       </fieldset>
       <div className="layer-position">
         <NumberField

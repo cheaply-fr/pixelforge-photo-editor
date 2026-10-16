@@ -6,9 +6,9 @@ standalone implementation is in `src/layerStyles.ts`; it is intentionally
 pure so the main-thread renderer and the OffscreenCanvas worker can share the
 same pixel recipe.
 
-Each layer may persist a `styles` object containing six optional decorations:
-`dropShadow`, `innerShadow`, `bevelEmboss`, `outline`, `colorOverlay` and
-`gradientOverlay`.
+Each layer may persist a `styles` object containing seven optional decorations:
+`dropShadow`, `innerShadow`, `bevelEmboss`, `outline`, `colorOverlay`,
+`gradientOverlay` and `patternOverlay`.
 The values are finite and bounded:
 
 - Drop shadow uses a six-digit hex colour, opacity `0..1`, offsets `-256..256`
@@ -26,14 +26,20 @@ The values are finite and bounded:
 - Gradient overlay uses bounded six-digit start/end colours, opacity `0..1`,
   angle `-180..180` degrees and an explicit reverse flag; it interpolates
   over the source alpha without changing the immutable asset.
+- Pattern overlay uses one of the bounded local `checker`, `stripes`, `dots`,
+  `grid` or `diagonal` tiles, six-digit foreground/background colours,
+  opacity `0..1` and an integer tile size of `4..128` pixels. It repeats the
+  deterministic tile over the source alpha without allocating or retaining a
+  source image.
 - `enabled` is explicit on every decoration. Missing or malformed legacy
   values resolve to the neutral disabled defaults.
 
 `applyLayerStylesPixels` receives RGBA bytes and returns a new byte array. It
 draws the outer shadow first, then the outline ring, then source pixels over
 both, then clipped inner-shadow and bevel/emboss shading, and finally blends
-enabled colour and gradient overlays over source-covered pixels.
-The source array is never mutated, and all math uses integer alpha operations
+enabled colour, gradient and pattern overlays over source-covered pixels.
+The source array is never mutated; transparent pixels retain their hidden RGB
+bytes, and all math uses integer alpha operations
 plus a separable box blur. This gives the worker and browser renderer identical
 pixels and avoids browser-specific `CanvasRenderingContext2D.filter` output.
 

@@ -95,6 +95,9 @@ test('Layer Style controls are disabled for locked layers', async ({ page }) => 
   await expect(page.getByLabel('Inner shadow blur', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Enable bevel emboss', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Bevel blur', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Enable pattern overlay', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Pattern overlay pattern', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Pattern overlay tile size', { exact: true })).toBeDisabled();
 });
 
 test('Color overlay is nondestructive, editable and survives project reload', async ({ page }) => {
@@ -218,6 +221,44 @@ test('Bevel and emboss keeps directional edge shading editable across reload', a
   expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
   expect(reloaded.history[reloaded.index].layers.at(-1)!.styles).toMatchObject({
     bevelEmboss: { enabled: true, angle: 0, depth: 1 },
+  });
+});
+
+test('Pattern overlay repeats an editable tile and retains source identity across reload', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+  await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
+  const before = await canvasPixels(page);
+  await page.getByLabel('Enable pattern overlay', { exact: true }).check();
+  await page.getByLabel('Pattern overlay pattern', { exact: true }).selectOption('stripes');
+  await page.getByLabel('Pattern overlay foreground', { exact: true }).fill('#ff0000');
+  await page.getByLabel('Pattern overlay background', { exact: true }).fill('#0000ff');
+  await page.getByLabel('Pattern overlay tile size', { exact: true }).fill('8');
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  expect(await canvasPixels(page)).not.toEqual(before);
+  const exported = await project(page);
+  const styledLayer = exported.history[exported.index].layers.at(-1)!;
+  expect(styledLayer.styles).toMatchObject({
+    patternOverlay: {
+      enabled: true,
+      pattern: 'stripes',
+      foregroundColor: '#ff0000',
+      backgroundColor: '#0000ff',
+      tileSize: 8,
+    },
+  });
+  const sourceAsset = styledLayer.asset;
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Enable pattern overlay', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Pattern overlay pattern', { exact: true })).toHaveValue('stripes');
+  const reloaded = await project(page);
+  expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
+  expect(reloaded.history[reloaded.index].layers.at(-1)!.styles).toMatchObject({
+    patternOverlay: { enabled: true, pattern: 'stripes', tileSize: 8 },
   });
 });
 

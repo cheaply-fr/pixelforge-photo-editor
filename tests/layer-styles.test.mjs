@@ -44,6 +44,7 @@ test('Layer Style metadata is bounded and legacy values normalize safely', () =>
   });
   assert.deepEqual(value.colorOverlay, neutralLayerStyles.colorOverlay);
   assert.deepEqual(value.gradientOverlay, neutralLayerStyles.gradientOverlay);
+  assert.deepEqual(value.patternOverlay, neutralLayerStyles.patternOverlay);
   assert.deepEqual(value.bevelEmboss, neutralLayerStyles.bevelEmboss);
   assert.equal(validLayerStyles(value), true);
   assert.equal(validLayerStyles({ ...value, outline: { ...value.outline, width: 0 } }), false);
@@ -52,6 +53,8 @@ test('Layer Style metadata is bounded and legacy values normalize safely', () =>
   assert.equal(validLayerStyles({ ...value, gradientOverlay: { ...value.gradientOverlay, angle: 181 } }), false);
   assert.equal(validLayerStyles({ ...value, innerShadow: { ...value.innerShadow, distance: 0 } }), false);
   assert.equal(validLayerStyles({ ...value, bevelEmboss: { ...value.bevelEmboss, depth: 0 } }), false);
+  assert.equal(validLayerStyles({ ...value, patternOverlay: { ...value.patternOverlay, tileSize: 3 } }), false);
+  assert.equal(validLayerStyles({ ...value, patternOverlay: { ...value.patternOverlay, pattern: 'unknown' } }), false);
   assert.equal(isNeutralLayerStyles(undefined), true);
 });
 
@@ -124,6 +127,34 @@ test('Gradient Overlay interpolates endpoints, respects angle/reverse and preser
   });
   assert.deepEqual(pixel(reversed, 4, 0, 0), [255, 0, 0, 255]);
   assert.deepEqual(pixel(reversed, 4, 3, 0), [0, 0, 255, 255]);
+});
+
+test('Pattern Overlay repeats a bounded local tile, blends alpha and preserves source bytes', () => {
+  const source = new Uint8ClampedArray(4 * 2 * 4);
+  for (let i = 0; i < source.length; i += 4) source.set([255, 255, 255, 255], i);
+  source.set([9, 8, 7, 0], (1 * 4 + 3) * 4);
+  const original = source.slice();
+  const style = {
+    patternOverlay: {
+      ...neutralLayerStyles.patternOverlay,
+      enabled: true,
+      pattern: 'checker',
+      foregroundColor: '#ff0000',
+      backgroundColor: '#0000ff',
+      opacity: 1,
+      tileSize: 4,
+    },
+  };
+  const output = applyLayerStylesPixels(source, 4, 2, style);
+  assert.deepEqual(source, original);
+  assert.deepEqual(pixel(output, 4, 0, 0), [255, 0, 0, 255]);
+  assert.deepEqual(pixel(output, 4, 1, 0), [255, 0, 0, 255]);
+  assert.deepEqual(pixel(output, 4, 2, 0), [0, 0, 255, 255]);
+  assert.deepEqual(pixel(output, 4, 3, 1), [9, 8, 7, 0]);
+  const half = applyLayerStylesPixels(source, 4, 2, {
+    patternOverlay: { ...style.patternOverlay, opacity: 0.5, foregroundColor: '#000000' },
+  });
+  assert.deepEqual(pixel(half, 4, 0, 0), [128, 128, 128, 255]);
 });
 
 test('Inner Shadow stays inside the source alpha and leaves the centre unchanged', () => {

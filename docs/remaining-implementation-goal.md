@@ -14,7 +14,7 @@ NTSC Colors has a documented local Y'IQ composite-envelope contract, editable no
 
 The latest local candidate adds bounded tiled Lens Correction parity, editable
 Layer Styles Color Overlay, bounded nested Smart Objects, Gradient Overlay,
-clipped Inner Shadow and Bevel/Emboss styles. Lens Correction has pure full-frame/tile parity
+clipped Inner Shadow, Bevel/Emboss and Pattern Overlay styles. Lens Correction has pure full-frame/tile parity
 plus desktop/mobile round-trip coverage; the Layer Styles and nested Smart
 Object slices have pure validation/pixel coverage plus desktop/mobile lock,
 undo, reload and project round-trip coverage. The candidate passes 853/853
@@ -23,6 +23,13 @@ Layer Styles checks and the static/build checks locally.
 It is pushed as `44d2bf5` on PR #149; protected CI/deploy and the live revision
 remain separate gates, and production still reports the previously verified
 revision until those gates complete.
+
+The current working-tree follow-up adds a bounded nondestructive Pattern
+Overlay style. It repeats local checker, stripes, dots, grid or diagonal tiles
+with editable colours, opacity and tile size while retaining the immutable
+source asset. Pure pixel/validation coverage and desktop/mobile project
+round-trip coverage are present locally; it remains uncommitted and therefore
+has no protected CI, deployment or live-acceptance evidence yet.
 
 ## Remaining roadmap stages
 
