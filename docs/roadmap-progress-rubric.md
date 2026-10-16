@@ -24,9 +24,22 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increments (`893bf60`)
+## Latest local increments (`language-options` on top of `302dbf7`)
 
-The current local candidate is `893bf60`. It adds `Image → Adjustments` as an
+The current local candidate adds `Type → Language Options` as an accessible
+local workflow for editable text. It persists bounded language, writing
+direction and hyphenation intent metadata, applies browser-supported LTR/RTL
+direction during Canvas 2D rendering, and keeps authored line breaks, source
+text, undo history and portable project round trips intact. The dialog and
+Layers panel share the normalized values, legacy drafts remain valid and
+invalid values fail closed. Pure coverage passes **886/886**; the focused
+language-options desktop/mobile suite passes **4/4**, and adjacent typography
+plus editor acceptance passes **82/82**. Typecheck, lint and build pass
+locally. Hyphenation layout, full language-specific shaping and font embedding
+remain staged. The branch is still an open PR, so protected CI, merge,
+deployment and live-acceptance credit remain unearned for this increment.
+
+The preceding local candidate is `893bf60`. It adds `Image → Adjustments` as an
 accessible local family chooser for Levels, Curves, Hue/Saturation, Color
 Balance, and Sharpen and Noise, routing each choice through the existing
 nondestructive inspector controls. Its desktop/mobile acceptance passes

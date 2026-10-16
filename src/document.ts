@@ -47,6 +47,7 @@ import { applyColorModePixels, normalizeColorMode, type ColorMode } from './colo
 import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { normalizeTextPathBinding, layoutTextOnPath, mapTextPathPoints, flattenTextPath, type TextPathBinding } from './textOnPath.ts';
 import { normalizeOpenType, validOpenType, type OpenTypeSettings } from './openType.ts';
+import { normalizeTextLanguage, resolvedTextDirection, validTextLanguageSettings, type TextLanguageSettings } from './textLanguage.ts';
 import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
@@ -294,6 +295,8 @@ export type Layer = Common &
         textPath?: TextPathBinding;
         /** Optional portable OpenType presentation flags. */
         openType?: OpenTypeSettings;
+        /** Optional portable language and paragraph-direction metadata. */
+        languageOptions?: TextLanguageSettings;
       }
     | {
         kind: 'rectangle';
@@ -1111,12 +1114,14 @@ export function drawTextLayer(
   layer: Extract<Layer, { kind: 'text' }>,
   path?: { points: readonly { x: number; y: number }[]; offset: number; reverse: boolean },
 ): void {
+  const previousDirection = context.direction;
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     align = layer.textAlign ?? 'left',
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
     spacing = layer.letterSpacing ?? 0,
     orientation = layer.orientation ?? 'horizontal',
     warp = normalizeTextWarp(layer.warp);
+  context.direction = resolvedTextDirection(layer.languageOptions);
   if (path && orientation === 'horizontal') {
     const placements = layoutTextOnPath(context, layer.text, path.points, {
       offset: path.offset,
@@ -1130,6 +1135,7 @@ export function drawTextLayer(
       context.fillText(placement.glyph, -context.measureText(placement.glyph).width / 2, 0);
       context.restore();
     }
+    context.direction = previousDirection;
     return;
   }
   if (orientation === 'vertical') {
@@ -1142,6 +1148,7 @@ export function drawTextLayer(
         y += layer.fontSize + spacing;
       }
     }
+    context.direction = previousDirection;
     return;
   }
   for (const [lineIndex, line] of layer.text.split('\n').entries()) {
@@ -1171,6 +1178,7 @@ export function drawTextLayer(
       x += glyphWidth + spacing;
     }
   }
+  context.direction = previousDirection;
 }
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -1265,6 +1273,7 @@ export function effectiveTextLayer<T extends Layer>(
     orientation: value.orientation ?? 'horizontal',
     warp: normalizeTextWarp(value.warp),
     openType: normalizeOpenType(value.openType),
+    languageOptions: normalizeTextLanguage(value.languageOptions),
     ...(normalizeTextPathBinding(value.textPath)
       ? { textPath: normalizeTextPathBinding(value.textPath) }
       : {}),
@@ -1544,6 +1553,7 @@ export function validateFrame(
         (layer.warp !== undefined && !isTextWarp(layer.warp)) ||
         (layer.textPath !== undefined && !normalizeTextPathBinding(layer.textPath)) ||
         (layer.openType !== undefined && !validOpenType(layer.openType))
+        || (layer.languageOptions !== undefined && !validTextLanguageSettings(layer.languageOptions))
       )
         return fail();
     } else if (

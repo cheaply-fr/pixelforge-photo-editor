@@ -20,6 +20,7 @@ import {
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
 import { PATTERN_IDS, type PatternId } from './patternStamp';
 import { normalizeOpenType } from './openType';
+import { normalizeTextLanguage, TEXT_DIRECTIONS, TEXT_LANGUAGES } from './textLanguage';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 import {
   clippingCandidateBase,
@@ -1264,6 +1265,33 @@ export default function LayersPanel({
               );
             })()}
             <p className="adjust-note">Browser font shaping applies these portable flags when supported; no font files leave the device.</p>
+          </fieldset>
+          <fieldset className="layer-fieldset">
+            <legend>Language Options</legend>
+            {(() => {
+              const language = normalizeTextLanguage(layer.languageOptions);
+              return (
+                <>
+                  <label className="layer-field">
+                    Language
+                    <select aria-label="Text language" value={language.language} disabled={layerLocked} onChange={(e) => edit({ languageOptions: { ...language, language: e.target.value as typeof language.language } })}>
+                      {TEXT_LANGUAGES.map((value) => <option key={value} value={value}>{value === 'auto' ? 'Auto detect' : value.toUpperCase()}</option>)}
+                    </select>
+                  </label>
+                  <label className="layer-field">
+                    Direction
+                    <select aria-label="Text direction" value={language.direction} disabled={layerLocked} onChange={(e) => edit({ languageOptions: { ...language, direction: e.target.value as typeof language.direction } })}>
+                      {TEXT_DIRECTIONS.map((value) => <option key={value} value={value}>{value === 'auto' ? 'Auto' : value.toUpperCase()}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <input type="checkbox" aria-label="Text hyphenation" checked={language.hyphenation} disabled={layerLocked} onChange={(e) => edit({ languageOptions: { ...language, hyphenation: e.target.checked } })} />
+                    Hyphenation intent
+                  </label>
+                </>
+              );
+            })()}
+            <p className="adjust-note">Language and direction stay local and preserve authored line breaks.</p>
           </fieldset>
           <label className="layer-field">
             Text color

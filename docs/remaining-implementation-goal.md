@@ -187,6 +187,19 @@ coverage is in `tests/open-type.test.mjs`; browser coverage is in
 vertical shaping, type-on-path alternates, font embedding and provider-backed
 style libraries remain staged; see [`open-type-contract.md`](./open-type-contract.md).
 
+The current language-options increment enables `Type → Language Options` for
+editable text layers. It stores bounded local language, writing-direction and
+hyphenation intent metadata, applies browser-supported LTR/RTL direction during
+Canvas 2D rendering, and keeps authored line breaks, source text, undo history
+and portable project round trips intact. The dialog and Layers panel share the
+same normalized values; legacy drafts remain valid and invalid values fail
+closed. Hyphenation is metadata-only until a bounded layout engine exists, and
+full language-specific shaping, font embedding and Adobe paragraph-engine
+parity remain staged. Pure coverage is in `tests/text-language.test.mjs` and
+desktop/mobile menu, rendering, reload and project coverage is in
+`tests/browser/language-options.spec.ts`. Protected CI, merge, deployment and
+live revision verification are still required.
+
 The current Camera Raw increment adds `Filter → Camera Raw Filter…` as a
 distinct bounded local correction. Highlights, Shadows, Temperature, Tint and
 Clarity remain editable metadata and compose with existing exposure/vibrance

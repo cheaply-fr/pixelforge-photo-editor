@@ -115,6 +115,8 @@ import {
   type CalculationMode,
 } from '../src/applyImage';
 import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
+import LanguageOptionsDialog from '../src/LanguageOptionsDialog';
+import { normalizeTextLanguage, type TextLanguageSettings } from '../src/textLanguage';
 import { normalizeTextPathBinding } from '../src/textOnPath';
 import {
   createCustomBrushPreset,
@@ -869,6 +871,7 @@ type Command =
   | 'screen-full-menu'
   | 'screen-full'
   | 'font-preview-size'
+  | 'language-options'
   | 'missing-fonts'
   | 'image-mode'
   | 'image-analysis'
@@ -1247,7 +1250,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Warp Text…', command: 'text-warp' },
     { label: 'Text on Path…', command: 'text-on-path' },
     { label: 'Font Preview Size', command: 'font-preview-size' },
-    { label: 'Language Options', command: 'noop', disabled: true },
+    { label: 'Language Options', command: 'language-options' },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'missing-fonts' },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
@@ -2237,6 +2240,7 @@ export default function Home() {
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
     [analysisData, setAnalysisData] = useState<HistogramData | null>(null),
     [adjustmentsOpen, setAdjustmentsOpen] = useState(false),
+    [languageOptionsOpen, setLanguageOptionsOpen] = useState(false),
     [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
     [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
     [toolbarDensity, setToolbarDensity] = useState<ToolbarDensity>(() => initialToolbarPreferences.density),
@@ -3943,6 +3947,17 @@ export default function Home() {
       return;
     }
     editLayer({ orientation });
+  };
+  const applyLanguageOptions = (languageOptions: TextLanguageSettings) => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer || layer.kind !== 'text') {
+      setLanguageOptionsOpen(false);
+      setNotice('Select a text layer before changing language options');
+      return;
+    }
+    setLanguageOptionsOpen(false);
+    if (editLayer({ languageOptions: normalizeTextLanguage(languageOptions) }))
+      setNotice('Language options updated; undo restores the previous text direction');
   };
   const setTextWarp = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
@@ -12630,6 +12645,7 @@ export default function Home() {
       setTextOrientation('horizontal');
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
+    else if (command === 'language-options') setLanguageOptionsOpen(true);
     else if (command === 'text-warp') setTextWarp();
     else if (command === 'text-on-path') setTextOnPath();
     else if (command === 'font-preview-size') {
@@ -13390,6 +13406,7 @@ export default function Home() {
       case 'text-orientation-vertical':
       case 'text-warp':
       case 'open-type':
+      case 'language-options':
         return !layer || layer.kind !== 'text' || locked;
       case 'save-default-type-styles':
         return !layer || layer.kind !== 'text' || locked;
@@ -13530,6 +13547,7 @@ export default function Home() {
     name: layer.name,
     hints: findSpellingHints(layer.text),
   }));
+  const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -13835,6 +13853,13 @@ export default function Home() {
             setAdjustmentsOpen(false);
             void runCommand(command);
           }}
+        />
+      )}
+      {languageOptionsOpen && (
+        <LanguageOptionsDialog
+          initial={normalizeTextLanguage(activeTextLayer?.languageOptions)}
+          close={() => setLanguageOptionsOpen(false)}
+          apply={applyLanguageOptions}
         />
       )}
       {toolbarSettingsOpen && (
