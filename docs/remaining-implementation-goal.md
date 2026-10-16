@@ -17,10 +17,10 @@ editable Layer Styles Color Overlay, bounded nested Smart Objects and a
 Gradient Overlay style. Lens Correction has pure full-frame/tile parity plus
 desktop/mobile round-trip coverage; the Layer Styles and nested Smart Object
 slices have pure validation/pixel coverage plus desktop/mobile lock, undo,
-reload and project round-trip coverage. The candidate passes 850/850 pure
-tests, 126/126 Filter browser checks, 10/10 Smart Object checks and the
-static/build checks locally.
-It is pushed as `0caef75` on PR #149; protected CI/deploy and the live revision
+reload and project round-trip coverage. The candidate passes 851/851 pure
+tests, 126/126 Filter browser checks, 10/10 Smart Object checks, 10/10 Layer
+Styles checks and the static/build checks locally.
+It is pushed as `780bda5` on PR #149; protected CI/deploy and the live revision
 remain separate gates, and production still reports the previously verified
 revision until those gates complete.
 
