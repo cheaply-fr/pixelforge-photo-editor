@@ -14,31 +14,37 @@ NTSC Colors has a documented local Y'IQ composite-envelope contract, editable no
 
 The latest local candidate adds bounded tiled Lens Correction parity, editable
 Layer Styles Color Overlay, bounded nested Smart Objects, Gradient Overlay,
-clipped Inner Shadow, Bevel/Emboss and Pattern Overlay styles. Lens Correction has pure full-frame/tile parity
-plus desktop/mobile round-trip coverage; the Layer Styles and nested Smart
-Object slices have pure validation/pixel coverage plus desktop/mobile lock,
-undo, reload and project round-trip coverage. The local candidate passes
-854/854 pure tests, 997/1000 browser tests with 3 intentional skips, and the
-static/typecheck/build checks locally.
-The remote PR #149 head is `a2517b7`; its protected validation run is
+clipped Inner Shadow, Bevel/Emboss, Pattern Overlay, AI Denoise, AI Sharpen
+and Neural Filters local approximations. Lens Correction has pure full-frame/
+tile parity plus desktop/mobile round-trip coverage; the Layer Styles, nested
+Smart Object and filter slices have pure validation/pixel coverage plus
+desktop/mobile lock, undo, reload and project round-trip coverage. The local
+candidate passes 859/859 pure tests and 132/132 Filter effects browser cases,
+with static/typecheck/build checks locally.
+The remote PR #149 head is `d5c4290`; its protected validation run is
 still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
 
-The local candidate commit `0b3e018` includes the bounded nondestructive
-Pattern Overlay style, `Filter → AI Denoise…` and `Filter → AI Sharpen…`.
-Pattern Overlay repeats checker, stripes, dots, grid or diagonal tiles with
-editable colours, opacity and tile size while retaining the immutable source
-asset. AI Denoise is a private deterministic Y’CbCr bilateral approximation
-with editable radius, edge-protection threshold and amount; alpha,
-transparent RGB, source assets and Action defaults remain safe, and the UI
-discloses that model-backed RAW or temporal denoising is not enabled. AI
-Sharpen is a private deterministic luminance-detail approximation with
-editable radius, edge threshold and amount; it retains source/alpha safety and
-discloses that model-backed RAW priors and deconvolution remain staged. Pure
-and desktop/mobile persistence tests are present locally: 856/856 pure tests
-and the AI Sharpen desktop/mobile cases pass 2/2. Protected CI, deployment and
-live acceptance remain separate gates.
+The local candidate commit `d5c4290` includes the bounded nondestructive
+Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…` and the
+now-enabled `Filter → Neural Filters…` approximation. Pattern Overlay repeats
+checker, stripes, dots, grid or diagonal tiles with editable colours, opacity
+and tile size while retaining the immutable source asset. AI Denoise is a
+private deterministic Y’CbCr bilateral approximation with editable radius,
+edge-protection threshold and amount; alpha, transparent RGB, source assets
+and Action defaults remain safe, and the UI discloses that model-backed RAW or
+temporal denoising is not enabled. AI Sharpen is a private deterministic
+luminance-detail approximation with editable radius, edge threshold and amount;
+it retains source/alpha safety and discloses that model-backed RAW priors and
+deconvolution remain staged. Neural Filters is a private deterministic local
+neighbourhood enhancement with editable luminance recovery, colour balance,
+texture detail and radius; it uses no model, upload or network call, and
+semantic Adobe model parity remains staged. Pure coverage is 859/859; the
+full Filter effects browser file passes 132/132 desktop/mobile cases, and
+static/typecheck/build checks pass locally (with the existing chunk-size and
+dynamic-import warnings). Protected CI, deployment and live acceptance remain
+separate gates.
 
 ## Remaining roadmap stages
 
