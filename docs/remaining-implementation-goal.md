@@ -32,13 +32,14 @@ and desktop/mobile adjustment round-trip coverage. The local candidate passes
 877/877 pure tests, 4/4 Paste Special browser cases, 8/8 Generative Upscale
 browser cases, 4/4 Generative Fill browser cases and 4/4 Prompt to Edit
 browser cases, with static/typecheck/build checks locally.
-Remote PR #149 includes source commit `0fdecce` (with Generative Fill at
+Remote PR #149 includes source commit `ba561ca` (with Prompt to Edit at
+`0fdecce`, Generative Fill at
 `77b0996` and Generative Upscale at `908f905`); its protected validation run
 for the current documentation head is still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
 
-The local candidate source commit `0fdecce` includes the bounded nondestructive
+The local candidate source commit `ba561ca` includes the bounded nondestructive
 Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
 enabled `Filter → Neural Filters…` approximation and the enabled
 `Edit → Reflection Removal…` approximation. Pattern Overlay repeats checker,
