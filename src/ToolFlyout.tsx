@@ -40,9 +40,16 @@ export function ToolFlyout({
     const dismiss = () => onClose();
     window.addEventListener('pointerdown', close);
     window.addEventListener('resize', dismiss);
-    // Scrolls within the popup remain usable; moving its anchor closes it.
-    window.addEventListener('scroll', close, true);
+    // Focus can scroll the toolbar after the flyout has mounted. Attach the
+    // scroll listener after two frames so that keyboard opening does not
+    // immediately dismiss the popup during that settling scroll.
+    let scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = requestAnimationFrame(() =>
+        window.addEventListener('scroll', close, true),
+      );
+    });
     return () => {
+      cancelAnimationFrame(scrollFrame);
       window.removeEventListener('pointerdown', close);
       window.removeEventListener('resize', dismiss);
       window.removeEventListener('scroll', close, true);

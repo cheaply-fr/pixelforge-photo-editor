@@ -51,6 +51,10 @@ export async function selectTool(page: Page, label: string): Promise<void> {
       });
       if (!(await button.count())) continue;
       await button.scrollIntoViewIfNeeded();
+      // Some Photoshop keyboard families intentionally keep an independent
+      // toolbar slot (for example Selection Brush). Only a representative
+      // that actually exposes a flyout can open the requested subtool menu.
+      if (await button.getAttribute('aria-haspopup') !== 'menu') continue;
       // The context-menu path is deterministic across desktop and touch
       // projects while still exercising the same anchored ToolFlyout used by
       // press-and-hold and keyboard navigation.
