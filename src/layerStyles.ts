@@ -19,9 +19,16 @@ export type OutlineStyle = {
   width: number;
 };
 
+export type ColorOverlayStyle = {
+  enabled: boolean;
+  color: string;
+  opacity: number;
+};
+
 export type LayerStyles = {
   dropShadow: DropShadowStyle;
   outline: OutlineStyle;
+  colorOverlay: ColorOverlayStyle;
 };
 
 export const neutralLayerStyles: LayerStyles = {
@@ -39,6 +46,11 @@ export const neutralLayerStyles: LayerStyles = {
     opacity: 1,
     width: 2,
   },
+  colorOverlay: {
+    enabled: false,
+    color: '#ffffff',
+    opacity: 1,
+  },
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -50,6 +62,7 @@ const hex = (value: unknown): value is string =>
 export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): LayerStyles {
   const shadow = value?.dropShadow;
   const outline = value?.outline;
+  const colorOverlay = value?.colorOverlay;
   return {
     dropShadow: {
       ...neutralLayerStyles.dropShadow,
@@ -85,6 +98,17 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
         ? outline.enabled
         : neutralLayerStyles.outline.enabled,
     },
+    colorOverlay: {
+      ...neutralLayerStyles.colorOverlay,
+      ...colorOverlay,
+      color: hex(colorOverlay?.color) ? colorOverlay!.color : neutralLayerStyles.colorOverlay.color,
+      opacity: finite(colorOverlay?.opacity, 0, 1)
+        ? colorOverlay!.opacity
+        : neutralLayerStyles.colorOverlay.opacity,
+      enabled: typeof colorOverlay?.enabled === 'boolean'
+        ? colorOverlay.enabled
+        : neutralLayerStyles.colorOverlay.enabled,
+    },
   };
 }
 
@@ -107,13 +131,20 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
       typeof outline.enabled === 'boolean' &&
       hex(outline.color) &&
       finite(outline.opacity, 0, 1) &&
-      finite(outline.width, 1, 32),
+      finite(outline.width, 1, 32) &&
+      (candidate.colorOverlay === undefined || (
+        candidate.colorOverlay &&
+        typeof candidate.colorOverlay === 'object' &&
+        typeof candidate.colorOverlay.enabled === 'boolean' &&
+        hex(candidate.colorOverlay.color) &&
+        finite(candidate.colorOverlay.opacity, 0, 1)
+      )),
   );
 }
 
 export function isNeutralLayerStyles(value: Partial<LayerStyles> | undefined): boolean {
   const styles = effectiveLayerStyles(value);
-  return !styles.dropShadow.enabled && !styles.outline.enabled;
+  return !styles.dropShadow.enabled && !styles.outline.enabled && !styles.colorOverlay.enabled;
 }
 
 function color(value: string): [number, number, number] {
@@ -240,5 +271,13 @@ export function applyLayerStylesPixels(
       const i = (y * width + x) * 4;
       over(output, i, source[i], source[i + 1], source[i + 2], source[i + 3]);
     }
+  if (styles.colorOverlay.enabled) {
+    const [r, g, b] = color(styles.colorOverlay.color);
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const i = (y * width + x) * 4;
+        over(output, i, r, g, b, source[i + 3] * styles.colorOverlay.opacity);
+      }
+  }
   return output;
 }

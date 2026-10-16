@@ -42,9 +42,11 @@ test('Layer Style metadata is bounded and legacy values normalize safely', () =>
     opacity: neutralLayerStyles.outline.opacity,
     width: neutralLayerStyles.outline.width,
   });
+  assert.deepEqual(value.colorOverlay, neutralLayerStyles.colorOverlay);
   assert.equal(validLayerStyles(value), true);
   assert.equal(validLayerStyles({ ...value, outline: { ...value.outline, width: 0 } }), false);
   assert.equal(validLayerStyles({ ...value, dropShadow: { ...value.dropShadow, color: 'red' } }), false);
+  assert.equal(validLayerStyles({ ...value, colorOverlay: { ...value.colorOverlay, opacity: 2 } }), false);
   assert.equal(isNeutralLayerStyles(undefined), true);
 });
 
@@ -69,16 +71,23 @@ test('Layer Style pixels are deterministic, source-safe and alpha-preserving', (
       opacity: 1,
       width: 1,
     },
+    colorOverlay: {
+      ...neutralLayerStyles.colorOverlay,
+      enabled: true,
+      color: '#00ff00',
+      opacity: 0.5,
+    },
   };
   const first = applyLayerStylesPixels(source, 5, 5, style);
   const second = applyLayerStylesPixels(source, 5, 5, style);
   assert.deepEqual(first, second);
   assert.deepEqual(source, original);
-  assert.deepEqual(pixel(first, 5, 2, 2), [255, 255, 255, 255]);
+  assert.deepEqual(pixel(first, 5, 2, 2), [128, 255, 128, 255]);
   assert.equal(pixel(first, 5, 3, 2)[3], 255);
   assert.equal(pixel(first, 5, 1, 2)[0], 255);
   assert.equal(pixel(first, 5, 1, 2)[1], 0);
   assert.equal(pixel(first, 5, 1, 2)[2], 0);
+  assert.ok(pixel(first, 5, 2, 2)[1] > 128, 'overlay blends the source colour');
   assert.deepEqual(
     applyLayerStylesPixels(source, 5, 5, undefined),
     source,

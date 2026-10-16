@@ -139,6 +139,9 @@ export default function LayersPanel({
   ) => updateStyles({ dropShadow: { ...styles.dropShadow, ...patch } });
   const updateOutline = (patch: Partial<LayerStyles['outline']>) =>
     updateStyles({ outline: { ...styles.outline, ...patch } });
+  const updateColorOverlay = (
+    patch: Partial<LayerStyles['colorOverlay']>,
+  ) => updateStyles({ colorOverlay: { ...styles.colorOverlay, ...patch } });
   const selectedLayers = frame.layers.filter((item) => selectedIds.has(item.id));
   const selectedGroupIds = new Set(selectedLayers.flatMap((item) => item.groupId ? [item.groupId] : []));
   const distributionGroup = selectedGroupIds.size === 1
@@ -696,6 +699,39 @@ export default function LayersPanel({
             value={Math.round(styles.outline.width)}
             onChange={(event) =>
               updateOutline({ width: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable color overlay"
+            checked={styles.colorOverlay.enabled}
+            onChange={(event) =>
+              updateColorOverlay({ enabled: event.target.checked })
+            }
+          />
+          Color overlay
+        </label>
+        <label className="layer-field">
+          Overlay color
+          <input
+            aria-label="Color overlay color"
+            type="color"
+            value={styles.colorOverlay.color}
+            onChange={(event) => updateColorOverlay({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Overlay opacity {Math.round(styles.colorOverlay.opacity * 100)}%
+          <input
+            aria-label="Color overlay opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.colorOverlay.opacity * 100)}
+            onChange={(event) =>
+              updateColorOverlay({ opacity: Number(event.target.value) / 100 })
             }
           />
         </label>

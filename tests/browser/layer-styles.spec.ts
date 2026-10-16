@@ -93,6 +93,34 @@ test('Layer Style controls are disabled for locked layers', async ({ page }) => 
   await expect(page.getByLabel('Outline width', { exact: true })).toBeDisabled();
 });
 
+test('Color overlay is nondestructive, editable and survives project reload', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+  await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  const before = await canvasPixels(page);
+  await page.getByLabel('Enable color overlay', { exact: true }).check();
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  expect(await canvasPixels(page)).not.toEqual(before);
+  const exported = await project(page);
+  const styledLayer = exported.history[exported.index].layers.at(-1)!;
+  expect(styledLayer.styles).toMatchObject({
+    colorOverlay: { enabled: true, opacity: 1 },
+  });
+  const sourceAsset = styledLayer.asset;
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Enable color overlay', { exact: true })).toBeChecked();
+  const reloaded = await project(page);
+  expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
+  expect(reloaded.history[reloaded.index].layers.at(-1)!.styles).toMatchObject({
+    colorOverlay: { enabled: true },
+  });
+});
+
 test('Layer Style menu activates the existing nondestructive style controls', async ({ page }) => {
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Layer Style', exact: true }).click();
