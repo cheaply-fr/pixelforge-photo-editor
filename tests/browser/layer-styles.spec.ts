@@ -91,6 +91,10 @@ test('Layer Style controls are disabled for locked layers', async ({ page }) => 
   await expect(page.getByLabel('Enable drop shadow', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Enable outline', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Outline width', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Enable inner shadow', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Inner shadow blur', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Enable bevel emboss', { exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Bevel blur', { exact: true })).toBeDisabled();
 });
 
 test('Color overlay is nondestructive, editable and survives project reload', async ({ page }) => {
