@@ -29,17 +29,20 @@ selection/layer guards, source/alpha safety and desktop/mobile round-trip
 coverage. Prompt to Edit now adds a bounded offline allow-listed parser for
 common tonal, colour and sharpening requests, with unsupported-language guards
 and desktop/mobile adjustment round-trip coverage. The local candidate passes
-877/877 pure tests, 4/4 Paste Special browser cases, 8/8 Generative Upscale
+880/880 pure tests, 4/4 Paste Special browser cases, 8/8 Generative Upscale
 browser cases, 4/4 Generative Fill browser cases and 4/4 Prompt to Edit
-browser cases, with static/typecheck/build checks locally.
-Remote PR #149 includes source commit `ba561ca` (with Prompt to Edit at
+browser cases. It also adds Generate Image as a bounded offline abstract
+renderer with 3/3 pure cases and 4/4 desktop/mobile browser cases covering
+editable raster insertion, dimension persistence, reload and empty-input
+failure. Static/typecheck/build checks pass locally.
+Remote PR #149 includes source commit `2254afd` (with Prompt to Edit at
 `0fdecce`, Generative Fill at
 `77b0996` and Generative Upscale at `908f905`); its protected validation run
 for the current documentation head is still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
 
-The local candidate source commit `ba561ca` includes the bounded nondestructive
+The local candidate source commit `2254afd` includes the bounded nondestructive
 Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
 enabled `Filter → Neural Filters…` approximation and the enabled
 `Edit → Reflection Removal…` approximation. Pattern Overlay repeats checker,
@@ -78,6 +81,13 @@ undoable edit. Its parser and focused desktop/mobile cases pass 5/5 and 4/4;
 unsupported semantic language fails closed. It does not call a provider or
 claim arbitrary natural-language understanding; see
 [`prompt-to-edit-contract.md`](./prompt-to-edit-contract.md).
+Generate Image keeps a short description local and maps it to one of four
+deterministic abstract styles (gradient, stripes, dots or noise). It inserts a
+bounded opaque raster layer with explicit dimension, pixel and layer limits and
+survives draft/project round trips. Its normalisation/render tests pass 3/3 and
+its focused desktop/mobile cases pass 4/4. It does not call a provider or claim
+semantic prompt-following generation; see
+[`generate-image-contract.md`](./generate-image-contract.md).
 Static/typecheck/build checks pass locally with the existing chunk-size and
 dynamic-import warnings. Protected CI, deployment and live acceptance remain
 separate gates.
