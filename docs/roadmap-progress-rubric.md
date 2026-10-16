@@ -24,7 +24,7 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increments (`2b20107` plus Gradient Overlay)
+## Latest local increments (`21c3b3a` plus Inner Shadow)
 
 Lens Correction now uses a bounded source-pixel influence radius and forwards
 the tile-local authored centre through the renderer. `lens-correction` is in
@@ -47,12 +47,13 @@ contract: selected root-level layers can be wrapped in a recursive child
 and retained by recursive asset compaction. Layer-panel and Layer-menu entry
 points are covered by desktop/mobile acceptance, including representative
 pixels, undo, reload and portable project round trips. The focused Smart Object
-suite passes **10/10**. The follow-up Gradient Overlay style adds editable
-start/end colours, opacity, angle and reversal while retaining source pixels;
-its desktop/mobile round-trip suite passes **10/10**. The combined pure suite
-passes **851/851**, and typecheck, lint and build pass locally. These changes
-remain local evidence until protected CI, deployment and live revision checks
-complete.
+suite passes **10/10**. The follow-up Gradient Overlay style adds editable start/end colours, opacity,
+angle and reversal while retaining source pixels. The next Inner Shadow style
+adds bounded offsets, distance and blur, clips to source alpha and retains the
+source asset. The combined Layer Styles desktop/mobile suite passes **12/12**,
+the Smart Object suite passes **10/10**, and the pure suite passes **852/852**;
+typecheck, lint and build pass locally. These changes remain local evidence
+until protected CI, deployment and live revision checks complete.
 
 ## Current baseline
 

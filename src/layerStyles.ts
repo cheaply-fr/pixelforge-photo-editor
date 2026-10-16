@@ -12,6 +12,16 @@ export type DropShadowStyle = {
   blur: number;
 };
 
+export type InnerShadowStyle = {
+  enabled: boolean;
+  color: string;
+  opacity: number;
+  offsetX: number;
+  offsetY: number;
+  blur: number;
+  distance: number;
+};
+
 export type OutlineStyle = {
   enabled: boolean;
   color: string;
@@ -36,6 +46,7 @@ export type GradientOverlayStyle = {
 
 export type LayerStyles = {
   dropShadow: DropShadowStyle;
+  innerShadow: InnerShadowStyle;
   outline: OutlineStyle;
   colorOverlay: ColorOverlayStyle;
   gradientOverlay: GradientOverlayStyle;
@@ -49,6 +60,15 @@ export const neutralLayerStyles: LayerStyles = {
     offsetX: 8,
     offsetY: 8,
     blur: 12,
+  },
+  innerShadow: {
+    enabled: false,
+    color: '#000000',
+    opacity: 0.5,
+    offsetX: 4,
+    offsetY: 4,
+    blur: 8,
+    distance: 4,
   },
   outline: {
     enabled: false,
@@ -79,6 +99,7 @@ const hex = (value: unknown): value is string =>
 
 export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): LayerStyles {
   const shadow = value?.dropShadow;
+  const innerShadow = value?.innerShadow;
   const outline = value?.outline;
   const colorOverlay = value?.colorOverlay;
   const gradientOverlay = value?.gradientOverlay;
@@ -102,6 +123,29 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
       enabled: typeof shadow?.enabled === 'boolean'
         ? shadow.enabled
         : neutralLayerStyles.dropShadow.enabled,
+    },
+    innerShadow: {
+      ...neutralLayerStyles.innerShadow,
+      ...innerShadow,
+      color: hex(innerShadow?.color) ? innerShadow!.color : neutralLayerStyles.innerShadow.color,
+      opacity: finite(innerShadow?.opacity, 0, 1)
+        ? innerShadow!.opacity
+        : neutralLayerStyles.innerShadow.opacity,
+      offsetX: finite(innerShadow?.offsetX, -256, 256)
+        ? innerShadow!.offsetX
+        : neutralLayerStyles.innerShadow.offsetX,
+      offsetY: finite(innerShadow?.offsetY, -256, 256)
+        ? innerShadow!.offsetY
+        : neutralLayerStyles.innerShadow.offsetY,
+      blur: finite(innerShadow?.blur, 0, 64)
+        ? innerShadow!.blur
+        : neutralLayerStyles.innerShadow.blur,
+      distance: finite(innerShadow?.distance, 1, 32)
+        ? innerShadow!.distance
+        : neutralLayerStyles.innerShadow.distance,
+      enabled: typeof innerShadow?.enabled === 'boolean'
+        ? innerShadow.enabled
+        : neutralLayerStyles.innerShadow.enabled,
     },
     outline: {
       ...neutralLayerStyles.outline,
@@ -157,6 +201,7 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<LayerStyles>;
   const shadow = candidate.dropShadow,
+    innerShadow = candidate.innerShadow,
     outline = candidate.outline,
     gradientOverlay = candidate.gradientOverlay;
   return Boolean(
@@ -168,6 +213,17 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
       finite(shadow.offsetX, -256, 256) &&
       finite(shadow.offsetY, -256, 256) &&
       finite(shadow.blur, 0, 64) &&
+      (innerShadow === undefined || (
+        innerShadow &&
+        typeof innerShadow === 'object' &&
+        typeof innerShadow.enabled === 'boolean' &&
+        hex(innerShadow.color) &&
+        finite(innerShadow.opacity, 0, 1) &&
+        finite(innerShadow.offsetX, -256, 256) &&
+        finite(innerShadow.offsetY, -256, 256) &&
+        finite(innerShadow.blur, 0, 64) &&
+        finite(innerShadow.distance, 1, 32)
+      )) &&
       outline &&
       typeof outline === 'object' &&
       typeof outline.enabled === 'boolean' &&
@@ -196,7 +252,7 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
 
 export function isNeutralLayerStyles(value: Partial<LayerStyles> | undefined): boolean {
   const styles = effectiveLayerStyles(value);
-  return !styles.dropShadow.enabled && !styles.outline.enabled &&
+  return !styles.dropShadow.enabled && !styles.innerShadow.enabled && !styles.outline.enabled &&
     !styles.colorOverlay.enabled && !styles.gradientOverlay.enabled;
 }
 
@@ -324,6 +380,52 @@ export function applyLayerStylesPixels(
       const i = (y * width + x) * 4;
       over(output, i, source[i], source[i + 1], source[i + 2], source[i + 3]);
     }
+  if (styles.innerShadow.enabled) {
+    const distance = Math.round(styles.innerShadow.distance);
+    const blur = Math.round(styles.innerShadow.blur);
+    const padding = distance + blur + Math.max(
+      Math.abs(Math.round(styles.innerShadow.offsetX)),
+      Math.abs(Math.round(styles.innerShadow.offsetY)),
+    );
+    const sourceX = Math.max(0, bounds.minX - padding);
+    const sourceY = Math.max(0, bounds.minY - padding);
+    const sourceRight = Math.min(width - 1, bounds.maxX + padding);
+    const sourceBottom = Math.min(height - 1, bounds.maxY + padding);
+    const sourceWidth = sourceRight - sourceX + 1;
+    const sourceHeight = sourceBottom - sourceY + 1;
+    const edge = new Uint8ClampedArray(sourceWidth * sourceHeight);
+    for (let y = 0; y < sourceHeight; y += 1)
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const gx = sourceX + x, gy = sourceY + y;
+        const own = alpha[gy * width + gx];
+        if (own === 0) continue;
+        let minimum = 255;
+        for (let oy = -distance; oy <= distance; oy += 1)
+          for (let ox = -distance; ox <= distance; ox += 1) {
+            const nx = gx + ox, ny = gy + oy;
+            const neighbour = nx >= 0 && nx < width && ny >= 0 && ny < height
+              ? alpha[ny * width + nx]
+              : 0;
+            minimum = Math.min(minimum, neighbour);
+          }
+        edge[y * sourceWidth + x] = Math.max(0, own - minimum);
+      }
+    const softened = blurAlpha(edge, sourceWidth, sourceHeight, blur);
+    const [r, g, b] = color(styles.innerShadow.color);
+    const offsetX = Math.round(styles.innerShadow.offsetX);
+    const offsetY = Math.round(styles.innerShadow.offsetY);
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const destination = (y * width + x) * 4;
+        if (source[destination + 3] === 0) continue;
+        const sx = x - offsetX - sourceX;
+        const sy = y - offsetY - sourceY;
+        if (sx < 0 || sx >= sourceWidth || sy < 0 || sy >= sourceHeight) continue;
+        const amount = softened[sy * sourceWidth + sx] *
+          (source[destination + 3] / 255) * styles.innerShadow.opacity;
+        over(output, destination, r, g, b, amount);
+      }
+  }
   if (styles.colorOverlay.enabled) {
     const [r, g, b] = color(styles.colorOverlay.color);
     for (let y = bounds.minY; y <= bounds.maxY; y += 1)

@@ -713,6 +713,7 @@ export const commonLayer = (name: string): Common => ({
   adjustments: { ...neutral },
   styles: {
     dropShadow: { ...neutralLayerStyles.dropShadow },
+    innerShadow: { ...neutralLayerStyles.innerShadow },
     outline: { ...neutralLayerStyles.outline },
     colorOverlay: { ...neutralLayerStyles.colorOverlay },
     gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
@@ -2561,6 +2562,7 @@ export async function renderFrame(
               blend: 'source-over',
               styles: {
                 dropShadow: { ...neutralLayerStyles.dropShadow },
+                innerShadow: { ...neutralLayerStyles.innerShadow },
                 outline: { ...neutralLayerStyles.outline },
                 colorOverlay: { ...neutralLayerStyles.colorOverlay },
                 gradientOverlay: { ...neutralLayerStyles.gradientOverlay },

@@ -139,6 +139,9 @@ export default function LayersPanel({
   const updateDropShadow = (
     patch: Partial<LayerStyles['dropShadow']>,
   ) => updateStyles({ dropShadow: { ...styles.dropShadow, ...patch } });
+  const updateInnerShadow = (
+    patch: Partial<LayerStyles['innerShadow']>,
+  ) => updateStyles({ innerShadow: { ...styles.innerShadow, ...patch } });
   const updateOutline = (patch: Partial<LayerStyles['outline']>) =>
     updateStyles({ outline: { ...styles.outline, ...patch } });
   const updateColorOverlay = (
@@ -664,6 +667,83 @@ export default function LayersPanel({
             value={Math.round(styles.dropShadow.blur)}
             onChange={(event) =>
               updateDropShadow({ blur: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable inner shadow"
+            checked={styles.innerShadow.enabled}
+            onChange={(event) =>
+              updateInnerShadow({ enabled: event.target.checked })
+            }
+          />
+          Inner shadow
+        </label>
+        <label className="layer-field">
+          Inner shadow color
+          <input
+            aria-label="Inner shadow color"
+            type="color"
+            value={styles.innerShadow.color}
+            onChange={(event) => updateInnerShadow({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Inner shadow opacity {Math.round(styles.innerShadow.opacity * 100)}%
+          <input
+            aria-label="Inner shadow opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.innerShadow.opacity * 100)}
+            onChange={(event) =>
+              updateInnerShadow({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <div className="layer-position">
+          <NumberField
+            label="Inner shadow X"
+            value={styles.innerShadow.offsetX}
+            min={-256}
+            max={256}
+            disabled={layerLocked}
+            apply={(value) => updateInnerShadow({ offsetX: value })}
+          />
+          <NumberField
+            label="Inner shadow Y"
+            value={styles.innerShadow.offsetY}
+            min={-256}
+            max={256}
+            disabled={layerLocked}
+            apply={(value) => updateInnerShadow({ offsetY: value })}
+          />
+        </div>
+        <label className="layer-field">
+          Inner shadow blur {Math.round(styles.innerShadow.blur)} px
+          <input
+            aria-label="Inner shadow blur"
+            type="range"
+            min="0"
+            max="64"
+            value={Math.round(styles.innerShadow.blur)}
+            onChange={(event) =>
+              updateInnerShadow({ blur: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label className="layer-field">
+          Inner shadow distance {Math.round(styles.innerShadow.distance)} px
+          <input
+            aria-label="Inner shadow distance"
+            type="range"
+            min="1"
+            max="32"
+            value={Math.round(styles.innerShadow.distance)}
+            onChange={(event) =>
+              updateInnerShadow({ distance: Number(event.target.value) })
             }
           />
         </label>

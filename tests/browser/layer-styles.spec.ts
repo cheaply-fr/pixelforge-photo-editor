@@ -158,6 +158,35 @@ test('Gradient overlay keeps endpoints editable, source pixels and project reloa
   });
 });
 
+test('Inner shadow is nondestructive, stays inside the layer and survives reload', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  const box = await canvas.boundingBox();
+  expect(box).toBeTruthy();
+  await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
+  const before = await canvasPixels(page);
+  await page.getByLabel('Enable inner shadow', { exact: true }).check();
+  await page.getByLabel('Inner shadow blur', { exact: true }).fill('0');
+  await page.getByLabel('Inner shadow distance', { exact: true }).fill('1');
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  expect(await canvasPixels(page)).not.toEqual(before);
+  const exported = await project(page);
+  const styledLayer = exported.history[exported.index].layers.at(-1)!;
+  expect(styledLayer.styles).toMatchObject({
+    innerShadow: { enabled: true, blur: 0, distance: 1 },
+  });
+  const sourceAsset = styledLayer.asset;
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByLabel('Enable inner shadow', { exact: true })).toBeChecked();
+  const reloaded = await project(page);
+  expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
+  expect(reloaded.history[reloaded.index].layers.at(-1)!.styles).toMatchObject({
+    innerShadow: { enabled: true, distance: 1 },
+  });
+});
+
 test('Layer Style menu activates the existing nondestructive style controls', async ({ page }) => {
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Layer Style', exact: true }).click();
