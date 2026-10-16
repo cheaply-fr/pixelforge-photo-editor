@@ -579,6 +579,8 @@ import {
 } from '../src/fontPreview';
 import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
+import HistogramDialog from '../src/HistogramDialog';
+import { buildHistogram, type HistogramData } from '../src/histogram';
 import MenuSettingsDialog from '../src/MenuSettingsDialog';
 import {
   MENU_PREFERENCES_STORAGE_KEY,
@@ -867,7 +869,9 @@ type Command =
   | 'screen-full'
   | 'font-preview-size'
   | 'missing-fonts'
-  | 'image-mode';
+  | 'image-mode'
+  | 'image-analysis';
+
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -1149,7 +1153,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Duplicate…', command: 'duplicate-document' },
     { label: 'Apply Image…', command: 'apply-image' },
     { label: 'Calculations…', command: 'calculations' },
-    { label: 'Analysis', command: 'noop', disabled: true },
+    { label: 'Analysis', command: 'image-analysis' },
   ],
   Layer: [
     { label: 'New Paint Layer', command: 'new-layer' },
@@ -2229,6 +2233,7 @@ export default function Home() {
     [menuSettingsOpen, setMenuSettingsOpen] = useState(false),
     [showDisabledMenuItems, setShowDisabledMenuItems] = useState(() => initialMenuPreferences.showDisabled),
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
+    [analysisData, setAnalysisData] = useState<HistogramData | null>(null),
     [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
     [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
     [toolbarDensity, setToolbarDensity] = useState<ToolbarDensity>(() => initialToolbarPreferences.density),
@@ -12415,6 +12420,18 @@ export default function Home() {
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   });
+  const openHistogram = async () => {
+    const snapshot = current();
+    try {
+      const composite = await renderFrame(snapshot, assets.current);
+      const context = composite.getContext('2d');
+      if (!context) throw new Error('Histogram canvas is unavailable');
+      const pixels = context.getImageData(0, 0, snapshot.w, snapshot.h).data;
+      setAnalysisData(buildHistogram(pixels));
+    } catch {
+      setNotice('Histogram analysis could not render this document');
+    }
+  };
   const runCommand = async (command: Command) => {
     if (command === 'noop') return;
     if (command === 'search-commands') {
@@ -12427,6 +12444,10 @@ export default function Home() {
     }
     if (command === 'actions') {
       setActionsOpen(true);
+      return;
+    }
+    if (command === 'image-analysis') {
+      await openHistogram();
       return;
     }
     if (
@@ -13792,6 +13813,12 @@ export default function Home() {
             setFilterGalleryOpen(false);
             void runCommand(command as Command);
           }}
+        />
+      )}
+      {analysisData && (
+        <HistogramDialog
+          data={analysisData}
+          close={() => setAnalysisData(null)}
         />
       )}
       {toolbarSettingsOpen && (

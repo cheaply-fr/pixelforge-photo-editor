@@ -105,6 +105,17 @@ covers the packed geometry in addition to the 26-case family, icon, keyboard,
 touch, persistence and no-placeholder suite. This is local candidate evidence
 until the protected workflow, deployment and live revision checks complete.
 
+The current analysis increment adds `Image → Analysis → Histogram`. It computes
+256-bin red, green, blue and Rec. 709 luminance channels from the rendered
+composite in the browser, excludes fully transparent RGB samples, reports
+visible-pixel/mean/range/alpha statistics, and keeps the document, history and
+source assets unchanged. Pure coverage is in `tests/histogram.test.mjs` and
+desktop/mobile menu, channel-switching and Escape coverage is in
+`tests/browser/histogram.spec.ts` plus the Photoshop menu-family test. This is
+a local analysis approximation; profile-aware histogram caches, print
+proofing and advanced provider-backed analysis remain staged. Protected CI,
+merge, deployment and live revision verification are still required.
+
 ## Remaining roadmap stages
 
 1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. **Nested local Smart Objects are now active:** root-level selections can be wrapped in a bounded recursive child `Frame`, rendered through the normal source-safe pipeline, validated to four levels, and retained by recursive asset compaction with Layer-panel and menu entry points. A nested frame remains a local editable data model; separate smart-object document windows, linked cloud assets and full asset compaction across external providers remain staged.

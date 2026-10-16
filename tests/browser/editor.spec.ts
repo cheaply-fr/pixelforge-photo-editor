@@ -887,15 +887,9 @@ test('Photoshop menu families expose working commands and label planned actions'
   ).toBeDisabled();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  const plannedAnalysis = page.getByRole('menuitem', {
-    name: 'Analysis',
-    exact: true,
-  });
-  await expect(plannedAnalysis).toBeDisabled();
-  await expect(plannedAnalysis).toHaveAttribute(
-    'title',
-    'Planned for a later roadmap stage',
-  );
+  await page.getByRole('menuitem', { name: 'Analysis', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Histogram' })).toBeVisible();
+  await expect(page.getByText('Rendered composite analysis.', { exact: false })).toBeVisible();
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await expect(
