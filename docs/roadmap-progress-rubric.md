@@ -24,9 +24,19 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increments (`3e00174`)
+## Latest local increments (`893bf60`)
 
-The current local candidate is `2629cc5`. It adds `Edit → Generate Image…` as
+The current local candidate is `893bf60`. It adds `Image → Adjustments` as an
+accessible local family chooser for Levels, Curves, Hue/Saturation, Color
+Balance, and Sharpen and Noise, routing each choice through the existing
+nondestructive inspector controls. Its desktop/mobile acceptance passes
+**2/2**. The preceding increment adds `Image → Analysis → Histogram` with
+256-bin RGB/luminance statistics, transparency handling and channel controls;
+its focused desktop/mobile acceptance passes **2/2** and its pure coverage is
+included in the full suite. These menu-family surfaces do not claim full
+Photoshop adjustment-dialog or profile-aware analysis parity.
+
+The preceding local candidate `2629cc5` adds `Edit → Generate Image…` as
 a bounded offline abstract renderer that inserts a deterministic gradient,
 stripes, dots or noise raster layer while enforcing prompt, dimension, pixel
 and layer limits. The pure normalisation/render cases pass **3/3** and the
