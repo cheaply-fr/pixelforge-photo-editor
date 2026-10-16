@@ -265,6 +265,8 @@ export type Layer = Common &
         sourceName?: string;
         /** Optional local link identity shared by smart-object instances. */
         linkId?: string;
+        /** Bounded editable child document for a nested Smart Object. */
+        contents?: Frame;
       }
     | {
         /** A source-free, nondestructive correction applied to the composite below this layer. */
@@ -442,6 +444,8 @@ export type Frame = {
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
+/** Nested documents are intentionally bounded so malformed drafts cannot recurse forever. */
+export const MAX_NESTED_SMART_OBJECT_DEPTH = 4;
 export const identity = (): Matrix => [1, 0, 0, 1, 0, 0];
 
 /**
@@ -1265,10 +1269,13 @@ export function effectiveTextLayer<T extends Layer>(
 export function validateFrame(
   value: unknown,
   assets: Assets,
+  nestedDepth = 0,
 ): asserts value is Frame {
   const fail = () => {
     throw new Error('Invalid layer document');
   };
+  if (!Number.isInteger(nestedDepth) || nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
+    return fail();
   if (
     !record(value) ||
     !integer(value.w, 1, 16000) ||
@@ -1384,6 +1391,20 @@ export function validateFrame(
         return fail();
       if (layer.kind === 'smart-object' && layer.linkId !== undefined && !validId(layer.linkId))
         return fail();
+      if (layer.kind === 'smart-object' && layer.contents !== undefined) {
+        if (nestedDepth >= MAX_NESTED_SMART_OBJECT_DEPTH || !record(layer.contents))
+          return fail();
+        if (
+          layer.contents.w !== assets[layer.asset].w ||
+          layer.contents.h !== assets[layer.asset].h
+        )
+          return fail();
+        try {
+          validateFrame(layer.contents, assets, nestedDepth + 1);
+        } catch {
+          return fail();
+        }
+      }
       if (layer.kind === 'raster' && layer.fillColor !== undefined && (typeof layer.fillColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.fillColor)))
         return fail();
       if (
@@ -1684,6 +1705,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
       if (isMaskableLayer(layer) && layer.mask) used[layer.mask] = assets[layer.mask];
       if (isRasterContentLayer(layer)) {
         used[layer.asset] = assets[layer.asset];
+        if (layer.kind === 'smart-object' && layer.contents)
+          Object.assign(used, referencedAssets([layer.contents], assets));
         for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
         for (const move of layer.kind === 'raster' ? layer.contentAwareMoves || [] : [])
@@ -1963,6 +1986,8 @@ export type RenderOptions = {
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
   /** Report bounded tile completion before the final telemetry envelope. */
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
+  /** Internal recursion guard for editable nested Smart Object contents. */
+  nestedDepth?: number;
 };
 
 /** Render a raster layer's bounded style stack in local coordinates. */
@@ -1987,6 +2012,9 @@ export async function renderFrame(
   overrides?: Record<string, HTMLCanvasElement>,
   options?: RenderOptions,
 ): Promise<HTMLCanvasElement> {
+  const nestedDepth = options?.nestedDepth ?? 0;
+  if (nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
+    throw new Error('Nested Smart Object depth exceeds the local safety limit');
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group])),
@@ -2217,7 +2245,16 @@ export async function renderFrame(
               fillContext.fillRect(0, 0, fill.width, fill.height);
               return fill;
             })()
-          : await decodeAsset(assets[layer.asset])
+          : layer.kind === 'smart-object' && layer.contents
+            ? await renderFrame(
+                layer.contents,
+                assets,
+                undefined,
+                options?.onProgress
+                  ? { ...options, onProgress: undefined, nestedDepth: nestedDepth + 1 }
+                  : { ...options, nestedDepth: nestedDepth + 1 },
+              )
+            : await decodeAsset(assets[layer.asset])
         : undefined;
     // Overrides are raw, layer-local buffers. They must travel through the
     // exact same matrix, opacity, blend, adjustment and mask pipeline as the

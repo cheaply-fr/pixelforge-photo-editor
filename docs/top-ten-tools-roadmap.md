@@ -35,8 +35,10 @@ detection, generative fill or semantic Content-Aware Move/Scale. Parameterized
 batch Actions follow this slice. The local Patch Tool remains available for
 deterministic source-offset cleanup.
 
-Smart Objects, Camera Raw, richer filters, ICC/HDR, tiled compositing and
-optional reviewable AI remain separate milestones. AI edits must stay optional,
+Smart Objects now include a bounded local nested-child milestone alongside the
+existing embedded and linked-source contract; separate smart-object document
+windows, cloud links, Camera Raw depth, richer filters, ICC/HDR, tiled
+compositing and optional reviewable AI remain separate milestones. AI edits must stay optional,
 previewable and undoable: the PSR study found current AI editors fulfilled only
 about one third of real requests and often changed identity or made unrequested
 edits.

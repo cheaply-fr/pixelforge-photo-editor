@@ -632,6 +632,7 @@ type Command =
   | 'new-fill-layer'
   | 'new-adjustment-layer'
   | 'new-smart-object'
+  | 'nest-smart-object'
   | 'replace-smart-object'
   | 'link-smart-objects'
   | 'select-linked-layers'
@@ -1146,6 +1147,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Create Clipping Mask', command: 'create-clipping-mask' },
     { label: 'Release Clipping Mask', command: 'release-clipping-mask' },
     { label: 'New Smart Object…', command: 'new-smart-object' },
+    { label: 'Nest Selected Layers as Smart Object', command: 'nest-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
     { label: 'Link Smart Object Contents', command: 'link-smart-objects' },
     { label: 'Select Linked Layers', command: 'select-linked-layers' },
@@ -7866,7 +7868,7 @@ export default function Home() {
           layers: original.layers.map((layer) =>
             layer.kind === 'smart-object' &&
             (layer.id === target.id || (linkedId !== undefined && layer.linkId === linkedId))
-              ? { ...layer, asset, sourceName }
+              ? { ...layer, asset, sourceName, contents: undefined }
               : layer,
           ),
         };
@@ -7925,6 +7927,71 @@ export default function Home() {
       if (smartObjectFile.current) smartObjectFile.current.value = '';
     }
   };
+  const nestSelectedAsSmartObject = async () => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before nesting layers');
+      return;
+    }
+    const original = current();
+    const selected = selectedLayersForFrame(original);
+    if (!selected.length) {
+      setNotice('Select one or more layers to nest');
+      return;
+    }
+    if (selected.some((layer) => layer.groupId)) {
+      setNotice('Select root-level layers before nesting them');
+      return;
+    }
+    if (selected.some((layer) => layerIsLocked(original, layer))) {
+      setNotice('Unlock every selected layer before nesting them');
+      return;
+    }
+    const nested: Frame = {
+      w: original.w,
+      h: original.h,
+      ...(original.colorMode ? { colorMode: original.colorMode } : {}),
+      ...(original.colorProfile ? { colorProfile: original.colorProfile } : {}),
+      ...(original.imageSize ? { imageSize: original.imageSize } : {}),
+      layers: selected.map((layer) => ({ ...layer, groupId: undefined })),
+      active: selected.some((layer) => layer.id === original.active)
+        ? original.active
+        : selected[0].id,
+      selectedLayerIds: selected.map((layer) => layer.id),
+    };
+    try {
+      const rendered = await renderFrame(nested, assets.current);
+      if (current() !== original) {
+        setNotice('Nesting cancelled because the document changed');
+        return;
+      }
+      const asset = addAsset(assets.current, rendered),
+        sourceName = `Nested contents · ${selected.length} layer${selected.length === 1 ? '' : 's'}`,
+        nestedLayer: Layer = {
+          ...commonLayer(sourceName),
+          kind: 'smart-object',
+          asset,
+          sourceName,
+          contents: nested,
+        },
+        selectedIds = new Set(selected.map((layer) => layer.id)),
+        firstIndex = Math.min(...selected.map((layer) => original.layers.findIndex((item) => item.id === layer.id))),
+        layersBefore = original.layers.slice(0, firstIndex).filter((layer) => !selectedIds.has(layer.id)),
+        layersAfter = original.layers.slice(firstIndex).filter((layer) => !selectedIds.has(layer.id)),
+        groups = (original.groups || []).filter((group) =>
+          original.layers.some((layer) => !selectedIds.has(layer.id) && layer.groupId === group.id),
+        );
+      if (commit({
+        ...original,
+        layers: [...layersBefore, nestedLayer, ...layersAfter],
+        groups: groups.length ? groups : undefined,
+        active: nestedLayer.id,
+        selectedLayerIds: [nestedLayer.id],
+      }))
+        setNotice('Selected layers nested into an editable Smart Object');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not nest the selected layers');
+    }
+  };
   const chooseSmartObjectFile = (replace: boolean, fitToArtboard = false) => {
     smartObjectAction.current = replace
       ? fitToArtboard
@@ -7957,6 +8024,7 @@ export default function Home() {
               asset: sourceObject.asset,
               sourceName: sourceObject.sourceName,
               linkId,
+              ...(sourceObject.contents ? { contents: sourceObject.contents } : { contents: undefined }),
             }
           : layer,
       ),
@@ -12173,6 +12241,7 @@ export default function Home() {
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
+    else if (command === 'nest-smart-object') return nestSelectedAsSmartObject();
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
     else if (command === 'link-smart-objects') return linkSmartObjectContents();
     else if (command === 'select-linked-layers') return selectLinkedLayers();
@@ -12693,6 +12762,13 @@ export default function Home() {
         return (
           selectedLayersForFrame(frame).filter((candidate) => candidate.kind === 'smart-object').length < 2 ||
           selectedLayersForFrame(frame).some((candidate) => layerIsLocked(frame, candidate))
+        );
+      case 'nest-smart-object':
+        return (
+          selectedLayersForFrame(frame).length === 0 ||
+          selectedLayersForFrame(frame).some((candidate) =>
+            Boolean(candidate.groupId) || layerIsLocked(frame, candidate),
+          )
         );
       case 'select-linked-layers':
         return !selectedLayersForFrame(frame).some(
@@ -14521,6 +14597,7 @@ export default function Home() {
               add={addPaint}
               addAdjustment={addAdjustmentLayer}
               addSmartObject={() => chooseSmartObjectFile(false)}
+              nestSelectedAsSmartObject={() => void nestSelectedAsSmartObject()}
               replaceSmartObject={() => chooseSmartObjectFile(true)}
               duplicate={duplicate}
               remove={remove}

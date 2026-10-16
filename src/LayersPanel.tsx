@@ -39,6 +39,7 @@ type Props = {
   add: () => void;
   addAdjustment: () => void;
   addSmartObject: () => void;
+  nestSelectedAsSmartObject: () => void;
   replaceSmartObject: () => void;
   duplicate: () => void;
   remove: () => void;
@@ -77,6 +78,7 @@ export default function LayersPanel({
   add,
   addAdjustment,
   addSmartObject,
+  nestSelectedAsSmartObject,
   replaceSmartObject,
   duplicate,
   remove,
@@ -250,6 +252,12 @@ export default function LayersPanel({
         </button>
         <button onClick={addSmartObject} disabled={frame.layers.length >= 32}>
           Add smart object
+        </button>
+        <button
+          onClick={nestSelectedAsSmartObject}
+          disabled={selectedIds.size === 0 || frame.layers.some((item) => selectedIds.has(item.id) && item.groupId !== undefined)}
+        >
+          Nest selected layers
         </button>
         <button
           onClick={replaceSmartObject}
