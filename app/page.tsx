@@ -184,6 +184,9 @@ import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
 import PasteSpecialDialog from '../src/PasteSpecialDialog';
+import GenerativeFillDialog, {
+  type GenerativeFillRequest,
+} from '../src/GenerativeFillDialog';
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -485,6 +488,9 @@ import {
 } from '../src/patchTool';
 import {
   CONTENT_AWARE_MAX_OPERATIONS,
+  GENERATIVE_FILL_MAX_OPERATIONS,
+  GENERATIVE_FILL_MAX_RADIUS,
+  GENERATIVE_FILL_MAX_PROMPT,
   type ContentAwareFill,
 } from '../src/contentAwareCleanup';
 import {
@@ -613,6 +619,7 @@ type Command =
   | 'content-aware-fill'
   | 'content-aware-move'
   | 'content-aware-scale'
+  | 'generative-fill'
   | 'resize'
   | 'generative-upscale'
   | 'canvas-size'
@@ -1062,7 +1069,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
     { label: 'Content-Aware Move…', command: 'content-aware-move' },
     { label: 'Prompt to Edit…', command: 'noop', disabled: true },
-    { label: 'Generative Fill…', command: 'noop', disabled: true },
+    { label: 'Generative Fill…', command: 'generative-fill' },
     { label: 'Generate Image…', command: 'noop', disabled: true },
     { label: 'Reflection Removal…', command: 'filter-reflection-removal' },
     { label: 'Remove Background…', command: 'remove-background' },
@@ -2253,6 +2260,7 @@ export default function Home() {
     [batchActionId, setBatchActionId] = useState<string>(),
     [fileInfoOpen, setFileInfoOpen] = useState(false),
     [pasteSpecialOpen, setPasteSpecialOpen] = useState(false),
+    [generativeFillOpen, setGenerativeFillOpen] = useState(false),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
@@ -5297,6 +5305,80 @@ export default function Home() {
         );
     } catch {
       setNotice('Content-Aware Fill could not be applied');
+    }
+  };
+  const applyGenerativeFill = async (request: GenerativeFillRequest) => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Generative Fill');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Generative Fill');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Generative Fill');
+      return;
+    }
+    const generativeCount = (layer.contentAwareFills ?? []).filter((fill) => fill.mode === 'texture').length;
+    if (generativeCount >= GENERATIVE_FILL_MAX_OPERATIONS) {
+      setNotice(`This layer has ${GENERATIVE_FILL_MAX_OPERATIONS} local Generative Fill operations; export a copy before adding more`);
+      return;
+    }
+    const prompt = request.prompt.trim().slice(0, GENERATIVE_FILL_MAX_PROMPT);
+    const radius = Math.max(1, Math.min(GENERATIVE_FILL_MAX_RADIUS, Math.round(request.radius)));
+    const opacity = Math.max(0.01, Math.min(1, request.opacity / 100));
+    const seed = Math.max(0, Math.min(0xffffffff, Math.round(request.seed)));
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(
+          f.selection,
+          f,
+          layer,
+          assets.current,
+          width,
+          height,
+        );
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Generative Fill was prepared');
+        return;
+      }
+      const maskCanvas = surface(width, height),
+        context = maskCanvas.getContext('2d');
+      if (!context) throw new Error('Generative Fill mask is unavailable');
+      const imageData = context.createImageData(width, height);
+      for (let index = 0; index < mask.length; index += 1) {
+        const offset = index * 4;
+        imageData.data[offset] = 255;
+        imageData.data[offset + 1] = 255;
+        imageData.data[offset + 2] = 255;
+        imageData.data[offset + 3] = mask[index];
+      }
+      context.putImageData(imageData, 0, 0);
+      const maskId = addAsset(assets.current, maskCanvas),
+        fill: ContentAwareFill = {
+          version: 1,
+          mask: maskId,
+          radius,
+          opacity,
+          mode: 'texture',
+          prompt,
+          seed,
+        };
+      if (editLayer({ contentAwareFills: [...(layer.contentAwareFills ?? []), fill] })) {
+        setGenerativeFillOpen(false);
+        setNotice('Local Generative Fill applied; prompt stayed private and source pixels remain editable');
+      }
+    } catch {
+      setNotice('Generative Fill could not be applied; the draft is unchanged');
     }
   };
   const applyContentAwareMove = async () => {
@@ -12285,6 +12367,8 @@ export default function Home() {
       });
     else if (command === 'generative-upscale')
       setGenerativeUpscaling({ width: current().w, height: current().h });
+    else if (command === 'generative-fill')
+      setGenerativeFillOpen(true);
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
@@ -12948,6 +13032,15 @@ export default function Home() {
           !frame.selection ||
           (layer.contentAwareFills?.length ?? 0) >= CONTENT_AWARE_MAX_OPERATIONS
         );
+      case 'generative-fill':
+        return (
+          !layer ||
+          layer.kind !== 'raster' ||
+          locked ||
+          !layer.visible ||
+          !frame.selection ||
+          (layer.contentAwareFills?.filter((fill) => fill.mode === 'texture').length ?? 0) >= GENERATIVE_FILL_MAX_OPERATIONS
+        );
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -13421,6 +13514,12 @@ export default function Home() {
           height={generativeUpscaling.height}
           close={() => setGenerativeUpscaling(null)}
           apply={generativeUpscale}
+        />
+      )}
+      {generativeFillOpen && (
+        <GenerativeFillDialog
+          close={() => setGenerativeFillOpen(false)}
+          apply={(request) => void applyGenerativeFill(request)}
         />
       )}
       {canvasSizing && (
