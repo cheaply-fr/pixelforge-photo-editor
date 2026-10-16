@@ -26,6 +26,18 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 
 ## Latest local increments (`44d2bf5`)
 
+The current local candidate is `f06364e`. It adds `Edit → Generate Image…` as
+a bounded offline abstract renderer that inserts a deterministic gradient,
+stripes, dots or noise raster layer while enforcing prompt, dimension, pixel
+and layer limits. The pure normalisation/render cases pass **3/3** and the
+desktop/mobile dialog, editable-layer, dimension, reload and empty-input cases
+pass **4/4**. The full local suite is **880/880**; typecheck, lint, build and
+the toolbar regression suite (**26/26**) also pass. PR #149's protected run
+for this exact SHA is still in progress, so this evidence does not earn CI,
+deployment or live-acceptance credit. Production remains on the previously
+verified revision until those gates complete. See
+[`generate-image-contract.md`](./generate-image-contract.md).
+
 Lens Correction now uses a bounded source-pixel influence radius and forwards
 the tile-local authored centre through the renderer. `lens-correction` is in
 the explicit tiled neighbourhood allow-list, and its full-frame oracle matches
