@@ -117,9 +117,10 @@ export default function BatchExportDialog({
             <option value="jpeg">JPEG — smaller, opaque</option>
             <option value="webp">WebP — smaller, transparent</option>
             <option value="psd">PSD — flattened composite</option>
+            <option value="pdf">PDF — flattened page</option>
           </select>
         </label>
-        {format !== 'png' && format !== 'psd' && (
+        {format !== 'png' && format !== 'psd' && format !== 'pdf' && (
           <label>
             Quality
             <output>{quality}%</output>

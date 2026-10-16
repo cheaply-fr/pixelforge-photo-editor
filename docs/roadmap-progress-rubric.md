@@ -517,3 +517,16 @@ cover planar ordering, signatures and malformed dimensions; desktop/mobile
 export acceptance checks the download signature, disclosure and absence of
 quality/target-size controls. Layered PSD/PSB, profiles, metadata and editable
 document round trips remain staged; keep the `.pixelforge` project for editing.
+
+## Single-page PDF export increment
+
+The Export dialog now offers **PDF — flattened page**. It mattes the rendered
+composite to white, encodes one local JPEG image XObject on a deterministic
+single-page PDF, and omits layers, editable text, profiles, metadata and undo
+history. The encoder enforces the same 16-megapixel/30,000-pixel bounds as the
+other interchange outputs and runs on the main thread because it is a binary
+container encoder rather than an `image/*` browser MIME path. Pure tests cover
+the PDF header, catalog/page/image objects, JPEG embedding and malformed bounds;
+desktop/mobile tests cover the dialog disclosure, download signature and
+absence of quality/target-size controls. Layered PDF import and editable PDF
+round trips remain staged; keep the `.pixelforge` project for editing.

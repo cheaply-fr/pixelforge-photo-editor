@@ -1,6 +1,6 @@
 # PixelForge image export contract
 
-The image export dialog renders the current editable frame locally, then encodes a flattened copy as PNG, JPEG, WebP or a bounded 8-bit PSD composite. It never uploads the source image. An editable `.pixelforge` project remains the recovery format because a rendered export cannot retain layers, masks, vector properties or undo history.
+The image export dialog renders the current editable frame locally, then encodes a flattened copy as PNG, JPEG, WebP, a bounded 8-bit PSD composite or a bounded single-page PDF composite. It never uploads the source image. An editable `.pixelforge` project remains the recovery format because a rendered export cannot retain layers, masks, vector properties or undo history.
 
 ## Formats and fidelity
 
@@ -8,6 +8,7 @@ The image export dialog renders the current editable frame locally, then encodes
 * **JPEG** is lossy and always receives a white matte. Transparent pixels therefore become white. The browser's encoded MIME type is checked before download so a fallback PNG cannot be mislabeled as `.jpg`.
 * **WebP** is encoded with the selected quality and supports transparency. Quality 100 is still not presented as a lossless guarantee. Unsupported WebP encoders fail visibly and leave the editable draft unchanged.
 * **PSD** writes a deterministic Photoshop-compatible version-1 RGB composite with separate R, G, B and alpha planes. The PSD has no layer/mask, profile, metadata or undo sections, so the dialog labels it as flattened and retains the `.pixelforge` project as the editable recovery copy.
+* **PDF** writes one local JPEG image XObject on a single page. Transparency is matted to white, and layers, editable text, profiles, metadata and undo history are omitted. The dialog labels the output as a flattened page.
 
 The dialog previews the actual encoded byte size before download. JPEG and WebP also accept an optional target size from 1 KB through 64 MB. When a target is present, PixelForge performs a bounded search over integer quality values and chooses the highest quality whose browser-produced blob fits. If even quality 1 is too large, the smallest valid blob is returned with an explicit “target not met” status; dimensions are never silently reduced. PNG remains lossless and has no target-size control. The filename uses the document name and the format extension. Exports contain only the rendered pixels; original EXIF/GPS metadata and source color profiles are not copied.
 
@@ -43,7 +44,7 @@ replacement and linked frame assets remain staged.
 
 ## Acceptance evidence
 
-The desktop/mobile browser tests export PNG, JPEG, WebP and PSD and check their signatures, check that WebP quality changes the encoded byte count, check the PSD flattened-loss disclosure and absence of lossy controls, exercise the JPEG/WebP target-size search against actual downloaded bytes, assert the target preference survives reload, and check that rendered exports contain no EXIF/GPS marker. Batch tests create multiple history states, inspect the ZIP entries and manifest, verify dimensions/byte counts and assert that source data URLs are absent. Pure tests cover CRC-32, archive entry order and path-traversal/duplicate-name rejection plus PSD header, planar-channel, round-trip and malformed-boundary coverage. A browser that cannot encode WebP receives an explicit unsupported-format message rather than a corrupt download.
+The desktop/mobile browser tests export PNG, JPEG, WebP, PSD and PDF and check their signatures, check that WebP quality changes the encoded byte count, check the PSD/PDF flattened-loss disclosures and absence of lossy controls, exercise the JPEG/WebP target-size search against actual downloaded bytes, assert the target preference survives reload, and check that rendered exports contain no EXIF/GPS marker. Batch tests create multiple history states, inspect the ZIP entries and manifest, verify dimensions/byte counts and assert that source data URLs are absent. Pure tests cover CRC-32, archive entry order and path-traversal/duplicate-name rejection plus PSD/PDF headers, planar/JPEG image embedding, round-trip and malformed-boundary coverage. A browser that cannot encode WebP receives an explicit unsupported-format message rather than a corrupt download.
 
 ## Multi-input batch export
 
@@ -57,7 +58,7 @@ background-removal quality for arbitrary batches. Unsupported layered and
 camera formats are rejected with explicit per-file compatibility labels before
 the browser decoder runs.
 
-The metadata privacy slice is implemented and tested, but this contract does not claim EXIF/ICC writing, color-managed output, HEIC/RAW or layered PSD compatibility. PSD output is a flattened composite interchange aid; browser exports otherwise remain rendered-pixel downloads.
+The metadata privacy slice is implemented and tested, but this contract does not claim EXIF/ICC writing, color-managed output, HEIC/RAW or layered PSD/PDF compatibility. PSD and PDF output are flattened composite interchange aids; browser exports otherwise remain rendered-pixel downloads.
 
 ## Source-format compatibility disclosure
 

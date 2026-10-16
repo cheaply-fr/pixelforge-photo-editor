@@ -191,6 +191,29 @@ test('PSD export downloads a bounded flattened composite with explicit loss disc
   );
 });
 
+test('PDF export downloads a single-page flattened composite with explicit loss disclosure', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByLabel('Export format').selectOption('pdf');
+  await expect(page.getByText('one flattened JPEG composite', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Export quality')).toHaveCount(0);
+  await expect(page.getByLabel('Target size (KB)')).toHaveCount(0);
+  const size = page.getByLabel('Encoded file size');
+  await expect(size).toHaveAttribute('data-bytes', /\d+/, { timeout: 15_000 });
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download image', exact: true }).click();
+  const download = await pending;
+  expect(download.suggestedFilename()).toBe('coastline-edit.pdf');
+  const path = await download.path();
+  const bytes = await (await import('node:fs/promises')).readFile(path!);
+  expect(bytes.subarray(0, 8).toString()).toBe('%PDF-1.4');
+  expect(bytes.includes(Buffer.from('/Subtype /Image'))).toBe(true);
+  expect(bytes.includes(Buffer.from('%%EOF'))).toBe(true);
+});
+
 test('lossy exports honor a persisted target-size budget without metadata', async ({
   page,
 }) => {
@@ -1809,6 +1832,24 @@ test('batch history export can package flattened PSD composites without quality 
   const path = await (await pending).path();
   const bytes = await (await import('node:fs/promises')).readFile(path!);
   expect(bytes.includes(Buffer.from('8BPS'))).toBe(true);
+});
+
+test('batch history export can package flattened PDF pages without quality controls', async ({
+  page,
+}) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export history…', exact: true }).click();
+  await page.getByLabel('Batch export format', { exact: true }).selectOption('pdf');
+  await expect(page.getByLabel('Batch export quality', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Build batch ZIP', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Batch export progress', exact: true })).toContainText('1 snapshots');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP', exact: true }).click();
+  const path = await (await pending).path();
+  const bytes = await (await import('node:fs/promises')).readFile(path!);
+  expect(bytes.includes(Buffer.from('%PDF-1.4'))).toBe(true);
 });
 
 test('Escape cancels a running batch without mutating history', async ({ page }) => {

@@ -223,7 +223,7 @@ export default function ExportDialog({
             onChange={(event) => {
               const next = event.target.value as ExportFormat;
               setFormat(next);
-              if (next === 'png' || next === 'psd') {
+              if (next === 'png' || next === 'psd' || next === 'pdf') {
                 setTargetBytes(undefined);
                 setTargetInput('');
                 setTargetError('');
@@ -234,9 +234,10 @@ export default function ExportDialog({
             <option value="jpeg">JPEG — smaller, opaque</option>
             <option value="webp">WebP — smaller, transparent</option>
             <option value="psd">PSD — flattened composite</option>
+            <option value="pdf">PDF — flattened page</option>
           </select>
         </label>
-        {format !== 'png' && format !== 'psd' && (
+        {format !== 'png' && format !== 'psd' && format !== 'pdf' && (
           <>
             <label>
               Quality
@@ -284,7 +285,9 @@ export default function ExportDialog({
               ? 'WebP uses lossy color compression and preserves transparency. Quality 100 is not a lossless guarantee.'
               : format === 'psd'
                 ? 'PSD stores a flattened 8-bit RGB composite with an alpha channel. Layers, masks, profiles, metadata and undo history are omitted; keep a .pixelforge project for editable recovery.'
-                : 'PNG preserves transparency and pixels without lossy compression. Quality does not apply.'}
+                : format === 'pdf'
+                  ? 'PDF stores one flattened JPEG composite on a single page. Layers, editable text, profiles, metadata and undo history are omitted; keep a .pixelforge project for editable recovery.'
+                  : 'PNG preserves transparency and pixels without lossy compression. Quality does not apply.'}
         </p>
         {targetMode && (
           <p className="export-format-note">
@@ -293,9 +296,9 @@ export default function ExportDialog({
           </p>
         )}
         <div className="export-preview">
-          {current && (format !== 'psd' || rasterPreviewUrl) && (
+          {current && ((format !== 'psd' && format !== 'pdf') || rasterPreviewUrl) && (
             <img
-              src={format === 'psd' ? rasterPreviewUrl ?? undefined : current.url}
+              src={format === 'psd' || format === 'pdf' ? rasterPreviewUrl ?? undefined : current.url}
               alt={`${exportLabels[format]} export preview`}
             />
           )}

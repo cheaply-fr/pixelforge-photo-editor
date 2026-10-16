@@ -52,6 +52,25 @@ test('multi-input batch can package flattened PSD composites without lossy contr
   expect(archive.includes(Buffer.from('8BPS'))).toBe(true);
 });
 
+test('multi-input batch can package flattened PDF pages without lossy controls', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export images…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles([
+    { name: 'portrait.png', mimeType: 'image/png', buffer: ONE_PIXEL_PNG },
+  ]);
+  await page.getByLabel('Batch image export format').selectOption('pdf');
+  await expect(page.getByLabel('Batch image export quality')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Build batch ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const path = await (await pending).path();
+  const archive = await (await import('node:fs/promises')).readFile(path!);
+  expect(archive.includes(Buffer.from('%PDF-1.4'))).toBe(true);
+});
+
 
 test('multi-input batch keeps valid outputs and reports invalid files', async ({ page }) => {
   await page.goto('/editor?new=1');
