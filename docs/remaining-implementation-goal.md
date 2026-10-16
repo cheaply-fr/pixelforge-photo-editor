@@ -26,16 +26,19 @@ adds in-place, centered and selection-masked placement for the private layer
 clipboard with desktop/mobile round-trip coverage. Generative Fill now adds a
 bounded offline seeded texture-synthesis dialog with local prompt metadata,
 selection/layer guards, source/alpha safety and desktop/mobile round-trip
-coverage. The local candidate passes 872/872 pure tests, 4/4 Paste Special
-browser cases, 8/8 Generative Upscale browser cases and 4/4 Generative Fill
+coverage. Prompt to Edit now adds a bounded offline allow-listed parser for
+common tonal, colour and sharpening requests, with unsupported-language guards
+and desktop/mobile adjustment round-trip coverage. The local candidate passes
+877/877 pure tests, 4/4 Paste Special browser cases, 8/8 Generative Upscale
+browser cases, 4/4 Generative Fill browser cases and 4/4 Prompt to Edit
 browser cases, with static/typecheck/build checks locally.
-Remote PR #149 includes source commit `77b0996` (with Generative Upscale at
-`908f905`); its protected validation run
+Remote PR #149 includes source commit `0fdecce` (with Generative Fill at
+`77b0996` and Generative Upscale at `908f905`); its protected validation run
 for the current documentation head is still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
 
-The local candidate source commit `77b0996` includes the bounded nondestructive
+The local candidate source commit `0fdecce` includes the bounded nondestructive
 Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
 enabled `Filter → Neural Filters…` approximation and the enabled
 `Edit → Reflection Removal…` approximation. Pattern Overlay repeats checker,
@@ -53,7 +56,7 @@ texture detail and radius; it uses no model, upload or network call, and
 semantic Adobe model parity remains staged. Reflection Removal is a private
 local de-glare approximation that targets bright, low-saturation local
 outliers with editable threshold and cleanup radius; semantic reflection
-inference and material reconstruction remain staged. Pure coverage is 872/872;
+inference and material reconstruction remain staged. Pure coverage is 877/877;
 the full Filter effects browser file previously passed 132/132 desktop/mobile
 cases, and the new Reflection Removal desktop/mobile cases pass 2/2.
 Generative Upscale is an offline 2x/4x resampling workflow with a 16-megapixel
@@ -68,6 +71,12 @@ unlocked raster layer; it preserves source/alpha and supports undo, reload and
 portable project round trips. Its focused desktop/mobile cases pass 4/4. It
 does not call a provider or claim semantic prompt-following generation; see
 [`generative-fill-contract.md`](./generative-fill-contract.md).
+Prompt to Edit keeps a short instruction local and maps at most four
+allow-listed intents to existing nondestructive adjustment metadata in one
+undoable edit. Its parser and focused desktop/mobile cases pass 5/5 and 4/4;
+unsupported semantic language fails closed. It does not call a provider or
+claim arbitrary natural-language understanding; see
+[`prompt-to-edit-contract.md`](./prompt-to-edit-contract.md).
 Static/typecheck/build checks pass locally with the existing chunk-size and
 dynamic-import warnings. Protected CI, deployment and live acceptance remain
 separate gates.
