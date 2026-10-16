@@ -23,16 +23,19 @@ undo, reload and project round-trip coverage. Generative Upscale adds a
 bounded offline 2x/4x editable resampling dialog with a 16-megapixel budget
 and desktop/mobile apply, undo, cancel and reload coverage. Paste Special now
 adds in-place, centered and selection-masked placement for the private layer
-clipboard with desktop/mobile round-trip coverage. The local candidate passes
-869/869 pure tests, 4/4 Paste Special browser cases and 8/8 Generative Upscale
+clipboard with desktop/mobile round-trip coverage. Generative Fill now adds a
+bounded offline seeded texture-synthesis dialog with local prompt metadata,
+selection/layer guards, source/alpha safety and desktop/mobile round-trip
+coverage. The local candidate passes 872/872 pure tests, 4/4 Paste Special
+browser cases, 8/8 Generative Upscale browser cases and 4/4 Generative Fill
 browser cases, with static/typecheck/build checks locally.
-Remote PR #149 includes source commit `5e35afb` (with Generative Upscale at
+Remote PR #149 includes source commit `77b0996` (with Generative Upscale at
 `908f905`); its protected validation run
 for the current documentation head is still in progress, so CI/deploy and the live revision remain separate gates,
 and production still reports the previously verified revision until those
 gates complete.
 
-The local candidate source commit `5e35afb` includes the bounded nondestructive
+The local candidate source commit `77b0996` includes the bounded nondestructive
 Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
 enabled `Filter → Neural Filters…` approximation and the enabled
 `Edit → Reflection Removal…` approximation. Pattern Overlay repeats checker,
@@ -50,7 +53,7 @@ texture detail and radius; it uses no model, upload or network call, and
 semantic Adobe model parity remains staged. Reflection Removal is a private
 local de-glare approximation that targets bright, low-saturation local
 outliers with editable threshold and cleanup radius; semantic reflection
-inference and material reconstruction remain staged. Pure coverage is 869/869;
+inference and material reconstruction remain staged. Pure coverage is 872/872;
 the full Filter effects browser file previously passed 132/132 desktop/mobile
 cases, and the new Reflection Removal desktop/mobile cases pass 2/2.
 Generative Upscale is an offline 2x/4x resampling workflow with a 16-megapixel
@@ -59,6 +62,12 @@ its focused desktop/mobile cases pass 8/8.
 Paste Special keeps the private layer clipboard local and supports in-place,
 centered and selection-masked insertion; its focused desktop/mobile cases pass
 4/4.
+Generative Fill keeps the user prompt local and applies a bounded seeded
+texture-synthesis approximation only inside a current selection on a visible
+unlocked raster layer; it preserves source/alpha and supports undo, reload and
+portable project round trips. Its focused desktop/mobile cases pass 4/4. It
+does not call a provider or claim semantic prompt-following generation; see
+[`generative-fill-contract.md`](./generative-fill-contract.md).
 Static/typecheck/build checks pass locally with the existing chunk-size and
 dynamic-import warnings. Protected CI, deployment and live acceptance remain
 separate gates.
@@ -72,7 +81,7 @@ separate gates.
 5. **Adjustments and menus:** complete nondestructive adjustment layers, hue/saturation, levels, curves, color balance, sharpen and noise depth; implement distinct algorithms for requested commands rather than presenting shared aliases as equivalent. Check Spelling now provides a bounded private local hint workflow, Color Settings stores an explicit sRGB/Display P3 working label; Assign Profile is metadata-only and Convert to Profile performs a bounded local raster/smart-object D65 transform without ICC embedding or authored vector/text conversion; Filter → Last Filter repeats the most recently selected nondestructive effect with a guarded empty state and reload-safe validated local preference. Complete the individual Edit/Image/Layer/Type/Select/Filter/View/Plugins capability inventory, including remaining gallery, distortion, procedural, video and color-management work under explicit contracts.
 6. **Projects and exports:** strengthen reliable history, migration/corruption handling, conflict recovery, private-cloud authorization, account isolation, portable editable projects and recovery. Complete PNG/JPEG/WebP quality, byte-size control, metadata privacy, artboard exports and cancellable batch/Action workflows with per-file failure isolation and resource bounds. Audit lossless versus flattened behavior.
 7. **Interaction and scale:** finish compact responsive categorized toolbar layouts, representative icons, hold-to-open subtools, group arrows, remembered subtools and Photoshop-compatible shortcuts. The local searchable Keyboard Shortcuts reference now derives from menu definitions, and Toolbar settings persist an anonymous two/three-column preference, category visibility, category ordering, and per-category tool ordering without placeholder rows. Keyboard Shortcuts also supports versioned one-character tool bindings with collision-safe normalization and reload persistence; selected flyout subtools now persist through a versioned local preference envelope and restore their compact representative after reload; modifier-aware tool chord rebinding now accepts validated Shift/Ctrl/Alt/Cmd combinations with reload persistence; **all working menu commands, including commands without a built-in shortcut, now accept validated local bindings with disabled-command guards and reload persistence** (see [`command-shortcuts-contract.md`](./command-shortcuts-contract.md)). Preserve optional profile/login/logout and version/server status. Close keyboard/accessibility, mobile/touch, offline recovery, worker/tile/cancellation/cache and measured latency/memory/device-budget gaps. Do not infer physical-device acceptance from emulation.
-8. **Advanced and format evaluation:** complete optional background removal/object cleanup and separately evaluate HEIC/HEIF/TIFF/PSD/PSB/RAW/SVG/PDF interoperability with editable/lossless/flattened/unsupported labels. **PSD/PSB now has bounded flattened 8-bit RGB/grayscale composite import (raw and PackBits RLE) and TIFF now has bounded classic 8-bit chunky RGB/grayscale raw or PackBits import, both with source-safe failure handling; layered, profile, mask, page and metadata round trips remain explicitly unsupported.** **Image → Generative Upscale… now has a bounded offline 2×/4× editable resampling approximation with a 16-megapixel budget, alpha-safe source retention and desktop/mobile apply/undo/cancel coverage; it does not call an AI provider or claim semantic content generation.** Address remaining requested generative, plugin/integration and synchronization capabilities already recorded in the roadmap only after privacy, resource, authorization, provider and failure contracts exist. Evaluations must record concrete evidence and limitations; supported capabilities require full release gates.
+8. **Advanced and format evaluation:** complete optional background removal/object cleanup and separately evaluate HEIC/HEIF/TIFF/PSD/PSB/RAW/SVG/PDF interoperability with editable/lossless/flattened/unsupported labels. **PSD/PSB now has bounded flattened 8-bit RGB/grayscale composite import (raw and PackBits RLE) and TIFF now has bounded classic 8-bit chunky RGB/grayscale raw or PackBits import, both with source-safe failure handling; layered, profile, mask, page and metadata round trips remain explicitly unsupported.** **Image → Generative Upscale… now has a bounded offline 2×/4× editable resampling approximation with a 16-megapixel budget, alpha-safe source retention and desktop/mobile apply/undo/cancel coverage; it does not call an AI provider or claim semantic content generation.** **Edit → Generative Fill… now has a bounded offline seeded texture-synthesis approximation with a local-only prompt, source/alpha safety, an eight-operation layer budget and desktop/mobile coverage; it does not claim semantic prompt-following generation.** Address remaining requested generative, plugin/integration and synchronization capabilities already recorded in the roadmap only after privacy, resource, authorization, provider and failure contracts exist. Evaluations must record concrete evidence and limitations; supported capabilities require full release gates.
 
 ## Invariants and delivery gates
 
