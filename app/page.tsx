@@ -188,7 +188,7 @@ import GenerativeFillDialog, {
   type GenerativeFillRequest,
 } from '../src/GenerativeFillDialog';
 import PromptToEditDialog from '../src/PromptToEditDialog';
-import { parsePromptToEdit, PROMPT_TO_EDIT_MAX_PROMPT } from '../src/promptToEdit';
+import { parsePromptToEdit } from '../src/promptToEdit';
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -5386,7 +5386,7 @@ export default function Home() {
     }
   };
   const applyPromptToEdit = (value: string) => {
-    const parsed = parsePromptToEdit(value.slice(0, PROMPT_TO_EDIT_MAX_PROMPT + 1));
+    const parsed = parsePromptToEdit(value);
     if (!parsed.ok) {
       setNotice(parsed.reason);
       return;
