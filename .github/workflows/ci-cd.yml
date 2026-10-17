@@ -44,7 +44,13 @@ jobs:
         run: npm run build
       - run: npm test
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - name: Run desktop and mobile acceptance suite
+        env:
+          # Each test owns an isolated browser context and IndexedDB draft.
+          # Four workers use the GitHub runner's available CPU without
+          # reducing the matrix, retries, or acceptance coverage.
+          PLAYWRIGHT_WORKERS: 4
+        run: npm run test:e2e
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: site-${{ github.sha }}
