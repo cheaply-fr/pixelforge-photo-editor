@@ -18,6 +18,7 @@ export const FILTER_EFFECT_TYPES = [
   'box-blur',
   'gaussian-blur',
   'sharpen',
+  'high-pass',
   'unsharp-mask',
   'sharpen-more',
   'sharpen-edges',
@@ -46,6 +47,7 @@ export const FILTER_EFFECT_TYPES = [
   'fibers',
   'difference-clouds',
   'lens-correction',
+  'adaptive-wide-angle',
   'displace',
   'pinch',
   'liquify',
@@ -70,7 +72,11 @@ export const FILTER_EFFECT_TYPES = [
   'dust-scratches',
   'despeckle',
   'reduce-noise',
+  'ai-denoise',
+  'ai-sharpen',
   'add-noise',
+  'neural-enhance',
+  'reflection-removal',
 ] as const;
 export type FilterEffectType = (typeof FILTER_EFFECT_TYPES)[number];
 
@@ -150,6 +156,24 @@ export type GradientMapSettings = {
   blend?: 'normal' | 'multiply' | 'screen' | 'overlay';
 };
 
+/** Bounded anisotropic geometry controls for Adaptive Wide Angle. */
+export type AdaptiveWideAngleSettings = {
+  /** Horizontal line-preservation bias in the 0..100 range. */
+  horizontal: number;
+  /** Vertical line-preservation bias in the 0..100 range. */
+  vertical: number;
+};
+
+/** Bounded controls for the offline Neural Filters local approximation. */
+export type NeuralEnhanceSettings = {
+  /** Recover local luminance separation without clipping transparent padding. */
+  luminance: number;
+  /** Reduce local colour casts while retaining channel differences. */
+  color: number;
+  /** Reintroduce bounded high-frequency texture from visible neighbours. */
+  texture: number;
+};
+
 export const DEFAULT_COLOR_HALFTONE_SETTINGS: ColorHalftoneSettings = {
   cyanAngle: 108,
   magentaAngle: 162,
@@ -178,6 +202,17 @@ export const DEFAULT_TREE_SETTINGS: TreeSettings = {
 export const DEFAULT_GRADIENT_MAP_SETTINGS: GradientMapSettings = {
   shadow: '#000000',
   highlight: '#ffffff',
+};
+
+export const DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS: AdaptiveWideAngleSettings = {
+  horizontal: 50,
+  vertical: 50,
+};
+
+export const DEFAULT_NEURAL_ENHANCE_SETTINGS: NeuralEnhanceSettings = {
+  luminance: 52,
+  color: 38,
+  texture: 56,
 };
 
 export type FilterEffects = {
@@ -221,6 +256,10 @@ export type FilterEffects = {
   fibers?: FibersSettings;
   tree?: TreeSettings;
   gradientMap?: GradientMapSettings;
+  /** Editable anisotropic geometry controls for Adaptive Wide Angle. */
+  adaptiveWideAngle?: AdaptiveWideAngleSettings;
+  /** Editable controls for the deterministic local Neural Filters approximation. */
+  neuralEnhance?: NeuralEnhanceSettings;
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
   deinterlace?: DeinterlaceSettings;
@@ -371,10 +410,34 @@ export function effectiveFilterEffects(
         : 'normal',
     };
   }
-  if (type === 'dust-scratches' || type === 'reduce-noise') {
+  if (type === 'adaptive-wide-angle') {
+    const settings = source.adaptiveWideAngle;
+    normalized.adaptiveWideAngle = {
+      horizontal: finite(settings?.horizontal)
+        ? clamp(Math.round(settings.horizontal), 0, 100)
+        : DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS.horizontal,
+      vertical: finite(settings?.vertical)
+        ? clamp(Math.round(settings.vertical), 0, 100)
+        : DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS.vertical,
+    };
+  }
+  if (type === 'neural-enhance') {
+    const settings = source.neuralEnhance;
+    normalized.neuralEnhance = {
+      luminance: finite(settings?.luminance) ? clamp(Math.round(settings.luminance), 0, 100) : DEFAULT_NEURAL_ENHANCE_SETTINGS.luminance,
+      color: finite(settings?.color) ? clamp(Math.round(settings.color), 0, 100) : DEFAULT_NEURAL_ENHANCE_SETTINGS.color,
+      texture: finite(settings?.texture) ? clamp(Math.round(settings.texture), 0, 100) : DEFAULT_NEURAL_ENHANCE_SETTINGS.texture,
+    };
+  }
+  if (type === 'dust-scratches' || type === 'reduce-noise' || type === 'ai-denoise' || type === 'ai-sharpen') {
     normalized.threshold = finite(source.threshold)
       ? clamp(Math.round(source.threshold), 0, 255)
-      : type === 'reduce-noise' ? 25 : 12;
+      : type === 'reduce-noise' ? 25 : type === 'ai-denoise' ? 18 : type === 'ai-sharpen' ? 22 : 12;
+  }
+  if (type === 'reflection-removal') {
+    normalized.threshold = finite(source.threshold)
+      ? clamp(Math.round(source.threshold), 0, 255)
+      : 28;
   }
   if (type === 'deinterlace') normalized.deinterlace = effectiveDeinterlaceSettings(source.deinterlace);
   return normalized;
@@ -443,6 +506,19 @@ function validGradientMapSettings(value: unknown): value is GradientMapSettings 
     (settings.stops === undefined || isGradientStops(settings.stops)) &&
     (settings.blend === undefined || settings.blend === 'normal' || settings.blend === 'multiply' || settings.blend === 'screen' || settings.blend === 'overlay');
 }
+function validAdaptiveWideAngleSettings(value: unknown): value is AdaptiveWideAngleSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<AdaptiveWideAngleSettings>;
+  return finite(settings.horizontal) && Number.isInteger(settings.horizontal) && settings.horizontal >= 0 && settings.horizontal <= 100 &&
+    finite(settings.vertical) && Number.isInteger(settings.vertical) && settings.vertical >= 0 && settings.vertical <= 100;
+}
+function validNeuralEnhanceSettings(value: unknown): value is NeuralEnhanceSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<NeuralEnhanceSettings>;
+  return finite(settings.luminance) && Number.isInteger(settings.luminance) && settings.luminance >= 0 && settings.luminance <= 100 &&
+    finite(settings.color) && Number.isInteger(settings.color) && settings.color >= 0 && settings.color <= 100 &&
+    finite(settings.texture) && Number.isInteger(settings.texture) && settings.texture >= 0 && settings.texture <= 100;
+}
 
 export function validFilterEffects(value: unknown): value is FilterEffects {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -462,6 +538,8 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.fibers === undefined || validFibersSettings(effect.fibers)) &&
     (effect.tree === undefined || validTreeSettings(effect.tree)) &&
     (effect.gradientMap === undefined || validGradientMapSettings(effect.gradientMap)) &&
+    (effect.adaptiveWideAngle === undefined || validAdaptiveWideAngleSettings(effect.adaptiveWideAngle)) &&
+    (effect.neuralEnhance === undefined || validNeuralEnhanceSettings(effect.neuralEnhance)) &&
     (effect.noiseMonochromatic === undefined || typeof effect.noiseMonochromatic === 'boolean') &&
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
@@ -2852,7 +2930,9 @@ function applyLensCorrection(
 ): void {
   const centreX = effect.centerX * (width - 1);
   const centreY = effect.centerY * (height - 1);
-  const influenceRadius = Math.max(1, Math.min(width, height) * 0.7 * (effect.radius / 64));
+  // Radius is expressed in source pixels so the correction can be rendered
+  // through the bounded tiled path without sampling beyond its overlap.
+  const influenceRadius = Math.max(1, Math.min(effect.radius, Math.max(width, height)));
   const strength = (effect.amount / 100) * 0.45 * (effect.lensDirection === 'outward' ? -1 : 1);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -2860,14 +2940,74 @@ function applyLensCorrection(
       if (!source[destination + 3]) continue;
       const dx = x - centreX;
       const dy = y - centreY;
-      const normalized = clamp(Math.hypot(dx, dy) / influenceRadius, 0, 1);
-      const scale = 1 - strength * normalized * normalized;
+      const normalized = Math.hypot(dx, dy) / influenceRadius;
+      if (normalized >= 1) continue;
+      const radial = normalized * normalized * (1 - normalized);
+      const scale = 1 - strength * radial;
       const sample = sourcePixelBilinear(
         source,
         width,
         height,
         centreX + dx * scale,
         centreY + dy * scale,
+      );
+      if (!sample[3]) continue;
+      output[destination] = sample[0];
+      output[destination + 1] = sample[1];
+      output[destination + 2] = sample[2];
+      output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
+/**
+ * Apply a bounded Adaptive Wide Angle approximation.
+ *
+ * The renderer uses separate horizontal and vertical radial fields plus a
+ * small cross-axis term. This keeps the effect distinct from Lens Correction:
+ * changing either line-preservation bias produces a different anisotropic map
+ * while the authored centre remains fixed. It is intentionally local and
+ * source-safe; Photoshop's constraint drawing and camera calibration remain
+ * outside this browser-only contract.
+ */
+function applyAdaptiveWideAngle(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+): void {
+  const centreX = effect.centerX * (width - 1);
+  const centreY = effect.centerY * (height - 1);
+  // Radius is expressed in source pixels so a tiled render can expand by a
+  // bounded overlap and reproduce the full-frame result at tile seams.
+  const influenceRadius = Math.max(1, Math.min(effect.radius, Math.max(width, height)));
+  const strength = clamp(effect.amount, 0, 100) / 100 * 0.34;
+  const settings = effect.adaptiveWideAngle ?? DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS;
+  const horizontalBias = 0.55 + settings.horizontal / 100 * 0.9;
+  const verticalBias = 0.55 + settings.vertical / 100 * 0.9;
+  const crossBias = (settings.vertical - settings.horizontal) / 100 * strength * 0.16;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      if (!source[destination + 3]) continue;
+      const dx = x - centreX;
+      const dy = y - centreY;
+      const normalized = Math.hypot(dx, dy) / influenceRadius;
+      if (normalized >= 1) continue;
+      // Fade to the source at the bounded local edge. Keeping the map local
+      // makes the maximum source displacement fit inside tile overlap.
+      const radial = normalized * normalized * (1 - normalized);
+      const xScale = 1 - strength * radial * horizontalBias *
+        (0.84 + clamp(Math.abs(dy) / influenceRadius, 0, 1) * 0.32);
+      const yScale = 1 - strength * radial * verticalBias *
+        (0.84 + clamp(Math.abs(dx) / influenceRadius, 0, 1) * 0.32);
+      const sample = sourcePixelBilinear(
+        source,
+        width,
+        height,
+        centreX + dx * xScale + dy * crossBias * radial,
+        centreY + dy * yScale + dx * crossBias * radial,
       );
       if (!sample[3]) continue;
       output[destination] = sample[0];
@@ -3171,6 +3311,66 @@ function applyDustScratches(
   }
 }
 
+/**
+ * Apply a bounded local reflection-removal approximation.
+ *
+ * Bright, low-saturation pixels that are strong local luminance outliers are
+ * blended toward a visible-neighbour median. This gives a useful de-glare
+ * baseline without claiming semantic reflection detection, inpainting or
+ * material reconstruction. The source, alpha and transparent RGB padding are
+ * never mutated.
+ */
+function applyReflectionRemoval(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 8);
+  const threshold = clamp(Math.round(effect.threshold ?? 28), 0, 255);
+  const luma = (r: number, g: number, b: number) => r * 0.2126 + g * 0.7152 + b * 0.0722;
+  const channels: number[][] = [[], [], []];
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const destination = (y * width + x) * 4;
+      const alpha = source[destination + 3];
+      if (!alpha) continue;
+      channels[0].length = 0;
+      channels[1].length = 0;
+      channels[2].length = 0;
+      for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1) {
+        for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+          const sample = (sy * width + sx) * 4;
+          if (!source[sample + 3] || (sx === x && sy === y)) continue;
+          channels[0].push(source[sample]);
+          channels[1].push(source[sample + 1]);
+          channels[2].push(source[sample + 2]);
+        }
+      }
+      if (!channels[0].length) continue;
+      const medians = channels.map((channel) => {
+        channel.sort((a, b) => a - b);
+        return channel[Math.floor(channel.length / 2)] ?? 0;
+      });
+      const currentLuma = luma(source[destination], source[destination + 1], source[destination + 2]);
+      const medianLuma = luma(medians[0], medians[1], medians[2]);
+      const highlight = clamp((currentLuma - 160) / 95, 0, 1);
+      const saturation = Math.max(source[destination], source[destination + 1], source[destination + 2]) -
+        Math.min(source[destination], source[destination + 1], source[destination + 2]);
+      const neutrality = 1 - clamp(saturation / 96, 0, 1);
+      const outlier = clamp((currentLuma - medianLuma - threshold) / 80, 0, 1);
+      const mix = clamp(strength, 0, 1) * highlight * neutrality * outlier;
+      if (mix <= 0) continue;
+      output[destination] = clampByte(source[destination] + (medians[0] - source[destination]) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] + (medians[1] - source[destination + 1]) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] + (medians[2] - source[destination + 2]) * mix);
+      output[destination + 3] = alpha;
+    }
+  }
+}
+
 /** Bounded edge-aware Reduce Noise approximation using a colour-weighted kernel. */
 function applyReduceNoise(
   source: Uint8ClampedArray,
@@ -3205,6 +3405,195 @@ function applyReduceNoise(
     output[destination] = clampByte(baseR + (sumR / weight - baseR) * mix);
     output[destination + 1] = clampByte(baseG + (sumG / weight - baseG) * mix);
     output[destination + 2] = clampByte(baseB + (sumB / weight - baseB) * mix);
+  }
+}
+
+/**
+ * Apply a bounded local AI Denoise approximation. The renderer does not call
+ * a remote model: it uses a two-domain bilateral pass in Y'CbCr space, which
+ * removes chroma speckle more strongly than luminance detail while keeping
+ * high-contrast edges protected by a luminance range weight. The operation is
+ * deterministic, source-safe and alpha-preserving; model-backed denoising,
+ * RAW-aware priors and temporal frame analysis remain outside this contract.
+ */
+function applyAiDenoise(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 6);
+  const preserve = clamp(Math.round(effect.threshold ?? 18), 1, 255);
+  const mix = clamp(strength, 0, 1);
+  const toYuv = (red: number, green: number, blue: number) => {
+    const y = red * 0.299 + green * 0.587 + blue * 0.114;
+    return [y, red - y, blue - y] as const;
+  };
+  const toRgb = (luma: number, chromaR: number, chromaB: number) => {
+    const red = luma + chromaR;
+    const blue = luma + chromaB;
+    const green = (luma - red * 0.299 - blue * 0.114) / 0.587;
+    return [red, green, blue] as const;
+  };
+  const spatialScale = Math.max(1, radius * radius * 0.7);
+  const rangeScale = Math.max(4, preserve * 0.8);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    const alpha = source[destination + 3];
+    if (!alpha) continue;
+    const base = toYuv(source[destination], source[destination + 1], source[destination + 2]);
+    let sumY = 0, sumCr = 0, sumCb = 0, weight = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const candidate = toYuv(source[sample], source[sample + 1], source[sample + 2]);
+        const spatial = Math.exp(-((sx - x) ** 2 + (sy - y) ** 2) / spatialScale);
+        const range = Math.exp(-Math.abs(candidate[0] - base[0]) / rangeScale);
+        const sampleWeight = spatial * range;
+        sumY += candidate[0] * sampleWeight;
+        sumCr += candidate[1] * sampleWeight;
+        sumCb += candidate[2] * sampleWeight;
+        weight += sampleWeight;
+      }
+    if (!weight) continue;
+    const lumaMix = mix * 0.65;
+    const chromaMix = Math.min(1, mix * 1.25);
+    const nextY = base[0] + ((sumY / weight) - base[0]) * lumaMix;
+    const nextCr = base[1] + ((sumCr / weight) - base[1]) * chromaMix;
+    const nextCb = base[2] + ((sumCb / weight) - base[2]) * chromaMix;
+    const result = toRgb(nextY, nextCr, nextCb);
+    output[destination] = clampByte(result[0]);
+    output[destination + 1] = clampByte(result[1]);
+    output[destination + 2] = clampByte(result[2]);
+    output[destination + 3] = alpha;
+  }
+}
+
+/**
+ * Apply a bounded local AI Sharpen approximation. The renderer uses a
+ * luminance-only high-frequency detail pass with a spatially weighted
+ * neighbourhood and an edge threshold. It is intentionally local and
+ * deterministic; model-backed semantic sharpening, RAW priors and camera
+ * deconvolution remain outside this contract.
+ */
+function applyAiSharpen(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const radius = clamp(Math.round(effect.radius), 1, 6);
+  const threshold = clamp(Math.round(effect.threshold ?? 22), 0, 255);
+  const mix = clamp(strength, 0, 1);
+  const luma = (red: number, green: number, blue: number) => red * 0.299 + green * 0.587 + blue * 0.114;
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const destination = (y * width + x) * 4;
+    const alpha = source[destination + 3];
+    if (!alpha) continue;
+    const baseY = luma(source[destination], source[destination + 1], source[destination + 2]);
+    let sum = 0, weight = 0;
+    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
+      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
+        const sample = (sy * width + sx) * 4;
+        if (!source[sample + 3]) continue;
+        const sampleWeight = 1 / (1 + Math.hypot(sx - x, sy - y));
+        sum += luma(source[sample], source[sample + 1], source[sample + 2]) * sampleWeight;
+        weight += sampleWeight;
+      }
+    if (!weight) continue;
+    const detail = baseY - sum / weight;
+    if (Math.abs(detail) <= threshold) continue;
+    const nextY = baseY + detail * mix * 1.8;
+    const chromaR = source[destination] - baseY;
+    const chromaB = source[destination + 2] - baseY;
+    const nextRed = nextY + chromaR;
+    const nextBlue = nextY + chromaB;
+    const nextGreen = (nextY - nextRed * 0.299 - nextBlue * 0.114) / 0.587;
+    output[destination] = clampByte(nextRed);
+    output[destination + 1] = clampByte(nextGreen);
+    output[destination + 2] = clampByte(nextBlue);
+    output[destination + 3] = alpha;
+  }
+}
+
+
+/**
+ * Apply the offline Neural Filters local approximation.
+ *
+ * This is deliberately a deterministic image-space pipeline rather than a
+ * model invocation: visible neighbours provide a local luminance reference,
+ * colour-cast correction recentres the local channels, and a bounded
+ * high-pass residual restores texture. Transparent pixels and their hidden
+ * RGB padding are copied byte-for-byte.
+ */
+function applyNeuralEnhance(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const settings = effect.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS;
+  const luminanceGain = settings.luminance / 100;
+  const colorBalance = settings.color / 100;
+  const textureGain = settings.texture / 100;
+  const radius = Math.max(1, Math.min(4, effect.radius || 2));
+  const sourceLuminance = (r: number, g: number, b: number) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      const alpha = source[offset + 3];
+      if (alpha === 0) continue;
+      let count = 0;
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let sumLuminance = 0;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        const sy = Math.max(0, Math.min(height - 1, y + dy));
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          const sx = Math.max(0, Math.min(width - 1, x + dx));
+          const sample = (sy * width + sx) * 4;
+          if (source[sample + 3] === 0) continue;
+          const r = source[sample];
+          const g = source[sample + 1];
+          const b = source[sample + 2];
+          sumR += r;
+          sumG += g;
+          sumB += b;
+          sumLuminance += sourceLuminance(r, g, b);
+          count += 1;
+        }
+      }
+      if (!count) continue;
+      const meanR = sumR / count;
+      const meanG = sumG / count;
+      const meanB = sumB / count;
+      const meanLuminance = sumLuminance / count;
+      const currentR = source[offset];
+      const currentG = source[offset + 1];
+      const currentB = source[offset + 2];
+      const currentLuminance = sourceLuminance(currentR, currentG, currentB);
+      const recoveredLuminance = meanLuminance + (currentLuminance - meanLuminance) * (1 + luminanceGain * 0.8);
+      const detailLuminance = (currentLuminance - meanLuminance) * textureGain * 0.85;
+      const targetLuminance = clamp(recoveredLuminance + detailLuminance, 0, 255);
+      const correctedR = currentR + (meanLuminance - meanR) * colorBalance * 0.65;
+      const correctedG = currentG + (meanLuminance - meanG) * colorBalance * 0.65;
+      const correctedB = currentB + (meanLuminance - meanB) * colorBalance * 0.65;
+      const correctedLuminance = sourceLuminance(correctedR, correctedG, correctedB);
+      const scale = correctedLuminance > 0.001 ? targetLuminance / correctedLuminance : 1;
+      const mix = clamp(strength, 0, 1);
+      output[offset] = clampByte(currentR + (correctedR * scale - currentR) * mix);
+      output[offset + 1] = clampByte(currentG + (correctedG * scale - currentG) * mix);
+      output[offset + 2] = clampByte(currentB + (correctedB * scale - currentB) * mix);
+      output[offset + 3] = alpha;
+    }
   }
 }
 
@@ -3244,11 +3633,40 @@ function applyAddNoise(
   }
 }
 
+/**
+ * Render a bounded Photoshop-style High Pass residual. The result is a
+ * neutral-grey edge map whose detail is derived from the difference between
+ * the source and a Gaussian reference. Alpha and transparent RGB remain
+ * source-owned, so the effect stays safe for layered documents.
+ */
+function applyHighPass(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  amount: number,
+): void {
+  const reference = new Uint8ClampedArray(source);
+  applyGaussianBlur(source, width, height, radius, reference, 1);
+  const strength = clamp(amount / 100, 0, 1);
+  for (let offset = 0; offset < source.length; offset += 4) {
+    const alpha = source[offset + 3];
+    if (alpha === 0) continue;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const detail = source[offset + channel] - reference[offset + channel];
+      output[offset + channel] = clampByte(128 + detail * strength * 2);
+    }
+    output[offset + 3] = alpha;
+  }
+}
+
 export function applyFilterEffectsPixels(
   data: Uint8ClampedArray,
   width: number,
   height: number,
   value: Partial<FilterEffects> | undefined,
+  renderCenter?: { x: number; y: number },
 ): Uint8ClampedArray {
   validateDimensions(data, width, height);
   const effect = effectiveFilterEffects(value);
@@ -3275,6 +3693,8 @@ export function applyFilterEffectsPixels(
     applyGaussianBlur(data, width, height, effect.radius, output, strength);
   } else if (effect.type === 'sharpen') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
+  } else if (effect.type === 'high-pass') {
+    applyHighPass(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'unsharp-mask') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'sharpen-more') {
@@ -3357,8 +3777,16 @@ export function applyFilterEffectsPixels(
     applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
   } else if (effect.type === 'reduce-noise') {
     applyReduceNoise(data, width, height, effect, output, strength);
+  } else if (effect.type === 'ai-denoise') {
+    applyAiDenoise(data, width, height, effect, output, strength);
+  } else if (effect.type === 'ai-sharpen') {
+    applyAiSharpen(data, width, height, effect, output, strength);
   } else if (effect.type === 'add-noise') {
     applyAddNoise(data, width, height, effect, output);
+  } else if (effect.type === 'neural-enhance') {
+    applyNeuralEnhance(data, width, height, effect, output, strength);
+  } else if (effect.type === 'reflection-removal') {
+    applyReflectionRemoval(data, width, height, effect, output, strength);
   } else if (effect.type === 'mezzotint') {
     applyMezzotint(data, width, height, effect, output, strength);
   } else if (effect.type === 'fibers') {
@@ -3398,7 +3826,23 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'wind') {
     applyWind(data, width, height, effect, output, strength);
   } else if (effect.type === 'lens-correction') {
-    applyLensCorrection(data, width, height, effect, output);
+    applyLensCorrection(
+      data,
+      width,
+      height,
+      renderCenter ? { ...effect, centerX: renderCenter.x, centerY: renderCenter.y } : effect,
+      output,
+    );
+  } else if (effect.type === 'adaptive-wide-angle') {
+    applyAdaptiveWideAngle(
+      data,
+      width,
+      height,
+      renderCenter
+        ? { ...effect, centerX: renderCenter.x, centerY: renderCenter.y }
+        : effect,
+      output,
+    );
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
 

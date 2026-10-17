@@ -19,7 +19,7 @@ export function filterActionParameters(
     centerX: effect.centerX,
     centerY: effect.centerY,
     seed: effect.seed,
-    threshold: effect.threshold ?? 25,
+    threshold: effect.threshold ?? (effect.type === 'ai-denoise' ? 18 : effect.type === 'ai-sharpen' ? 22 : 25),
     noiseMonochromatic: effect.noiseMonochromatic === true,
     noiseDistribution: effect.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform',
     gradientShadow: effect.gradientMap?.shadow ?? '#000000',
@@ -37,7 +37,9 @@ export function filterActionParameters(
       ...(effect.mezzotint ? { mezzotint: effect.mezzotint } : {}),
       ...(effect.fibers ? { fibers: effect.fibers } : {}),
       ...(effect.tree ? { tree: effect.tree } : {}),
+      ...(effect.adaptiveWideAngle ? { adaptiveWideAngle: effect.adaptiveWideAngle } : {}),
       ...(effect.deinterlace ? { deinterlace: effect.deinterlace } : {}),
+      ...(effect.neuralEnhance ? { neuralEnhance: effect.neuralEnhance } : {}),
     }),
   };
 }

@@ -4,6 +4,9 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+const SIMPLE_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="#ff5c35"/></svg>',
+);
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -29,6 +32,89 @@ test('File menu opens local multi-input batch export and downloads a manifest ZI
   await page.getByRole('button', { name: 'Download batch ZIP' }).click();
   const download = await pending;
   expect(download.suggestedFilename()).toMatch(/pixelforge-images-batch\.zip$/);
+  expect(await download.failure()).toBeNull();
+});
+
+test('multi-input batch can package flattened PSD composites without lossy controls', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export images…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles([
+    { name: 'portrait.png', mimeType: 'image/png', buffer: ONE_PIXEL_PNG },
+  ]);
+  await page.getByLabel('Batch image export format').selectOption('psd');
+  await expect(page.getByLabel('Batch image export quality')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Build batch ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const download = await pending;
+  const path = await download.path();
+  const archive = await (await import('node:fs/promises')).readFile(path!);
+  expect(archive.includes(Buffer.from('8BPS'))).toBe(true);
+});
+
+test('multi-input batch can package flattened PDF pages without lossy controls', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export images…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles([
+    { name: 'portrait.png', mimeType: 'image/png', buffer: ONE_PIXEL_PNG },
+  ]);
+  await page.getByLabel('Batch image export format').selectOption('pdf');
+  await expect(page.getByLabel('Batch image export quality')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Build batch ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const path = await (await pending).path();
+  const archive = await (await import('node:fs/promises')).readFile(path!);
+  expect(archive.includes(Buffer.from('%PDF-1.4'))).toBe(true);
+});
+
+test('multi-input batch can decode a PixelForge single-page PDF composite', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  await page.getByLabel('Export format').selectOption('pdf');
+  const pendingPdf = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download image', exact: true }).click();
+  const pdfDownload = await pendingPdf;
+  const pdfPath = await pdfDownload.path();
+  const pdfBytes = await (await import('node:fs/promises')).readFile(pdfPath!);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export images…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles({
+    name: 'round-trip.pdf',
+    mimeType: 'application/pdf',
+    buffer: pdfBytes,
+  });
+  await page.getByRole('button', { name: 'Build batch ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const download = await pending;
+  expect(await download.failure()).toBeNull();
+});
+
+test('multi-input batch decodes safe SVG locally and reports unsafe SVG per file', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export images…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles([
+    { name: 'safe.svg', mimeType: 'image/svg+xml', buffer: SIMPLE_SVG },
+    { name: 'unsafe.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><image href="https://example.com/x.png"/></svg>') },
+  ]);
+  await page.getByRole('button', { name: 'Build batch ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/2 images/);
+  await expect(page.getByLabel('Batch image export failures')).toContainText('unsafe.svg');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const download = await pending;
   expect(await download.failure()).toBeNull();
 });
 

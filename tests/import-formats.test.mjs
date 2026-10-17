@@ -62,19 +62,19 @@ test('SVG is conditional flattened rasterization with vector-loss disclosure', (
     assert.match(info.disclosure, /flattened/);
     assert.match(info.disclosure, /vector paths/);
   }
-  assert.match(importFailureMessage(byName), /SVG rasterization/);
+  assert.match(importFailureMessage(byName), /safe local SVG/);
 });
 
-test('PDF is explicitly unsupported before browser decoding', () => {
+test('PDF is conditional single-page JPEG composite import', () => {
   for (const info of [
     describeImportFormat('proof.pdf', 'application/octet-stream'),
     describeImportFormat('proof.bin', 'application/pdf'),
   ]) {
     assert.deepEqual(
       { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
-      { format: 'pdf', capability: 'unsupported', tryDecode: false },
+      { format: 'pdf', capability: 'conditional', tryDecode: true },
     );
-    assert.match(info.disclosure, /PDF import is not supported/);
+    assert.match(info.disclosure, /single-page JPEG composite/);
   }
 });
 

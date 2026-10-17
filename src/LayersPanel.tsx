@@ -18,7 +18,9 @@ import {
   type LayerArrangeMode,
 } from './layerArrange';
 import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
+import { PATTERN_IDS, type PatternId } from './patternStamp';
 import { normalizeOpenType } from './openType';
+import { normalizeTextLanguage, TEXT_DIRECTIONS, TEXT_LANGUAGES } from './textLanguage';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 import {
   clippingCandidateBase,
@@ -39,6 +41,7 @@ type Props = {
   add: () => void;
   addAdjustment: () => void;
   addSmartObject: () => void;
+  nestSelectedAsSmartObject: () => void;
   replaceSmartObject: () => void;
   duplicate: () => void;
   remove: () => void;
@@ -77,6 +80,7 @@ export default function LayersPanel({
   add,
   addAdjustment,
   addSmartObject,
+  nestSelectedAsSmartObject,
   replaceSmartObject,
   duplicate,
   remove,
@@ -137,8 +141,23 @@ export default function LayersPanel({
   const updateDropShadow = (
     patch: Partial<LayerStyles['dropShadow']>,
   ) => updateStyles({ dropShadow: { ...styles.dropShadow, ...patch } });
+  const updateInnerShadow = (
+    patch: Partial<LayerStyles['innerShadow']>,
+  ) => updateStyles({ innerShadow: { ...styles.innerShadow, ...patch } });
+  const updateBevelEmboss = (
+    patch: Partial<LayerStyles['bevelEmboss']>,
+  ) => updateStyles({ bevelEmboss: { ...styles.bevelEmboss, ...patch } });
   const updateOutline = (patch: Partial<LayerStyles['outline']>) =>
     updateStyles({ outline: { ...styles.outline, ...patch } });
+  const updateColorOverlay = (
+    patch: Partial<LayerStyles['colorOverlay']>,
+  ) => updateStyles({ colorOverlay: { ...styles.colorOverlay, ...patch } });
+  const updateGradientOverlay = (
+    patch: Partial<LayerStyles['gradientOverlay']>,
+  ) => updateStyles({ gradientOverlay: { ...styles.gradientOverlay, ...patch } });
+  const updatePatternOverlay = (
+    patch: Partial<LayerStyles['patternOverlay']>,
+  ) => updateStyles({ patternOverlay: { ...styles.patternOverlay, ...patch } });
   const selectedLayers = frame.layers.filter((item) => selectedIds.has(item.id));
   const selectedGroupIds = new Set(selectedLayers.flatMap((item) => item.groupId ? [item.groupId] : []));
   const distributionGroup = selectedGroupIds.size === 1
@@ -247,6 +266,12 @@ export default function LayersPanel({
         </button>
         <button onClick={addSmartObject} disabled={frame.layers.length >= 32}>
           Add smart object
+        </button>
+        <button
+          onClick={nestSelectedAsSmartObject}
+          disabled={selectedIds.size === 0 || frame.layers.some((item) => selectedIds.has(item.id) && item.groupId !== undefined)}
+        >
+          Nest selected layers
         </button>
         <button
           onClick={replaceSmartObject}
@@ -656,6 +681,162 @@ export default function LayersPanel({
         <label>
           <input
             type="checkbox"
+            aria-label="Enable inner shadow"
+            checked={styles.innerShadow.enabled}
+            onChange={(event) =>
+              updateInnerShadow({ enabled: event.target.checked })
+            }
+          />
+          Inner shadow
+        </label>
+        <label className="layer-field">
+          Inner shadow color
+          <input
+            aria-label="Inner shadow color"
+            type="color"
+            value={styles.innerShadow.color}
+            onChange={(event) => updateInnerShadow({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Inner shadow opacity {Math.round(styles.innerShadow.opacity * 100)}%
+          <input
+            aria-label="Inner shadow opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.innerShadow.opacity * 100)}
+            onChange={(event) =>
+              updateInnerShadow({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <div className="layer-position">
+          <NumberField
+            label="Inner shadow X"
+            value={styles.innerShadow.offsetX}
+            min={-256}
+            max={256}
+            disabled={layerLocked}
+            apply={(value) => updateInnerShadow({ offsetX: value })}
+          />
+          <NumberField
+            label="Inner shadow Y"
+            value={styles.innerShadow.offsetY}
+            min={-256}
+            max={256}
+            disabled={layerLocked}
+            apply={(value) => updateInnerShadow({ offsetY: value })}
+          />
+        </div>
+        <label className="layer-field">
+          Inner shadow blur {Math.round(styles.innerShadow.blur)} px
+          <input
+            aria-label="Inner shadow blur"
+            type="range"
+            min="0"
+            max="64"
+            value={Math.round(styles.innerShadow.blur)}
+            onChange={(event) =>
+              updateInnerShadow({ blur: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label className="layer-field">
+          Inner shadow distance {Math.round(styles.innerShadow.distance)} px
+          <input
+            aria-label="Inner shadow distance"
+            type="range"
+            min="1"
+            max="32"
+            value={Math.round(styles.innerShadow.distance)}
+            onChange={(event) =>
+              updateInnerShadow({ distance: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable bevel emboss"
+            checked={styles.bevelEmboss.enabled}
+            onChange={(event) =>
+              updateBevelEmboss({ enabled: event.target.checked })
+            }
+          />
+          Bevel &amp; emboss
+        </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Bevel highlight
+            <input
+              aria-label="Bevel highlight color"
+              type="color"
+              value={styles.bevelEmboss.highlightColor}
+              onChange={(event) =>
+                updateBevelEmboss({ highlightColor: event.target.value })
+              }
+            />
+          </label>
+          <label className="layer-field">
+            Bevel shadow
+            <input
+              aria-label="Bevel shadow color"
+              type="color"
+              value={styles.bevelEmboss.shadowColor}
+              onChange={(event) =>
+                updateBevelEmboss({ shadowColor: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label className="layer-field">
+          Bevel opacity {Math.round(styles.bevelEmboss.opacity * 100)}%
+          <input
+            aria-label="Bevel opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.bevelEmboss.opacity * 100)}
+            onChange={(event) =>
+              updateBevelEmboss({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <div className="layer-position">
+          <NumberField
+            label="Bevel angle"
+            value={styles.bevelEmboss.angle}
+            min={-180}
+            max={180}
+            disabled={layerLocked}
+            apply={(value) => updateBevelEmboss({ angle: value })}
+          />
+          <NumberField
+            label="Bevel depth"
+            value={styles.bevelEmboss.depth}
+            min={1}
+            max={32}
+            disabled={layerLocked}
+            apply={(value) => updateBevelEmboss({ depth: value })}
+          />
+        </div>
+        <label className="layer-field">
+          Bevel blur {Math.round(styles.bevelEmboss.blur)} px
+          <input
+            aria-label="Bevel blur"
+            type="range"
+            min="0"
+            max="32"
+            value={Math.round(styles.bevelEmboss.blur)}
+            onChange={(event) =>
+              updateBevelEmboss({ blur: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
             aria-label="Enable outline"
             checked={styles.outline.enabled}
             onChange={(event) =>
@@ -696,6 +877,185 @@ export default function LayersPanel({
             value={Math.round(styles.outline.width)}
             onChange={(event) =>
               updateOutline({ width: Number(event.target.value) })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable color overlay"
+            checked={styles.colorOverlay.enabled}
+            onChange={(event) =>
+              updateColorOverlay({ enabled: event.target.checked })
+            }
+          />
+          Color overlay
+        </label>
+        <label className="layer-field">
+          Overlay color
+          <input
+            aria-label="Color overlay color"
+            type="color"
+            value={styles.colorOverlay.color}
+            onChange={(event) => updateColorOverlay({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Overlay opacity {Math.round(styles.colorOverlay.opacity * 100)}%
+          <input
+            aria-label="Color overlay opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.colorOverlay.opacity * 100)}
+            onChange={(event) =>
+              updateColorOverlay({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable gradient overlay"
+            checked={styles.gradientOverlay.enabled}
+            onChange={(event) =>
+              updateGradientOverlay({ enabled: event.target.checked })
+            }
+          />
+          Gradient overlay
+        </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Gradient start
+            <input
+              aria-label="Gradient overlay start color"
+              type="color"
+              value={styles.gradientOverlay.startColor}
+              onChange={(event) =>
+                updateGradientOverlay({ startColor: event.target.value })
+              }
+            />
+          </label>
+          <label className="layer-field">
+            Gradient end
+            <input
+              aria-label="Gradient overlay end color"
+              type="color"
+              value={styles.gradientOverlay.endColor}
+              onChange={(event) =>
+                updateGradientOverlay({ endColor: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label className="layer-field">
+          Gradient opacity {Math.round(styles.gradientOverlay.opacity * 100)}%
+          <input
+            aria-label="Gradient overlay opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.gradientOverlay.opacity * 100)}
+            onChange={(event) =>
+              updateGradientOverlay({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <div className="layer-position">
+          <NumberField
+            label="Gradient angle"
+            value={styles.gradientOverlay.angle}
+            min={-180}
+            max={180}
+            disabled={layerLocked}
+            apply={(value) => updateGradientOverlay({ angle: value })}
+          />
+          <label>
+            <input
+              type="checkbox"
+              aria-label="Reverse gradient overlay"
+              checked={styles.gradientOverlay.reverse}
+              onChange={(event) =>
+                updateGradientOverlay({ reverse: event.target.checked })
+              }
+            />
+            Reverse
+          </label>
+        </div>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable pattern overlay"
+            checked={styles.patternOverlay.enabled}
+            onChange={(event) =>
+              updatePatternOverlay({ enabled: event.target.checked })
+            }
+          />
+          Pattern overlay
+        </label>
+        <label className="layer-field">
+          Pattern
+          <select
+            aria-label="Pattern overlay pattern"
+            value={styles.patternOverlay.pattern}
+            onChange={(event) =>
+              updatePatternOverlay({ pattern: event.target.value as PatternId })
+            }
+          >
+            {PATTERN_IDS.map((pattern) => (
+              <option key={pattern} value={pattern}>
+                {pattern[0].toUpperCase() + pattern.slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Pattern foreground
+            <input
+              aria-label="Pattern overlay foreground"
+              type="color"
+              value={styles.patternOverlay.foregroundColor}
+              onChange={(event) =>
+                updatePatternOverlay({ foregroundColor: event.target.value })
+              }
+            />
+          </label>
+          <label className="layer-field">
+            Pattern background
+            <input
+              aria-label="Pattern overlay background"
+              type="color"
+              value={styles.patternOverlay.backgroundColor}
+              onChange={(event) =>
+                updatePatternOverlay({ backgroundColor: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label className="layer-field">
+          Pattern opacity {Math.round(styles.patternOverlay.opacity * 100)}%
+          <input
+            aria-label="Pattern overlay opacity"
+            type="range"
+            min="0"
+            max="100"
+            value={Math.round(styles.patternOverlay.opacity * 100)}
+            onChange={(event) =>
+              updatePatternOverlay({ opacity: Number(event.target.value) / 100 })
+            }
+          />
+        </label>
+        <label className="layer-field">
+          Pattern tile size {Math.round(styles.patternOverlay.tileSize)} px
+          <input
+            aria-label="Pattern overlay tile size"
+            type="range"
+            min="4"
+            max="128"
+            value={Math.round(styles.patternOverlay.tileSize)}
+            onChange={(event) =>
+              updatePatternOverlay({ tileSize: Number(event.target.value) })
             }
           />
         </label>
@@ -905,6 +1265,33 @@ export default function LayersPanel({
               );
             })()}
             <p className="adjust-note">Browser font shaping applies these portable flags when supported; no font files leave the device.</p>
+          </fieldset>
+          <fieldset className="layer-fieldset">
+            <legend>Language Options</legend>
+            {(() => {
+              const language = normalizeTextLanguage(layer.languageOptions);
+              return (
+                <>
+                  <label className="layer-field">
+                    Language
+                    <select aria-label="Text language" value={language.language} disabled={layerLocked} onChange={(e) => edit({ languageOptions: { ...language, language: e.target.value as typeof language.language } })}>
+                      {TEXT_LANGUAGES.map((value) => <option key={value} value={value}>{value === 'auto' ? 'Auto detect' : value.toUpperCase()}</option>)}
+                    </select>
+                  </label>
+                  <label className="layer-field">
+                    Direction
+                    <select aria-label="Text direction" value={language.direction} disabled={layerLocked} onChange={(e) => edit({ languageOptions: { ...language, direction: e.target.value as typeof language.direction } })}>
+                      {TEXT_DIRECTIONS.map((value) => <option key={value} value={value}>{value === 'auto' ? 'Auto' : value.toUpperCase()}</option>)}
+                    </select>
+                  </label>
+                  <label>
+                    <input type="checkbox" aria-label="Text hyphenation" checked={language.hyphenation} disabled={layerLocked} onChange={(e) => edit({ languageOptions: { ...language, hyphenation: e.target.checked } })} />
+                    Hyphenation intent
+                  </label>
+                </>
+              );
+            })()}
+            <p className="adjust-note">Language and direction stay local and preserve authored line breaks.</p>
           </fieldset>
           <label className="layer-field">
             Text color

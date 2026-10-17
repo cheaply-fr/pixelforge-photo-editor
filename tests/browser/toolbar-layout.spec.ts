@@ -69,12 +69,16 @@ test('wide editor palette expands to three columns without losing focus targets'
     };
   });
   expect(layout.columns).toBe(3);
-  expect(layout.xPositions.length).toBe(3);
+  // Compact one-slot categories can share a row with another category, while
+  // two-slot categories retain two global tracks. The packed layout therefore
+  // exposes up to five distinct button x positions without placeholder cells.
+  expect(layout.xPositions.length).toBeGreaterThanOrEqual(3);
+  expect(layout.xPositions.length).toBeLessThanOrEqual(5);
 
   const pen = page.getByRole('button', { name: 'Pen tool', exact: true });
   await pen.focus();
   await expect(pen).toBeFocused();
-  await expect(pen).toHaveAttribute('title', 'Pen (P)');
+  await expect(pen).toHaveAttribute('title', /Pen \(P\).*press and hold/i);
   await expect(
     page.getByRole('button', { name: 'Crop tool', exact: true }),
   ).toHaveAttribute('title', /press and hold/i);
@@ -100,13 +104,37 @@ test('family tools show Photoshop-style submenu arrows while singleton tools sta
     );
   }
 
-  for (const label of ['Move tool', 'Text tool', 'Pen tool']) {
+  for (const label of ['Move tool', 'Text tool']) {
     await expect(
       page.getByRole('button', { name: label, exact: true }).locator(
         '.tool-subtool-arrow',
       ),
     ).toHaveCount(0);
   }
+  await expect(
+    page.getByRole('button', { name: 'Pen tool', exact: true }).locator(
+      '.tool-subtool-arrow',
+    ),
+  ).toHaveCount(1);
+});
+
+test('Pen family exposes icon-bearing subtools and keeps one compact slot', async ({ page }) => {
+  await openEditor(page);
+  const pen = page.getByRole('button', { name: 'Pen tool', exact: true });
+  await expect(pen.locator('.tool-subtool-arrow')).toHaveCount(1);
+  await pen.focus();
+  await page.keyboard.press('ArrowDown');
+  const flyout = page.locator('[role="menu"]:visible');
+  for (const label of ['Pen', 'Freeform Pen', 'Curvature Pen']) {
+    const item = flyout.getByRole('menuitem', { name: label, exact: true });
+    await expect(item).toBeVisible();
+    await expect(item.locator('svg')).toHaveCount(1);
+    await expect(item.locator('kbd')).toHaveText('P');
+  }
+  await flyout.getByRole('menuitem', { name: 'Curvature Pen', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Curvature Pen tool', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pen tool', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Freeform Pen tool', exact: true })).toHaveCount(0);
 });
 
 test('short keyboard activation selects while directional keys and context menu open one anchored flyout', async ({
@@ -241,17 +269,17 @@ test('M/L/W flyouts retain Photoshop tool names and shortcuts', async ({ page })
   await page.keyboard.press('Escape');
 
   const selectionBrush = page.getByRole('button', { name: 'Selection Brush tool', exact: true });
-  await selectionBrush.focus();
+  await expect(selectionBrush.locator('.tool-subtool-arrow')).toHaveCount(0);
+  await selectionBrush.click();
+  const quickParent = page.getByRole('button', { name: 'Quick Selection tool', exact: true });
+  await quickParent.focus();
   await page.keyboard.press('ArrowDown');
   flyout = page.locator('[role="menu"]:visible');
-  const selection = flyout.getByRole('menuitem', { name: 'Selection Brush', exact: true });
   const quick = flyout.getByRole('menuitem', { name: 'Quick Selection', exact: true });
   const wand = flyout.getByRole('menuitem', { name: 'Magic Wand', exact: true });
-  await expect(selection).toBeVisible();
   await expect(quick).toBeVisible();
   await expect(wand).toBeVisible();
   await expect(quick.locator('svg')).toBeVisible();
-  await expect(selection.locator('kbd')).toHaveText('W');
   await expect(quick.locator('kbd')).toHaveText('W');
   await expect(wand.locator('kbd')).toHaveText('W');
 });
@@ -267,6 +295,16 @@ test('family variants occupy one category slot without duplicate toolbar ids', a
   expect(ids).toContain('selection-brush');
   expect(ids).toContain('lasso');
   expect(ids).not.toContain('polygonal-lasso');
+});
+
+test('measure tools and Selection Brush keep independent toolbar slots', async ({ page }) => {
+  await openEditor(page);
+  for (const label of ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Count', 'Selection Brush']) {
+    await expect(page.getByRole('button', { name: `${label} tool`, exact: true })).toBeVisible();
+  }
+  await expect(page.getByRole('button', { name: 'Eyedropper tool', exact: true }).locator('.tool-subtool-arrow')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Selection Brush tool', exact: true }).locator('.tool-subtool-arrow')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Quick Selection tool', exact: true }).locator('.tool-subtool-arrow')).toHaveCount(1);
 });
 
 test('family slots remember the last chosen subtool after switching tools', async ({ page }) => {
@@ -303,7 +341,7 @@ test('family subtool choice survives a reload through the local preference envel
   await expect(page.getByRole('button', { name: 'Lasso tool', exact: true })).toHaveCount(0);
 });
 
-test('categories stack in one column while their tools keep the responsive grid', async ({
+test('compact categories pack across tracks while larger categories keep full rows', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
@@ -313,10 +351,13 @@ test('categories stack in one column while their tools keep the responsive grid'
     const rects = categories.map((category) => {
       const rect = category.getBoundingClientRect();
       const grid = category.querySelector<HTMLElement>('.tool-category-grid');
+      const className = [...category.classList].find((item) => item.startsWith('tool-category--')) ?? '';
       return {
         left: Math.round(rect.left),
         right: Math.round(rect.right),
         top: Math.round(rect.top),
+        className,
+        gridColumn: getComputedStyle(category).gridColumn,
         gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
         gridClass: grid ? [...grid.classList].find((item) => item.startsWith('tool-category-grid--')) : undefined,
       };
@@ -324,13 +365,20 @@ test('categories stack in one column while their tools keep the responsive grid'
     return { rects, palette: element.getBoundingClientRect().toJSON() };
   });
   expect(layout.rects.length).toBeGreaterThan(4);
-  expect(new Set(layout.rects.map((rect) => rect.left)).size).toBe(1);
-  expect(new Set(layout.rects.map((rect) => rect.right)).size).toBe(1);
+  expect(new Set(layout.rects.map((rect) => rect.left)).size).toBeGreaterThan(1);
   expect(layout.rects.every((rect, index) => index === 0 || rect.top >= layout.rects[index - 1].top)).toBe(true);
   expect(layout.rects.every((rect) => rect.gridColumns === (
     rect.gridClass === 'tool-category-grid--one' ? 1 :
       rect.gridClass === 'tool-category-grid--two' ? 2 : 3
   ))).toBe(true);
+  expect(layout.rects.every((rect) => {
+    const expected = rect.className === 'tool-category--one' ? 'span 1'
+      : rect.className === 'tool-category--two' ? 'span 2' : '1 / -1';
+    return rect.gridColumn === expected;
+  })).toBe(true);
+  const packed = layout.rects.filter((rect) => rect.className.endsWith('--one'));
+  expect(packed.length).toBeGreaterThan(1);
+  expect(new Set(packed.map((rect) => rect.top)).size).toBeLessThan(packed.length);
 });
 
 test('category grids size to their compact tool count without trailing empty slots', async ({

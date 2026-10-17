@@ -111,6 +111,8 @@ export type Tool =
   | 'burn'
   | 'sponge'
   | 'smudge'
+  | 'blur'
+  | 'sharpen'
   | 'text'
   | 'pen'
   | 'freeform-pen'
@@ -146,6 +148,8 @@ export type Settings = {
   pressureSize?: boolean;
   /** Opt-in pen/touch pressure mapping for brush alpha. */
   pressureOpacity?: boolean;
+  /** Bounded response curve for enabled pen/touch pressure mappings. */
+  pressureCurve?: 'linear' | 'soft' | 'firm';
   /** Optional deterministic local Brush preset selected in the tool panel. */
   brushPreset?: BrushPresetId;
   /** User-authored local brush presets; pixels and remote references are never stored. */
@@ -356,6 +360,8 @@ function validSettings(settings: unknown): settings is Settings {
       'burn',
       'sponge',
       'smudge',
+      'blur',
+      'sharpen',
       'text',
       'pen',
       'freeform-pen',

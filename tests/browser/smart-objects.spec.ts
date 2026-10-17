@@ -6,7 +6,7 @@ const additiveModifier: 'Meta' | 'Control' =
 
 type Project = {
   history: Array<{
-    layers: Array<{ id: string; kind: string; asset?: string; sourceName?: string; linkId?: string; matrix: number[] }>;
+    layers: Array<{ id: string; kind: string; asset?: string; sourceName?: string; linkId?: string; matrix: number[]; contents?: { layers: Array<{ kind: string }> } }>;
     selectedLayerIds?: string[];
     artboards?: Array<{ id: string; name: string; x: number; y: number; w: number; h: number; visible?: boolean; locked?: boolean; layerIds?: string[] }>;
     activeArtboardId?: string;
@@ -102,8 +102,41 @@ test('embeds, transforms, replaces and rasterizes a source-retaining smart objec
 test('menu commands expose bounded smart-object lifecycle', async ({ page }) => {
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'New Smart Object…', exact: true })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Nest Selected Layers as Smart Object', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Replace Contents…', exact: true })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: 'Rasterize', exact: true })).toBeVisible();
+});
+
+test('nests selected root layers into editable child contents with pixel and reload round trips', async ({ page }) => {
+  const red = await fixture(page, [255, 0, 0]);
+  await add(page, 'red-source.png', red);
+  const rows = page.getByRole('button', { name: /^Select layer / });
+  await expect(rows).toHaveCount(2);
+  await rows.nth(0).click();
+  await rows.nth(1).click({ modifiers: [additiveModifier] });
+  await page.getByRole('button', { name: 'Nest selected layers', exact: true }).click();
+  await expect(page.getByText('Selected layers nested into an editable Smart Object', { exact: true })).toBeVisible();
+  const nested = await project(page);
+  const frame = nested.history[nested.index];
+  expect(frame.layers).toHaveLength(1);
+  const layer = frame.layers[0];
+  expect(layer.kind).toBe('smart-object');
+  expect(layer.sourceName).toMatch(/^Nested contents/);
+  expect(layer.contents?.layers).toHaveLength(2);
+  expect(await sample(page, 0, 0)).toEqual([255, 0, 0, 255]);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const undone = await project(page);
+  expect(undone.history[undone.index].layers).toHaveLength(2);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Redo/ }).click();
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  const restored = await project(page);
+  const restoredLayer = restored.history[restored.index].layers[0];
+  expect(restoredLayer.kind).toBe('smart-object');
+  expect(restoredLayer.contents?.layers).toHaveLength(2);
+  expect(await sample(page, 0, 0)).toEqual([255, 0, 0, 255]);
 });
 
 test('links selected smart-object contents and propagates replacement while preserving transforms', async ({ page }) => {

@@ -24,6 +24,107 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
+## Latest local increments (`language-options` on top of `302dbf7`)
+
+The current local candidate adds `Type → Language Options` as an accessible
+local workflow for editable text. It persists bounded language, writing
+direction and hyphenation intent metadata, applies browser-supported LTR/RTL
+direction during Canvas 2D rendering, and keeps authored line breaks, source
+text, undo history and portable project round trips intact. The dialog and
+Layers panel share the normalized values, legacy drafts remain valid and
+invalid values fail closed. Pure coverage passes **886/886**; the focused
+language-options desktop/mobile suite passes **4/4**, and adjacent typography
+plus editor acceptance passes **82/82**. Typecheck, lint and build pass
+locally. Hyphenation layout, full language-specific shaping and font embedding
+remain staged. The branch is still an open PR, so protected CI, merge,
+deployment and live-acceptance credit remain unearned for this increment.
+
+The preceding local candidate is `893bf60`. It adds `Image → Adjustments` as an
+accessible local family chooser for Levels, Curves, Hue/Saturation, Color
+Balance, and Sharpen and Noise, routing each choice through the existing
+nondestructive inspector controls. Its desktop/mobile acceptance passes
+**2/2**. The preceding increment adds `Image → Analysis → Histogram` with
+256-bin RGB/luminance statistics, transparency handling and channel controls;
+its focused desktop/mobile acceptance passes **2/2** and its pure coverage is
+included in the full suite. These menu-family surfaces do not claim full
+Photoshop adjustment-dialog or profile-aware analysis parity.
+
+Protected run `38963588498` passes for the exact candidate `a8eae77`, covering
+lint, typecheck, build, the full pure suite and desktop/mobile Playwright
+coverage. The production job was skipped because the candidate is still on
+open PR #149; deployment and live-acceptance credit therefore remain unearned.
+
+The preceding local candidate `2629cc5` adds `Edit → Generate Image…` as
+a bounded offline abstract renderer that inserts a deterministic gradient,
+stripes, dots or noise raster layer while enforcing prompt, dimension, pixel
+and layer limits. The pure normalisation/render cases pass **3/3** and the
+desktop/mobile dialog, editable-layer, dimension, reload and empty-input cases
+pass **4/4**. The full local pure suite is **880/880**, and the complete local
+desktop/mobile Playwright run is **1,025/1,025** after aligning two stale menu
+expectations with the now-enabled Generative Fill command. Typecheck, lint,
+build and the toolbar regression suite (**26/26**) also pass. Protected runs
+`38948652002` (source head) and `38952991183` (documentation head) passed,
+including the complete browser suite;
+deployment and live-acceptance credit remain unearned because PR #149 is still
+open. Production remains on the previously verified revision until those gates
+complete. See
+[`generate-image-contract.md`](./generate-image-contract.md).
+
+The toolbar layout hardening now lets one-slot categories consume one global
+track, two-slot categories consume two tracks, and larger categories retain a
+full row. This removes the large blank regions introduced when family slots
+were added while preserving family deduplication, visible subtool icons and
+hold-to-open behavior. The desktop/mobile toolbar suite passes **26/26** with
+explicit packed-track, no-placeholder and touch-target assertions. This is
+local UI evidence only; the protected run for the candidate remains the
+release gate.
+
+The current local candidate adds source-safe Blur and Sharpen brush tools to
+the Retouch category. Smudge, Blur and Sharpen share the Photoshop `R` family
+flyout with a bottom-right arrow and visible subtool icons; each exposes Size,
+Hardness and Flow, clips to the active selection, preserves source/alpha bytes,
+guards locked layers, commits one undoable raster asset and survives reload and
+portable project export. Pure retouch coverage is **3/3**, and the focused
+desktop/mobile browser suite is **6/6**. The candidate is not merged or
+deployed, so protected CI and live evidence remain separate gates.
+
+The protected Playwright gate now defaults to two isolated workers on CI, with
+`PLAYWRIGHT_WORKERS` as an override. This brings the full browser run inside
+the workflow budget while preserving the same test inventory; each worker owns
+an independent browser context and IndexedDB draft. This is a test-execution
+reliability change, not a product-capability claim.
+
+Lens Correction now uses a bounded source-pixel influence radius and forwards
+the tile-local authored centre through the renderer. `lens-correction` is in
+the explicit tiled neighbourhood allow-list, and its full-frame oracle matches
+the tiled output at seams. The pure tiled/filter checks pass **18/18** and the
+desktop/mobile Lens Correction acceptance passes **4/4**. The follow-up Layer
+Styles increment adds a nondestructive editable Color Overlay beside the
+existing bounded drop shadow and outline. It preserves the source asset and
+alpha, normalizes legacy style records, and survives undo, reload and portable
+project round trips; the focused desktop/mobile Layer Styles suite passes
+**8/8**, while the full pure suite passes **848/848**. Lint, typecheck and the
+production build pass locally; the build retains the known dynamic-import and
+large-chunk warnings. These commits are pushed to PR #149 but protected CI and
+deployment are still pending, so no production or live-acceptance credit is
+earned yet.
+
+The current nested Smart Object candidate extends the same bounded local
+contract: selected root-level layers can be wrapped in a recursive child
+`Frame`, rendered through the source-safe compositor, validated to four levels,
+and retained by recursive asset compaction. Layer-panel and Layer-menu entry
+points are covered by desktop/mobile acceptance, including representative
+pixels, undo, reload and portable project round trips. The focused Smart Object
+suite passes **10/10**. The follow-up Gradient Overlay style adds editable start/end colours, opacity,
+angle and reversal while retaining source pixels. The next Inner Shadow style
+adds bounded offsets, distance and blur, clips to source alpha and retains the
+source asset. The next Bevel/Emboss style adds directional highlight/shadow
+edge shading with bounded angle, depth and blur. The combined Layer Styles
+desktop/mobile suite passes **14/14**, the Smart Object suite passes **10/10**,
+and the pure suite passes **853/853**;
+typecheck, lint and build pass locally. These changes remain local evidence
+until protected CI, deployment and live revision checks complete.
+
 ## Current baseline
 
 The repository contains broad partial implementations across all eight stages. The current local code candidate (`d46ec09`, with its preceding roadmap commits) passes **825/825 pure tests**, including the linked smart-object selection contract, deterministic Wet Edges and Build-up brush-mask coverage, focused desktop/mobile tiled Gaussian Blur acceptance (**2/2**), tiled neighborhood coverage including plain Blur (**16/16**), toolbar taxonomy/preferences coverage (**13/13**), responsive toolbar acceptance (**22/22** across desktop and mobile), the desktop/mobile active blur-family batch Action acceptance (**2/2**), normalized filter-control Action persistence (**2/2**), Gradient Map color/stop Action persistence (**2/2**), and the plain Blur menu workflow (**2/2** across desktop and mobile), the distinct Camera Raw control/pixel contract with focused desktop/mobile acceptance (**14/14**), explicit Assign/Convert Profile workflows with focused desktop/mobile acceptance (**6/6**), bounded oriented/alpha-aware TIFF import coverage (**5/5** pure and **22/22** focused desktop/mobile browser checks), and bounded Text-tool font persistence plus Font Preview Size coverage (**8/8** focused desktop/mobile browser checks), plus the typecheck, lint and production-build checks. The layer workflow now exposes generic Link Layers, Unlink Layers and Select Linked Layers: ordinary selected layers persist a `layerLinkId`, affine transform deltas propagate across linked peers as one undoable edit, and source assets remain independent; smart-object content links retain their separate embedded source identity. External provider-backed, nested and cloud-synchronized links remain staged. Recorded Actions now route enabled plain, lens, iris, smart, surface and shape blur, Find Edges and Emboss through the same deterministic renderer used by editor filters when flattening a batch, and persist normalized filter amount/radius/angle/centre/seed plus Gradient Map colours, blend and bounded interior stops and effect-specific geometry/settings (radial and lens modes, blur paths/pins, tilt-shift, halftone, mezzotint, fibers, tree and de-interlace) without source data. The plain Blur command is also allow-listed for recording, serialization and replay, and enters the bounded tiled renderer with a fixed one-pixel overlap. The toolbar evidence covers one visible slot per subtool family, Photoshop-style submenu arrows, visible SVG flyout icons, remembered subtool selection, reload persistence and two/three-column layouts without duplicate IDs or trailing empty slots. Toolbar settings now also persist compact or comfortable category spacing, with desktop/mobile reload coverage; Reset defaults additionally clears remembered family choices and returns the active tool to Select, with desktop/mobile coverage in the toolbar settings suite. The tiled render status now exposes the selected device-aware cache budget so desktop/mobile budget evidence is observable at runtime. The deployed baseline remains `7495c1b4…`: protected run `38386650794` completed successfully for that SHA, including its production deploy. Independent live checks matched that SHA in `/release.json` and `/api/readyz.json`; DNS resolves through `photoeditor-cheaply.web.app` to `199.36.158.100`, TLS verifies for `photoeditor.cheaply.fr`, the editor reports `v0.1.0 · Server online · 7495c1b4…`, and the export dialog confirmed a downloaded 102,221-byte JPEG with metadata privacy disclosure. PR #136 remains open; protected run #639 for `d46ec09` completed successfully, and deployment/live verification for the candidate remain unproven.
@@ -260,6 +361,20 @@ The noise family now also includes `Filter → Noise → Despeckle`, a fixed-rad
 
 The Noise family now also includes `Filter → Noise → Reduce Noise…`, a bounded colour-weighted local filter with an editable preserve-details threshold. Pure and desktop/mobile tests cover representative smoothing, edge retention, transparent-RGB safety, source retention and project persistence.
 
+The advanced-correction increment now also includes `Filter → AI Denoise…` as
+a private deterministic Y’CbCr bilateral approximation with editable radius,
+edge-protection threshold and amount. Pure and desktop/mobile tests cover
+chroma smoothing, luminance-edge retention, transparent-RGB/source safety,
+Action defaults and project reload. Model-backed RAW and temporal denoising
+remain staged behind explicit privacy and capability contracts.
+
+The same increment now includes `Filter → AI Sharpen…` as a private
+deterministic luminance-detail approximation with editable radius, edge
+threshold and amount. Pure and desktop/mobile tests cover high-frequency edge
+enhancement, flat-field identity, transparent-RGB/source safety, Action
+defaults and project reload. Model-backed RAW priors, deconvolution and
+camera-aware sharpening remain staged.
+
 The current geometry increment adds `Filter → Distort → Twirl…`. It uses a
 bounded quadratically tapered rotational inverse map with premultiplied-alpha
 bilinear sampling, preserving source bytes and transparent edge RGB. Pure and
@@ -379,3 +494,45 @@ Semantic object/subject detection and provider-backed segmentation remain
 staged. The focused browser coverage checks representative mask pixels, source
 asset identity, undo, lock gating and both desktop/mobile projects. See
 [`mask-all-objects-contract.md`](mask-all-objects-contract.md).
+
+## High Pass filter increment
+
+`Filter → Other → High Pass…` is now enabled as a bounded neutral-grey local
+edge residual. Editable amount/radius metadata, source/alpha/transparent-RGB
+safety, locked-layer guards, undo, reload and portable-project round trips are
+covered by pure and desktop/mobile tests. Blend-mode compositing,
+channel-specific high-bit-depth processing and exact Photoshop parity remain
+staged; see [`high-pass-effect-contract.md`](high-pass-effect-contract.md).
+
+## Flattened PSD export increment
+
+The Export dialog now offers **PSD — flattened composite**. It writes a
+bounded version-1 8-bit RGB PSD with separate R, G, B and alpha planes from the
+rendered artboard. The encoder is deterministic, source-safe and limited to
+16 megapixels/30,000-pixel dimensions; empty color-mode, image-resource and
+layer/mask sections make the loss boundary explicit. PSD previews use the
+rendered PNG preview because browsers do not display PSD blobs. Pure tests
+round-trip the emitted bytes through the bounded PSD composite decoder and
+cover planar ordering, signatures and malformed dimensions; desktop/mobile
+export acceptance checks the download signature, disclosure and absence of
+quality/target-size controls. Layered PSD/PSB, profiles, metadata and editable
+document round trips remain staged; keep the `.pixelforge` project for editing.
+
+## Single-page PDF export increment
+
+The Export dialog now offers **PDF — flattened page**. It mattes the rendered
+composite to white, encodes one local JPEG image XObject on a deterministic
+single-page PDF, and omits layers, editable text, profiles, metadata and undo
+history. The encoder enforces the same 16-megapixel/30,000-pixel bounds as the
+other interchange outputs and runs on the main thread because it is a binary
+container encoder rather than an `image/*` browser MIME path. Pure tests cover
+the PDF header, catalog/page/image objects, JPEG embedding and malformed bounds;
+desktop/mobile tests cover the dialog disclosure, download signature and
+absence of quality/target-size controls. The matching import boundary now
+accepts only a bounded one-page DeviceRGB 8-bit JPEG image XObject, decodes it
+locally and publishes one flattened editable raster; parser tests cover image
+extraction, truncation, duplicate-image and dimension guards, and browser
+acceptance exports a real PDF then imports it back. General multi-page PDF,
+vector/text/font/profile/metadata support and editable PDF round trips remain
+staged; keep the `.pixelforge` project for editing. See
+[`pdf-import-contract.md`](pdf-import-contract.md).

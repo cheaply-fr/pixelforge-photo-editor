@@ -128,17 +128,17 @@ export function describeImportFormat(
       capability: 'conditional',
       tryDecode: true,
       disclosure:
-        'SVG import is conditional browser rasterization. It is flattened into editable pixels; vector paths, embedded fonts, external resources and source metadata are not retained.',
+        'SVG import is conditional local rasterization. Safe bounded markup is flattened into editable pixels; vector paths, embedded fonts, external resources and source metadata are not retained.',
     };
   }
   if (PDF_EXTENSIONS.has(extension) || hasMime(mimeType, ...PDF_MIME_TYPES)) {
     return {
       format: 'pdf',
       label: 'PDF',
-      capability: 'unsupported',
-      tryDecode: false,
+      capability: 'conditional',
+      tryDecode: true,
       disclosure:
-        'PDF import is not supported yet. Render the required page to PNG or JPEG first; page structure, vectors, text and PDF metadata are not retained.',
+        'PDF import reads a bounded single-page JPEG composite as a flattened editable raster; page structure, vectors, text, profiles and PDF metadata are not retained.',
     };
   }
   if (
@@ -193,11 +193,14 @@ export function importFailureMessage(info: ImportFormatInfo): string {
   if (info.format === 'heic') {
     return 'HEIC/HEIF decoding is unavailable in this browser. Convert it to PNG or JPEG; the current draft is unchanged.';
   }
+  if (info.format === 'pdf') {
+    return 'This PDF is not a supported single-page JPEG composite. Render the required page to PNG or JPEG; page structure, vectors, text and PDF metadata are not retained.';
+  }
   if (info.format === 'tiff') {
     return 'This TIFF is not a supported 8-bit chunky RGB/grayscale composite. Export a flattened PNG or JPEG; the current draft is unchanged.';
   }
   if (info.format === 'svg') {
-    return 'SVG rasterization is unavailable in this browser. Export a PNG or JPEG; the current draft is unchanged.';
+    return 'This SVG is not a supported safe local SVG. Remove scripts, external resources, unsupported units or oversized dimensions; the current draft is unchanged.';
   }
   return `${info.label} could not be decoded. Convert it to PNG or JPEG; the current draft is unchanged.`;
 }

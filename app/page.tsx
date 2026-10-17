@@ -5,6 +5,7 @@ import {
   Bookmark,
   Crop,
   Download,
+  Droplets,
   Eraser,
   FileImage,
   Copy,
@@ -82,6 +83,7 @@ import {
   inversePoint,
   localSize,
   multiply,
+  layerTransformMatrix,
   neutral,
   rasterFrame,
   replaceColorStroke,
@@ -100,6 +102,7 @@ import {
   type Frame,
   type Matrix,
   type Selection,
+  type SelectionTransform,
   type SelectionOperation,
   type SelectionPart,
   type TextAlign,
@@ -113,6 +116,8 @@ import {
   type CalculationMode,
 } from '../src/applyImage';
 import { normalizeTextWarp, TEXT_WARP_STYLES, type TextWarp } from '../src/textWarp';
+import LanguageOptionsDialog from '../src/LanguageOptionsDialog';
+import { normalizeTextLanguage, type TextLanguageSettings } from '../src/textLanguage';
 import { normalizeTextPathBinding } from '../src/textOnPath';
 import {
   createCustomBrushPreset,
@@ -160,6 +165,11 @@ import {
 } from '../src/performanceMarks';
 import LayersPanel from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
+import GenerativeUpscaleDialog from '../src/GenerativeUpscaleDialog';
+import {
+  planGenerativeUpscale,
+  type GenerativeUpscaleRequest,
+} from '../src/generativeUpscale';
 import ExportDialog from '../src/ExportDialog';
 import MetadataDialog from '../src/MetadataDialog';
 import BatchExportDialog from '../src/BatchExportDialog';
@@ -176,6 +186,18 @@ import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
+import PasteSpecialDialog from '../src/PasteSpecialDialog';
+import GenerativeFillDialog, {
+  type GenerativeFillRequest,
+} from '../src/GenerativeFillDialog';
+import PromptToEditDialog from '../src/PromptToEditDialog';
+import { parsePromptToEdit } from '../src/promptToEdit';
+import GenerateImageDialog from '../src/GenerateImageDialog';
+import {
+  normalizeGenerateImageRequest,
+  renderGeneratedImage,
+  type GenerateImageRequest,
+} from '../src/generateImage';
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
@@ -273,7 +295,9 @@ import {
   importFailureMessage,
 } from '../src/importFormats';
 import { decodePsdComposite } from '../src/psd';
+import { decodePdfComposite } from '../src/pdf';
 import { decodeTiffComposite } from '../src/tiff';
+import { prepareSvgBytes } from '../src/svg';
 import { renderSelection } from '../src/selections';
 import {
   refineSelectionAlpha,
@@ -306,6 +330,7 @@ import {
 } from '../src/pathBooleans';
 import { pathContours, transformPath } from '../src/paths';
 import { pathToSvg } from '../src/svgExport';
+import { cloneLayerCss } from '../src/cssExport';
 import { traceAlphaContours } from '../src/alphaContours';
 import { shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
 import { quickSelectionMask } from '../src/quickSelection';
@@ -341,6 +366,11 @@ import {
   type BrushMode,
 } from '../src/brush';
 import {
+  BRUSH_PRESSURE_CURVES,
+  normalizeBrushPressureCurve,
+  type BrushPressureCurve,
+} from '../src/brushPressure';
+import {
   BRUSH_PRESETS,
   brushPresetById,
   type BrushPresetId,
@@ -357,6 +387,10 @@ import {
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
+import {
+  pastePlacementMatrix,
+  type PasteSpecialMode,
+} from '../src/pasteSpecial';
 import {
   normalizeToolShortcutPreferences,
   toolShortcutMatches,
@@ -442,6 +476,7 @@ import {
   type PathModel,
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
+import { applyRetouchStroke } from '../src/retouch';
 import {
   DEFAULT_HISTORY_BRUSH,
   DEFAULT_ART_HISTORY_BRUSH,
@@ -467,6 +502,9 @@ import {
 } from '../src/patchTool';
 import {
   CONTENT_AWARE_MAX_OPERATIONS,
+  GENERATIVE_FILL_MAX_OPERATIONS,
+  GENERATIVE_FILL_MAX_RADIUS,
+  GENERATIVE_FILL_MAX_PROMPT,
   type ContentAwareFill,
 } from '../src/contentAwareCleanup';
 import {
@@ -482,6 +520,7 @@ import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_FIBERS_SETTINGS,
   DEFAULT_MEZZOTINT_SETTINGS,
+  DEFAULT_NEURAL_ENHANCE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
@@ -546,6 +585,9 @@ import {
 } from '../src/fontPreview';
 import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
+import HistogramDialog from '../src/HistogramDialog';
+import { buildHistogram, type HistogramData } from '../src/histogram';
+import AdjustmentsDialog, { type AdjustmentCommand } from '../src/AdjustmentsDialog';
 import MenuSettingsDialog from '../src/MenuSettingsDialog';
 import {
   MENU_PREFERENCES_STORAGE_KEY,
@@ -594,7 +636,11 @@ type Command =
   | 'content-aware-fill'
   | 'content-aware-move'
   | 'content-aware-scale'
+  | 'generative-fill'
+  | 'prompt-to-edit'
+  | 'generate-image'
   | 'resize'
+  | 'generative-upscale'
   | 'canvas-size'
   | 'trim'
   | 'reveal-all'
@@ -617,6 +663,7 @@ type Command =
   | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
+  | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
   | 'stroke-selection'
@@ -624,6 +671,7 @@ type Command =
   | 'new-fill-layer'
   | 'new-adjustment-layer'
   | 'new-smart-object'
+  | 'nest-smart-object'
   | 'replace-smart-object'
   | 'link-smart-objects'
   | 'select-linked-layers'
@@ -636,6 +684,7 @@ type Command =
   | 'matting'
   | 'duplicate-layer'
   | 'copy-svg'
+  | 'copy-css'
   | 'delete-layer'
   | 'rename-layer'
   | 'layer-style'
@@ -712,6 +761,11 @@ type Command =
   | 'create-clipping-mask'
   | 'release-clipping-mask'
   | 'free-transform'
+  | 'layer-rotate-90-cw'
+  | 'layer-rotate-90-ccw'
+  | 'layer-rotate-180'
+  | 'layer-flip-horizontal'
+  | 'layer-flip-vertical'
   | 'perspective-warp'
   | 'puppet-warp'
   | 'quick-mask'
@@ -747,6 +801,7 @@ type Command =
   | 'filter-box-blur'
   | 'filter-gaussian-blur'
   | 'filter-sharpen'
+  | 'filter-high-pass'
   | 'filter-unsharp-mask'
   | 'filter-sharpen-more'
   | 'filter-sharpen-edges'
@@ -775,7 +830,9 @@ type Command =
   | 'filter-fibers'
   | 'filter-difference-clouds'
   | 'filter-lens-correction'
+  | 'filter-adaptive-wide-angle'
   | 'filter-lens-flare'
+  | 'filter-vanishing-point'
   | 'filter-displace'
   | 'filter-pinch'
   | 'filter-liquify'
@@ -797,7 +854,11 @@ type Command =
   | 'filter-dust-scratches'
   | 'filter-despeckle'
   | 'filter-reduce-noise'
+  | 'filter-ai-denoise'
+  | 'filter-ai-sharpen'
   | 'filter-add-noise'
+  | 'filter-neural-filters'
+  | 'filter-reflection-removal'
   | 'filter-deinterlace'
   | 'filter-ntsc-colors'
   | 'filter-clear-effect'
@@ -815,8 +876,12 @@ type Command =
   | 'screen-full-menu'
   | 'screen-full'
   | 'font-preview-size'
+  | 'language-options'
   | 'missing-fonts'
-  | 'image-mode';
+  | 'image-mode'
+  | 'image-analysis'
+  | 'image-adjustments';
+
 type MenuItem = {
   label: string;
   shortcut?: string;
@@ -869,6 +934,8 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
   { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
+  { id: 'blur', label: 'Blur', icon: Droplets, key: 'R' },
+  { id: 'sharpen', label: 'Sharpen', icon: Sparkles, key: 'R' },
   { id: 'pen', label: 'Pen', icon: Pencil, key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: Pencil, key: 'P' },
   { id: 'curvature-pen', label: 'Curvature Pen', icon: Pencil, key: 'P' },
@@ -960,7 +1027,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   e: ['eraser', 'background-eraser', 'magic-eraser'],
   k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
   o: ['dodge', 'burn', 'sponge'],
-  r: ['rotate-view', 'smudge'],
+  r: ['rotate-view', 'smudge', 'blur', 'sharpen'],
   s: ['clone', 'pattern-stamp'],
   y: ['history-brush', 'art-history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
@@ -1009,6 +1076,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Paste Special…', command: 'paste-special' },
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
     { label: '', command: 'noop', separator: true },
@@ -1026,10 +1094,10 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Stroke…', command: 'stroke-selection' },
     { label: 'Content-Aware Fill…', command: 'content-aware-fill' },
     { label: 'Content-Aware Move…', command: 'content-aware-move' },
-    { label: 'Prompt to Edit…', command: 'noop', disabled: true },
-    { label: 'Generative Fill…', command: 'noop', disabled: true },
-    { label: 'Generate Image…', command: 'noop', disabled: true },
-    { label: 'Reflection Removal…', command: 'noop', disabled: true },
+    { label: 'Prompt to Edit…', command: 'prompt-to-edit' },
+    { label: 'Generative Fill…', command: 'generative-fill' },
+    { label: 'Generate Image…', command: 'generate-image' },
+    { label: 'Reflection Removal…', command: 'filter-reflection-removal' },
     { label: 'Remove Background…', command: 'remove-background' },
     { label: 'Cookie Cutter Mask…', command: 'cookie-cutter' },
     { label: '', command: 'noop', separator: true },
@@ -1038,7 +1106,11 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       shortcut: 'Ctrl+T',
       command: 'free-transform',
     },
-    { label: 'Transform', command: 'noop', disabled: true },
+    { label: 'Transform → Rotate 90° Clockwise', command: 'layer-rotate-90-cw' },
+    { label: 'Transform → Rotate 90° Counterclockwise', command: 'layer-rotate-90-ccw' },
+    { label: 'Transform → Rotate 180°', command: 'layer-rotate-180' },
+    { label: 'Transform → Flip Horizontal', command: 'layer-flip-horizontal' },
+    { label: 'Transform → Flip Vertical', command: 'layer-flip-vertical' },
     { label: 'Perspective Warp…', command: 'perspective-warp' },
     { label: 'Puppet Warp…', command: 'puppet-warp' },
     { label: 'Content-Aware Scale…', command: 'content-aware-scale' },
@@ -1060,7 +1132,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   ],
   Image: [
     { label: 'Mode', command: 'image-mode' },
-    { label: 'Adjustments', command: 'reset', disabled: true },
+    { label: 'Adjustments', command: 'image-adjustments' },
     { label: 'Levels…', command: 'levels' },
     { label: 'Curves…', command: 'curves' },
     { label: 'Hue/Saturation…', command: 'hue-saturation' },
@@ -1074,7 +1146,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Auto Color', command: 'auto-color' },
     { label: '', command: 'noop', separator: true },
     { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
-    { label: 'Generative Upscale…', command: 'noop', disabled: true },
+    { label: 'Generative Upscale…', command: 'generative-upscale' },
     { label: 'Canvas Size…', command: 'canvas-size' },
     { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
@@ -1093,7 +1165,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Duplicate…', command: 'duplicate-document' },
     { label: 'Apply Image…', command: 'apply-image' },
     { label: 'Calculations…', command: 'calculations' },
-    { label: 'Analysis', command: 'noop', disabled: true },
+    { label: 'Analysis', command: 'image-analysis' },
   ],
   Layer: [
     { label: 'New Paint Layer', command: 'new-layer' },
@@ -1103,6 +1175,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
       command: 'duplicate-layer',
     },
     { label: 'Copy SVG', command: 'copy-svg' },
+    { label: 'Copy CSS', command: 'copy-css' },
     { label: 'Delete Layer', command: 'delete-layer' },
     { label: '', command: 'noop', separator: true },
     { label: 'Quick Export document as PNG', command: 'png' },
@@ -1125,6 +1198,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Create Clipping Mask', command: 'create-clipping-mask' },
     { label: 'Release Clipping Mask', command: 'release-clipping-mask' },
     { label: 'New Smart Object…', command: 'new-smart-object' },
+    { label: 'Nest Selected Layers as Smart Object', command: 'nest-smart-object' },
     { label: 'Replace Contents…', command: 'replace-smart-object' },
     { label: 'Link Smart Object Contents', command: 'link-smart-objects' },
     { label: 'Select Linked Layers', command: 'select-linked-layers' },
@@ -1183,7 +1257,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Warp Text…', command: 'text-warp' },
     { label: 'Text on Path…', command: 'text-on-path' },
     { label: 'Font Preview Size', command: 'font-preview-size' },
-    { label: 'Language Options', command: 'noop', disabled: true },
+    { label: 'Language Options', command: 'language-options' },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'missing-fonts' },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
@@ -1228,14 +1302,15 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: '', command: 'noop', separator: true },
     { label: 'Last Filter', command: 'last-filter' },
     { label: 'Convert for Smart Filters', command: 'convert-smart-filters' },
-    { label: 'Neural Filters…', command: 'noop', disabled: true },
+    { label: 'Neural Filters…', command: 'filter-neural-filters' },
     { label: 'Filter Gallery…', command: 'filter-gallery' },
     { label: 'Camera Raw Filter…', command: 'camera-raw' },
-    { label: 'AI Denoise…', command: 'noop', disabled: true },
-    { label: 'AI Sharpen…', command: 'noop', disabled: true },
+    { label: 'AI Denoise…', command: 'filter-ai-denoise' },
+    { label: 'AI Sharpen…', command: 'filter-ai-sharpen' },
     { label: 'Lens Correction…', command: 'filter-lens-correction' },
+    { label: 'Adaptive Wide Angle…', command: 'filter-adaptive-wide-angle' },
     { label: 'Liquify…', command: 'filter-liquify' },
-    { label: 'Vanishing Point…', command: 'noop', disabled: true },
+    { label: 'Vanishing Point…', command: 'filter-vanishing-point' },
     { label: '', command: 'noop', separator: true },
     { label: 'Blur', command: 'noop', disabled: true },
     { label: 'Field Blur…', command: 'filter-field-blur' },
@@ -1302,6 +1377,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Video', command: 'noop', disabled: true },
     { label: 'De-Interlace…', command: 'filter-deinterlace' },
     { label: 'NTSC Colors', command: 'filter-ntsc-colors' },
+    { label: 'Other', command: 'noop', disabled: true },
+    { label: 'High Pass…', command: 'filter-high-pass' },
     { label: '', command: 'noop', separator: true },
     { label: 'Clear local filter effect', command: 'filter-clear-effect' },
     { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
@@ -1440,6 +1517,7 @@ type StampCanvasOptions = {
   pressure?: number;
   pressureSize?: boolean;
   pressureOpacity?: boolean;
+  pressureCurve?: BrushPressureCurve;
   spacing?: number;
   scatter?: number;
   texture?: number;
@@ -1514,6 +1592,7 @@ const stampCanvas = (
     pressure: options.pressure,
     pressureSize: options.pressureSize,
     pressureOpacity: options.pressureOpacity,
+    pressureCurve: options.pressureCurve,
     bristle: options.bristle,
     wetEdges: options.wetEdges,
     buildUp: options.buildUp,
@@ -1546,6 +1625,7 @@ const stampCanvas = (
       pressure: options.pressure,
       pressureSize: secondary.pressureSize,
       pressureOpacity: secondary.pressureOpacity,
+      pressureCurve: options.pressureCurve,
       bristle: options.bristle,
       wetEdges: options.wetEdges,
       buildUp: options.buildUp,
@@ -1584,6 +1664,7 @@ const stampCanvasSegment = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      pressureCurve: options.pressureCurve,
       spacing: options.spacing,
       angle: options.angle,
       roundness: options.roundness,
@@ -1634,6 +1715,7 @@ const patternCanvas = (
     pressure?: number;
     pressureSize?: boolean;
     pressureOpacity?: boolean;
+    pressureCurve?: BrushPressureCurve;
     spacing?: number;
     angle?: number;
     roundness?: number;
@@ -1667,6 +1749,7 @@ const patternCanvas = (
       pressure: options.pressure,
       pressureSize: options.pressureSize,
       pressureOpacity: options.pressureOpacity,
+      pressureCurve: options.pressureCurve,
       spacing: options.spacing,
       angle: options.angle,
       roundness: options.roundness,
@@ -2005,6 +2088,7 @@ export default function Home() {
     pendingMenuFocus = useRef<Record<MenuName, 'first' | 'last' | undefined>>(
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
+    commandDisabledRef = useRef<Record<string, boolean>>({}),
     smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new');
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
@@ -2039,7 +2123,7 @@ export default function Home() {
   const initialToolShortcutPreferences = readToolShortcutPreferences();
   const commandShortcutIds = Array.from(new Set(
     (Object.values(MENU_DEFS) as MenuItem[][]).flatMap((items) =>
-      items.filter((item) => item.shortcut && item.command !== 'noop').map((item) => item.command),
+      items.filter((item) => !item.separator && item.command !== 'noop').map((item) => item.command),
     ),
   ));
   const initialCommandShortcutPreferences = readCommandShortcutPreferences(commandShortcutIds);
@@ -2072,6 +2156,7 @@ export default function Home() {
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
+    [pressureCurve, setPressureCurve] = useState<BrushPressureCurve>('linear'),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
@@ -2131,8 +2216,11 @@ export default function Home() {
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
   });
+  const lastRFamilyTool = useRef<Tool>('smudge');
   const setTool = useCallback((next: Tool) => {
     setActiveTool(next);
+    if (next === 'smudge' || next === 'blur' || next === 'sharpen')
+      lastRFamilyTool.current = next;
     const family = flyoutForTool(next);
     if (family)
       setToolFamilyChoices((current) => {
@@ -2162,6 +2250,9 @@ export default function Home() {
     [menuSettingsOpen, setMenuSettingsOpen] = useState(false),
     [showDisabledMenuItems, setShowDisabledMenuItems] = useState(() => initialMenuPreferences.showDisabled),
     [filterGalleryOpen, setFilterGalleryOpen] = useState(false),
+    [analysisData, setAnalysisData] = useState<HistogramData | null>(null),
+    [adjustmentsOpen, setAdjustmentsOpen] = useState(false),
+    [languageOptionsOpen, setLanguageOptionsOpen] = useState(false),
     [toolbarSettingsOpen, setToolbarSettingsOpen] = useState(false),
     [toolbarColumns, setToolbarColumns] = useState<ToolbarColumns>(() => initialToolbarPreferences.columns),
     [toolbarDensity, setToolbarDensity] = useState<ToolbarDensity>(() => initialToolbarPreferences.density),
@@ -2202,12 +2293,20 @@ export default function Home() {
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [batchActionId, setBatchActionId] = useState<string>(),
     [fileInfoOpen, setFileInfoOpen] = useState(false),
+    [pasteSpecialOpen, setPasteSpecialOpen] = useState(false),
+    [generativeFillOpen, setGenerativeFillOpen] = useState(false),
+    [promptToEditOpen, setPromptToEditOpen] = useState(false),
+    [generateImageOpen, setGenerateImageOpen] = useState(false),
     [drag, setDrag] = useState(false),
     [resizing, setResizing] = useState<{
       width: number;
       height: number;
       imageSize?: Frame['imageSize'];
     } | null>(null);
+  const [generativeUpscaling, setGenerativeUpscaling] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
   const [canvasSizing, setCanvasSizing] = useState<{
     width: number;
     height: number;
@@ -2443,6 +2542,7 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    pressureCurve,
     brushPreset,
     customBrushPresets,
     customPatternPresets,
@@ -2520,6 +2620,7 @@ export default function Home() {
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
+    setPressureCurve(normalizeBrushPressureCurve(s.pressureCurve));
     setBrushPreset(s.brushPreset ?? 'round-hard');
     setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
@@ -2583,6 +2684,7 @@ export default function Home() {
     setHardness,
     setPressureSize,
     setPressureOpacity,
+    setPressureCurve,
     setBrushPreset,
     setCustomBrushPresets,
     setCustomPatternPresets,
@@ -2655,6 +2757,7 @@ export default function Home() {
     setBrushFlipY(preset.flipY ?? false);
     setPressureSize(preset.pressureSize);
     setPressureOpacity(preset.pressureOpacity);
+    setPressureCurve(normalizeBrushPressureCurve(preset.pressureCurve));
     setNotice(`Brush preset “${preset.label}” applied`);
   };
   const applyCustomBrushPreset = (preset: CustomBrushPreset) => {
@@ -2667,6 +2770,7 @@ export default function Home() {
     setBrushFlipY(preset.flipY);
     setPressureSize(preset.pressureSize);
     setPressureOpacity(preset.pressureOpacity);
+    setPressureCurve(normalizeBrushPressureCurve(preset.pressureCurve));
     setBrushSmoothing(preset.brushSmoothing);
     setBrushScatter(preset.brushScatter);
     setBrushTexture(preset.brushTexture);
@@ -2697,6 +2801,7 @@ export default function Home() {
         flipY: brushFlipY,
         pressureSize,
         pressureOpacity,
+        pressureCurve,
         brushSmoothing,
         brushScatter,
         brushTexture,
@@ -3855,6 +3960,17 @@ export default function Home() {
     }
     editLayer({ orientation });
   };
+  const applyLanguageOptions = (languageOptions: TextLanguageSettings) => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer || layer.kind !== 'text') {
+      setLanguageOptionsOpen(false);
+      setNotice('Select a text layer before changing language options');
+      return;
+    }
+    setLanguageOptionsOpen(false);
+    if (editLayer({ languageOptions: normalizeTextLanguage(languageOptions) }))
+      setNotice('Language options updated; undo restores the previous text direction');
+  };
   const setTextWarp = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || layer.kind !== 'text') {
@@ -4542,26 +4658,67 @@ export default function Home() {
       setLayerTransforming(false);
     }
   };
-  const applyPerspectiveWarp = async () => {
+  const applyLayerTransformPreset = (
+    label: string,
+    values: Pick<SelectionTransform, 'angle' | 'flipX' | 'flipY'>,
+  ) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before transforming a layer');
+      return;
+    }
+    const f = current();
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (!layer) {
+      setNotice('Select a layer before transforming it');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before transforming it');
+      return;
+    }
+    try {
+      const bounds = layerLocalBounds(layer, assets.current) as LayerTransformBounds;
+      const delta = layerTransformMatrix(bounds, layer.matrix, {
+        offsetX: 0,
+        offsetY: 0,
+        scaleX: 100,
+        scaleY: 100,
+        skewX: 0,
+        skewY: 0,
+        angle: values.angle,
+        flipX: values.flipX,
+        flipY: values.flipY,
+      });
+      if (commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...item, matrix: multiply(delta, layer.matrix) } : item,
+        ),
+      })) setNotice(`${label} applied`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `${label} failed`);
+    }
+  };
+  const applyPerspectiveWarp = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
-      setNotice('Select a raster or smart-object layer before using Perspective Warp');
+      setNotice(`Select a raster or smart-object layer before using ${mode}`);
       return;
     }
     if (layerIsLocked(f, layer) || !layer.visible) {
-      setNotice('Unlock and show the active layer before using Perspective Warp');
+      setNotice(`Unlock and show the active layer before using ${mode}`);
       return;
     }
     try {
       const image = await decodeAsset(assets.current[layer.asset]);
       const width = image.naturalWidth, height = image.naturalHeight;
       const defaultQuad = `10,10;${Math.max(11, width - 10)},10;${Math.max(11, width - 10)},${Math.max(11, height - 10)};10,${Math.max(11, height - 10)}`;
-      const input = window.prompt('Perspective Warp target quad (clockwise x,y; x,y; x,y; x,y)', defaultQuad);
+      const input = window.prompt(`${mode} target quad (clockwise x,y; x,y; x,y; x,y)`, defaultQuad);
       if (input === null) return;
       const points = input.split(';').map((entry) => entry.split(',').map((value) => Number(value.trim())));
       if (points.length !== 4 || points.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value)))) {
-        setNotice('Perspective Warp needs four numeric x,y points');
+        setNotice(`${mode} needs four numeric x,y points`);
         return;
       }
       const plan = planPerspectiveWarp(width, height, points.map(([x, y]) => ({ x, y })) as CropQuad);
@@ -4574,13 +4731,13 @@ export default function Home() {
       outputImage.data.set(warped);
       outputContext.putImageData(outputImage, 0, 0);
       if (current() !== f || current().active !== layer.id) {
-        setNotice('Perspective Warp cancelled because the document changed');
+        setNotice(`${mode} cancelled because the document changed`);
         return;
       }
       const asset = addAsset(assets.current, output);
-      if (editLayer({ asset })) setNotice('Perspective Warp applied locally; undo restores the source asset');
+      if (editLayer({ asset })) setNotice(`${mode} applied locally; undo restores the source asset`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not apply Perspective Warp');
+      setNotice(error instanceof Error ? error.message : `Could not apply ${mode}`);
     }
   };
   const applyPuppetWarp = async () => {
@@ -5197,6 +5354,156 @@ export default function Home() {
       setNotice('Content-Aware Fill could not be applied');
     }
   };
+  const applyGenerativeFill = async (request: GenerativeFillRequest) => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) {
+      setNotice('Create a selection before using Generative Fill');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster' || !layer.visible) {
+      setNotice('Select a visible raster layer before using Generative Fill');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Generative Fill');
+      return;
+    }
+    const generativeCount = (layer.contentAwareFills ?? []).filter((fill) => fill.mode === 'texture').length;
+    if (generativeCount >= GENERATIVE_FILL_MAX_OPERATIONS) {
+      setNotice(`This layer has ${GENERATIVE_FILL_MAX_OPERATIONS} local Generative Fill operations; export a copy before adding more`);
+      return;
+    }
+    const prompt = request.prompt.trim().slice(0, GENERATIVE_FILL_MAX_PROMPT);
+    const radius = Math.max(1, Math.min(GENERATIVE_FILL_MAX_RADIUS, Math.round(request.radius)));
+    const opacity = Math.max(0.01, Math.min(1, request.opacity / 100));
+    const seed = Math.max(0, Math.min(0xffffffff, Math.round(request.seed)));
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        mask = await selectionMaskForLayer(
+          f.selection,
+          f,
+          layer,
+          assets.current,
+          width,
+          height,
+        );
+      if (!mask || !mask.some((alpha) => alpha > 0)) {
+        setNotice('The selection does not intersect the active raster layer');
+        return;
+      }
+      if (current() !== f || current().active !== layer.id) {
+        setNotice('The document changed while Generative Fill was prepared');
+        return;
+      }
+      const maskCanvas = surface(width, height),
+        context = maskCanvas.getContext('2d');
+      if (!context) throw new Error('Generative Fill mask is unavailable');
+      const imageData = context.createImageData(width, height);
+      for (let index = 0; index < mask.length; index += 1) {
+        const offset = index * 4;
+        imageData.data[offset] = 255;
+        imageData.data[offset + 1] = 255;
+        imageData.data[offset + 2] = 255;
+        imageData.data[offset + 3] = mask[index];
+      }
+      context.putImageData(imageData, 0, 0);
+      const maskId = addAsset(assets.current, maskCanvas),
+        fill: ContentAwareFill = {
+          version: 1,
+          mask: maskId,
+          radius,
+          opacity,
+          mode: 'texture',
+          prompt,
+          seed,
+        };
+      if (editLayer({ contentAwareFills: [...(layer.contentAwareFills ?? []), fill] })) {
+        setGenerativeFillOpen(false);
+        setNotice('Local Generative Fill applied; prompt stayed private and source pixels remain editable');
+      }
+    } catch {
+      setNotice('Generative Fill could not be applied; the draft is unchanged');
+    }
+  };
+  const applyPromptToEdit = (value: string) => {
+    const parsed = parsePromptToEdit(value);
+    if (!parsed.ok) {
+      setNotice(parsed.reason);
+      return;
+    }
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !layer.visible) {
+      setNotice('Select a visible layer before using Prompt to Edit');
+      return;
+    }
+    if (layerIsLocked(f, layer)) {
+      setNotice('Unlock this layer before using Prompt to Edit');
+      return;
+    }
+    if (parsed.plan.reset) {
+      resetAdjustments();
+      setPromptToEditOpen(false);
+      setNotice('Prompt to Edit reset the selected layer adjustments locally');
+      return;
+    }
+    const patch = parsed.plan.patch;
+    const changed = adjust({
+      ...(patch.brightness === undefined ? {} : { brightness: patch.brightness }),
+      ...(patch.contrast === undefined ? {} : { contrast: patch.contrast }),
+      ...(patch.saturation === undefined ? {} : { saturation: patch.saturation }),
+      ...(patch.hue === undefined ? {} : { hue: patch.hue }),
+      ...(patch.blur === undefined ? {} : { blur: patch.blur }),
+      ...(patch.photoAdjustments
+        ? { photoAdjustments: { ...photoAdjustments, ...patch.photoAdjustments } }
+        : {}),
+      ...(patch.sharpenNoise
+        ? { sharpenNoise: { ...sharpenNoise, ...patch.sharpenNoise } }
+        : {}),
+    });
+    if (changed) {
+      setPromptToEditOpen(false);
+      setNotice(`Prompt to Edit applied locally: ${parsed.plan.summary}`);
+    }
+  };
+  const applyGenerateImage = (value: GenerateImageRequest) => {
+    const parsed = normalizeGenerateImageRequest(value);
+    if (!parsed.ok) {
+      setNotice(parsed.reason);
+      return;
+    }
+    const f = current();
+    if (f.layers.length >= 32) {
+      setNotice('32-layer limit reached; remove a layer before generating an image');
+      return;
+    }
+    try {
+      const image = surface(parsed.request.width, parsed.request.height);
+      const context = image.getContext('2d');
+      if (!context) throw new Error('Generate Image canvas is unavailable');
+      const pixels = context.createImageData(parsed.request.width, parsed.request.height);
+      pixels.data.set(renderGeneratedImage(parsed.request));
+      context.putImageData(pixels, 0, 0);
+      const layer: Layer = {
+        ...commonLayer('Generated Image'),
+        kind: 'raster',
+        asset: addAsset(assets.current, image),
+        matrix: translateMatrix(identity(), {
+          x: (f.w - parsed.request.width) / 2,
+          y: (f.h - parsed.request.height) / 2,
+        }),
+      };
+      if (addLayer(layer)) {
+        setGenerateImageOpen(false);
+        setNotice(`Local abstract image generated (${parsed.request.style}); the new raster layer remains editable`);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Generate Image failed; the document is unchanged');
+    }
+  };
   const applyContentAwareMove = async () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -5534,19 +5841,30 @@ export default function Home() {
                 ...(type === 'gradient-map' ? {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
                 } : {}),
+                ...(type === 'adaptive-wide-angle' ? {
+                  centerX: 0.5,
+                  centerY: 0.5,
+                  adaptiveWideAngle: { horizontal: 50, vertical: 50 },
+                } : {}),
+                ...(type === 'neural-enhance' ? {
+                  neuralEnhance: { ...DEFAULT_NEURAL_ENHANCE_SETTINGS },
+                } : {}),
                 ...(type === 'dust-scratches' ? { threshold: 12 } : {}),
-                ...(type === 'reduce-noise' ? { threshold: 25 } : {}),
+                ...(type === 'reduce-noise' ? { threshold: 25 } : type === 'ai-denoise' ? { threshold: 18 } : type === 'ai-sharpen' ? { threshold: 22 } : {}),
+                ...(type === 'reflection-removal' ? { threshold: 28 } : {}),
                 amount:
-                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise'
+                  type === 'fragment' || type === 'deinterlace' || type === 'ntsc-colors' || type === 'find-edges' || type === 'median' || type === 'dust-scratches' || type === 'despeckle' || type === 'reduce-noise' || type === 'ai-denoise' || type === 'ai-sharpen'
                     ? 100
                     : type === 'average-blur' ||
                   type === 'blur-more' ||
                   type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone'
                   || type === 'pointillize' || type === 'mezzotint' || type === 'fibers' || type === 'clouds' || type === 'difference-clouds' || type === 'picture-frame' || type === 'field-blur' || type === 'flame'
                     ? 85
-                  : type === 'lens-correction' || type === 'lens-flare'
+                  : type === 'lens-correction' || type === 'adaptive-wide-angle' || type === 'lens-flare'
                     ? 75
-                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
+                    : type === 'neural-enhance'
+                      ? 85
+                    : type === 'box-blur' || type === 'gaussian-blur' || type === 'high-pass' || type === 'lens-blur' || type === 'iris-blur' || type === 'smart-blur' || type === 'surface-blur' || type === 'shape-blur'
                       ? 85
                       : 70,
                 radius:
@@ -5560,12 +5878,18 @@ export default function Home() {
                     ? 18
                     : type === 'flame'
                       ? 16
+                    : type === 'high-pass'
+                      ? 3
+                    : type === 'reflection-removal'
+                      ? 4
                     : type === 'mosaic' || type === 'crystallize' || type === 'facet' || type === 'color-halftone' || type === 'mezzotint' || type === 'pointillize' || type === 'fibers'
                     ? 10
                     : type === 'clouds'
                       ? 16
                     : type === 'gradient-map'
                     ? 1
+                    : type === 'neural-enhance'
+                    ? 2
                     : type === 'median'
                     ? 2
                     : type === 'dust-scratches'
@@ -5574,7 +5898,11 @@ export default function Home() {
                     ? 1
                     : type === 'reduce-noise'
                     ? 2
-                    : type === 'lens-correction'
+                    : type === 'ai-denoise'
+                      ? 3
+                    : type === 'ai-sharpen'
+                      ? 2
+                    : type === 'lens-correction' || type === 'adaptive-wide-angle'
                       ? 64
                     : type === 'lens-flare'
                       ? 36
@@ -5811,6 +6139,7 @@ export default function Home() {
         hardness,
         pressureSize,
         pressureOpacity,
+        pressureCurve,
         brushPreset,
         customBrushPresets,
         customPatternPresets,
@@ -5914,6 +6243,7 @@ export default function Home() {
     hardness,
     pressureSize,
     pressureOpacity,
+    pressureCurve,
     brushPreset,
     customBrushPresets,
     customPatternPresets,
@@ -6167,6 +6497,33 @@ export default function Home() {
     setResizing(null);
     setNotice(
       `Image resized to ${plan.width} × ${plan.height}; layers remain editable`,
+    );
+  };
+  const generativeUpscale = async (request: GenerativeUpscaleRequest) => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before upscaling the document');
+      return;
+    }
+    const f = current();
+    let plan;
+    try {
+      plan = planGenerativeUpscale(f.w, f.h, request);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Upscale values are invalid');
+      return;
+    }
+    const next = await transformFrameWithMasks(
+      f,
+      [request.factor, 0, 0, request.factor, 0, 0],
+      assets.current,
+      plan.width,
+      plan.height,
+      request.method,
+    );
+    if (!commit(next)) return;
+    setGenerativeUpscaling(null);
+    setNotice(
+      `Local ${request.factor}× upscale created ${plan.width} × ${plan.height}; editable layers preserved`,
     );
   };
   const resizeCanvas = async (request: CanvasSizeRequest) => {
@@ -7012,6 +7369,21 @@ export default function Home() {
       setNotice('Could not serialize this layer as SVG');
     }
   };
+  const copyCss = async () => {
+    const f = current(), layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !['text', 'rectangle', 'ellipse', 'line', 'polygon', 'path'].includes(layer.kind)) {
+      setNotice('Select an editable text or vector layer before copying CSS');
+      return;
+    }
+    try {
+      const css = cloneLayerCss(layer, f.w, f.h);
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(css);
+      setNotice('CSS copied from the editable layer');
+    } catch {
+      setNotice('Could not serialize this layer as CSS');
+    }
+  };
   const copyMerged = async () => {
     const beforeFrame = current();
     const beforeIndex = index.current;
@@ -7053,10 +7425,11 @@ export default function Home() {
     clipboardLayer.current = null;
     setHasClipboard(false);
   };
-  const pasteLayer = () => {
+  const pasteLayerSpecial = async (mode: PasteSpecialMode = 'in-place') => {
     const copied = clipboardLayer.current;
     if (!copied) {
       setNotice('Copy a layer before pasting');
+      setPasteSpecialOpen(false);
       return;
     }
     const f = current();
@@ -7067,6 +7440,37 @@ export default function Home() {
     ) {
       clearClipboard();
       setNotice('The copied layer is no longer available in this document');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    if (mode === 'into-selection' && !f.selection) {
+      setNotice('Create a selection before pasting into it');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    if (mode === 'into-selection' && !isMaskableLayer(copied)) {
+      setNotice('Paste into Selection requires an image or smart-object layer');
+      setPasteSpecialOpen(false);
+      return;
+    }
+    let matrix = copied.matrix;
+    let mask: string | undefined;
+    try {
+      matrix = pastePlacementMatrix(
+        copied.matrix,
+        layerLocalBounds(copied, assets.current),
+        { width: f.w, height: f.h },
+        mode,
+      );
+      if (mode === 'into-selection' && f.selection) {
+        mask = addAsset(
+          assets.current,
+          await renderSelection(f.selection, f.w, f.h, assets.current),
+        );
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Paste placement failed');
+      setPasteSpecialOpen(false);
       return;
     }
     const copiedGroup = copied.groupId
@@ -7077,13 +7481,24 @@ export default function Home() {
       id: crypto.randomUUID(),
       name: `${copied.name} copy`.slice(0, 160),
       locked: false,
+      matrix,
+      ...(mask ? { mask, maskEnabled: true, maskInverted: false } : {}),
       ...(copiedGroup && !copiedGroup.locked
         ? { groupId: copiedGroup.id }
         : { groupId: undefined }),
     } as Layer;
-    addLayer(pasted);
-    setNotice('Layer pasted');
+    if (addLayer(pasted)) {
+      setPasteSpecialOpen(false);
+      setNotice(
+        mode === 'center'
+          ? 'Layer pasted at canvas centre'
+          : mode === 'into-selection'
+            ? 'Layer pasted into the selection with a nondestructive mask'
+            : 'Layer pasted in place',
+      );
+    }
   };
+  const pasteLayer = () => void pasteLayerSpecial('in-place');
   const cutLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -7652,7 +8067,30 @@ export default function Home() {
       context.putImageData(imageData, 0, 0);
       return canvas;
     }
-    const url = URL.createObjectURL(selected);
+    if (importInfo.format === 'pdf') {
+      const bytes = new Uint8Array(await selected.arrayBuffer());
+      const decoded = decodePdfComposite(bytes);
+      const url = URL.createObjectURL(new Blob([decoded.jpeg.buffer as ArrayBuffer], { type: 'image/jpeg' }));
+      const image = new Image();
+      try {
+        image.src = url;
+        await image.decode();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+      if (image.naturalWidth !== decoded.width || image.naturalHeight !== decoded.height)
+        throw new Error('PDF image dimensions do not match its page declaration.');
+      const canvas = surface(decoded.width, decoded.height);
+      canvas.getContext('2d')!.drawImage(image, 0, 0);
+      return canvas;
+    }
+    let imageSource: Blob = selected;
+    let preparedSvg: ReturnType<typeof prepareSvgBytes> | undefined;
+    if (importInfo.format === 'svg') {
+      preparedSvg = prepareSvgBytes(new Uint8Array(await selected.arrayBuffer()));
+      imageSource = new Blob([preparedSvg.markup], { type: 'image/svg+xml' });
+    }
+    const url = URL.createObjectURL(imageSource);
     const image = new Image();
     try {
       image.src = url;
@@ -7666,6 +8104,10 @@ export default function Home() {
       image.height > 16000
     )
       throw new Error('Image exceeds 16 megapixels. Current draft unchanged.');
+    if (preparedSvg?.width !== undefined && image.naturalWidth !== preparedSvg.width)
+      throw new Error('SVG width does not match its declared pixel width.');
+    if (preparedSvg?.height !== undefined && image.naturalHeight !== preparedSvg.height)
+      throw new Error('SVG height does not match its declared pixel height.');
     const canvas = surface(image.width, image.height);
     canvas.getContext('2d')!.drawImage(image, 0, 0);
     return canvas;
@@ -7711,6 +8153,8 @@ export default function Home() {
           ? `HEIC/HEIF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
           : importInfo.format === 'tiff'
             ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
+            : importInfo.format === 'pdf'
+              ? `PDF imported as a flattened single-page raster${asLayer ? ' layer' : ''}; page structure, vectors, text and PDF metadata omitted`
             : importInfo.format === 'svg'
               ? `SVG rasterized as a flattened raster${asLayer ? ' layer' : ''}; vector data and external resources omitted`
           : asLayer
@@ -7719,7 +8163,7 @@ export default function Home() {
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'pdf' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -7767,7 +8211,7 @@ export default function Home() {
           layers: original.layers.map((layer) =>
             layer.kind === 'smart-object' &&
             (layer.id === target.id || (linkedId !== undefined && layer.linkId === linkedId))
-              ? { ...layer, asset, sourceName }
+              ? { ...layer, asset, sourceName, contents: undefined }
               : layer,
           ),
         };
@@ -7809,6 +8253,8 @@ export default function Home() {
             ? 'HEIC/HEIF embedded as a flattened raster smart object; source metadata omitted'
             : importInfo.format === 'tiff'
               ? 'TIFF embedded as a flattened raster smart object; source metadata omitted'
+              : importInfo.format === 'pdf'
+                ? 'PDF embedded as a flattened single-page raster smart object; page structure, vectors, text and PDF metadata omitted'
               : importInfo.format === 'svg'
                 ? 'SVG embedded as a flattened raster smart object; vector data and external resources omitted'
               : 'Embedded smart object added',
@@ -7816,7 +8262,7 @@ export default function Home() {
       }
     } catch (error) {
       setNotice(
-        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'svg'
+        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'pdf' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -7824,6 +8270,71 @@ export default function Home() {
       );
     } finally {
       if (smartObjectFile.current) smartObjectFile.current.value = '';
+    }
+  };
+  const nestSelectedAsSmartObject = async () => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before nesting layers');
+      return;
+    }
+    const original = current();
+    const selected = selectedLayersForFrame(original);
+    if (!selected.length) {
+      setNotice('Select one or more layers to nest');
+      return;
+    }
+    if (selected.some((layer) => layer.groupId)) {
+      setNotice('Select root-level layers before nesting them');
+      return;
+    }
+    if (selected.some((layer) => layerIsLocked(original, layer))) {
+      setNotice('Unlock every selected layer before nesting them');
+      return;
+    }
+    const nested: Frame = {
+      w: original.w,
+      h: original.h,
+      ...(original.colorMode ? { colorMode: original.colorMode } : {}),
+      ...(original.colorProfile ? { colorProfile: original.colorProfile } : {}),
+      ...(original.imageSize ? { imageSize: original.imageSize } : {}),
+      layers: selected.map((layer) => ({ ...layer, groupId: undefined })),
+      active: selected.some((layer) => layer.id === original.active)
+        ? original.active
+        : selected[0].id,
+      selectedLayerIds: selected.map((layer) => layer.id),
+    };
+    try {
+      const rendered = await renderFrame(nested, assets.current);
+      if (current() !== original) {
+        setNotice('Nesting cancelled because the document changed');
+        return;
+      }
+      const asset = addAsset(assets.current, rendered),
+        sourceName = `Nested contents · ${selected.length} layer${selected.length === 1 ? '' : 's'}`,
+        nestedLayer: Layer = {
+          ...commonLayer(sourceName),
+          kind: 'smart-object',
+          asset,
+          sourceName,
+          contents: nested,
+        },
+        selectedIds = new Set(selected.map((layer) => layer.id)),
+        firstIndex = Math.min(...selected.map((layer) => original.layers.findIndex((item) => item.id === layer.id))),
+        layersBefore = original.layers.slice(0, firstIndex).filter((layer) => !selectedIds.has(layer.id)),
+        layersAfter = original.layers.slice(firstIndex).filter((layer) => !selectedIds.has(layer.id)),
+        groups = (original.groups || []).filter((group) =>
+          original.layers.some((layer) => !selectedIds.has(layer.id) && layer.groupId === group.id),
+        );
+      if (commit({
+        ...original,
+        layers: [...layersBefore, nestedLayer, ...layersAfter],
+        groups: groups.length ? groups : undefined,
+        active: nestedLayer.id,
+        selectedLayerIds: [nestedLayer.id],
+      }))
+        setNotice('Selected layers nested into an editable Smart Object');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not nest the selected layers');
     }
   };
   const chooseSmartObjectFile = (replace: boolean, fitToArtboard = false) => {
@@ -7858,6 +8369,7 @@ export default function Home() {
               asset: sourceObject.asset,
               sourceName: sourceObject.sourceName,
               linkId,
+              ...(sourceObject.contents ? { contents: sourceObject.contents } : { contents: undefined }),
             }
           : layer,
       ),
@@ -8521,6 +9033,8 @@ export default function Home() {
         'burn',
         'sponge',
         'gradient',
+        'blur',
+        'sharpen',
         'mixer-brush',
         'history-brush',
         'art-history-brush',
@@ -9014,6 +9528,70 @@ export default function Home() {
       await g.pending;
       return;
     }
+    if (tool === 'blur' || tool === 'sharpen') {
+      if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
+        setNotice(`Select a visible, unlocked raster layer before ${tool === 'blur' ? 'blurring' : 'sharpening'}`);
+        return;
+      }
+      const g = {
+        tool,
+        start: local,
+        last: local,
+        frame: f,
+        layer,
+        lastPressure: pressure(e),
+        pointerType: e.pointerType,
+        moved: false,
+        queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+      } as Gesture;
+      gesture.current = g;
+      g.pending = (async () => {
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]),
+            source = surface(image.naturalWidth, image.naturalHeight),
+            buffer = surface(image.naturalWidth, image.naturalHeight),
+            sourceContext = source.getContext('2d')!,
+            bufferContext = buffer.getContext('2d')!;
+          sourceContext.drawImage(image, 0, 0);
+          bufferContext.drawImage(image, 0, 0);
+          if (gesture.current !== g) return;
+          g.source = source;
+          g.buffer = buffer;
+          g.selectionMask = await selectionMaskForLayer(f.selection, f, layer, assets.current, image.naturalWidth, image.naturalHeight);
+          if (gesture.current !== g) return;
+          let from = g.start;
+          for (const queued of g.queued || []) {
+            const result = applyRetouchStroke(
+              new Uint8ClampedArray(sourceContext.getImageData(0, 0, source.width, source.height).data),
+              new Uint8ClampedArray(bufferContext.getImageData(0, 0, buffer.width, buffer.height).data),
+              {
+                width: buffer.width,
+                height: buffer.height,
+                x1: from.x,
+                y1: from.y,
+                x2: queued.x,
+                y2: queued.y,
+                size: localSize(layer.matrix, size),
+                hardness,
+                flow: brushOpacity / 100,
+                mode: tool,
+                selectionMask: g.selectionMask,
+              },
+            );
+            bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+            g.changed = Boolean(g.changed || result.changed);
+            from = queued;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          gesture.current = null;
+          setNotice(`Could not prepare ${tool === 'blur' ? 'Blur' : 'Sharpen'} tool`);
+        }
+      })();
+      await g.pending;
+      return;
+    }
     if (tool === 'mixer-brush' || tool === 'history-brush' || tool === 'art-history-brush') {
       if (layerIsLocked(f, layer) || !layer.visible || layer.kind !== 'raster') {
         const label = tool === 'mixer-brush' ? 'Mixer Brush' : tool === 'history-brush' ? 'History Brush' : 'Art History Brush';
@@ -9324,6 +9902,7 @@ export default function Home() {
             pressure: point.pressure,
             pressureSize,
             pressureOpacity,
+            pressureCurve,
             spacing: brushSpacing,
             angle: brushAngle,
             roundness: brushRoundness,
@@ -9396,6 +9975,7 @@ export default function Home() {
                 pressure: point.pressure,
                 pressureSize,
                 pressureOpacity,
+                pressureCurve,
                 spacing: brushSpacing,
                 angle: brushAngle,
                 roundness: brushRoundness,
@@ -9784,6 +10364,7 @@ export default function Home() {
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
               pressureOpacity: tool !== 'pencil' && pressureOpacity,
+              pressureCurve,
               spacing: brushSpacing,
               scatter: brushScatter,
               texture: brushTexture,
@@ -10025,6 +10606,7 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize,
         pressureOpacity,
+        pressureCurve,
         spacing: brushSpacing,
         angle: brushAngle,
         roundness: brushRoundness,
@@ -10049,6 +10631,7 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize,
           pressureOpacity,
+          pressureCurve,
           spacing: brushSpacing,
           angle: brushAngle,
           roundness: brushRoundness,
@@ -10171,6 +10754,32 @@ export default function Home() {
       });
       g.changed = Boolean(g.changed || changed);
       void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.last = local;
+      return;
+    }
+    if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.source && g.layer) {
+      const sourceContext = g.source.getContext('2d')!,
+        bufferContext = g.buffer.getContext('2d')!,
+        result = applyRetouchStroke(
+          new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
+          new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
+          {
+            width: g.buffer.width,
+            height: g.buffer.height,
+            x1: g.last.x,
+            y1: g.last.y,
+            x2: local.x,
+            y2: local.y,
+            size: localSize(g.layer.matrix, size),
+            hardness,
+            flow: brushOpacity / 100,
+            mode: g.tool,
+            selectionMask: g.selectionMask,
+          },
+        );
+      bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+      g.changed = Boolean(g.changed || result.changed);
+      void paint(g.frame, { [g.layer.id]: g.buffer });
       g.last = local;
       return;
     }
@@ -10927,6 +11536,7 @@ export default function Home() {
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
           pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+          pressureCurve,
           spacing: brushSpacing,
           scatter: brushScatter,
           texture: brushTexture,
@@ -11265,6 +11875,7 @@ export default function Home() {
             pressure: g.lastPressure ?? pressure(e),
             pressureSize,
             pressureOpacity,
+            pressureCurve,
             spacing: brushSpacing,
             angle: brushAngle,
             roundness: brushRoundness,
@@ -11413,6 +12024,39 @@ export default function Home() {
         })
       )
         setNotice('Smudge stroke applied');
+    } else if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.layer && g.source) {
+      let changed = Boolean(g.changed);
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y)) {
+        const sourceContext = g.source.getContext('2d')!,
+          bufferContext = g.buffer.getContext('2d')!,
+          result = applyRetouchStroke(
+            new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
+            new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
+            {
+              width: g.buffer.width,
+              height: g.buffer.height,
+              x1: g.last.x,
+              y1: g.last.y,
+              x2: local.x,
+              y2: local.y,
+              size: localSize(g.layer.matrix, size),
+              hardness,
+              flow: brushOpacity / 100,
+              mode: g.tool,
+              selectionMask: g.selectionMask,
+            },
+          );
+        bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+        changed = result.changed || changed;
+      }
+      if (!changed) {
+        void paint(f);
+        setNotice(`No ${g.tool === 'blur' ? 'Blur' : 'Sharpen'} change applied`);
+        return;
+      }
+      const asset = addAsset(assets.current, g.buffer);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
+        setNotice(`${g.tool === 'blur' ? 'Blur' : 'Sharpen'} stroke applied`);
     } else if (
       (g.tool === 'dodge' || g.tool === 'burn' || g.tool === 'sponge') &&
       g.buffer &&
@@ -11812,6 +12456,11 @@ export default function Home() {
         commandShortcutMatches(binding, e),
       )?.[0] as Command | undefined;
       if (customCommand) {
+        if (commandDisabledRef.current[customCommand]) {
+          e.preventDefault();
+          setNotice('That menu command is disabled for the current document');
+          return;
+        }
         e.preventDefault();
         runCommandRef.current?.(customCommand);
         return;
@@ -11909,6 +12558,23 @@ export default function Home() {
       }
       if (e.altKey) return;
       const lower = e.key.toLowerCase();
+      // Photoshop keeps Rotate View on the plain R press while Shift+R
+      // returns to the active retouch member of the R family. Preserve that
+      // affordance even though Blur and Sharpen now share the same flyout.
+      if (lower === 'r') {
+        e.preventDefault();
+        const next = e.shiftKey
+          ? (tool === 'rotate-view' ? lastRFamilyTool.current : tool)
+          : 'rotate-view';
+        setTool(next as Tool);
+        setNotice(
+          toolSelectionNotice(
+            next as Tool,
+            TOOLS.find((item) => item.id === next)?.label || next,
+          ),
+        );
+        return;
+      }
       const group = TOOL_GROUPS[lower];
       if (group) {
         e.preventDefault();
@@ -11959,6 +12625,18 @@ export default function Home() {
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   });
+  const openHistogram = async () => {
+    const snapshot = current();
+    try {
+      const composite = await renderFrame(snapshot, assets.current);
+      const context = composite.getContext('2d');
+      if (!context) throw new Error('Histogram canvas is unavailable');
+      const pixels = context.getImageData(0, 0, snapshot.w, snapshot.h).data;
+      setAnalysisData(buildHistogram(pixels));
+    } catch {
+      setNotice('Histogram analysis could not render this document');
+    }
+  };
   const runCommand = async (command: Command) => {
     if (command === 'noop') return;
     if (command === 'search-commands') {
@@ -11971,6 +12649,14 @@ export default function Home() {
     }
     if (command === 'actions') {
       setActionsOpen(true);
+      return;
+    }
+    if (command === 'image-analysis') {
+      await openHistogram();
+      return;
+    }
+    if (command === 'image-adjustments') {
+      setAdjustmentsOpen(true);
       return;
     }
     if (
@@ -11997,6 +12683,14 @@ export default function Home() {
         height: current().h,
         imageSize: effectiveImageSize(current().imageSize),
       });
+    else if (command === 'generative-upscale')
+      setGenerativeUpscaling({ width: current().w, height: current().h });
+    else if (command === 'generative-fill')
+      setGenerativeFillOpen(true);
+    else if (command === 'prompt-to-edit')
+      setPromptToEditOpen(true);
+    else if (command === 'generate-image')
+      setGenerateImageOpen(true);
     else if (command === 'canvas-size')
       setCanvasSizing({ width: current().w, height: current().h });
     else if (command === 'trim') setTrimming(true);
@@ -12051,9 +12745,11 @@ export default function Home() {
     }
     else if (command === 'copy-layer') copyLayer();
     else if (command === 'copy-svg') return copySvg();
+    else if (command === 'copy-css') return copyCss();
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'stroke-selection') return strokeSelection();
@@ -12061,6 +12757,7 @@ export default function Home() {
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
+    else if (command === 'nest-smart-object') return nestSelectedAsSmartObject();
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
     else if (command === 'link-smart-objects') return linkSmartObjectContents();
     else if (command === 'select-linked-layers') return selectLinkedLayers();
@@ -12135,6 +12832,7 @@ export default function Home() {
       setTextOrientation('horizontal');
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
+    else if (command === 'language-options') setLanguageOptionsOpen(true);
     else if (command === 'text-warp') setTextWarp();
     else if (command === 'text-on-path') setTextOnPath();
     else if (command === 'font-preview-size') {
@@ -12232,6 +12930,16 @@ export default function Home() {
     else if (command === 'remove-background') return removeBackground();
     else if (command === 'cookie-cutter') return createCookieCutterMask();
     else if (command === 'free-transform') beginLayerTransform();
+    else if (command === 'layer-rotate-90-cw')
+      return applyLayerTransformPreset('Layer rotate 90° clockwise', { angle: 90, flipX: false, flipY: false });
+    else if (command === 'layer-rotate-90-ccw')
+      return applyLayerTransformPreset('Layer rotate 90° counterclockwise', { angle: -90, flipX: false, flipY: false });
+    else if (command === 'layer-rotate-180')
+      return applyLayerTransformPreset('Layer rotate 180°', { angle: 180, flipX: false, flipY: false });
+    else if (command === 'layer-flip-horizontal')
+      return applyLayerTransformPreset('Layer flip horizontal', { angle: 0, flipX: true, flipY: false });
+    else if (command === 'layer-flip-vertical')
+      return applyLayerTransformPreset('Layer flip vertical', { angle: 0, flipX: false, flipY: true });
     else if (command === 'perspective-warp') return applyPerspectiveWarp();
     else if (command === 'puppet-warp') return applyPuppetWarp();
     else if (command === 'invert-layer-mask') invertLayerMask();
@@ -12274,6 +12982,8 @@ export default function Home() {
     }
     else if (command === 'convert-smart-filters') return convertForSmartFilters();
     else if (command === 'clear-smart-filters') return clearSmartFilters();
+    else if (command === 'filter-neural-filters')
+      chooseFilterEffect('neural-enhance', 'Neural Filters (deterministic local approximation)');
     else if (command === 'filter-average')
       chooseFilterEffect('average-blur', 'Average Blur');
     else if (command === 'filter-blur')
@@ -12286,6 +12996,8 @@ export default function Home() {
       chooseFilterEffect('gaussian-blur', 'Gaussian Blur');
     else if (command === 'filter-sharpen')
       chooseFilterEffect('sharpen', 'Sharpen (nondestructive)');
+    else if (command === 'filter-high-pass')
+      chooseFilterEffect('high-pass', 'High Pass (nondestructive local approximation)');
     else if (command === 'filter-unsharp-mask')
       chooseFilterEffect('unsharp-mask', 'Unsharp Mask (nondestructive)');
     else if (command === 'filter-sharpen-more')
@@ -12362,16 +13074,25 @@ export default function Home() {
       chooseFilterEffect('despeckle', 'Despeckle (local approximation)');
     else if (command === 'filter-reduce-noise')
       chooseFilterEffect('reduce-noise', 'Reduce Noise (edge-aware local approximation)');
+    else if (command === 'filter-ai-denoise')
+      chooseFilterEffect('ai-denoise', 'AI Denoise (private local approximation)');
+    else if (command === 'filter-ai-sharpen')
+      chooseFilterEffect('ai-sharpen', 'AI Sharpen (private local approximation)');
     else if (command === 'filter-add-noise')
       chooseFilterEffect('add-noise', 'Add Noise (seeded local approximation)');
+    else if (command === 'filter-reflection-removal')
+      chooseFilterEffect('reflection-removal', 'Reflection Removal (local approximation)');
     else if (command === 'filter-deinterlace')
       chooseFilterEffect('deinterlace', 'De-Interlace');
     else if (command === 'filter-ntsc-colors')
       chooseFilterEffect('ntsc-colors', 'NTSC Colors');
     else if (command === 'filter-lens-correction')
       chooseFilterEffect('lens-correction', 'Lens Correction (local approximation)');
+    else if (command === 'filter-adaptive-wide-angle')
+      chooseFilterEffect('adaptive-wide-angle', 'Adaptive Wide Angle (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
+    else if (command === 'filter-vanishing-point') return applyPerspectiveWarp('Vanishing Point');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
     else if (command === 'filter-ripple')
@@ -12550,6 +13271,8 @@ export default function Home() {
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
         return !hasClipboard || frame.layers.length >= 32;
+      case 'paste-special':
+        return !hasClipboard || frame.layers.length >= 32;
       case 'new-layer':
         return frame.layers.length >= 32;
       case 'clear-layer':
@@ -12568,6 +13291,13 @@ export default function Home() {
         return (
           selectedLayersForFrame(frame).filter((candidate) => candidate.kind === 'smart-object').length < 2 ||
           selectedLayersForFrame(frame).some((candidate) => layerIsLocked(frame, candidate))
+        );
+      case 'nest-smart-object':
+        return (
+          selectedLayersForFrame(frame).length === 0 ||
+          selectedLayersForFrame(frame).some((candidate) =>
+            Boolean(candidate.groupId) || layerIsLocked(frame, candidate),
+          )
         );
       case 'select-linked-layers':
         return !selectedLayersForFrame(frame).some(
@@ -12627,6 +13357,19 @@ export default function Home() {
           !frame.selection ||
           (layer.contentAwareFills?.length ?? 0) >= CONTENT_AWARE_MAX_OPERATIONS
         );
+      case 'generative-fill':
+        return (
+          !layer ||
+          layer.kind !== 'raster' ||
+          locked ||
+          !layer.visible ||
+          !frame.selection ||
+          (layer.contentAwareFills?.filter((fill) => fill.mode === 'texture').length ?? 0) >= GENERATIVE_FILL_MAX_OPERATIONS
+        );
+      case 'prompt-to-edit':
+        return !layer || !layer.visible || locked;
+      case 'generate-image':
+        return frame.layers.length >= 32;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -12683,6 +13426,7 @@ export default function Home() {
       case 'filter-blur':
       case 'filter-blur-more':
       case 'filter-sharpen':
+      case 'filter-high-pass':
       case 'filter-unsharp-mask':
       case 'filter-sharpen-more':
       case 'filter-sharpen-edges':
@@ -12720,7 +13464,10 @@ export default function Home() {
       case 'filter-dust-scratches':
       case 'filter-despeckle':
       case 'filter-reduce-noise':
+      case 'filter-ai-denoise':
+      case 'filter-ai-sharpen':
       case 'filter-add-noise':
+      case 'filter-neural-filters':
       case 'filter-solarize':
       case 'filter-diffuse':
       case 'filter-wind':
@@ -12728,6 +13475,7 @@ export default function Home() {
       case 'filter-find-edges':
       case 'filter-emboss':
       case 'filter-lens-correction':
+      case 'filter-adaptive-wide-angle':
       case 'filter-displace':
       case 'filter-ripple':
       case 'filter-pinch':
@@ -12771,6 +13519,7 @@ export default function Home() {
       case 'free-transform':
         return !layer || locked;
       case 'perspective-warp':
+      case 'filter-vanishing-point':
         return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
       case 'puppet-warp':
         return !layer || locked || !layer.visible || (layer.kind !== 'raster' && layer.kind !== 'smart-object');
@@ -12847,6 +13596,7 @@ export default function Home() {
       case 'text-orientation-vertical':
       case 'text-warp':
       case 'open-type':
+      case 'language-options':
         return !layer || layer.kind !== 'text' || locked;
       case 'save-default-type-styles':
         return !layer || layer.kind !== 'text' || locked;
@@ -12962,9 +13712,17 @@ export default function Home() {
         command: item.command,
         disabled: menuItemDisabled(item),
       })));
+  useEffect(() => {
+    commandDisabledRef.current = Object.fromEntries(
+      commandSearchItems.map((item) => [item.command, Boolean(item.disabled)]),
+    );
+  }, [commandSearchItems]);
   const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
     .filter((item) => Boolean(item.shortcut));
   const editableCommandShortcutItems = keyboardShortcutItems.filter((item, index, items) =>
+    items.findIndex((candidate) => candidate.command === item.command) === index,
+  );
+  const editableCommandItems = commandSearchItems.filter((item, index, items) =>
     items.findIndex((candidate) => candidate.command === item.command) === index,
   );
   const filterGalleryItems: FilterGalleryItem[] = FILTERS.map(([label, , first, second]) => ({
@@ -12979,6 +13737,7 @@ export default function Home() {
     name: layer.name,
     hints: findSpellingHints(layer.text),
   }));
+  const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -13020,7 +13779,7 @@ export default function Home() {
         data-testid="layer-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => void load(e.target.files?.[0], true)}
       />
       <input
@@ -13028,7 +13787,7 @@ export default function Home() {
         data-testid="smart-object-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(event) =>
           void importSmartObject(
             event.target.files?.[0],
@@ -13059,7 +13818,7 @@ export default function Home() {
         data-testid="batch-image-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
@@ -13079,6 +13838,32 @@ export default function Home() {
           imageSize={resizing.imageSize}
           close={() => setResizing(null)}
           apply={resizeImage}
+        />
+      )}
+      {generativeUpscaling && (
+        <GenerativeUpscaleDialog
+          width={generativeUpscaling.width}
+          height={generativeUpscaling.height}
+          close={() => setGenerativeUpscaling(null)}
+          apply={generativeUpscale}
+        />
+      )}
+      {generativeFillOpen && (
+        <GenerativeFillDialog
+          close={() => setGenerativeFillOpen(false)}
+          apply={(request) => void applyGenerativeFill(request)}
+        />
+      )}
+      {promptToEditOpen && (
+        <PromptToEditDialog
+          close={() => setPromptToEditOpen(false)}
+          apply={applyPromptToEdit}
+        />
+      )}
+      {generateImageOpen && (
+        <GenerateImageDialog
+          close={() => setGenerateImageOpen(false)}
+          apply={applyGenerateImage}
         />
       )}
       {canvasSizing && (
@@ -13143,6 +13928,13 @@ export default function Home() {
           initialColor={color}
           close={() => setFillLayerDialog(false)}
           apply={addSolidFillLayer}
+        />
+      )}
+      {pasteSpecialOpen && (
+        <PasteSpecialDialog
+          hasSelection={Boolean(frame?.selection)}
+          close={() => setPasteSpecialOpen(false)}
+          apply={(mode) => void pasteLayerSpecial(mode)}
         />
       )}
       {focusAreaValue && (
@@ -13212,6 +14004,7 @@ export default function Home() {
             } catch { /* private mode */ }
             setNotice('Custom tool shortcuts updated');
           }}
+          commandItems={editableCommandItems}
           commandBindings={commandShortcutBindings}
           applyCommandBindings={(bindings) => {
             const normalized = normalizeCommandShortcutPreferences(
@@ -13235,6 +14028,28 @@ export default function Home() {
             setFilterGalleryOpen(false);
             void runCommand(command as Command);
           }}
+        />
+      )}
+      {analysisData && (
+        <HistogramDialog
+          data={analysisData}
+          close={() => setAnalysisData(null)}
+        />
+      )}
+      {adjustmentsOpen && (
+        <AdjustmentsDialog
+          close={() => setAdjustmentsOpen(false)}
+          choose={(command: AdjustmentCommand) => {
+            setAdjustmentsOpen(false);
+            void runCommand(command);
+          }}
+        />
+      )}
+      {languageOptionsOpen && (
+        <LanguageOptionsDialog
+          initial={normalizeTextLanguage(activeTextLayer?.languageOptions)}
+          close={() => setLanguageOptionsOpen(false)}
+          apply={applyLanguageOptions}
         />
       )}
       {toolbarSettingsOpen && (
@@ -13387,7 +14202,7 @@ export default function Home() {
         data-testid="file-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => load(e.target.files?.[0])}
       />
       {screenMode !== 'standard' && (
@@ -14385,6 +15200,7 @@ export default function Home() {
               add={addPaint}
               addAdjustment={addAdjustmentLayer}
               addSmartObject={() => chooseSmartObjectFile(false)}
+              nestSelectedAsSmartObject={() => void nestSelectedAsSmartObject()}
               replaceSmartObject={() => chooseSmartObjectFile(true)}
               duplicate={duplicate}
               remove={remove}
@@ -14852,6 +15668,8 @@ export default function Home() {
             tool === 'burn' ||
             tool === 'sponge' ||
             tool === 'smudge' ||
+            tool === 'blur' ||
+            tool === 'sharpen' ||
             tool === 'clone' ||
             tool === 'heal' ||
             tool === 'spot-heal' ||
@@ -15119,6 +15937,8 @@ export default function Home() {
                 tool === 'burn' ||
                 tool === 'sponge' ||
                 tool === 'smudge' ||
+                tool === 'blur' ||
+                tool === 'sharpen' ||
                 tool === 'clone' ||
                 tool === 'heal' ||
                 tool === 'spot-heal' ||
@@ -15208,6 +16028,14 @@ export default function Home() {
                       for edge-connected backdrop removal.
                     </p>
                   )}
+                  {(tool === 'blur' || tool === 'sharpen') && (
+                    <p className="adjust-note">
+                      {tool === 'blur'
+                        ? 'Blurs pixels under the brush using a bounded local average.'
+                        : 'Sharpens local luminance detail with a bounded source-safe high-pass brush.'}
+                      {' '}Source pixels remain immutable and each stroke is undoable; use Filter for full-layer effects.
+                    </p>
+                  )}
                   {tool === 'patch' && (
                     <p className="adjust-note">
                       Click a source area, then drag over a destination. Patch
@@ -15230,7 +16058,9 @@ export default function Home() {
                         tool === 'dodge' ||
                         tool === 'burn' ||
                         tool === 'sponge' ||
-                        tool === 'smudge'
+                        tool === 'smudge' ||
+                        tool === 'blur' ||
+                        tool === 'sharpen'
                           ? 'Flow'
                           : 'Opacity'
                       }
@@ -15412,6 +16242,33 @@ export default function Home() {
                         </p>
                       </>
                     )}
+                  {(tool === 'brush' ||
+                    tool === 'pencil' ||
+                    tool === 'eraser' ||
+                    tool === 'clone' ||
+                    tool === 'heal' ||
+                    tool === 'pattern-stamp') && (
+                    <label className="select-row">
+                      <span>Pressure curve</span>
+                      <select
+                        aria-label="Pressure curve"
+                        value={pressureCurve}
+                        onChange={(event) =>
+                          setPressureCurve(normalizeBrushPressureCurve(event.target.value))
+                        }
+                      >
+                        {BRUSH_PRESSURE_CURVES.map((curve) => (
+                          <option key={curve} value={curve}>
+                            {curve === 'linear'
+                              ? 'Linear'
+                              : curve === 'soft'
+                                ? 'Soft (more response)'
+                                : 'Firm (less response)'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {(tool === 'color-replace' ||
                     tool === 'background-eraser' ||
                     tool === 'magic-eraser' ||
@@ -15727,6 +16584,12 @@ export default function Home() {
             {filterEffects.type === 'smart-sharpen' && (
               <p>Smart Sharpen uses a bounded edge-preserving reference to limit gain on flat tonal surfaces while retaining local detail. Amount and radius stay editable; threshold, halo suppression and camera-aware controls remain planned.</p>
             )}
+            {filterEffects.type === 'high-pass' && (
+              <p>High Pass renders a neutral-grey local edge residual from a bounded Gaussian reference. Amount and radius remain editable; blend-mode compositing, channel-specific controls and high-bit-depth parity remain planned.</p>
+            )}
+            {filterEffects.type === 'neural-enhance' && (
+              <p>Neural Filters uses a deterministic local approximation: visible-neighbour luminance recovery, local colour-balance correction and bounded texture reconstruction. No model, upload or network call is used; semantic subject selection and Adobe model parity remain planned.</p>
+            )}
             {filterEffects.type === 'surface-blur' && (
               <p>Local tonal-surface blur. Neighbours outside the luminance threshold are excluded; semantic edges and depth are not inferred.</p>
             )}
@@ -15915,6 +16778,12 @@ export default function Home() {
             {filterEffects.type === 'reduce-noise' && (
               <p>Bounded colour-weighted neighbourhood smoothing that favours nearby similar tones. Radius, preserve-details threshold and amount remain editable; temporal and high-bit-depth parity remain staged.</p>
             )}
+            {filterEffects.type === 'ai-denoise' && (
+              <p>Private local AI Denoise approximation: a deterministic Y&apos;CbCr bilateral pass that removes chroma speckle while protecting luminance edges. No image is uploaded and model-backed RAW or temporal denoising remains staged.</p>
+            )}
+            {filterEffects.type === 'ai-sharpen' && (
+              <p>Private local AI Sharpen approximation: a deterministic luminance-detail pass that protects flat tones with an edge threshold. No image is uploaded and model-backed RAW priors or deconvolution remain staged.</p>
+            )}
             {filterEffects.type === 'add-noise' && (
               <>
                 <p>Seeded uniform noise is blended into visible pixels without changing alpha or transparent RGB. Amount, seed and monochromatic mode remain editable; Gaussian distribution, film grain and channel clipping parity remain staged.</p>
@@ -15966,6 +16835,9 @@ export default function Home() {
             {filterEffects.type === 'find-edges' && (
               <p>Deterministic Sobel luminance edges blended nondestructively with the source. Alpha and transparent padding remain unchanged; semantic edge tracing and vector extraction remain separate roadmap work.</p>
             )}
+            {filterEffects.type === 'reflection-removal' && (
+              <p>Local de-glare approximation: bright, low-saturation luminance outliers blend toward a visible-neighbour median. It does not infer reflections, materials or scene semantics; source pixels remain editable.</p>
+            )}
             {filterEffects.type !== 'none' && (
               <>
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
@@ -15977,6 +16849,13 @@ export default function Home() {
             {filterEffects.type === 'difference-clouds' && (
               <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
             )}
+                {filterEffects.type === 'neural-enhance' && (
+                  <>
+                    <Slider label="Luminance recovery" value={filterEffects.neuralEnhance?.luminance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS.luminance} min={0} max={100} set={(value) => setFilterEffects({ neuralEnhance: { ...(filterEffects.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS), luminance: value } })} />
+                    <Slider label="Color balance" value={filterEffects.neuralEnhance?.color ?? DEFAULT_NEURAL_ENHANCE_SETTINGS.color} min={0} max={100} set={(value) => setFilterEffects({ neuralEnhance: { ...(filterEffects.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS), color: value } })} />
+                    <Slider label="Texture detail" value={filterEffects.neuralEnhance?.texture ?? DEFAULT_NEURAL_ENHANCE_SETTINGS.texture} min={0} max={100} set={(value) => setFilterEffects({ neuralEnhance: { ...(filterEffects.neuralEnhance ?? DEFAULT_NEURAL_ENHANCE_SETTINGS), texture: value } })} />
+                  </>
+                )}
                 <Slider
                   label="Effect amount"
                   value={filterEffects.amount}
@@ -15984,10 +16863,10 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise') && (
+                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise' || filterEffects.type === 'ai-denoise' || filterEffects.type === 'ai-sharpen' || filterEffects.type === 'reflection-removal') && (
                   <Slider
-                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : 'Outlier threshold'}
-                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : 12)}
+                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : filterEffects.type === 'ai-denoise' ? 'Edge protection' : filterEffects.type === 'ai-sharpen' ? 'Edge threshold' : filterEffects.type === 'reflection-removal' ? 'Reflection threshold' : 'Outlier threshold'}
+                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : filterEffects.type === 'ai-denoise' ? 18 : filterEffects.type === 'ai-sharpen' ? 22 : filterEffects.type === 'reflection-removal' ? 28 : 12)}
                     min={0}
                     max={255}
                     set={(value) => setFilterEffects({ threshold: value })}
@@ -16008,11 +16887,14 @@ export default function Home() {
                       ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
                       : filterEffects.type === 'box-blur' ||
                           filterEffects.type === 'gaussian-blur' ||
+                          filterEffects.type === 'high-pass' ||
                           filterEffects.type === 'sharpen' ||
                           filterEffects.type === 'unsharp-mask' ||
                           filterEffects.type === 'sharpen-more' ||
                           filterEffects.type === 'sharpen-edges' ||
                           filterEffects.type === 'smart-sharpen' ||
+                          filterEffects.type === 'ai-sharpen' ||
+                          filterEffects.type === 'median' ||
                           filterEffects.type === 'lens-blur' ||
                           filterEffects.type === 'iris-blur' ||
                           filterEffects.type === 'smart-blur' ||
@@ -16021,7 +16903,7 @@ export default function Home() {
                           filterEffects.type === 'motion-blur' ||
                           filterEffects.type === 'path-blur' ||
                           filterEffects.type === 'tilt-shift'
-                          ? 'Blur radius'
+                          ? filterEffects.type === 'high-pass' ? 'High Pass radius' : 'Blur radius'
                       : filterEffects.type === 'fragment'
                           ? 'Fragment offset'
                       : filterEffects.type === 'picture-frame'
@@ -16051,12 +16933,16 @@ export default function Home() {
                           ? 'Displace wavelength'
                       : filterEffects.type === 'field-blur'
                           ? 'Fallback blur radius'
-                      : filterEffects.type === 'lens-correction'
+                      : filterEffects.type === 'lens-correction' || filterEffects.type === 'adaptive-wide-angle'
                           ? 'Correction radius'
                       : filterEffects.type === 'lens-flare'
                           ? 'Flare size'
+                      : filterEffects.type === 'reflection-removal'
+                          ? 'Cleanup radius'
                       : filterEffects.type === 'emboss'
                           ? 'Emboss depth'
+                      : filterEffects.type === 'neural-enhance'
+                          ? 'Neighbourhood radius'
 
                       : 'Radius'
                   }
@@ -16183,6 +17069,43 @@ export default function Home() {
                       min={0}
                       max={100}
                       set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {filterEffects.type === 'adaptive-wide-angle' && (
+                  <>
+                    <p>Bounded anisotropic wide-angle correction with editable line-preservation biases. The authored centre stays fixed and transparent padding remains untouched; Photoshop constraint drawing and camera calibration remain staged.</p>
+                    <Slider
+                      label="Correction centre X"
+                      value={Math.round(filterEffects.centerX * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Correction centre Y"
+                      value={Math.round(filterEffects.centerY * 100)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Horizontal line bias"
+                      value={filterEffects.adaptiveWideAngle?.horizontal ?? 50}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ adaptiveWideAngle: { ...(filterEffects.adaptiveWideAngle ?? { horizontal: 50, vertical: 50 }), horizontal: value } })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label="Vertical line bias"
+                      value={filterEffects.adaptiveWideAngle?.vertical ?? 50}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ adaptiveWideAngle: { ...(filterEffects.adaptiveWideAngle ?? { horizontal: 50, vertical: 50 }), vertical: value } })}
                       suffix="%"
                     />
                   </>

@@ -11,7 +11,7 @@ const features = [
   { icon: Palette, title: 'Find your look', text: 'Adjust brightness, contrast, saturation and filters on individual layers without changing the source image.' },
   { icon: Type, title: 'Add your touch', text: 'Keep text and shapes editable. Paint on separate layers, reorder, blend and adjust each one.' },
   { icon: RotateCw, title: 'Pick up where you left off', text: 'Your draft and undo history save in this browser. Bookmark a document to return to it.' },
-  { icon: Download, title: 'Ready to share', text: 'Export PNG, JPEG or WebP with a preview and file size, or download an editable PixelForge project with its layers and undo history.' },
+  { icon: Download, title: 'Ready to share', text: 'Export PNG, JPEG, WebP, a flattened PSD composite or a single-page PDF with a preview and file size, or download an editable PixelForge project with its layers and undo history.' },
   { icon: ShieldCheck, title: 'Your photos stay with you', text: 'Edit locally without an account. Optional private cloud projects use your existing Cheaply sign-in.' },
 ];
 

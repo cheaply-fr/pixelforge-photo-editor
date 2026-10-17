@@ -47,6 +47,7 @@ import { applyColorModePixels, normalizeColorMode, type ColorMode } from './colo
 import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { normalizeTextPathBinding, layoutTextOnPath, mapTextPathPoints, flattenTextPath, type TextPathBinding } from './textOnPath.ts';
 import { normalizeOpenType, validOpenType, type OpenTypeSettings } from './openType.ts';
+import { normalizeTextLanguage, resolvedTextDirection, validTextLanguageSettings, type TextLanguageSettings } from './textLanguage.ts';
 import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
 import {
@@ -265,6 +266,8 @@ export type Layer = Common &
         sourceName?: string;
         /** Optional local link identity shared by smart-object instances. */
         linkId?: string;
+        /** Bounded editable child document for a nested Smart Object. */
+        contents?: Frame;
       }
     | {
         /** A source-free, nondestructive correction applied to the composite below this layer. */
@@ -292,6 +295,8 @@ export type Layer = Common &
         textPath?: TextPathBinding;
         /** Optional portable OpenType presentation flags. */
         openType?: OpenTypeSettings;
+        /** Optional portable language and paragraph-direction metadata. */
+        languageOptions?: TextLanguageSettings;
       }
     | {
         kind: 'rectangle';
@@ -442,6 +447,8 @@ export type Frame = {
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
+/** Nested documents are intentionally bounded so malformed drafts cannot recurse forever. */
+export const MAX_NESTED_SMART_OBJECT_DEPTH = 4;
 export const identity = (): Matrix => [1, 0, 0, 1, 0, 0];
 
 /**
@@ -709,7 +716,12 @@ export const commonLayer = (name: string): Common => ({
   adjustments: { ...neutral },
   styles: {
     dropShadow: { ...neutralLayerStyles.dropShadow },
+    innerShadow: { ...neutralLayerStyles.innerShadow },
+    bevelEmboss: { ...neutralLayerStyles.bevelEmboss },
     outline: { ...neutralLayerStyles.outline },
+    colorOverlay: { ...neutralLayerStyles.colorOverlay },
+    gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
+    patternOverlay: { ...neutralLayerStyles.patternOverlay },
   },
 });
 export function multiply(a: Matrix, b: Matrix): Matrix {
@@ -1102,12 +1114,14 @@ export function drawTextLayer(
   layer: Extract<Layer, { kind: 'text' }>,
   path?: { points: readonly { x: number; y: number }[]; offset: number; reverse: boolean },
 ): void {
+  const previousDirection = context.direction;
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     align = layer.textAlign ?? 'left',
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
     spacing = layer.letterSpacing ?? 0,
     orientation = layer.orientation ?? 'horizontal',
     warp = normalizeTextWarp(layer.warp);
+  context.direction = resolvedTextDirection(layer.languageOptions);
   if (path && orientation === 'horizontal') {
     const placements = layoutTextOnPath(context, layer.text, path.points, {
       offset: path.offset,
@@ -1121,6 +1135,7 @@ export function drawTextLayer(
       context.fillText(placement.glyph, -context.measureText(placement.glyph).width / 2, 0);
       context.restore();
     }
+    context.direction = previousDirection;
     return;
   }
   if (orientation === 'vertical') {
@@ -1133,6 +1148,7 @@ export function drawTextLayer(
         y += layer.fontSize + spacing;
       }
     }
+    context.direction = previousDirection;
     return;
   }
   for (const [lineIndex, line] of layer.text.split('\n').entries()) {
@@ -1162,6 +1178,7 @@ export function drawTextLayer(
       x += glyphWidth + spacing;
     }
   }
+  context.direction = previousDirection;
 }
 
 const record = (v: unknown): v is Record<string, unknown> =>
@@ -1256,6 +1273,7 @@ export function effectiveTextLayer<T extends Layer>(
     orientation: value.orientation ?? 'horizontal',
     warp: normalizeTextWarp(value.warp),
     openType: normalizeOpenType(value.openType),
+    languageOptions: normalizeTextLanguage(value.languageOptions),
     ...(normalizeTextPathBinding(value.textPath)
       ? { textPath: normalizeTextPathBinding(value.textPath) }
       : {}),
@@ -1264,10 +1282,13 @@ export function effectiveTextLayer<T extends Layer>(
 export function validateFrame(
   value: unknown,
   assets: Assets,
+  nestedDepth = 0,
 ): asserts value is Frame {
   const fail = () => {
     throw new Error('Invalid layer document');
   };
+  if (!Number.isInteger(nestedDepth) || nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
+    return fail();
   if (
     !record(value) ||
     !integer(value.w, 1, 16000) ||
@@ -1383,6 +1404,20 @@ export function validateFrame(
         return fail();
       if (layer.kind === 'smart-object' && layer.linkId !== undefined && !validId(layer.linkId))
         return fail();
+      if (layer.kind === 'smart-object' && layer.contents !== undefined) {
+        if (nestedDepth >= MAX_NESTED_SMART_OBJECT_DEPTH || !record(layer.contents))
+          return fail();
+        if (
+          layer.contents.w !== assets[layer.asset].w ||
+          layer.contents.h !== assets[layer.asset].h
+        )
+          return fail();
+        try {
+          validateFrame(layer.contents, assets, nestedDepth + 1);
+        } catch {
+          return fail();
+        }
+      }
       if (layer.kind === 'raster' && layer.fillColor !== undefined && (typeof layer.fillColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.fillColor)))
         return fail();
       if (
@@ -1518,6 +1553,7 @@ export function validateFrame(
         (layer.warp !== undefined && !isTextWarp(layer.warp)) ||
         (layer.textPath !== undefined && !normalizeTextPathBinding(layer.textPath)) ||
         (layer.openType !== undefined && !validOpenType(layer.openType))
+        || (layer.languageOptions !== undefined && !validTextLanguageSettings(layer.languageOptions))
       )
         return fail();
     } else if (
@@ -1683,6 +1719,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
       if (isMaskableLayer(layer) && layer.mask) used[layer.mask] = assets[layer.mask];
       if (isRasterContentLayer(layer)) {
         used[layer.asset] = assets[layer.asset];
+        if (layer.kind === 'smart-object' && layer.contents)
+          Object.assign(used, referencedAssets([layer.contents], assets));
         for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
         for (const move of layer.kind === 'raster' ? layer.contentAwareMoves || [] : [])
@@ -1962,6 +2000,8 @@ export type RenderOptions = {
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
   /** Report bounded tile completion before the final telemetry envelope. */
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
+  /** Internal recursion guard for editable nested Smart Object contents. */
+  nestedDepth?: number;
 };
 
 /** Render a raster layer's bounded style stack in local coordinates. */
@@ -1986,6 +2026,9 @@ export async function renderFrame(
   overrides?: Record<string, HTMLCanvasElement>,
   options?: RenderOptions,
 ): Promise<HTMLCanvasElement> {
+  const nestedDepth = options?.nestedDepth ?? 0;
+  if (nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
+    throw new Error('Nested Smart Object depth exceeds the local safety limit');
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group])),
@@ -2216,7 +2259,16 @@ export async function renderFrame(
               fillContext.fillRect(0, 0, fill.width, fill.height);
               return fill;
             })()
-          : await decodeAsset(assets[layer.asset])
+          : layer.kind === 'smart-object' && layer.contents
+            ? await renderFrame(
+                layer.contents,
+                assets,
+                undefined,
+                options?.onProgress
+                  ? { ...options, onProgress: undefined, nestedDepth: nestedDepth + 1 }
+                  : { ...options, nestedDepth: nestedDepth + 1 },
+              )
+            : await decodeAsset(assets[layer.asset])
         : undefined;
     // Overrides are raw, layer-local buffers. They must travel through the
     // exact same matrix, opacity, blend, adjustment and mask pipeline as the
@@ -2522,7 +2574,12 @@ export async function renderFrame(
               blend: 'source-over',
               styles: {
                 dropShadow: { ...neutralLayerStyles.dropShadow },
+                innerShadow: { ...neutralLayerStyles.innerShadow },
+                bevelEmboss: { ...neutralLayerStyles.bevelEmboss },
                 outline: { ...neutralLayerStyles.outline },
+                colorOverlay: { ...neutralLayerStyles.colorOverlay },
+                gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
+                patternOverlay: { ...neutralLayerStyles.patternOverlay },
               },
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),

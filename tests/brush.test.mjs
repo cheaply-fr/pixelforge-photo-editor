@@ -67,7 +67,7 @@ test('pressure size and opacity flags can be enabled independently', () => {
   assert.equal(noOpacity.size, 5); assert.equal(noOpacity.opacity, 0.8);
   const disabled = resolveBrushStamp({ ...base, pointerType: 'pen', pressure: 0.5, size: 10, opacity: 0.8, pressureSize: false, pressureOpacity: false });
   assert.equal(disabled.size, 10); assert.equal(disabled.opacity, 0.8);
-  assert.deepEqual(effectiveBrushPressureSettings(undefined), { pressureSize: false, pressureOpacity: false });
+  assert.deepEqual(effectiveBrushPressureSettings(undefined), { pressureSize: false, pressureOpacity: false, pressureCurve: 'linear' });
   assert.equal(validBrushPressureSettings({ pressureSize: false, pressureOpacity: true }), true);
   assert.equal(validBrushPressureSettings({ pressureSize: 'yes' }), false);
 });

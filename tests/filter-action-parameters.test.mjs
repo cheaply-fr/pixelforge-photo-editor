@@ -26,6 +26,9 @@ test('filter Action parameters fail closed to bounded defaults', () => {
 test('filter Action parameters retain effect-specific thresholds', () => {
   assert.equal(filterActionParameters({ type: 'dust-scratches', threshold: 9 }).threshold, 9);
   assert.equal(filterActionParameters({ type: 'reduce-noise', threshold: 999 }).threshold, 255);
+  assert.equal(filterActionParameters({ type: 'ai-denoise' }).threshold, 18);
+  assert.equal(filterActionParameters({ type: 'ai-denoise', threshold: 42 }).threshold, 42);
+  assert.equal(filterActionParameters({ type: 'ai-sharpen' }).threshold, 22);
 });
 
 test('filter Action parameters retain bounded Gradient Map appearance', () => {
@@ -54,5 +57,22 @@ test('filter Action parameters retain effect-specific geometry', () => {
   });
   assert.deepEqual(JSON.parse(tiltParameters.filterExtra), {
     tiltShift: { focusWidth: 0.4, feather: 0.3 },
+  });
+  const adaptiveParameters = filterActionParameters({
+    type: 'adaptive-wide-angle',
+    adaptiveWideAngle: { horizontal: 72, vertical: 28 },
+  });
+  assert.deepEqual(JSON.parse(adaptiveParameters.filterExtra), {
+    adaptiveWideAngle: { horizontal: 72, vertical: 28 },
+  });
+});
+
+test('filter Action parameters retain Neural Filters controls without source data', () => {
+  const parameters = filterActionParameters({
+    type: 'neural-enhance', amount: 85, radius: 2,
+    neuralEnhance: { luminance: 52, color: 38, texture: 56 },
+  });
+  assert.deepEqual(JSON.parse(parameters.filterExtra), {
+    neuralEnhance: { luminance: 52, color: 38, texture: 56 },
   });
 });

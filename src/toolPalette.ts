@@ -11,7 +11,7 @@ export type PaletteToolId =
   | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
   | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush' | 'art-history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
-  | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'pen'
+  | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'blur' | 'sharpen' | 'pen'
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
   | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
@@ -30,7 +30,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
   { id: 'selection', label: 'Selection', tools: ['selection-brush', 'quick-selection', 'magic-wand'] },
   { id: 'crop', label: 'Crop & Slice', tools: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'] },
-  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
+  { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
   { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
@@ -51,31 +51,34 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   s: ['clone', 'pattern-stamp'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   y: ['history-brush', 'art-history-brush'],
+  r: ['smudge', 'blur', 'sharpen'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 
-/** Pointer/touch flyouts use Photoshop's visible tool families.  Selection
- * Brush stays in the L keyboard family for backward compatibility, while its
- * compact flyout lives beside Magic Wand under the W-style Selection group. */
+/** Pointer/touch flyouts use Photoshop's visible tool families. Selection
+ * Brush stays in the L keyboard family for backward compatibility, but remains
+ * an independent toolbar slot beside the W-style Selection flyout. */
 export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = {
   marquee: ['select', 'ellipse-select', 'row-select', 'column-select'],
   lasso: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
-  selection: ['selection-brush', 'quick-selection', 'magic-wand'],
+  // Selection Brush is an independent toolbar tool. Quick Selection and
+  // Magic Wand share the Photoshop-style W flyout.
+  selection: ['quick-selection', 'magic-wand'],
   crop: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'],
   fill: ['gradient', 'fill'],
-  paint: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
+  brush: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   shape: ['rectangle', 'ellipse', 'line', 'polygon'],
-  measure: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   eraser: ['eraser', 'background-eraser', 'magic-eraser'],
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],
   healing: ['heal', 'spot-heal', 'patch', 'red-eye'],
+  retouch: ['smudge', 'blur', 'sharpen'],
   history: ['history-brush', 'art-history-brush'],
   mask: ['mask-brush', 'mask-eraser', 'adjustment-brush'],
-  // The classic Pen button remains a direct tool in the toolbar. Freeform
-  // and Curvature Pen stay independently reachable (and still cycle from P)
-  // so the direct Pen keeps its Photoshop-compatible singleton affordance and
-  // does not gain a misleading submenu indicator in the compact palette.
+  // Pen variants share one Photoshop-style hold/keyboard flyout. The active
+  // variant replaces the representative slot while the remaining variants
+  // stay reachable from the flyout and P cycling.
+  pen: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 
 export function familyForTool(tool: string): string | undefined {

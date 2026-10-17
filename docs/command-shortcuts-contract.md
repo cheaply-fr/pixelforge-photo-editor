@@ -1,8 +1,9 @@
 # Custom command shortcut contract
 
 PixelForge keeps its Photoshop-style menu shortcuts as the built-in baseline
-and lets users add local overrides from **Edit → Keyboard Shortcuts…**. An
-override is a single key, punctuation key, or function-key chord with optional
+and lets users add local overrides from **Edit → Keyboard Shortcuts…**. Every
+working menu command, including commands without a built-in shortcut, can
+receive an override. An override is a single key, punctuation key, or function-key chord with optional
 Shift, Ctrl, Alt/Option, or Cmd modifiers. Chords are normalized to a stable
 `ctrl+meta+alt+shift+key` order, aliases are accepted at input, and duplicate
 or malformed bindings are discarded deterministically.
@@ -19,5 +20,6 @@ The contract is intentionally local and opt-in. It does not claim that every
 menu entry is enabled or that browser-reserved shortcuts can be intercepted.
 Pure tests cover punctuation/function-key validation, version failure,
 collision handling, alias normalization, and exact modifier matching.
-Desktop/mobile acceptance covers applying a command chord, invoking it,
-reload persistence, and the existing shortcut listing/filter behavior.
+Desktop/mobile acceptance covers applying a built-in and no-default command
+chord, invoking each, reload persistence, disabled-command guards, and the
+existing shortcut listing/filter behavior.

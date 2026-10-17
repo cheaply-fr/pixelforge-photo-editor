@@ -47,6 +47,56 @@ test('smart object metadata and immutable source reference survive JSON round tr
   assert.deepEqual(restored.layers[0].adjustments, neutral);
 });
 
+test('nested smart-object contents stay editable, bounded and recursively compacted', () => {
+  const childLayer = {
+    ...commonLayer('Child source'),
+    kind: 'raster',
+    asset: embeddedId,
+  };
+  const child = {
+    w: 24,
+    h: 12,
+    layers: [childLayer],
+    active: childLayer.id,
+    selectedLayerIds: [childLayer.id],
+  };
+  const nested = frame({ ...smart(), contents: child });
+  assert.doesNotThrow(() => validateFrame(nested, assets));
+  const restored = JSON.parse(JSON.stringify(nested));
+  validateFrame(restored, assets);
+  assert.equal(restored.layers[0].contents.layers[0].kind, 'raster');
+  assert.deepEqual(Object.keys(referencedAssets([nested], { ...assets, [unusedId]: assets[unusedId] })), [embeddedId]);
+  assert.throws(
+    () => validateFrame(frame({ ...smart(), contents: { ...child, w: 23 } }), assets),
+    /Invalid layer document/,
+  );
+});
+
+test('nested smart-object depth guard rejects recursive chains beyond the local limit', () => {
+  const make = (depth) => {
+    const child = {
+      ...commonLayer(`Depth ${depth}`),
+      kind: 'smart-object',
+      asset: embeddedId,
+    };
+    if (depth > 0) {
+      const contents = make(depth - 1);
+      child.contents = {
+        w: 24,
+        h: 12,
+        layers: [contents],
+        active: contents.id,
+      };
+    }
+    return child;
+  };
+  const root = make(5);
+  assert.throws(
+    () => validateFrame({ w: 24, h: 12, layers: [root], active: root.id }, assets),
+    /Invalid layer document/,
+  );
+});
+
 test('linked smart-object identities are validated without changing their editable transforms', () => {
   const first = smart();
   const second = { ...smart(), id: '00000000-0000-4000-8000-000000000010', matrix: [1, 0, 0, 1, 18, 4] };

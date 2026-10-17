@@ -148,6 +148,25 @@ test('Dust & Scratches replaces only strong local outliers and preserves source 
   assert.equal(effectiveFilterEffects({ ...effect, threshold: 999 }).threshold, 255);
 });
 
+test('Reflection Removal reduces a bright neutral local glare while preserving source and alpha', () => {
+  const source = rgba(5, 5, (x, y) => {
+    if (x === 0 && y === 0) return [19, 29, 39, 0];
+    if (x === 2 && y === 2) return [255, 255, 255, 255];
+    return [42 + x, 76 + y, 112, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'reflection-removal', amount: 100, radius: 2, threshold: 20 };
+  const output = applyFilterEffectsPixels(source, 5, 5, effect);
+  assert.deepEqual(source, original);
+  assert.ok(pixel(output, 5, 2, 2)[0] < 255);
+  assert.ok(pixel(output, 5, 2, 2)[1] < 255);
+  assert.ok(pixel(output, 5, 2, 2)[2] < 255);
+  assert.deepEqual(pixel(output, 5, 0, 0), [19, 29, 39, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 5, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(effectiveFilterEffects({ ...effect, threshold: 999 }).threshold, 255);
+});
+
 test('Despeckle applies the fixed local cleanup contract deterministically', () => {
   const source = rgba(3, 3, (x, y) => {
     if (x === 1 && y === 1) return [255, 0, 255, 255];
@@ -179,6 +198,48 @@ test('Reduce Noise smooths similar tones while preserving strong edges and sourc
   assert.deepEqual(pixel(output, 4, 0, 0), [19, 29, 39, 0]);
   assert.deepEqual(output, applyFilterEffectsPixels(source, 4, 2, effect));
   assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+});
+
+test('AI Denoise reduces chroma speckle while protecting luminance edges and source safety', () => {
+  const source = rgba(5, 3, (x, y) => {
+    if (x === 0 && y === 0) return [23, 37, 51, 0];
+    if (x < 2) return [82 + ((x + y) % 2) * 18, 88 - ((x * 3 + y) % 2) * 14, 124 + ((x + y) % 2) * 16, 255];
+    return [218 + ((x + y) % 2) * 10, 180 + ((x * 5 + y) % 2) * 14, 150 + ((x + y) % 2) * 9, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'ai-denoise', amount: 100, radius: 2, threshold: 24 };
+  const output = applyFilterEffectsPixels(source, 5, 3, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 5, 0, 0), [23, 37, 51, 0]);
+  assert.equal(pixel(output, 5, 2, 1)[3], 255);
+  const leftOffset = (1 * 5 + 1) * 4;
+  const rightOffset = (1 * 5 + 2) * 4;
+  const leftLuma = output[leftOffset] * 0.299 + output[leftOffset + 1] * 0.587 + output[leftOffset + 2] * 0.114;
+  const rightLuma = output[rightOffset] * 0.299 + output[rightOffset + 1] * 0.587 + output[rightOffset + 2] * 0.114;
+  assert.ok(rightLuma - leftLuma > 70, 'the strong luminance edge should remain protected');
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 3, effect));
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(effectiveFilterEffects({ type: 'ai-denoise' }).threshold, 18);
+});
+
+test('AI Sharpen enhances luminance detail while preserving flat fields, alpha and source safety', () => {
+  const source = rgba(5, 5, (x, y) => {
+    if (x === 0 && y === 0) return [17, 29, 41, 0];
+    if (x === 2 && y === 2) return [190, 182, 174, 255];
+    return [70, 76, 82, 255];
+  });
+  const original = source.slice();
+  const effect = { type: 'ai-sharpen', amount: 100, radius: 2, threshold: 4 };
+  const output = applyFilterEffectsPixels(source, 5, 5, effect);
+  assert.deepEqual(source, original);
+  assert.ok(pixel(output, 5, 2, 2)[0] > pixel(source, 5, 2, 2)[0]);
+  assert.deepEqual(pixel(output, 5, 0, 0), [17, 29, 41, 0]);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 5, effect));
+  const flat = rgba(3, 3, () => [100, 100, 100, 255]);
+  assert.deepEqual(applyFilterEffectsPixels(flat, 3, 3, effect), flat);
+  assert.equal(validFilterEffects(effectiveFilterEffects(effect)), true);
+  assert.equal(effectiveFilterEffects({ type: 'ai-sharpen' }).threshold, 22);
 });
 
 test('De-Interlace supports both field parity choices and interpolation', () => {
@@ -1492,4 +1553,43 @@ test('Wind uses deterministic directional source samples and preserves alpha', (
   assert.notDeepEqual(output, source);
   assert.deepEqual(output, applyFilterEffectsPixels(source, 3, 2, value));
   assert.deepEqual(applyFilterEffectsPixels(source, 3, 2, { ...value, amount: 0 }), source);
+});
+
+test('Neural Filters local approximation is deterministic, editable and source-safe', () => {
+  const source = rgba(5, 3, (x, y) => {
+    if (x === 0 && y === 0) return [231, 17, 91, 0];
+    return [20 + x * 42, 180 - y * 38, 30 + (x + y) * 24, 255];
+  });
+  const original = source.slice();
+  const effect = {
+    type: 'neural-enhance', amount: 85, radius: 2,
+    neuralEnhance: { luminance: 52, color: 38, texture: 56 },
+  };
+  const normalized = effectiveFilterEffects(effect);
+  assert.equal(validFilterEffects(normalized), true);
+  assert.deepEqual(normalized.neuralEnhance, effect.neuralEnhance);
+  const output = applyFilterEffectsPixels(source, 5, 3, effect);
+  assert.deepEqual(source, original);
+  assert.notDeepEqual(output, source);
+  assert.deepEqual(pixel(output, 5, 0, 0), [231, 17, 91, 0]);
+  assert.equal(pixel(output, 5, 1, 1)[3], 255);
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 5, 3, effect));
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 3, { ...effect, amount: 0 }), source);
+  assert.deepEqual(applyFilterEffectsPixels(source, 5, 3, {
+    ...effect,
+    neuralEnhance: { luminance: 0, color: 0, texture: 0 },
+  }), source);
+});
+
+test('Neural Filters controls produce distinct bounded results and reject malformed metadata', () => {
+  const source = rgba(7, 3, (x, y) => [35 + x * 25, 70 + y * 30, 190 - x * 12, 255]);
+  const base = { type: 'neural-enhance', amount: 100, radius: 2 };
+  const luminance = applyFilterEffectsPixels(source, 7, 3, { ...base, neuralEnhance: { luminance: 100, color: 0, texture: 0 } });
+  const color = applyFilterEffectsPixels(source, 7, 3, { ...base, neuralEnhance: { luminance: 0, color: 100, texture: 0 } });
+  const texture = applyFilterEffectsPixels(source, 7, 3, { ...base, neuralEnhance: { luminance: 0, color: 0, texture: 100 } });
+  assert.notDeepEqual(luminance, color);
+  assert.notDeepEqual(color, texture);
+  assert.equal(effectiveFilterEffects({ ...base, neuralEnhance: { luminance: -4, color: 240, texture: 11.4 } }).neuralEnhance?.luminance, 0);
+  assert.equal(effectiveFilterEffects({ ...base, neuralEnhance: { luminance: -4, color: 240, texture: 11.4 } }).neuralEnhance?.color, 100);
+  assert.equal(validFilterEffects({ ...effectiveFilterEffects(base), neuralEnhance: { luminance: 10, color: 20, texture: 30.5 } }), false);
 });

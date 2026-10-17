@@ -20,6 +20,8 @@ const validId = (value: unknown): value is number => Number.isSafeInteger(value)
 export function validateEncodeRequest(value: unknown): { request: EncodeRequest; plan: TilePlan } {
   if (!record(value) || value.kind !== 'encode' || !validId(value.id) || !EXPORT_FORMATS.includes(value.format as ExportFormat) || !validExportQuality(value.quality))
     throw new Error('Invalid worker encoding request');
+  if (value.format === 'psd' || value.format === 'pdf')
+    throw new Error('PSD and PDF encoding run on the main thread.');
   const plan = planTiles(value.width as number, value.height as number, { tileSize: value.tileSize as number | undefined });
   if (!(value.pixels instanceof ArrayBuffer) || value.pixels.byteLength !== plan.width * plan.height * 4)
     throw new Error('Worker pixel buffer does not match dimensions');

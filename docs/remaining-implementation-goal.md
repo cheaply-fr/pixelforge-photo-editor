@@ -10,18 +10,149 @@ Replace the provisional completion percentages with a documented weighted rubric
 
 ## Recently shipped milestone
 
+The current unmerged candidate adds the Photoshop-style Retouch `R` flyout
+for source-safe Blur and Sharpen brush strokes. Each tool has bounded local
+blur/high-pass kernels, Size/Hardness/Flow controls, selection clipping,
+alpha/source safety, undo/reload/project persistence and locked-layer guards;
+pure and desktop/mobile browser coverage is in `tests/retouch.test.mjs` and
+`tests/browser/retouch-tools.spec.ts`. Protected CI, merge, deployment and
+live verification remain pending for this candidate.
+
 NTSC Colors has a documented local Y'IQ composite-envelope contract, editable nondestructive UI, unit coverage, and desktop/mobile browser coverage for worker/fallback rendering, locks, source retention, undo/redo, draft reload, portable projects and PNG pixels. Protected CI, PR review/merge, deployment and independent live-revision plus DNS/TLS verification completed in the main workflow for `0fc1857d07d08083b960a34dc77c6f6b2ecb3bde`; `/release.json` and `/api/readyz.json` report that exact revision. The local approximation does not claim broadcast compliance or Photoshop parity.
+
+The latest local candidate adds bounded tiled Lens Correction parity, editable
+Layer Styles Color Overlay, bounded nested Smart Objects, Gradient Overlay,
+clipped Inner Shadow, Bevel/Emboss, Pattern Overlay, AI Denoise, AI Sharpen,
+Neural Filters, Reflection Removal and Generative Upscale local
+approximations. Lens Correction has pure full-frame/tile parity plus
+desktop/mobile round-trip coverage; the Layer Styles, nested Smart Object and
+filter slices have pure validation/pixel coverage plus desktop/mobile lock,
+undo, reload and project round-trip coverage. Generative Upscale adds a
+bounded offline 2x/4x editable resampling dialog with a 16-megapixel budget
+and desktop/mobile apply, undo, cancel and reload coverage. Paste Special now
+adds in-place, centered and selection-masked placement for the private layer
+clipboard with desktop/mobile round-trip coverage. Generative Fill now adds a
+bounded offline seeded texture-synthesis dialog with local prompt metadata,
+selection/layer guards, source/alpha safety and desktop/mobile round-trip
+coverage. Prompt to Edit now adds a bounded offline allow-listed parser for
+common tonal, colour and sharpening requests, with unsupported-language guards
+and desktop/mobile adjustment round-trip coverage. The local candidate passes
+880/880 pure tests, 4/4 Paste Special browser cases, 8/8 Generative Upscale
+browser cases, 4/4 Generative Fill browser cases and 4/4 Prompt to Edit
+browser cases. It also adds Generate Image as a bounded offline abstract
+renderer with 3/3 pure cases and 4/4 desktop/mobile browser cases covering
+editable raster insertion, dimension persistence, reload and empty-input
+failure. Static/typecheck/build checks pass locally.
+Remote PR #149 now has documentation head `3e00174` and includes source through `2629cc5` (with the menu-test
+alignment at `4e192d7` and the protected Playwright worker-budget fix at
+`2629cc5`). Protected validation runs `38948652002` (source head) and
+`38952991183` (documentation head) completed successfully: lint, typecheck,
+build, 880 pure tests and the complete desktop/mobile Playwright suite passed.
+The run did not deploy because this is
+an open pull-request branch, so deployment and live revision remain separate
+gates; production still reports the previously verified revision
+`6515b45affed0a39113f9134fb8ebecf2f5935d2d` until a protected main-branch
+deployment completes.
+
+The latest protected validation run `38963588498` now passes for the exact
+candidate `a8eae77`, including lint, typecheck, production build, pure tests
+and the complete desktop/mobile Playwright suite. Its production deploy job
+was correctly skipped because PR #149 is not a main-branch push. This earns
+protected-CI evidence for the histogram and adjustment-family increments;
+production and live acceptance remain separate gates on the existing deployed
+revision.
+
+The local candidate source commit `2254afd` includes the bounded nondestructive
+Pattern Overlay style, `Filter → AI Denoise…`, `Filter → AI Sharpen…`, the
+enabled `Filter → Neural Filters…` approximation and the enabled
+`Edit → Reflection Removal…` approximation. Pattern Overlay repeats checker,
+stripes, dots, grid or diagonal tiles with editable colours, opacity and tile
+size while retaining the immutable source asset. AI Denoise is a private
+deterministic Y’CbCr bilateral approximation with editable radius,
+edge-protection threshold and amount; alpha, transparent RGB, source assets
+and Action defaults remain safe, and the UI discloses that model-backed RAW or
+temporal denoising is not enabled. AI Sharpen is a private deterministic
+luminance-detail approximation with editable radius, edge threshold and amount;
+it retains source/alpha safety and discloses that model-backed RAW priors and
+deconvolution remain staged. Neural Filters is a private deterministic local
+neighbourhood enhancement with editable luminance recovery, colour balance,
+texture detail and radius; it uses no model, upload or network call, and
+semantic Adobe model parity remains staged. Reflection Removal is a private
+local de-glare approximation that targets bright, low-saturation local
+outliers with editable threshold and cleanup radius; semantic reflection
+inference and material reconstruction remain staged. Pure coverage is 877/877;
+the full Filter effects browser file previously passed 132/132 desktop/mobile
+cases, and the new Reflection Removal desktop/mobile cases pass 2/2.
+Generative Upscale is an offline 2x/4x resampling workflow with a 16-megapixel
+budget, source-safe alpha handling and no provider-backed semantic generation;
+its focused desktop/mobile cases pass 8/8.
+Paste Special keeps the private layer clipboard local and supports in-place,
+centered and selection-masked insertion; its focused desktop/mobile cases pass
+4/4.
+Generative Fill keeps the user prompt local and applies a bounded seeded
+texture-synthesis approximation only inside a current selection on a visible
+unlocked raster layer; it preserves source/alpha and supports undo, reload and
+portable project round trips. Its focused desktop/mobile cases pass 4/4. It
+does not call a provider or claim semantic prompt-following generation; see
+[`generative-fill-contract.md`](./generative-fill-contract.md).
+Prompt to Edit keeps a short instruction local and maps at most four
+allow-listed intents to existing nondestructive adjustment metadata in one
+undoable edit. Its parser and focused desktop/mobile cases pass 5/5 and 4/4;
+unsupported semantic language fails closed. It does not call a provider or
+claim arbitrary natural-language understanding; see
+[`prompt-to-edit-contract.md`](./prompt-to-edit-contract.md).
+Generate Image keeps a short description local and maps it to one of four
+deterministic abstract styles (gradient, stripes, dots or noise). It inserts a
+bounded opaque raster layer with explicit dimension, pixel and layer limits and
+survives draft/project round trips. Its normalisation/render tests pass 3/3 and
+its focused desktop/mobile cases pass 4/4. It does not call a provider or claim
+semantic prompt-following generation; see
+[`generate-image-contract.md`](./generate-image-contract.md).
+Static/typecheck/build checks pass locally with the existing chunk-size and
+dynamic-import warnings. Protected CI, deployment and live acceptance remain
+separate gates.
+
+The current toolbar hardening packs sparse one-slot and two-slot categories
+across the available two/three-column tracks instead of forcing every category
+to consume a full row. Larger categories retain full-width rows, family
+representatives remain deduplicated, and the existing hold-to-open flyouts keep
+their visible Lucide icons and arrows. Desktop/mobile toolbar acceptance now
+covers the packed geometry in addition to the 26-case family, icon, keyboard,
+touch, persistence and no-placeholder suite. This is local candidate evidence
+until the protected workflow, deployment and live revision checks complete.
+
+The current analysis increment adds `Image → Analysis → Histogram`. It computes
+256-bin red, green, blue and Rec. 709 luminance channels from the rendered
+composite in the browser, excludes fully transparent RGB samples, reports
+visible-pixel/mean/range/alpha statistics, and keeps the document, history and
+source assets unchanged. Pure coverage is in `tests/histogram.test.mjs` and
+desktop/mobile menu, channel-switching and Escape coverage is in
+`tests/browser/histogram.spec.ts` plus the Photoshop menu-family test. This is
+a local analysis approximation; profile-aware histogram caches, print
+proofing and advanced provider-backed analysis remain staged. Protected CI,
+merge, deployment and live revision verification are still required.
+
+The current menu-family increment enables `Image → Adjustments` as an
+accessible local chooser for Levels, Curves, Hue/Saturation, Color Balance and
+Sharpen and Noise. Each selection routes through the existing nondestructive
+inspector command and preserves its individual lock, pixel, undo and round-trip
+contracts; no second adjustment implementation or provider call is introduced.
+Pure adjustment suites remain authoritative, while
+`tests/browser/adjustments-menu.spec.ts` covers the chooser on desktop and
+mobile. Full Photoshop adjustment-dialog parity and colour-management depth
+remain staged; protected CI, merge, deployment and live revision verification
+are still required.
 
 ## Remaining roadmap stages
 
-1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. Linked/nested smart-object semantics and full asset compaction remain staged; audit every existing implementation against its real behavior and regression contract.
+1. **Document foundations:** finish missing depth in editable raster/text/vector layers, layer groups and stacking, artboards and frames, nondestructive raster/vector/clipping masks, smart-object semantics, asset ownership/compaction and versioned persistence. Artboards now have guarded per-viewport visibility controls with at least-one-visible export safety, isolated layer-tree rendering, and desktop/mobile persistence coverage. **Nested local Smart Objects are now active:** root-level selections can be wrapped in a bounded recursive child `Frame`, rendered through the normal source-safe pipeline, validated to four levels, and retained by recursive asset compaction with Layer-panel and menu entry points. A nested frame remains a local editable data model; separate smart-object document windows, linked cloud assets and full asset compaction across external providers remain staged.
 2. **Selections and precision:** complete requested rectangle/ellipse/row/column/lasso/color-based and automatic selections, replace/add/subtract/intersect/invert/feather and refinement, precision transforms, selection transforms, crop/perspective crop, slices, frames and remaining warp workflows. Preserve editable metadata and cancel/undo safety; disclose composite-raster operations.
 3. **Painting and retouching:** deepen configurable brush/eraser/pencil/mixer/history/adjustment tools, size/hardness/opacity/flow, pressure and touch, presets/dynamics/stabilization, eyedropper, fill/gradients, clone/pattern stamp, healing/patch/removal, dodge/burn/sponge/blur/sharpen/smudge and requested cleanup tools. Evaluate semantic and content-aware capabilities separately from deterministic local substitutes.
 4. **Typography and vectors:** finish text layout, alignment/spacing, shapes and parametric geometry, path/anchor/handle editing, vector Boolean limitations, text masks/conversions, OpenType shaping, warp/type-on-path and requested font workflows. Update All Text Layers now provides bounded supported font/size batch editing with an editable project round trip. Verify source editability, transforms, bounds, fill/stroke, hit testing and export pixels.
 5. **Adjustments and menus:** complete nondestructive adjustment layers, hue/saturation, levels, curves, color balance, sharpen and noise depth; implement distinct algorithms for requested commands rather than presenting shared aliases as equivalent. Check Spelling now provides a bounded private local hint workflow, Color Settings stores an explicit sRGB/Display P3 working label; Assign Profile is metadata-only and Convert to Profile performs a bounded local raster/smart-object D65 transform without ICC embedding or authored vector/text conversion; Filter → Last Filter repeats the most recently selected nondestructive effect with a guarded empty state and reload-safe validated local preference. Complete the individual Edit/Image/Layer/Type/Select/Filter/View/Plugins capability inventory, including remaining gallery, distortion, procedural, video and color-management work under explicit contracts.
 6. **Projects and exports:** strengthen reliable history, migration/corruption handling, conflict recovery, private-cloud authorization, account isolation, portable editable projects and recovery. Complete PNG/JPEG/WebP quality, byte-size control, metadata privacy, artboard exports and cancellable batch/Action workflows with per-file failure isolation and resource bounds. Audit lossless versus flattened behavior.
-7. **Interaction and scale:** finish compact responsive categorized toolbar layouts, representative icons, hold-to-open subtools, group arrows, remembered subtools and Photoshop-compatible shortcuts. The local searchable Keyboard Shortcuts reference now derives from menu definitions, and Toolbar settings persist an anonymous two/three-column preference, category visibility, category ordering, and per-category tool ordering without placeholder rows. Keyboard Shortcuts also supports versioned one-character tool bindings with collision-safe normalization and reload persistence; selected flyout subtools now persist through a versioned local preference envelope and restore their compact representative after reload; modifier-aware tool chord rebinding now accepts validated Shift/Ctrl/Alt/Cmd combinations with reload persistence; full menu-command rebinding and future preference fields remain staged. Preserve optional profile/login/logout and version/server status. Close keyboard/accessibility, mobile/touch, offline recovery, worker/tile/cancellation/cache and measured latency/memory/device-budget gaps. Do not infer physical-device acceptance from emulation.
-8. **Advanced and format evaluation:** complete optional background removal/object cleanup and separately evaluate HEIC/HEIF/TIFF/PSD/PSB/RAW/SVG/PDF interoperability with editable/lossless/flattened/unsupported labels. **PSD/PSB now has bounded flattened 8-bit RGB/grayscale composite import (raw and PackBits RLE) and TIFF now has bounded classic 8-bit chunky RGB/grayscale raw or PackBits import, both with source-safe failure handling; layered, profile, mask, page and metadata round trips remain explicitly unsupported.** Address requested generative, plugin/integration and synchronization capabilities already recorded in the roadmap only after privacy, resource, authorization, provider and failure contracts exist. Evaluations must record concrete evidence and limitations; supported capabilities require full release gates.
+7. **Interaction and scale:** finish compact responsive categorized toolbar layouts, representative icons, hold-to-open subtools, group arrows, remembered subtools and Photoshop-compatible shortcuts. The local searchable Keyboard Shortcuts reference now derives from menu definitions, and Toolbar settings persist an anonymous two/three-column preference, category visibility, category ordering, and per-category tool ordering without placeholder rows. Keyboard Shortcuts also supports versioned one-character tool bindings with collision-safe normalization and reload persistence; selected flyout subtools now persist through a versioned local preference envelope and restore their compact representative after reload; modifier-aware tool chord rebinding now accepts validated Shift/Ctrl/Alt/Cmd combinations with reload persistence; **all working menu commands, including commands without a built-in shortcut, now accept validated local bindings with disabled-command guards and reload persistence** (see [`command-shortcuts-contract.md`](./command-shortcuts-contract.md)). Preserve optional profile/login/logout and version/server status. Close keyboard/accessibility, mobile/touch, offline recovery, worker/tile/cancellation/cache and measured latency/memory/device-budget gaps. Do not infer physical-device acceptance from emulation.
+8. **Advanced and format evaluation:** complete optional background removal/object cleanup and separately evaluate HEIC/HEIF/TIFF/PSD/PSB/RAW/SVG/PDF interoperability with editable/lossless/flattened/unsupported labels. **PSD/PSB now has bounded flattened 8-bit RGB/grayscale composite import (raw and PackBits RLE) and a bounded flattened 8-bit RGB-plus-alpha PSD export; PDF now has a bounded single-page JPEG composite export and matching bounded single-page JPEG composite import.** These outputs have no editable layer, mask, profile, metadata or undo sections and retain `.pixelforge` as the editable recovery format. **TIFF now has bounded classic 8-bit chunky RGB/grayscale raw or PackBits import, both with source-safe failure handling; layered, profile, mask, page and metadata round trips remain explicitly unsupported.** **SVG now has a bounded local-only UTF-8 sanitizer before browser rasterization, rejecting scripts, foreign documents, external resources, unsafe references, oversized dimensions and malformed roots; safe SVG remains explicitly flattened and vector data is not retained.** **Image → Generative Upscale… now has a bounded offline 2×/4× editable resampling approximation with a 16-megapixel budget, alpha-safe source retention and desktop/mobile apply/undo/cancel coverage; it does not call an AI provider or claim semantic content generation.** **Edit → Generative Fill… now has a bounded offline seeded texture-synthesis approximation with a local-only prompt, source/alpha safety, an eight-operation layer budget and desktop/mobile coverage; it does not claim semantic prompt-following generation.** Address remaining requested generative, plugin/integration and synchronization capabilities already recorded in the roadmap only after privacy, resource, authorization, provider and failure contracts exist. Evaluations must record concrete evidence and limitations; supported capabilities require full release gates.
 
 ## Invariants and delivery gates
 
@@ -64,6 +195,19 @@ coverage is in `tests/open-type.test.mjs`; browser coverage is in
 vertical shaping, type-on-path alternates, font embedding and provider-backed
 style libraries remain staged; see [`open-type-contract.md`](./open-type-contract.md).
 
+The current language-options increment enables `Type → Language Options` for
+editable text layers. It stores bounded local language, writing-direction and
+hyphenation intent metadata, applies browser-supported LTR/RTL direction during
+Canvas 2D rendering, and keeps authored line breaks, source text, undo history
+and portable project round trips intact. The dialog and Layers panel share the
+same normalized values; legacy drafts remain valid and invalid values fail
+closed. Hyphenation is metadata-only until a bounded layout engine exists, and
+full language-specific shaping, font embedding and Adobe paragraph-engine
+parity remain staged. Pure coverage is in `tests/text-language.test.mjs` and
+desktop/mobile menu, rendering, reload and project coverage is in
+`tests/browser/language-options.spec.ts`. Protected CI, merge, deployment and
+live revision verification are still required.
+
 The current Camera Raw increment adds `Filter → Camera Raw Filter…` as a
 distinct bounded local correction. Highlights, Shadows, Temperature, Tint and
 Clarity remain editable metadata and compose with existing exposure/vibrance
@@ -72,6 +216,30 @@ finishing without replacing source assets. Pure coverage is in
 and project round-trip coverage is in `tests/browser/photo-adjustments.spec.ts`.
 Camera profiles, demosaicing, linear-light RAW processing and Adobe parity
 remain staged; see [`camera-raw-filter-contract.md`](./camera-raw-filter-contract.md).
+
+The current local brush increment adds a persisted Linear/Soft/Firm pressure
+curve for Brush, Pencil, Eraser, Clone, Healing and Pattern Stamp. The curve
+is applied only when pen/touch pressure affects size or opacity, keeps the
+existing full-pressure mouse fallback, and is source-safe and deterministic.
+Pure response/validation coverage is in `tests/brush-pressure.test.mjs` and
+desktop/mobile UI, pixel-response, draft-reload and legacy-settings coverage is
+in `tests/browser/brush.spec.ts`. The contract and limitation disclosure are
+in [`brush-pressure-contract.md`](./brush-pressure-contract.md). Protected
+CI, merge, deployment and live candidate verification remain pending.
+
+The current advanced-correction increment adds a distinct local Adaptive Wide
+Angle effect. Its bounded anisotropic geometry stores a persisted centre and
+horizontal/vertical line-bias controls, preserves source assets and transparent
+padding, and is covered by pure and desktop/mobile round-trip tests. Photoshop
+constraint drawing, camera calibration, lens profiles and full perspective
+mesh parity remain staged; see [`adaptive-wide-angle-contract.md`](./adaptive-wide-angle-contract.md).
+
+The current local filter increment adds `Filter → Other → High Pass…` as a
+bounded neutral-grey edge residual. Amount and radius remain editable, source
+assets, alpha and transparent RGB stay safe, and pure plus desktop/mobile menu,
+undo, reload and project round-trip coverage are present. Blend-mode
+compositing, channel-specific high-bit-depth processing and exact Photoshop
+parity remain staged; see [`high-pass-effect-contract.md`](./high-pass-effect-contract.md).
 
 ## Goal text for recreation
 

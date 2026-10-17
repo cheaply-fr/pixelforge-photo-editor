@@ -18,6 +18,7 @@ export type BrushPreset = BrushTipSettings & {
   hardness: number;
   pressureSize: boolean;
   pressureOpacity: boolean;
+  pressureCurve?: 'linear' | 'soft' | 'firm';
 };
 
 export const BRUSH_PRESETS = [
@@ -33,6 +34,7 @@ export const BRUSH_PRESETS = [
     flipY: false,
     pressureSize: false,
     pressureOpacity: false,
+    pressureCurve: 'linear',
   },
   {
     id: 'round-soft',
@@ -46,6 +48,7 @@ export const BRUSH_PRESETS = [
     flipY: false,
     pressureSize: false,
     pressureOpacity: false,
+    pressureCurve: 'linear',
   },
   {
     id: 'pencil',
@@ -59,6 +62,7 @@ export const BRUSH_PRESETS = [
     flipY: false,
     pressureSize: true,
     pressureOpacity: false,
+    pressureCurve: 'linear',
   },
   {
     id: 'ink-angled',
@@ -72,6 +76,7 @@ export const BRUSH_PRESETS = [
     flipY: false,
     pressureSize: true,
     pressureOpacity: true,
+    pressureCurve: 'linear',
   },
 ] as const satisfies readonly BrushPreset[];
 
@@ -100,6 +105,7 @@ export function validBrushPreset(value: unknown): value is BrushPreset {
     typeof candidate.hardness === 'number' && Number.isFinite(candidate.hardness) && candidate.hardness >= 0 && candidate.hardness <= 100 &&
     typeof candidate.pressureSize === 'boolean' &&
     typeof candidate.pressureOpacity === 'boolean' &&
+    (candidate.pressureCurve === undefined || ['linear', 'soft', 'firm'].includes(candidate.pressureCurve)) &&
     validBrushTipSettings(candidate)
   );
 }

@@ -10,6 +10,9 @@
 export const CONTENT_AWARE_VERSION = 1 as const;
 export const CONTENT_AWARE_MAX_OPERATIONS = 16;
 export const CONTENT_AWARE_MAX_RADIUS = 128;
+export const GENERATIVE_FILL_MAX_OPERATIONS = 8;
+export const GENERATIVE_FILL_MAX_PROMPT = 240;
+export const GENERATIVE_FILL_MAX_RADIUS = 96;
 
 export type ContentAwareFill = {
   version: typeof CONTENT_AWARE_VERSION;
@@ -19,6 +22,12 @@ export type ContentAwareFill = {
   radius: number;
   /** Blend strength from 0 to 1. */
   opacity: number;
+  /** Optional bounded local texture-synthesis mode. Legacy fills use median. */
+  mode?: 'median' | 'texture';
+  /** User-provided description retained locally; never sent to a provider. */
+  prompt?: string;
+  /** Deterministic local seed for texture sampling. */
+  seed?: number;
 };
 
 const finite = (value: unknown): value is number =>
@@ -30,6 +39,7 @@ export function validContentAwareFill(value: unknown): value is ContentAwareFill
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const candidate = value as Partial<ContentAwareFill>;
   const radius = candidate.radius;
+  const mode = candidate.mode ?? 'median';
   return (
     candidate.version === CONTENT_AWARE_VERSION &&
     typeof candidate.mask === 'string' &&
@@ -40,7 +50,12 @@ export function validContentAwareFill(value: unknown): value is ContentAwareFill
     radius <= CONTENT_AWARE_MAX_RADIUS &&
     finite(candidate.opacity) &&
     candidate.opacity >= 0 &&
-    candidate.opacity <= 1
+    candidate.opacity <= 1 &&
+    (mode === 'median' || mode === 'texture') &&
+    (candidate.prompt === undefined ||
+      (typeof candidate.prompt === 'string' && candidate.prompt.length <= GENERATIVE_FILL_MAX_PROMPT)) &&
+    (candidate.seed === undefined ||
+      (Number.isInteger(candidate.seed) && candidate.seed >= 0 && candidate.seed <= 0xffffffff))
   );
 }
 
@@ -108,6 +123,56 @@ function contextSample(
   return null;
 }
 
+function hash32(value: number): number {
+  let x = value | 0;
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x45d9f3b);
+  x ^= x >>> 16;
+  x = Math.imul(x, 0x45d9f3b);
+  x ^= x >>> 16;
+  return x >>> 0;
+}
+
+/**
+ * Sample several seeded rings rather than taking one median. This gives the
+ * local Generative Fill approximation a different, repeatable texture blend
+ * while keeping all reads outside the selected mask and preserving alpha.
+ */
+function textureContextSample(
+  source: ArrayLike<number>,
+  mask: ArrayLike<number>,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius: number,
+  seed: number,
+): [number, number, number, number] | null {
+  const samples: Array<{ rgba: [number, number, number, number]; weight: number }> = [];
+  const count = 24;
+  for (let index = 0; index < count; index += 1) {
+    const random = hash32(seed ^ Math.imul(x + 1, 0x1f123bb5) ^ Math.imul(y + 1, 0x5f356495) ^ index);
+    const angle = ((index + 0.25 + (random % 1000) / 1000) / count) * Math.PI * 2;
+    const distance = Math.max(1, Math.round(1 + (radius - 1) * ((random >>> 10) % 1000) / 999));
+    const sx = Math.round(x + Math.cos(angle) * distance);
+    const sy = Math.round(y + Math.sin(angle) * distance);
+    if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+    if (mask[sy * width + sx] >= 128) continue;
+    const offset = pixelOffset(width, sx, sy);
+    if (source[offset + 3] <= 0) continue;
+    const weight = 1 / (1 + distance);
+    samples.push({
+      rgba: [source[offset], source[offset + 1], source[offset + 2], source[offset + 3]],
+      weight,
+    });
+  }
+  if (!samples.length) return contextSample(source, mask, width, height, x, y, radius);
+  const total = samples.reduce((sum, sample) => sum + sample.weight, 0);
+  return [0, 1, 2, 3].map((channel) =>
+    Math.round(samples.reduce((sum, sample) => sum + sample.rgba[channel as 0 | 1 | 2 | 3] * sample.weight, 0) / total),
+  ) as [number, number, number, number];
+}
+
 function applyFill(
   destination: Uint8ClampedArray,
   source: ArrayLike<number>,
@@ -122,15 +187,18 @@ function applyFill(
     for (let x = 0; x < width; x += 1) {
       const maskAlpha = mask[y * width + x] ?? 0;
       if (maskAlpha <= 0) continue;
-      const context = contextSample(
-        samplingSource,
-        mask,
-        width,
-        height,
-        x,
-        y,
-        fill.radius,
-      );
+      const context = fill.mode === 'texture'
+        ? textureContextSample(
+            samplingSource,
+            mask,
+            width,
+            height,
+            x,
+            y,
+            Math.min(GENERATIVE_FILL_MAX_RADIUS, fill.radius),
+            fill.seed ?? 0,
+          )
+        : contextSample(samplingSource, mask, width, height, x, y, fill.radius);
       if (!context) continue;
       const offset = pixelOffset(width, x, y);
       const amount = clamp((maskAlpha / 255) * fill.opacity, 0, 1);

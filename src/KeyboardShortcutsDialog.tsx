@@ -13,6 +13,7 @@ export default function KeyboardShortcutsDialog({
   toolItems,
   toolBindings,
   applyToolBindings,
+  commandItems,
   commandBindings,
   applyCommandBindings,
 }: {
@@ -21,6 +22,7 @@ export default function KeyboardShortcutsDialog({
   toolItems?: { id: string; label: string; key: string }[];
   toolBindings?: Readonly<Record<string, string>>;
   applyToolBindings?: (bindings: Record<string, string>) => void;
+  commandItems?: KeyboardShortcutItem[];
   commandBindings?: Readonly<Record<string, string>>;
   applyCommandBindings?: (bindings: Record<string, string>) => void;
 }) {
@@ -39,6 +41,16 @@ export default function KeyboardShortcutsDialog({
       .filter((item) => !needle || `${item.label} ${item.menu} ${item.shortcut}`.toLocaleLowerCase().includes(needle))
       .slice(0, 100);
   }, [items, query]);
+  const commands = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return (commandItems ?? shortcuts)
+      .filter((item, index, values) => values.findIndex((candidate) => candidate.command === item.command) === index)
+      .filter((item) => !needle || `${item.label} ${item.menu} ${item.shortcut ?? ''}`.toLocaleLowerCase().includes(needle))
+      // Keep every working menu command reachable.  The dialog is already
+      // scrollable, and truncating the tail silently hid View and Plugins
+      // commands once the Filter menu grew past the old fixed cap.
+      .slice(0, 512);
+  }, [commandItems, query, shortcuts]);
   return (
     <dialog ref={dialog} className="editor-dialog keyboard-shortcuts-dialog" aria-labelledby="keyboard-shortcuts-title" onCancel={close}>
       <form onSubmit={(event) => { event.preventDefault(); applyToolBindings?.(bindings); applyCommandBindings?.(commandOverrides); close(); }}>
@@ -82,10 +94,10 @@ export default function KeyboardShortcutsDialog({
         {applyCommandBindings && (
           <fieldset className="tool-shortcut-settings command-shortcut-settings">
             <legend>Custom menu command bindings</legend>
-            <p className="toolbar-category-help">Override a listed menu shortcut with a key, punctuation key, or function-key chord. Leave blank to keep the built-in shortcut. Duplicate and invalid chords are ignored.</p>
-            {shortcuts.map((item) => (
+            <p className="toolbar-category-help">Assign a key, punctuation key, or function-key chord to any menu command, including commands without a built-in shortcut. Disabled roadmap commands remain unavailable. Duplicate and invalid chords are ignored.</p>
+            {commands.map((item) => (
               <label className="tool-shortcut-row" key={`command-${item.menu}-${item.command}`}>
-                <span><b>{item.label}</b><small>{item.menu} · Default {item.shortcut}</small></span>
+                <span><b>{item.label}</b><small>{item.menu} · Default {item.shortcut || '—'}</small></span>
                 <input
                   aria-label={`${item.label} custom command shortcut`}
                   value={commandOverrides[item.command] ?? ''}
