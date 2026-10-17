@@ -4,6 +4,9 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+const SIMPLE_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="#ff5c35"/></svg>',
+);
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -91,6 +94,24 @@ test('multi-input batch can decode a PixelForge single-page PDF composite', asyn
   });
   await page.getByRole('button', { name: 'Build batch ZIP' }).click();
   await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/1 images/);
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download batch ZIP' }).click();
+  const download = await pending;
+  expect(await download.failure()).toBeNull();
+});
+
+test('multi-input batch decodes safe SVG locally and reports unsafe SVG per file', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Batch export images…', exact: true }).click();
+  await page.getByTestId('batch-image-input').setInputFiles([
+    { name: 'safe.svg', mimeType: 'image/svg+xml', buffer: SIMPLE_SVG },
+    { name: 'unsafe.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><image href="https://example.com/x.png"/></svg>') },
+  ]);
+  await page.getByRole('button', { name: 'Build batch ZIP' }).click();
+  await expect(page.getByLabel('Batch image export progress')).toHaveText(/1\/2 images/);
+  await expect(page.getByLabel('Batch image export failures')).toContainText('unsafe.svg');
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download batch ZIP' }).click();
   const download = await pending;

@@ -7,6 +7,9 @@ const ONE_PIXEL_PNG = Buffer.from(
 const SIMPLE_SVG = Buffer.from(
   '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="#ff5c35"/></svg>',
 );
+const UNSAFE_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><image href="https://example.com/private.png" width="2" height="1"/></svg>',
+);
 const PSD_RGB_2X1 = Buffer.from([
   0x38, 0x42, 0x50, 0x53, 0, 1, 0, 0, 0, 0, 0, 0, 0, 4,
   0, 0, 0, 1, 0, 0, 0, 2, 0, 8, 0, 3,
@@ -194,6 +197,21 @@ test('rasterizes SVG with an explicit vector-loss disclosure', async ({ page }) 
     page.getByText('SVG rasterized as a flattened raster; vector data and external resources omitted', { exact: true }),
   ).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+});
+
+test('rejects unsafe SVG references before browser rasterization and keeps the draft unchanged', async ({ page }) => {
+  let externalRequests = 0;
+  page.on('request', (request) => {
+    if (request.url().startsWith('https://example.com/')) externalRequests += 1;
+  });
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'external.svg',
+    mimeType: 'image/svg+xml',
+    buffer: UNSAFE_SVG,
+  });
+  await expect(page.getByText('This SVG is not a supported safe local SVG.', { exact: false })).toBeVisible();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1440');
+  expect(externalRequests).toBe(0);
 });
 
 test('imports a single-page JPEG PDF composite as a flattened raster', async ({ page }) => {

@@ -62,7 +62,7 @@ test('SVG is conditional flattened rasterization with vector-loss disclosure', (
     assert.match(info.disclosure, /flattened/);
     assert.match(info.disclosure, /vector paths/);
   }
-  assert.match(importFailureMessage(byName), /SVG rasterization/);
+  assert.match(importFailureMessage(byName), /safe local SVG/);
 });
 
 test('PDF is conditional single-page JPEG composite import', () => {

@@ -67,14 +67,18 @@ are decoded into an editable raster layer. PixelForge deliberately labels this
 as a **flattened raster import**: original EXIF/GPS metadata, camera RAW data,
 layer stacks and the source container are not retained in the document.
 
-HEIC/HEIF and TIFF are conditional imports. When the current browser can
+HEIC/HEIF, TIFF and SVG are conditional imports. When the current browser can
 decode the container, each is imported as the same flattened raster and the UI
-identifies the source format and the metadata loss; when it cannot, the source
-draft remains untouched and the user is told to convert to PNG or JPEG. PSD/PSB
+identifies the source format and the metadata loss; SVG markup is first bounded
+and checked for scripts, external resources and oversized dimensions so no
+network fetch is used. When decoding or validation fails, the source draft
+remains untouched and the user is told to convert to PNG or JPEG. PSD/PSB
 extensions accept only the bounded 8-bit RGB/grayscale composite decoder and
 are labelled flattened; layered, profile, mask, page and metadata sections are
-not retained. Camera RAW extensions (including DNG, CR3, NEF and similar
-formats) remain explicitly rejected at the import boundary with a
-develop/flatten-first message. PixelForge does not claim lossless HEIC, TIFF,
-layered PSD or RAW round trips, and batch import uses the same labels in its
-per-file failure manifest.
+not retained. SVG vector paths, fonts and source metadata are not retained;
+the bounded subset and failure behavior are documented in
+[`svg-import-contract.md`](./svg-import-contract.md). Camera RAW extensions
+(including DNG, CR3, NEF and similar formats) remain explicitly rejected at
+the import boundary with a develop/flatten-first message. PixelForge does not
+claim lossless HEIC, TIFF, layered PSD or RAW round trips, and batch import
+uses the same labels in its per-file failure manifest.

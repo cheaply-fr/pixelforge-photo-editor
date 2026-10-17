@@ -297,6 +297,7 @@ import {
 import { decodePsdComposite } from '../src/psd';
 import { decodePdfComposite } from '../src/pdf';
 import { decodeTiffComposite } from '../src/tiff';
+import { prepareSvgBytes } from '../src/svg';
 import { renderSelection } from '../src/selections';
 import {
   refineSelectionAlpha,
@@ -2215,8 +2216,11 @@ export default function Home() {
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
   });
+  const lastRFamilyTool = useRef<Tool>('smudge');
   const setTool = useCallback((next: Tool) => {
     setActiveTool(next);
+    if (next === 'smudge' || next === 'blur' || next === 'sharpen')
+      lastRFamilyTool.current = next;
     const family = flyoutForTool(next);
     if (family)
       setToolFamilyChoices((current) => {
@@ -8080,7 +8084,13 @@ export default function Home() {
       canvas.getContext('2d')!.drawImage(image, 0, 0);
       return canvas;
     }
-    const url = URL.createObjectURL(selected);
+    let imageSource: Blob = selected;
+    let preparedSvg: ReturnType<typeof prepareSvgBytes> | undefined;
+    if (importInfo.format === 'svg') {
+      preparedSvg = prepareSvgBytes(new Uint8Array(await selected.arrayBuffer()));
+      imageSource = new Blob([preparedSvg.markup], { type: 'image/svg+xml' });
+    }
+    const url = URL.createObjectURL(imageSource);
     const image = new Image();
     try {
       image.src = url;
@@ -8094,6 +8104,10 @@ export default function Home() {
       image.height > 16000
     )
       throw new Error('Image exceeds 16 megapixels. Current draft unchanged.');
+    if (preparedSvg?.width !== undefined && image.naturalWidth !== preparedSvg.width)
+      throw new Error('SVG width does not match its declared pixel width.');
+    if (preparedSvg?.height !== undefined && image.naturalHeight !== preparedSvg.height)
+      throw new Error('SVG height does not match its declared pixel height.');
     const canvas = surface(image.width, image.height);
     canvas.getContext('2d')!.drawImage(image, 0, 0);
     return canvas;
@@ -12544,6 +12558,23 @@ export default function Home() {
       }
       if (e.altKey) return;
       const lower = e.key.toLowerCase();
+      // Photoshop keeps Rotate View on the plain R press while Shift+R
+      // returns to the active retouch member of the R family. Preserve that
+      // affordance even though Blur and Sharpen now share the same flyout.
+      if (lower === 'r') {
+        e.preventDefault();
+        const next = e.shiftKey
+          ? (tool === 'rotate-view' ? lastRFamilyTool.current : tool)
+          : 'rotate-view';
+        setTool(next as Tool);
+        setNotice(
+          toolSelectionNotice(
+            next as Tool,
+            TOOLS.find((item) => item.id === next)?.label || next,
+          ),
+        );
+        return;
+      }
       const group = TOOL_GROUPS[lower];
       if (group) {
         e.preventDefault();
@@ -13748,7 +13779,7 @@ export default function Home() {
         data-testid="layer-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => void load(e.target.files?.[0], true)}
       />
       <input
@@ -13756,7 +13787,7 @@ export default function Home() {
         data-testid="smart-object-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(event) =>
           void importSmartObject(
             event.target.files?.[0],
@@ -13787,7 +13818,7 @@ export default function Home() {
         data-testid="batch-image-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         multiple
         onChange={(event) => {
           const files = Array.from(event.target.files || []);
@@ -14171,7 +14202,7 @@ export default function Home() {
         data-testid="file-input"
         className="hidden"
         type="file"
-        accept="image/*,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
+        accept="image/*,.svg,.svgz,.heic,.heif,.heics,.heifs,.tif,.tiff,.psd,.psb,.pdf,.dng,.raw,.arw,.cr2,.cr3,.nef,.nrw,.orf,.raf,.rw2,.rwl,.sr2,.srf,.x3f"
         onChange={(e) => load(e.target.files?.[0])}
       />
       {screenMode !== 'standard' && (

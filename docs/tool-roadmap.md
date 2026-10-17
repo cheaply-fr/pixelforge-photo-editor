@@ -274,6 +274,15 @@ staged.
 
 The vector interoperability increment adds `Layer → Copy SVG` for path, rectangle, ellipse and polygon layers. It serializes transformed geometry through the existing path model, preserves fill/stroke/even-odd metadata, writes to the browser clipboard without mutating the draft, and rejects unsupported raster/text sources. Pure serialization and desktop/mobile clipboard tests are included; font embedding, styles and Photoshop document graphs remain staged. `Layer → Copy CSS` now provides a separate deterministic handoff for editable text and vector layers, retaining text metrics, opacity, transforms and bounded shape geometry while rejecting raster-bearing layers; see [`css-export-contract.md`](./css-export-contract.md). CSS handoff is not a Photoshop document export and does not claim font embedding, raster or authored-stroke parity.
 
+The SVG import increment now validates UTF-8 markup, explicit pixel
+dimensions or a viewBox, element count and 16-megapixel limits before creating
+a browser object URL. Scripts, foreign documents, event handlers, stylesheet
+imports, external/source URLs and non-fragment resource references fail closed;
+safe input is flattened into editable pixels and batch import uses the same
+contract. This is local rasterization with explicit vector/font/metadata loss,
+not editable SVG, animation, CSS/layout, font or external-asset parity. See
+[`svg-import-contract.md`](./svg-import-contract.md).
+
 
 **Edit → Fade…** is active as a bounded post-operation raster opacity blend with source-safe history and desktop/mobile round-trip coverage. Vector, locked, mismatched and adjustment-only states remain staged behind the contract in [`fade-contract.md`](./fade-contract.md).
 

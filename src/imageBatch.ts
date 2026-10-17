@@ -10,6 +10,7 @@ import { describeImportFormat } from './importFormats.ts';
 import { decodePsdComposite } from './psd.ts';
 import { decodePdfComposite } from './pdf.ts';
 import { decodeTiffComposite } from './tiff.ts';
+import { prepareSvgBytes } from './svg.ts';
 import { applyBatchActionToCanvas, publicBatchActionDescriptor, runBatchActionQueue } from './batchActions.ts';
 import { bindActionParameters, type ActionParameterValues, type ActionSet } from './actions.ts';
 
@@ -183,9 +184,36 @@ export async function decodeBatchImage(source: BatchImageSource): Promise<HTMLCa
       URL.revokeObjectURL(url);
     }
   }
+  if (format.format === 'svg') {
+    const prepared = prepareSvgBytes(new Uint8Array(await source.file.arrayBuffer()));
+    const svg = new Blob([prepared.markup], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(svg);
+    try {
+      const image = new Image();
+      image.decoding = 'async';
+      image.src = url;
+      await image.decode();
+      if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth * image.naturalHeight > MAX_BATCH_PIXELS)
+        throw new Error('The selected SVG exceeds the 16 megapixel safety limit.');
+      if (prepared.width !== undefined && image.naturalWidth !== prepared.width)
+        throw new Error('SVG width does not match its declared pixel width.');
+      if (prepared.height !== undefined && image.naturalHeight !== prepared.height)
+        throw new Error('SVG height does not match its declared pixel height.');
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Image decoding is unavailable in this browser.');
+      context.drawImage(image, 0, 0);
+      return canvas;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  const imageSource: Blob = source.file;
   const imageBitmapFactory = globalThis.createImageBitmap;
   if (typeof imageBitmapFactory === 'function') {
-    const bitmap = await imageBitmapFactory(source.file);
+    const bitmap = await imageBitmapFactory(imageSource);
     try {
       if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > MAX_BATCH_PIXELS)
         throw new Error('The selected image exceeds the 16 megapixel safety limit.');
@@ -201,7 +229,7 @@ export async function decodeBatchImage(source: BatchImageSource): Promise<HTMLCa
     }
   }
 
-  const url = URL.createObjectURL(source.file);
+  const url = URL.createObjectURL(imageSource);
   try {
     const image = new Image();
     image.decoding = 'async';
