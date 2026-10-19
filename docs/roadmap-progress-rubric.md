@@ -1,5 +1,26 @@
 # Roadmap progress rubric
 
+## Latest protected release evidence
+
+The protected workflow run **#725** completed successfully for
+`f7dec38ba456d702610abf4d525952d74bc3ddbe` on 2026-10-19. Both `Validate
+editor` and `Deploy production` completed with a successful conclusion. The
+live acceptance markers independently report the same revision:
+
+- `https://photoeditor.cheaply.fr/release.json` returned HTTP 200 with
+  application `pixelforge-photo-editor` and commit
+  `f7dec38ba456d702610abf4d525952d74bc3ddbe`.
+- `https://photoeditor.cheaply.fr/api/readyz.json` returned HTTP 200 with
+  `ready: true` and the same commit.
+- DNS resolved `photoeditor.cheaply.fr` through
+  `photoeditor-cheaply.web.app` to `199.36.158.100`; TLS validation succeeded
+  for the custom hostname.
+
+This proves the release and endpoint identity gates for that SHA. It does not
+claim Photoshop equivalence or complete the staged interoperability,
+semantic-cleanup, wet-media, and physical-device acceptance work described
+below.
+
 This rubric keeps implementation, verification, deployment, and live acceptance separate. A capability earns weighted credit only when its UI/data model and required tests are present; a release gate remains incomplete until protected CI, the deployed revision, and live behavior are independently verified.
 
 ## Weights
