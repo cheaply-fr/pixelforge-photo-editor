@@ -11,7 +11,9 @@ permissions:
 
 concurrency:
   group: pixelforge-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer run must replace an orphaned validation or manual dispatch;
+  # production deployment remains gated behind the replacement validation.
+  cancel-in-progress: true
 
 jobs:
   validate:
