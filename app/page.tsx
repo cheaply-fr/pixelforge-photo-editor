@@ -14428,7 +14428,7 @@ export default function Home() {
                             : `${label} (${key})`
                         }
                       >
-                        <Icon />
+                        <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
                         <kbd>{key}</kbd>
                         {subtools.length > 1 && (

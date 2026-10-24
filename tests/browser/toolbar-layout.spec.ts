@@ -356,6 +356,7 @@ test('compact categories pack across tracks while larger categories keep full ro
         left: Math.round(rect.left),
         right: Math.round(rect.right),
         top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
         className,
         gridColumn: getComputedStyle(category).gridColumn,
         gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
@@ -366,7 +367,11 @@ test('compact categories pack across tracks while larger categories keep full ro
   });
   expect(layout.rects.length).toBeGreaterThan(4);
   expect(new Set(layout.rects.map((rect) => rect.left)).size).toBeGreaterThan(1);
-  expect(layout.rects.every((rect, index) => index === 0 || rect.top >= layout.rects[index - 1].top)).toBe(true);
+  expect(layout.rects.every((rect) => rect.top >= layout.palette.top && rect.bottom <= layout.palette.bottom)).toBe(true);
+  expect(layout.rects.every((rect, index) => layout.rects.every((other, otherIndex) => (
+    index === otherIndex || rect.right <= other.left || other.right <= rect.left ||
+      rect.bottom <= other.top || other.bottom <= rect.top
+  )))).toBe(true);
   expect(layout.rects.every((rect) => rect.gridColumns === (
     rect.gridClass === 'tool-category-grid--one' ? 1 :
       rect.gridClass === 'tool-category-grid--two' ? 2 : 3
@@ -403,4 +408,20 @@ test('category grids size to their compact tool count without trailing empty slo
     expect(layout.columns).toBe(expected);
     expect(layout.itemCount).toBeGreaterThan(0);
   }
+});
+
+test('toolbar tool icons use a uniform box and dense packing', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openEditor(page);
+  const metrics = await page.getByTestId('tool-palette').locator('.tool-icon').evaluateAll((icons) => {
+    const boxes = icons.map((icon) => {
+      const rect = icon.getBoundingClientRect();
+      const style = getComputedStyle(icon);
+      return { width: Math.round(rect.width), height: Math.round(rect.height), flexBasis: style.flexBasis };
+    });
+    return { boxes, buttons: [...document.querySelectorAll<HTMLElement>('[data-testid="tool-palette"] .tool-button-wrap')].map((item) => item.getBoundingClientRect().height) };
+  });
+  expect(new Set(metrics.boxes.map((box) => `${box.width}x${box.height}`)).size).toBe(1);
+  expect(metrics.boxes.every((box) => box.flexBasis === '26px')).toBe(true);
+  expect(metrics.buttons.every((height) => height >= 56)).toBe(true);
 });

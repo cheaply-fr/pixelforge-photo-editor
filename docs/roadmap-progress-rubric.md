@@ -432,6 +432,13 @@ compact slot with their existing press-and-hold menu. Desktop/mobile reload
 coverage and pure migration tests cover the preference boundary; shortcut
 rebinding remains staged.
 
+The toolbar icon-grid hardening gives every visible tool a fixed 26×26 icon
+box with a 24px SVG, equal minimum button height, and dense row packing. This
+keeps icons aligned across different viewBox proportions and prevents later
+categories from leaving placeholder gaps. The focused desktop/mobile browser
+regression passes **2/2**; protected CI and release deployment remain the
+authoritative acceptance gates.
+
 Keyboard Shortcuts now provides editable local tool and menu-command binding
 sections. Tools accept validated alphanumeric chords, while commands accept
 validated alphanumeric, punctuation and function-key chords. Collisions,
