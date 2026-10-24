@@ -2,16 +2,16 @@
 
 ## Latest protected release evidence
 
-The protected workflow run **#725** completed successfully for
-`f7dec38ba456d702610abf4d525952d74bc3ddbe` on 2026-10-19. Both `Validate
+The protected workflow run **#727** completed successfully for
+`d692530cdf83abec2212f85012f762132acec28e` on 2026-10-24. Both `Validate
 editor` and `Deploy production` completed with a successful conclusion. The
 live acceptance markers independently report the same revision:
 
-- `https://photoeditor.cheaply.fr/release.json` returned HTTP 200 with
-  application `pixelforge-photo-editor` and commit
-  `f7dec38ba456d702610abf4d525952d74bc3ddbe`.
-- `https://photoeditor.cheaply.fr/api/readyz.json` returned HTTP 200 with
-  `ready: true` and the same commit.
+- `https://photoeditor.cheaply.fr/health` returned HTTP 200 with
+  application `pixelforge-photo-editor`, `ready: true`, and commit
+  `d692530cdf83abec2212f85012f762132acec28e`.
+- The deployed editor loaded with its application shell, canvas, and Export
+  control; a live PNG export downloaded as `coastline-edit.png` (149,685 bytes).
 - DNS resolved `photoeditor.cheaply.fr` through
   `photoeditor-cheaply.web.app` to `199.36.158.100`; TLS validation succeeded
   for the custom hostname.
@@ -20,6 +20,12 @@ This proves the release and endpoint identity gates for that SHA. It does not
 claim Photoshop equivalence or complete the staged interoperability,
 semantic-cleanup, wet-media, and physical-device acceptance work described
 below.
+
+The toolbar alignment increment is included in this release: every tool icon
+uses a fixed visual slot, compact categories pack densely without placeholder
+cells, labels remain aligned, and family subtools retain visible bottom-right
+arrows. The protected browser suite includes desktop and mobile geometry,
+duplicate-family, subtool-icon, touch-target and reload checks.
 
 This rubric keeps implementation, verification, deployment, and live acceptance separate. A capability earns weighted credit only when its UI/data model and required tests are present; a release gate remains incomplete until protected CI, the deployed revision, and live behavior are independently verified.
 
