@@ -63,8 +63,10 @@ invalid values fail closed. Pure coverage passes **886/886**; the focused
 language-options desktop/mobile suite passes **4/4**, and adjacent typography
 plus editor acceptance passes **82/82**. Typecheck, lint and build pass
 locally. Hyphenation layout, full language-specific shaping and font embedding
-remain staged. The branch is still an open PR, so protected CI, merge,
-deployment and live-acceptance credit remain unearned for this increment.
+remain staged. This increment is included in the merged release `9b376af…`;
+protected CI and production deployment passed for the exact release SHA.
+Independent live browser/export acceptance remains separate and is not claimed
+from the deployment result alone.
 
 The preceding local candidate is `893bf60`. It adds `Image → Adjustments` as an
 accessible local family chooser for Levels, Curves, Hue/Saturation, Color
