@@ -356,6 +356,7 @@ test('compact categories pack across tracks while larger categories keep full ro
         left: Math.round(rect.left),
         right: Math.round(rect.right),
         top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
         className,
         gridColumn: getComputedStyle(category).gridColumn,
         gridColumns: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
@@ -366,7 +367,11 @@ test('compact categories pack across tracks while larger categories keep full ro
   });
   expect(layout.rects.length).toBeGreaterThan(4);
   expect(new Set(layout.rects.map((rect) => rect.left)).size).toBeGreaterThan(1);
-  expect(layout.rects.every((rect, index) => index === 0 || rect.top >= layout.rects[index - 1].top)).toBe(true);
+  expect(layout.rects.every((rect) => rect.top >= layout.palette.top && rect.bottom <= layout.palette.bottom)).toBe(true);
+  expect(layout.rects.every((rect, index) => layout.rects.every((other, otherIndex) => (
+    index === otherIndex || rect.right <= other.left || other.right <= rect.left ||
+      rect.bottom <= other.top || other.bottom <= rect.top
+  )))).toBe(true);
   expect(layout.rects.every((rect) => rect.gridColumns === (
     rect.gridClass === 'tool-category-grid--one' ? 1 :
       rect.gridClass === 'tool-category-grid--two' ? 2 : 3
