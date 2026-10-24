@@ -404,3 +404,19 @@ test('category grids size to their compact tool count without trailing empty slo
     expect(layout.itemCount).toBeGreaterThan(0);
   }
 });
+
+test('toolbar tool icons use a uniform box and dense packing', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await openEditor(page);
+  const metrics = await page.getByTestId('tool-palette').locator('.tool-icon').evaluateAll((icons) => {
+    const boxes = icons.map((icon) => {
+      const rect = icon.getBoundingClientRect();
+      const style = getComputedStyle(icon);
+      return { width: Math.round(rect.width), height: Math.round(rect.height), flexBasis: style.flexBasis };
+    });
+    return { boxes, buttons: [...document.querySelectorAll<HTMLElement>('[data-testid="tool-palette"] .tool-button-wrap')].map((item) => item.getBoundingClientRect().height) };
+  });
+  expect(new Set(metrics.boxes.map((box) => `${box.width}x${box.height}`)).size).toBe(1);
+  expect(metrics.boxes.every((box) => box.flexBasis === '26px')).toBe(true);
+  expect(metrics.buttons.every((height) => height >= 56)).toBe(true);
+});
