@@ -45,7 +45,11 @@ jobs:
           VITE_CHEAPLY_GA_MEASUREMENT_ID: ${{ vars.PIXELFORGE_GA_MEASUREMENT_ID }}
         run: npm run build
       - run: npm test
-      - run: npx playwright install --with-deps chromium
+      # ubuntu-latest already provides the native libraries used by Chromium.
+      # --with-deps invokes apt on the hosted runner and can hang for many
+      # minutes before the browser suite even starts; install only the pinned
+      # Playwright browser required by this repository.
+      - run: npx playwright install chromium
       - name: Run desktop and mobile acceptance suite
         env:
           # Each test owns an isolated browser context and IndexedDB draft.
