@@ -73,3 +73,14 @@ test('OpenType is disabled for non-text and locked layers', async ({ page }) => 
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'OpenType', exact: true })).toBeDisabled();
 });
+
+test('variable font axes persist on editable text layers', async ({ page }) => {
+  await page.getByRole('button', { name: 'Text' }).click();
+  await page.getByRole('button', { name: /Add text layer/i }).click();
+  await expect(page.getByLabel('Variable font weight')).toBeVisible();
+  await page.getByLabel('Variable font weight').fill('650');
+  await page.getByLabel('Variable font width').fill('120');
+  await page.reload();
+  await expect(page.getByLabel('Variable font weight')).toHaveValue('650');
+  await expect(page.getByLabel('Variable font width')).toHaveValue('120');
+});

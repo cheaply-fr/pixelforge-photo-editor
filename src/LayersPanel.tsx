@@ -1261,6 +1261,14 @@ export default function LayersPanel({
                     />
                     Small caps
                   </label>
+                  <label className="layer-field">
+                    Variable weight ({Math.round(openType.variableAxes.wght)})
+                    <input aria-label="Variable font weight" type="range" min="100" max="900" step="1" value={openType.variableAxes.wght} disabled={layerLocked} onChange={(e) => edit({ openType: { ...openType, variableAxes: { ...openType.variableAxes, wght: Number(e.target.value) } } })} />
+                  </label>
+                  <label className="layer-field">
+                    Variable width ({Math.round(openType.variableAxes.wdth)}%)
+                    <input aria-label="Variable font width" type="range" min="50" max="200" step="1" value={openType.variableAxes.wdth} disabled={layerLocked} onChange={(e) => edit({ openType: { ...openType, variableAxes: { ...openType.variableAxes, wdth: Number(e.target.value) } } })} />
+                  </label>
                 </>
               );
             })()}

@@ -1,5 +1,36 @@
 # Roadmap progress rubric
 
+## Current implementation audit — 2026-10-25
+
+This audit is the authoritative separation between capabilities present in the
+current source tree and capabilities still requiring implementation or release
+evidence. Percentages are not completion claims; a capability is credited only
+when its contract and tests exist, and release/live gates remain separate.
+
+| Weighted stage | Implemented and evidenced locally | Remaining implementation or evidence |
+| --- | --- | --- |
+| Document model and persistence (18%) | Versioned raster, text, vector, folder, mask, adjustment, style, artboard, smart-object and link metadata; immutable source assets; migration, corruption rejection, undo/reload and portable-project tests. | Full Photoshop document graph, layered PSD/PSB/RAW/TIFF/PDF/SVG round trips, provider-backed/cloud-linked assets and complete colour-management parity. |
+| Selection and precision geometry (14%) | Marquee variants, lasso family, magic wand, colour range, object-selection proxy, quick selection, selection brush, refinement/morphology, feather, quick mask, named selections, transforms and cancellation tests. | Semantic object recognition, hair/edge reconstruction and the remaining advanced non-contiguous/refinement semantics. |
+| Painting and retouching (14%) | Brush, pencil, eraser, fill, gradient, colour replacement, clone, healing, patch, dodge, burn, sponge, smudge, blur/sharpen brushes, mask refinement, pattern stamp, pressure fallback and persisted bounded dynamics. | Full physical wet-media/bristle simulation, pressure curves, semantic cleanup and generative object removal. |
+| Typography and vectors (10%) | Editable horizontal/vertical text, language/direction metadata, OpenType presentation flags, bounded variable `wght`/`wdth` axes, warp styles, find/replace, pen Bézier handles, direct selection, compound booleans, text-on-path, parametric shapes and SVG serialization. | Language-specific shaping, hyphenation layout, font embedding/provider fonts, full variable-axis interpolation and unsupported mixed/open boolean operands. |
+| Adjustments and filters (14%) | Nondestructive light/colour controls, Camera Raw/local AI approximations, blur/gallery, distort, render, noise, pixelate, sharpen, stylize/video families, tiled deterministic rendering, metadata persistence and representative pixel tests. | Full Photoshop gallery family breadth, mesh/liquify parity, ICC/HDR/linear-light behaviour, physical material/wet-media effects and model-backed inference. |
+| History, projects and exports (12%) | Immutable history/timeline, branch-safe undo, local drafts/recovery, project JSON, PNG/JPEG/WebP, bounded flattened PSD/PDF, batch export, artboards, privacy metadata and cancellation/error isolation. | Editable layered interchange, full colour/profile/metadata round trips, and independent live export-pixel acceptance for the deployed revision. |
+| Accessibility, mobile and scale (10%) | Keyboard/focus/reduced-motion semantics, desktop/mobile Playwright coverage, touch targets, responsive packed toolbar, tiled rendering budgets, worker cancellation and offline/local-first boundaries. | Physical-device/assistive-technology certification, broader offline recovery and remaining performance budgets under production-scale documents. |
+| Interoperability and optional intelligence (8%) | Explicit capability labels for HEIC/TIFF/SVG/PDF/PSD/RAW, safe local sanitization/rasterization, deterministic local Generate Image/Content-Aware/AI approximations and privacy disclosures. | Semantic object/background intelligence, provider-backed plugins, folder watchers, synchronized cloud recipes/links and full unsupported-format round trips. |
+
+### Evidence status
+
+The current source tree has local contracts and tests across all eight stages.
+The latest local pure suite is **905/905**, and local lint, typecheck and build
+pass. The production readiness endpoint reports deployed commit
+`0ad096772bfa33f67f8bae4874f0986ad9137f02`; the deployment verifier now prefers
+IPv4 because this verifier host cannot reliably route the advertised IPv6 edge.
+Protected CI, production deployment and independent live editor/export checks
+must still be recorded for the exact candidate release before the roadmap can
+be called complete. The new variable-font-axis controls are currently local
+source/pure-test evidence until their desktop/mobile acceptance and release
+gates are recorded.
+
 ## Latest protected release evidence
 
 The protected workflow run for the current merged release completed
