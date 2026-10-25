@@ -84,7 +84,7 @@ This rubric keeps implementation, verification, deployment, and live acceptance 
 - **Live accepted** means `/release.json`, readiness, DNS/TLS, editor behavior, representative export pixels, and applicable account/project authorization all match the deployed SHA.
 - A stage is **verified shipped** only when all applicable evidence is present. Approximation, aliases, disabled menu entries, and source-only changes remain partial.
 
-## Latest local increment
+## Latest local increments (`language-options` on top of `302dbf7`)
 
 The current local candidate adds `Type → Language Options` as an accessible
 local workflow for editable text. It persists bounded language, writing
