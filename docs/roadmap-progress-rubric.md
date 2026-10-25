@@ -1,17 +1,50 @@
 # Roadmap progress rubric
 
+## Current implementation audit — 2026-10-25
+
+This audit is the authoritative separation between capabilities present in the
+current source tree and capabilities still requiring implementation or release
+evidence. Percentages are not completion claims; a capability is credited only
+when its contract and tests exist, and release/live gates remain separate.
+
+| Weighted stage | Implemented and evidenced locally | Remaining implementation or evidence |
+| --- | --- | --- |
+| Document model and persistence (18%) | Versioned raster, text, vector, folder, mask, adjustment, style, artboard, smart-object and link metadata; immutable source assets; migration, corruption rejection, undo/reload and portable-project tests. | Full Photoshop document graph, layered PSD/PSB/RAW/TIFF/PDF/SVG round trips, provider-backed/cloud-linked assets and complete colour-management parity. |
+| Selection and precision geometry (14%) | Marquee variants, lasso family, magic wand, colour range, object-selection proxy, quick selection, selection brush, refinement/morphology, feather, quick mask, named selections, transforms and cancellation tests. | Semantic object recognition, hair/edge reconstruction and the remaining advanced non-contiguous/refinement semantics. |
+| Painting and retouching (14%) | Brush, pencil, eraser, fill, gradient, colour replacement, clone, healing, patch, dodge, burn, sponge, smudge, blur/sharpen brushes, mask refinement, pattern stamp, pressure fallback and persisted bounded dynamics. | Full physical wet-media/bristle simulation, pressure curves, semantic cleanup and generative object removal. |
+| Typography and vectors (10%) | Editable horizontal/vertical text, language/direction metadata, OpenType presentation flags, bounded variable `wght`/`wdth`/`opsz` axes, warp styles, find/replace, pen Bézier handles, direct selection, compound booleans, text-on-path, parametric shapes and SVG serialization. | Language-specific shaping, hyphenation layout, font embedding/provider fonts, full variable-axis interpolation and unsupported mixed/open boolean operands. |
+| Adjustments and filters (14%) | Nondestructive light/colour controls, Camera Raw/local AI approximations, blur/gallery, distort, render, noise, pixelate, sharpen, stylize/video families, tiled deterministic rendering, metadata persistence and representative pixel tests. | Full Photoshop gallery family breadth, mesh/liquify parity, ICC/HDR/linear-light behaviour, physical material/wet-media effects and model-backed inference. |
+| History, projects and exports (12%) | Immutable history/timeline, branch-safe undo, local drafts/recovery, project JSON, PNG/JPEG/WebP, bounded flattened PSD/PDF, batch export, artboards, privacy metadata and cancellation/error isolation. | Editable layered interchange, full colour/profile/metadata round trips, and independent live export-pixel acceptance for the deployed revision. |
+| Accessibility, mobile and scale (10%) | Keyboard/focus/reduced-motion semantics, desktop/mobile Playwright coverage, touch targets, responsive packed toolbar, tiled rendering budgets, worker cancellation and offline/local-first boundaries. | Physical-device/assistive-technology certification, broader offline recovery and remaining performance budgets under production-scale documents. |
+| Interoperability and optional intelligence (8%) | Explicit capability labels for HEIC/TIFF/SVG/PDF/PSD/RAW, safe local sanitization/rasterization, deterministic local Generate Image/Content-Aware/AI approximations and privacy disclosures. | Semantic object/background intelligence, provider-backed plugins, folder watchers, synchronized cloud recipes/links and full unsupported-format round trips. |
+
+### Evidence status
+
+The current source tree has local contracts and tests across all eight stages.
+The latest local pure suite is **906/906**, and local lint, typecheck and build
+pass. The production readiness endpoint reports deployed commit
+`0ad096772bfa33f67f8bae4874f0986ad9137f02`; the deployment verifier now prefers
+IPv4 because this verifier host cannot reliably route the advertised IPv6 edge.
+Protected CI, production deployment and independent live editor/export checks
+must still be recorded for the exact candidate release before the roadmap can
+be called complete. The new variable-font-axis controls have local pure
+coverage and passing desktop and mobile acceptance tests; protected release
+gates remain to be recorded.
+
 ## Latest protected release evidence
 
-The protected workflow run **#727** completed successfully for
-`d692530cdf83abec2212f85012f762132acec28e` on 2026-10-24. Both `Validate
-editor` and `Deploy production` completed with a successful conclusion. The
-live acceptance markers independently report the same revision:
+The protected workflow run for the current merged release completed
+successfully for `0ad096772bfa33f67f8bae4874f0986ad9137f02` on 2026-10-25.
+Both `Validate editor` and `Deploy production` completed with a successful
+conclusion. The readiness marker independently reports the same revision:
 
 - `https://photoeditor.cheaply.fr/health` returned HTTP 200 with
   application `pixelforge-photo-editor`, `ready: true`, and commit
-  `d692530cdf83abec2212f85012f762132acec28e`.
-- The deployed editor loaded with its application shell, canvas, and Export
-  control; a live PNG export downloaded as `coastline-edit.png` (149,685 bytes).
+  `0ad096772bfa33f67f8bae4874f0986ad9137f02`.
+- The deployed editor shell has been checked for its application shell, canvas,
+  and Export control. Independent live export-pixel verification remains
+  pending because the browser probe is intermittently losing its network
+  route; no export acceptance is claimed here.
 - DNS resolved `photoeditor.cheaply.fr` through
   `photoeditor-cheaply.web.app` to `199.36.158.100`; TLS validation succeeded
   for the custom hostname.
@@ -156,7 +189,7 @@ until protected CI, deployment and live revision checks complete.
 
 ## Current baseline
 
-The repository contains broad partial implementations across all eight stages. The latest merged release (`3e6e0952522d5807abba809ec5dd2ca876f467fe`) passes the protected validation workflow (lint, typecheck, production build, **905/905** pure tests, desktop/mobile acceptance, and CodeQL); its post-merge production deployment completed successfully. The release also includes the linked smart-object selection contract, deterministic Wet Edges and Build-up brush-mask coverage, focused desktop/mobile tiled Gaussian Blur acceptance, tiled neighborhood coverage, toolbar taxonomy/preferences coverage, responsive toolbar acceptance, active blur-family batch Action acceptance, normalized filter-control Action persistence, Gradient Map color/stop Action persistence, plain Blur menu workflow, Camera Raw control/pixel contract, Assign/Convert Profile workflows, bounded oriented/alpha-aware TIFF import, bounded Text-tool font persistence and Font Preview Size coverage, and the toolbar release evidence. The layer workflow exposes generic Link Layers, Unlink Layers and Select Linked Layers; ordinary selected layers persist a `layerLinkId`, affine transform deltas propagate across linked peers as one undoable edit, and source assets remain independent. External provider-backed, nested and cloud-synchronized links remain staged. Recorded Actions route enabled blur families, Find Edges and Emboss through the deterministic renderer and persist normalized settings without source data. The toolbar evidence covers one visible slot per subtool family, Photoshop-style submenu arrows, visible SVG flyout icons, remembered subtool selection, reload persistence, two/three-column layouts without duplicate IDs or trailing empty slots, and compact/comfortable category spacing. Independent live health verification now matches the deployed commit at `/health` (`ready:true`, commit `3e6e095…`, built `2026-10-24T20:50:35Z`). Full independent browser/export verification remains pending. The remaining roadmap gaps are documented below.
+The repository contains broad partial implementations across all eight stages. The latest merged release (`3e6e0952522d5807abba809ec5dd2ca876f467fe`) passed protected validation and production deployment; the current candidate adds the bounded OpenType variable axes and has local lint, typecheck, production build and **906/906** pure tests passing. The release includes the linked smart-object selection contract, deterministic Wet Edges and Build-up brush-mask coverage, focused desktop/mobile tiled Gaussian Blur acceptance, tiled neighborhood coverage, toolbar taxonomy/preferences coverage, responsive toolbar acceptance, active blur-family batch Action acceptance, normalized filter-control Action persistence, Gradient Map color/stop Action persistence, plain Blur menu workflow, Camera Raw control/pixel contract, Assign/Convert Profile workflows, bounded oriented/alpha-aware TIFF import, bounded Text-tool font persistence and Font Preview Size coverage, and the toolbar release evidence. The layer workflow exposes generic Link Layers, Unlink Layers and Select Linked Layers; ordinary selected layers persist a `layerLinkId`, affine transform deltas propagate across linked peers as one undoable edit, and source assets remain independent. External provider-backed, nested and cloud-synchronized links remain staged. Recorded Actions route enabled blur families, Find Edges and Emboss through the deterministic renderer and persist normalized settings without source data. The toolbar evidence covers one visible slot per subtool family, Photoshop-style submenu arrows, visible SVG flyout icons, remembered subtool selection, reload persistence, two/three-column layouts without duplicate IDs or trailing empty slots, and compact/comfortable category spacing. Independent live health verification is recorded for the merged release; independent browser/export verification for the current candidate remains pending. The remaining roadmap gaps are documented below.
 
 Progress percentages in status reports are estimates derived from this rubric and must identify the stage evidence that is still missing. They must never be increased solely because source files changed.
 
@@ -176,6 +209,8 @@ remain outside this contract. Pure and desktop/mobile acceptance are recorded
 in `docs/content-aware-move-contract.md`.
 
 ## Latest local increment
+
+The Type tool now persists the bounded OpenType variable axes `wght`, `wdth` and `opsz` in project files and Canvas typography. Weight, width and optical size controls are clamped and validated, with desktop/mobile reload coverage in `tests/browser/open-type.spec.ts` and pure normalization coverage in `tests/open-type.test.mjs`. The focused pure suite passes 4/4 and the OpenType desktop/mobile suite passes 6/6 after rebuilding the preview bundle. This remains local acceptance evidence until protected CI, deployment and independent live export checks pass.
 
 The Type tool now persists a bounded Font Preview Size preference (`small`,
 `medium`, `large`) shared by the Type menu and inspector. It changes only the

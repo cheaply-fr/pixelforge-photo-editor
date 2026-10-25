@@ -1,4 +1,10 @@
 # Ten high-use Photoshop workflows
+
+> **Current evidence:** The complete eight-stage implementation audit, including
+> what is shipped locally and what remains staged, lives in
+> [`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#current-implementation-audit--2026-10-25).
+> This document describes workflow scope; it does not promote local source
+> changes to CI, deployment or live acceptance.
 PixelForge prioritizes the workflows people use to change an image predictably,
 then layers in creative and automation features. This is an evidence-based
 priority list, not a claim that Adobe publishes tool-click telemetry. A 2025

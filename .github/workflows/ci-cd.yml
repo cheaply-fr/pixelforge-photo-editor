@@ -17,12 +17,16 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate editor
+    name: Validate editor (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     # The desktop/mobile suite includes bounded retry paths for browser-only
     # image operations and a deliberately slow nondestructive Layer Styles
     # matrix; keep the full gate intact instead of cancelling it at 40 minutes.
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -55,23 +59,23 @@ jobs:
       # minutes before the browser suite even starts; install only the pinned
       # Playwright browser required by this repository.
       - run: npx playwright install chromium
-      - name: Run desktop and mobile acceptance suite
+      - name: Run desktop and mobile acceptance shard
         env:
           # Each test owns an isolated browser context and IndexedDB draft.
-          # Four workers use the GitHub runner's available CPU without
-          # reducing the matrix, retries, or acceptance coverage.
+          # Sharding keeps a slow browser case from starving the whole gate;
+          # all desktop/mobile tests still run across the four shards.
           PLAYWRIGHT_WORKERS: 2
-        run: npm run test:e2e
+        run: npm run test:e2e -- --shard=${{ matrix.shard }}/4
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: site-${{ github.sha }}
+          name: site-${{ github.sha }}-${{ matrix.shard }}
           path: dist
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
-          name: browser-test-results
+          name: browser-test-results-${{ matrix.shard }}
           path: |
             playwright-report
             test-results
@@ -98,7 +102,8 @@ jobs:
       - run: npm ci
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: site-${{ github.sha }}
+          pattern: site-${{ github.sha }}-*
+          merge-multiple: true
           path: dist
       - name: Authenticate to Google Cloud
         id: auth

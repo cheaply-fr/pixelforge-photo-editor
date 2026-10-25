@@ -46,7 +46,7 @@ import { validColorProfile, type ColorProfile } from './colorProfile.ts';
 import { applyColorModePixels, normalizeColorMode, type ColorMode } from './colorMode.ts';
 import { pathContours, validatePath, type PathModel } from './paths.ts';
 import { normalizeTextPathBinding, layoutTextOnPath, mapTextPathPoints, flattenTextPath, type TextPathBinding } from './textOnPath.ts';
-import { normalizeOpenType, validOpenType, type OpenTypeSettings } from './openType.ts';
+import { normalizeOpenType, openTypeCanvasValues, validOpenType, type OpenTypeSettings } from './openType.ts';
 import { normalizeTextLanguage, resolvedTextDirection, validTextLanguageSettings, type TextLanguageSettings } from './textLanguage.ts';
 import { applyMattingPixels, effectiveMatting, validMattingSettings, type MattingSettings } from './matting.ts';
 import { applyLayerMaskPixels, effectiveLayerMask } from './masks.ts';
@@ -2775,6 +2775,7 @@ export async function renderFrame(
         : 'none';
       typography.fontFeatureSettings = `${openType.contextualAlternates ? '"calt"' : '"calt" 0'}, ${openType.discretionaryLigatures ? '"dlig"' : '"dlig" 0'}`;
       typography.fontVariantCaps = openType.smallCaps ? 'small-caps' : 'normal';
+      (typography as CanvasRenderingContext2D & { fontVariationSettings?: string }).fontVariationSettings = openTypeCanvasValues(openType).fontVariationSettings;
       context.textBaseline = 'top';
       const binding = normalizeTextPathBinding(layer.textPath),
         pathLayer = binding
