@@ -21,15 +21,15 @@ when its contract and tests exist, and release/live gates remain separate.
 ### Evidence status
 
 The current source tree has local contracts and tests across all eight stages.
-The latest local pure suite is **905/905**, and local lint, typecheck and build
+The latest local pure suite is **906/906**, and local lint, typecheck and build
 pass. The production readiness endpoint reports deployed commit
 `0ad096772bfa33f67f8bae4874f0986ad9137f02`; the deployment verifier now prefers
 IPv4 because this verifier host cannot reliably route the advertised IPv6 edge.
 Protected CI, production deployment and independent live editor/export checks
 must still be recorded for the exact candidate release before the roadmap can
-be called complete. The new variable-font-axis controls are currently local
-source/pure-test evidence until their desktop/mobile acceptance and release
-gates are recorded.
+be called complete. The new variable-font-axis controls have local pure
+coverage and a passing desktop acceptance test; mobile acceptance and release
+gates remain to be recorded.
 
 ## Latest protected release evidence
 

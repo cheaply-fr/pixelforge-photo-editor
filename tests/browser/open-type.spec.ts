@@ -19,6 +19,7 @@ test('OpenType presentation flags persist on editable text layers across project
   await page.getByLabel('Text tool', { exact: true }).click();
   await page.getByTestId('editor-canvas').click({ position: { x: 96, y: 96 } });
   await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
+  await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'OpenType', exact: true })).toBeEnabled();
@@ -37,7 +38,7 @@ test('OpenType presentation flags persist on editable text layers across project
 
   const saved = await project(page);
   const layer = saved.history[saved.index].layers.find((item: { kind: string }) => item.kind === 'text') as {
-    openType: { ligatures: boolean; discretionaryLigatures: boolean; contextualAlternates: boolean; kerning: string; smallCaps: boolean };
+    openType: { ligatures: boolean; discretionaryLigatures: boolean; contextualAlternates: boolean; kerning: string; smallCaps: boolean; variableAxes: { wght: number; wdth: number } };
   };
   expect(layer.openType).toEqual({
     ligatures: false,
@@ -45,6 +46,7 @@ test('OpenType presentation flags persist on editable text layers across project
     contextualAlternates: false,
     kerning: 'none',
     smallCaps: true,
+    variableAxes: { wght: 400, wdth: 100 },
   });
 
   await page.reload();
@@ -68,6 +70,7 @@ test('OpenType is disabled for non-text and locked layers', async ({ page }) => 
   await page.getByTestId('editor-canvas').click({ position: { x: 90, y: 90 } });
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await page.getByRole('menuitem', { name: 'OpenType', exact: true }).click();
+  await expect(page.getByLabel('OpenType ligatures')).toBeVisible();
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Lock Layers…', exact: true }).click();
   await page.getByRole('button', { name: 'Type', exact: true }).click();
@@ -75,8 +78,12 @@ test('OpenType is disabled for non-text and locked layers', async ({ page }) => 
 });
 
 test('variable font axes persist on editable text layers', async ({ page }) => {
-  await page.getByRole('button', { name: 'Text' }).click();
-  await page.getByRole('button', { name: /Add text layer/i }).click();
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByTestId('editor-canvas').click({ position: { x: 96, y: 96 } });
+  await page.getByRole('button', { name: 'Type', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'OpenType', exact: true }).click();
   await expect(page.getByLabel('Variable font weight')).toBeVisible();
   await page.getByLabel('Variable font weight').fill('650');
   await page.getByLabel('Variable font width').fill('120');
