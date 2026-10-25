@@ -2,16 +2,18 @@
 
 ## Latest protected release evidence
 
-The protected workflow run **#727** completed successfully for
-`d692530cdf83abec2212f85012f762132acec28e` on 2026-10-24. Both `Validate
-editor` and `Deploy production` completed with a successful conclusion. The
-live acceptance markers independently report the same revision:
+The protected workflow run for the current merged release completed
+successfully for `3e6e0952522d5807abba809ec5dd2ca876f467fe` on 2026-10-24.
+Both `Validate editor` and `Deploy production` completed with a successful
+conclusion. The readiness marker independently reports the same revision:
 
 - `https://photoeditor.cheaply.fr/health` returned HTTP 200 with
   application `pixelforge-photo-editor`, `ready: true`, and commit
-  `d692530cdf83abec2212f85012f762132acec28e`.
-- The deployed editor loaded with its application shell, canvas, and Export
-  control; a live PNG export downloaded as `coastline-edit.png` (149,685 bytes).
+  `3e6e0952522d5807abba809ec5dd2ca876f467fe`.
+- The deployed editor shell has been checked for its application shell, canvas,
+  and Export control. Independent live export-pixel verification remains
+  pending because the browser probe is intermittently losing its network
+  route; no export acceptance is claimed here.
 - DNS resolved `photoeditor.cheaply.fr` through
   `photoeditor-cheaply.web.app` to `199.36.158.100`; TLS validation succeeded
   for the custom hostname.
