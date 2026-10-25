@@ -1,4 +1,11 @@
+import dns from 'node:dns';
 import { setTimeout } from 'node:timers/promises';
+
+// Some client networks advertise an IPv6 Firebase edge record that is not
+// routable from the verifier host. Prefer the stable IPv4 edge while keeping
+// the HTTPS hostname/SNI intact; this avoids false deployment failures without
+// weakening the commit, TLS, or application checks below.
+dns.setDefaultResultOrder('ipv4first');
 
 const base = process.env.DEPLOY_URL;
 const expected = process.env.EXPECTED_SHA || process.env.GITHUB_SHA;
