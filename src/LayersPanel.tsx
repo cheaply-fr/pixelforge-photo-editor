@@ -1269,6 +1269,10 @@ export default function LayersPanel({
                     Variable width ({Math.round(openType.variableAxes.wdth)}%)
                     <input aria-label="Variable font width" type="range" min="50" max="200" step="1" value={openType.variableAxes.wdth} disabled={layerLocked} onChange={(e) => edit({ openType: { ...openType, variableAxes: { ...openType.variableAxes, wdth: Number(e.target.value) } } })} />
                   </label>
+                  <label className="layer-field">
+                    Optical size ({Math.round(openType.variableAxes.opsz)}pt)
+                    <input aria-label="Variable optical size" type="range" min="8" max="144" step="1" value={openType.variableAxes.opsz} disabled={layerLocked} onChange={(e) => edit({ openType: { ...openType, variableAxes: { ...openType.variableAxes, opsz: Number(e.target.value) } } })} />
+                  </label>
                 </>
               );
             })()}

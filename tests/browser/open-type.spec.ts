@@ -38,7 +38,7 @@ test('OpenType presentation flags persist on editable text layers across project
 
   const saved = await project(page);
   const layer = saved.history[saved.index].layers.find((item: { kind: string }) => item.kind === 'text') as {
-    openType: { ligatures: boolean; discretionaryLigatures: boolean; contextualAlternates: boolean; kerning: string; smallCaps: boolean; variableAxes: { wght: number; wdth: number } };
+    openType: { ligatures: boolean; discretionaryLigatures: boolean; contextualAlternates: boolean; kerning: string; smallCaps: boolean; variableAxes: { wght: number; wdth: number; opsz: number } };
   };
   expect(layer.openType).toEqual({
     ligatures: false,
@@ -46,7 +46,7 @@ test('OpenType presentation flags persist on editable text layers across project
     contextualAlternates: false,
     kerning: 'none',
     smallCaps: true,
-    variableAxes: { wght: 400, wdth: 100 },
+    variableAxes: { wght: 400, wdth: 100, opsz: 14 },
   });
 
   await page.reload();
@@ -87,7 +87,9 @@ test('variable font axes persist on editable text layers', async ({ page }) => {
   await expect(page.getByLabel('Variable font weight')).toBeVisible();
   await page.getByLabel('Variable font weight').fill('650');
   await page.getByLabel('Variable font width').fill('120');
+  await page.getByLabel('Variable optical size').fill('24');
   await page.reload();
   await expect(page.getByLabel('Variable font weight')).toHaveValue('650');
   await expect(page.getByLabel('Variable font width')).toHaveValue('120');
+  await expect(page.getByLabel('Variable optical size')).toHaveValue('24');
 });
