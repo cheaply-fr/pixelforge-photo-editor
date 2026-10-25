@@ -28,7 +28,7 @@ IPv4 because this verifier host cannot reliably route the advertised IPv6 edge.
 Protected CI, production deployment and independent live editor/export checks
 must still be recorded for the exact candidate release before the roadmap can
 be called complete. The new variable-font-axis controls have local pure
-coverage and a passing desktop acceptance test; mobile acceptance and release
+coverage and passing desktop and mobile acceptance tests; protected release
 gates remain to be recorded.
 
 ## Latest protected release evidence
