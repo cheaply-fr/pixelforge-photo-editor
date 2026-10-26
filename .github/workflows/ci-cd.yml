@@ -19,10 +19,10 @@ jobs:
   validate:
     name: Validate editor (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # The desktop/mobile suite includes bounded retry paths for browser-only
-    # image operations and a deliberately slow nondestructive Layer Styles
-    # matrix; keep the full gate intact instead of cancelling it at 40 minutes.
-    timeout-minutes: 60
+    # A stuck browser or hosted-runner process must fail closed so it cannot
+    # block all subsequent deploys indefinitely. The full four-shard suite
+    # normally completes well below this bound.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -48,7 +48,8 @@ jobs:
         env:
           VITE_CHEAPLY_GA_MEASUREMENT_ID: ${{ vars.PIXELFORGE_GA_MEASUREMENT_ID }}
         run: npm run build
-      - run: npm test
+      - name: Run pure tests
+        run: timeout --signal=TERM --kill-after=30s 10m npm test
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -65,7 +66,7 @@ jobs:
           # Sharding keeps a slow browser case from starving the whole gate;
           # all desktop/mobile tests still run across the four shards.
           PLAYWRIGHT_WORKERS: 2
-        run: npm run test:e2e -- --shard=${{ matrix.shard }}/4
+        run: timeout --signal=TERM --kill-after=30s 15m npm run test:e2e -- --shard=${{ matrix.shard }}/4
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: site-${{ github.sha }}-${{ matrix.shard }}
