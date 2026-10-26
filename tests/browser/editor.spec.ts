@@ -1735,6 +1735,7 @@ test('batch history export packages flattened snapshots with a privacy manifest'
   await batch.click();
   await expect(page.getByRole('heading', { name: 'Batch export history', exact: true })).toBeVisible();
   await page.getByLabel('Batch export format', { exact: true }).selectOption('webp');
+  await page.getByLabel('Batch export color profile', { exact: true }).selectOption('display-p3');
   await page.getByLabel('Batch export quality', { exact: true }).fill('80');
   await page.getByRole('button', { name: 'Build batch ZIP', exact: true }).click();
   await expect(page.getByRole('status', { name: 'Batch export progress', exact: true })).toContainText('2 snapshots');
@@ -1767,6 +1768,7 @@ test('batch history export packages flattened snapshots with a privacy manifest'
     application: string;
     snapshotCount: number;
     format: string;
+    colorProfile: string;
     metadata: string;
     entries: Array<{ historyIndex: number; bytes: number; width: number; height: number; file: string }>;
   };
@@ -1774,7 +1776,8 @@ test('batch history export packages flattened snapshots with a privacy manifest'
     application: 'pixelforge-photo-editor',
     snapshotCount: 2,
     format: 'webp',
-    metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted',
+    colorProfile: 'display-p3',
+    metadata: 'rendered pixels only; source EXIF and GPS omitted; target color profile recorded',
   });
   expect(manifest.entries.map((entry) => entry.historyIndex)).toEqual([0, 1]);
   expect(manifest.entries.every((entry) => entry.bytes > 0)).toBe(true);

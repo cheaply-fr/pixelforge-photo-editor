@@ -8,6 +8,8 @@ import {
   type ZipEntry,
 } from './export';
 import { renderFrame, type Assets, type Frame } from './document';
+import { convertCanvasProfile } from './export';
+import type { ColorProfile } from './colorProfile';
 
 export type BatchManifestEntry = {
   file: string;
@@ -21,10 +23,11 @@ export type BatchManifest = {
   application: 'pixelforge-photo-editor';
   format: ExportFormat;
   quality: number;
+  colorProfile: ColorProfile;
   snapshotCount: number;
   documentName: string;
   generatedAt: string;
-  metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted';
+  metadata: string;
   entries: BatchManifestEntry[];
 };
 
@@ -44,6 +47,7 @@ export async function buildBatchExport(
   name: string,
   format: ExportFormat,
   quality: number,
+  colorProfile: ColorProfile = 'srgb',
   onProgress?: (completed: number, total: number) => void,
   signal?: AbortSignal,
 ): Promise<BatchExportResult> {
@@ -59,7 +63,11 @@ export async function buildBatchExport(
   for (let index = 0; index < frames.length; index += 1) {
     signal?.throwIfAborted();
     const frame = frames[index];
-    const image = await renderFrame(frame, assets);
+    const image = convertCanvasProfile(
+      await renderFrame(frame, assets),
+      frame.colorProfile ?? 'srgb',
+      colorProfile,
+    );
     signal?.throwIfAborted();
     const encoded = await encodeImage(image, format, quality);
     signal?.throwIfAborted();
@@ -81,10 +89,11 @@ export async function buildBatchExport(
     application: 'pixelforge-photo-editor',
     format,
     quality,
+    colorProfile,
     snapshotCount: frames.length,
     documentName: name,
     generatedAt: new Date().toISOString(),
-    metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted',
+    metadata: 'rendered pixels only; source EXIF and GPS omitted; target color profile recorded',
     entries: manifestEntries,
   };
   entries.push({
