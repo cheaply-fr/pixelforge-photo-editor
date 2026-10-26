@@ -2255,6 +2255,7 @@ test('Liquify is enabled as a bounded nondestructive local warp with round-trip 
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('liquify');
   await expect(page.getByLabel('Liquify radius', { exact: true })).toHaveValue('40');
   await expect(page.getByLabel('Liquify center X', { exact: true })).toHaveValue('50');
+  await page.getByLabel('Liquify mode', { exact: true }).selectOption('push');
   await page.getByLabel('Liquify radius', { exact: true }).press('ArrowRight');
   await page.getByLabel('Liquify angle', { exact: true }).press('ArrowRight');
   await expect.poll(() => pixels(page)).not.toEqual(original);
@@ -2262,10 +2263,11 @@ test('Liquify is enabled as a bounded nondestructive local warp with round-trip 
   const layer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(layer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
-  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'liquify', radius: 41, angle: 76 });
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'liquify', liquifyMode: 'push', radius: 41, angle: 76 });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('liquify');
+  await expect(page.getByLabel('Liquify mode', { exact: true })).toHaveValue('push');
   await expect(page.getByLabel('Liquify radius', { exact: true })).toHaveValue('41');
 });
 

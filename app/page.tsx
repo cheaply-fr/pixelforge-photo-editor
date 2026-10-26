@@ -16996,6 +16996,18 @@ export default function Home() {
                 )}
                 {filterEffects.type === 'liquify' && (
                   <>
+                    <label className="select-row">
+                      <span>Liquify mode</span>
+                      <select
+                        aria-label="Liquify mode"
+                        value={filterEffects.liquifyMode ?? 'twist'}
+                        onChange={(event) => setFilterEffects({ liquifyMode: event.target.value as 'twist' | 'push' | 'bloat' })}
+                      >
+                        <option value="twist">Twist</option>
+                        <option value="push">Push</option>
+                        <option value="bloat">Bloat</option>
+                      </select>
+                    </label>
                     <Slider label="Liquify center X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
                     <Slider label="Liquify center Y" value={Math.round(filterEffects.centerY * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
                   </>

@@ -217,6 +217,8 @@ export const DEFAULT_NEURAL_ENHANCE_SETTINGS: NeuralEnhanceSettings = {
 
 export type FilterEffects = {
   type: FilterEffectType;
+  /** Bounded local Liquify brush mode; full mesh semantics remain staged. */
+  liquifyMode?: 'twist' | 'push' | 'bloat';
   /** Radial Blur sampling direction; legacy records default to spin. */
   radialMode?: 'spin' | 'zoom';
   /** Legacy lens corrections default to inward source sampling. */
@@ -315,6 +317,11 @@ export function effectiveFilterEffects(
     ? Math.trunc(source.seed) >>> 0
     : neutralFilterEffects.seed;
   const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
+  if (type === 'liquify') {
+    normalized.liquifyMode = source.liquifyMode === 'push' || source.liquifyMode === 'bloat'
+      ? source.liquifyMode
+      : 'twist';
+  }
   if (type === 'add-noise') {
     normalized.noiseMonochromatic = source.noiseMonochromatic === true;
     normalized.noiseDistribution = source.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform';
@@ -527,6 +534,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     FILTER_EFFECT_TYPES.includes(effect.type as FilterEffectType) &&
     (effect.radialMode === undefined || effect.radialMode === 'spin' || effect.radialMode === 'zoom') &&
     (effect.lensDirection === undefined || effect.lensDirection === 'inward' || effect.lensDirection === 'outward') &&
+    (effect.liquifyMode === undefined || effect.liquifyMode === 'twist' || effect.liquifyMode === 'push' || effect.liquifyMode === 'bloat') &&
     (effect.path === undefined || validBlurPath(effect.path)) &&
     (effect.spinEllipse === undefined || validSpinEllipse(effect.spinEllipse)) &&
     (effect.pathCentered === undefined || typeof effect.pathCentered === 'boolean') &&
@@ -2518,12 +2526,18 @@ function applyDistort(
         // only the immutable source and fades to identity at the influence
         // boundary; it intentionally does not claim Photoshop mesh semantics.
         const falloff = 1 - normalized;
-        const scale = 1 - amount * 0.35 * falloff * falloff;
-        const turn = angle * amount * falloff * falloff;
-        const cosine = Math.cos(turn);
-        const sine = Math.sin(turn);
-        sampleX = centerX + (dx * cosine - dy * sine) * scale;
-        sampleY = centerY + (dx * sine + dy * cosine) * scale;
+        const influence = amount * 0.35 * falloff * falloff;
+        if (effect.liquifyMode === 'push') {
+          sampleX = x - Math.cos(angle) * influence * radius;
+          sampleY = y - Math.sin(angle) * influence * radius;
+        } else {
+          const scale = effect.liquifyMode === 'bloat' ? 1 + influence : 1 - influence;
+          const turn = effect.liquifyMode === 'bloat' ? 0 : angle * amount * falloff * falloff;
+          const cosine = Math.cos(turn);
+          const sine = Math.sin(turn);
+          sampleX = centerX + (dx * cosine - dy * sine) * scale;
+          sampleY = centerY + (dx * sine + dy * cosine) * scale;
+        }
       } else if (effect.type === 'spherize' && distance < radius) {
         // Inverse-map a bounded spherical bulge with a smooth edge falloff.
         // The exact centre and influence boundary remain stable.
