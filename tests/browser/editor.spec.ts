@@ -1769,6 +1769,7 @@ test('batch history export packages flattened snapshots with a privacy manifest'
     snapshotCount: number;
     format: string;
     colorProfile: string;
+    documentMetadata: { title: string; description: string; author: string };
     metadata: string;
     entries: Array<{ historyIndex: number; bytes: number; width: number; height: number; file: string }>;
   };
@@ -1777,6 +1778,7 @@ test('batch history export packages flattened snapshots with a privacy manifest'
     snapshotCount: 2,
     format: 'webp',
     colorProfile: 'display-p3',
+    documentMetadata: { title: '', description: '', author: '' },
     metadata: 'rendered pixels only; source EXIF and GPS omitted; target color profile recorded',
   });
   expect(manifest.entries.map((entry) => entry.historyIndex)).toEqual([0, 1]);

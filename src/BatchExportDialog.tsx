@@ -3,6 +3,7 @@ import { buildBatchExport, type BatchExportResult } from './batch';
 import { safeBatchStem } from './export';
 import { COLOR_PROFILES, type ColorProfile } from './colorProfile';
 import type { Assets, Frame } from './document';
+import type { DocumentMetadata } from './metadata';
 import type { ExportFormat } from './export';
 
 type Props = {
@@ -11,6 +12,7 @@ type Props = {
   name: string;
   close: () => void;
   downloaded: (message: string) => void;
+  documentMetadata?: DocumentMetadata;
 };
 
 export default function BatchExportDialog({
@@ -19,6 +21,7 @@ export default function BatchExportDialog({
   name,
   close,
   downloaded,
+  documentMetadata = { title: '', description: '', author: '' },
 }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const rendering = useRef<AbortController | null>(null);
@@ -55,6 +58,7 @@ export default function BatchExportDialog({
         format,
         quality,
         colorProfile,
+        documentMetadata,
         (completed, total) => setProgress(Math.round((completed / total) * 100)),
         controller.signal,
       );
