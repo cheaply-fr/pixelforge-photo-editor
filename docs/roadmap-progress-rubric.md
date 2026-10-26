@@ -211,6 +211,12 @@ tested increments rather than implied by the current high-use workflow:
 6. Provider-backed/nested smart links, plugin APIs, folder watchers and
    synchronized cloud recipes, subject to the local-first privacy contract.
 
+Implementation order is intentionally reprioritized for the next cycle:
+layered PSD/PSB is deferred; the next active milestone is bounded profile and
+metadata round-trip support, followed by wet-media brush dynamics and advanced
+Liquify semantics. Each increment must add pure pixel/validation tests and
+desktop/mobile persistence or export coverage before it is promoted.
+
 The deployed release has passed local and protected validation, production
 deployment, readiness and live editor-render checks. The independent live
 export-pixel check is still blocked by intermittent browser/network download
