@@ -3,6 +3,11 @@ import { renderArtboard } from './artboardRender';
 import type { Artboard } from './artboards';
 import { type Assets, type Frame } from './document';
 import {
+  COLOR_PROFILES,
+  type ColorProfile,
+} from './colorProfile';
+import {
+  convertCanvasProfile,
   encodeImage,
   encodeImageForTarget,
   exportLabels,
@@ -57,6 +62,7 @@ export default function ExportDialog({
   const [selectedArtboardId, setSelectedArtboardId] =
     useState<string | undefined>(initialArtboardId);
   const [image, setImage] = useState<HTMLCanvasElement | null>(null);
+  const [exportProfile, setExportProfile] = useState<ColorProfile>(frame.colorProfile ?? 'srgb');
   const rasterPreviewUrl = useMemo(() => {
     if (!image) return null;
     try {
@@ -84,7 +90,7 @@ export default function ExportDialog({
     )
       .then((result) => {
         if (!cancelled) {
-          setImage(result.canvas);
+          setImage(convertCanvasProfile(result.canvas, frame.colorProfile ?? 'srgb', exportProfile));
           setViewport(result.artboard);
         }
       })
@@ -95,7 +101,7 @@ export default function ExportDialog({
     return () => {
       cancelled = true;
     };
-  }, [selectedArtboardId]);
+  }, [selectedArtboardId, exportProfile, frame.colorProfile]);
 
   useEffect(() => {
     if (!image) return;
@@ -235,6 +241,20 @@ export default function ExportDialog({
             <option value="webp">WebP — smaller, transparent</option>
             <option value="psd">PSD — flattened composite</option>
             <option value="pdf">PDF — flattened page</option>
+          </select>
+        </label>
+        <label>
+          Export color profile
+          <select
+            aria-label="Export color profile"
+            value={exportProfile}
+            onChange={(event) => setExportProfile(event.target.value as ColorProfile)}
+          >
+            {COLOR_PROFILES.map((item) => (
+              <option key={item} value={item}>
+                {item === 'srgb' ? 'sRGB IEC 61966-2.1' : 'Display P3'}
+              </option>
+            ))}
           </select>
         </label>
         {format !== 'png' && format !== 'psd' && format !== 'pdf' && (

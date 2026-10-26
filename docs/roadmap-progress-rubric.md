@@ -242,6 +242,15 @@ in `docs/content-aware-move-contract.md`.
 
 ## Latest local increment
 
+The bounded profile/metadata export slice is now active. Export previews expose
+an explicit sRGB or Display P3 target; conversion runs on an export-only canvas
+through the existing alpha-safe D65 matrix primitive, so the editable draft and
+its source assets remain unchanged. The control is covered by a desktop export
+acceptance test, while the pure profile conversion and metadata privacy suites
+continue to cover validation, transparent RGB preservation and local-only
+project round trips. ICC embedding, authored vector/text colour conversion and
+full external profile/metadata round trips remain staged.
+
 The Type tool now persists the bounded OpenType variable axes `wght`, `wdth` and `opsz` in project files and Canvas typography. Weight, width and optical size controls are clamped and validated, with desktop/mobile reload coverage in `tests/browser/open-type.spec.ts` and pure normalization coverage in `tests/open-type.test.mjs`. The focused pure suite passes 4/4 and the OpenType desktop/mobile suite passes 6/6 after rebuilding the preview bundle. This remains local acceptance evidence until protected CI, deployment and independent live export checks pass.
 
 The Type tool now persists a bounded Font Preview Size preference (`small`,

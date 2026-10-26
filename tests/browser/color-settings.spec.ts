@@ -23,6 +23,20 @@ test('Color Settings stores a bounded working profile without converting pixels'
   expect(project.history.at(-1).colorProfile).toBe('display-p3');
 });
 
+test('Export exposes an explicit bounded target profile without mutating the draft', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Export', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Export image' });
+  await expect(dialog.getByLabel('Export color profile')).toHaveValue('srgb');
+  await dialog.getByLabel('Export color profile').selectOption('display-p3');
+  await expect(dialog.getByLabel('Export color profile')).toHaveValue('display-p3');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Editable project file downloaded');
+});
+
 async function project(page: import('@playwright/test').Page) {
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
