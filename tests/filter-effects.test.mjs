@@ -1297,6 +1297,14 @@ test('liquify is a bounded source-safe push/twist remap with editable centre', (
   const normalized = effectiveFilterEffects({ ...effect, amount: 140, radius: 99, angle: 999, centerX: -2, centerY: 9 });
   assert.deepEqual({ type: normalized.type, amount: normalized.amount, radius: normalized.radius, angle: normalized.angle, centerX: normalized.centerX, centerY: normalized.centerY }, { type: 'liquify', amount: 100, radius: 64, angle: 180, centerX: 0, centerY: 1 });
   assert.equal(validFilterEffects(normalized), true);
+  for (const mode of ['push', 'bloat']) {
+    const variant = effectiveFilterEffects({ ...effect, liquifyMode: mode });
+    const rendered = applyFilterEffectsPixels(source, 13, 9, variant);
+    assert.deepEqual(source, original);
+    assert.notDeepEqual(rendered, first);
+    assert.equal(variant.liquifyMode, mode);
+    assert.equal(validFilterEffects(variant), true);
+  }
 });
 
 test('wave is a deterministic directional remap with wavelength and alpha-safe edges', () => {

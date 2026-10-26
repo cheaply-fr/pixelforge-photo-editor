@@ -325,6 +325,12 @@ Brushes, with pure deterministic coverage in
 stroke coverage. Full fluid simulation, bristle collision and canvas-wide
 pigment reservoirs remain staged.
 
+Liquify now exposes three bounded local modes—Twist, Push and Bloat—while
+retaining the editable centre, radius and angle metadata. Each mode inverse
+samples immutable source pixels, preserves alpha and remains undoable; pure
+determinism/source-safety and desktop/mobile persistence coverage are recorded
+in the filter-effects suites. Mesh pins, face-aware constraints and the full
+Photoshop Liquify tool family remain staged.
 Brush-family controls also include a persisted Flow amount that scales local
 dab opacity independently from overall Opacity. `tests/browser/brush-flow.spec.ts`
 covers the accessible control and project-file round-trip; the setting defaults
