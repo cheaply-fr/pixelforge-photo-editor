@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildBatchExport, type BatchExportResult } from './batch';
 import { safeBatchStem } from './export';
+import { COLOR_PROFILES, type ColorProfile } from './colorProfile';
 import type { Assets, Frame } from './document';
 import type { ExportFormat } from './export';
 
@@ -23,6 +24,7 @@ export default function BatchExportDialog({
   const rendering = useRef<AbortController | null>(null);
   const [format, setFormat] = useState<ExportFormat>('png');
   const [quality, setQuality] = useState(92);
+  const [colorProfile, setColorProfile] = useState<ColorProfile>(history.at(-1)?.colorProfile ?? 'srgb');
   const [result, setResult] = useState<BatchExportResult | null>(null);
   const [progress, setProgress] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -52,6 +54,7 @@ export default function BatchExportDialog({
         name,
         format,
         quality,
+        colorProfile,
         (completed, total) => setProgress(Math.round((completed / total) * 100)),
         controller.signal,
       );
@@ -139,6 +142,24 @@ export default function BatchExportDialog({
             />
           </label>
         )}
+        <label>
+          Color profile
+          <select
+            aria-label="Batch export color profile"
+            value={colorProfile}
+            disabled={busy}
+            onChange={(event) => {
+              setColorProfile(event.target.value as ColorProfile);
+              setResult(null);
+            }}
+          >
+            {COLOR_PROFILES.map((profile) => (
+              <option key={profile} value={profile}>
+                {profile === 'srgb' ? 'sRGB' : 'Display P3'}
+              </option>
+            ))}
+          </select>
+        </label>
         <output
           aria-label="Batch export progress"
           aria-live="polite"
@@ -157,8 +178,9 @@ export default function BatchExportDialog({
         )}
         <p className="export-format-note">
           The ZIP contains a manifest with dimensions and byte sizes. Original
-          EXIF, GPS, source color profiles and editable project assets are not
-          included.
+          EXIF, GPS and editable project assets are not included. The selected
+          target color profile is applied to rendered pixels and recorded in the
+          manifest.
         </p>
         <div className="dialog-actions">
           <button type="button" onClick={dismiss}>

@@ -239,6 +239,13 @@ commits a new undoable asset; semantic object removal and generative inference
 remain outside this contract. Pure and desktop/mobile acceptance are recorded
 in `docs/content-aware-move-contract.md`.
 
+Batch history export now applies an explicit local sRGB or Display P3 target to
+every rendered snapshot and records that target in the privacy manifest. Source
+assets, EXIF/GPS metadata and editable project layers remain local and are not
+placed in the ZIP. The batch dialog and manifest assertion are covered by the
+desktop/mobile batch export acceptance suite; full ICC embedding and external
+metadata round trips remain staged.
+
 ## Latest local increment
 
 The bounded profile/metadata export slice is now active. Export previews expose
