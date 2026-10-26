@@ -87,15 +87,19 @@ export const DEFAULT_ART_HISTORY_BRUSH: ArtHistoryBrushSettings = {
 export const MAX_ART_HISTORY_BRUSH_WORK = 1_000_000;
 
 /** Deterministic spacing for pointer segments so fast drags leave no dab gaps. */
-export function interpolateArtHistoryPoints(from: BrushStrokePoint, to: BrushStrokePoint, spacing: number): BrushStrokePoint[] {
+/** Interpolate a brush segment so wet pigment cannot leave pointer-speed gaps. */
+export function interpolateBrushStrokePoints(from: BrushStrokePoint, to: BrushStrokePoint, spacing: number): BrushStrokePoint[] {
   if (!finite(spacing) || spacing <= 0 || !finite(from.x) || !finite(from.y) || !finite(to.x) || !finite(to.y))
-    throw new Error('Art History Brush interpolation is invalid');
+    throw new Error('Brush interpolation is invalid');
   const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / spacing));
   return Array.from({ length: steps }, (_, index) => {
     const ratio = (index + 1) / steps;
     return { x: from.x + (to.x - from.x) * ratio, y: from.y + (to.y - from.y) * ratio, pressure: to.pressure };
   });
 }
+
+/** Backwards-compatible name used by the Art History brush contract. */
+export const interpolateArtHistoryPoints = interpolateBrushStrokePoints;
 
 export function validMixerBrushSettings(value: unknown): value is MixerBrushSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;

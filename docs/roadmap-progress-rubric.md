@@ -317,6 +317,14 @@ Custom brush presets now retain the secondary brush tip plus bounded Wet edges a
 
 Brush-family controls now also include a persisted deterministic Build-up amount. It preserves centre coverage while applying a bounded centre-weighted opacity falloff to the outer deposit. Pure coverage is in `tests/brush-build-up.test.mjs`, desktop/mobile project-file coverage is included in `tests/browser/brush-dynamics.spec.ts`, and the approximation plus wet-media limitation are recorded in `docs/brush-build-up-contract.md`.
 
+Mixer Brush strokes now interpolate every pointer segment at a bounded spacing,
+so wet pigment pickup remains continuous during fast drags instead of applying
+isolated dabs. The interpolation helper is shared by Mixer and Art History
+Brushes, with pure deterministic coverage in
+`tests/mixer-history-brush.test.mjs` and existing desktop/mobile Mixer Brush
+stroke coverage. Full fluid simulation, bristle collision and canvas-wide
+pigment reservoirs remain staged.
+
 Brush-family controls also include a persisted Flow amount that scales local
 dab opacity independently from overall Opacity. `tests/browser/brush-flow.spec.ts`
 covers the accessible control and project-file round-trip; the setting defaults
