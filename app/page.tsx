@@ -482,7 +482,7 @@ import {
   DEFAULT_ART_HISTORY_BRUSH,
   DEFAULT_MIXER_BRUSH,
   applyArtHistoryBrushPixels,
-  interpolateArtHistoryPoints,
+  interpolateBrushStrokePoints,
   applyHistoryBrushPixels,
   applyMixerBrushPixels,
   type HistoryBrushSettings,
@@ -10790,14 +10790,12 @@ export default function Home() {
       }
       const nextPoint = { x: local.x, y: local.y, pressure: pressure(e) };
       const spacing = Math.max(1, localSize(g.layer.matrix, size) * 0.35);
-      const segmentPoints = g.tool === 'art-history-brush'
-        ? interpolateArtHistoryPoints(g.last, nextPoint, spacing)
-        : [nextPoint];
+      const segmentPoints = interpolateBrushStrokePoints(g.last, nextPoint, spacing);
       const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
       let next: Uint8ClampedArray;
       try {
         next = g.tool === 'mixer-brush'
-          ? applyMixerBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, [nextPoint], {
+          ? applyMixerBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, segmentPoints, {
               ...mixerBrush,
               size: localSize(g.layer.matrix, size),
               hardness,

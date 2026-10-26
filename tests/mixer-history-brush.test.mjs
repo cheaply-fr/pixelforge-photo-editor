@@ -7,6 +7,7 @@ import {
   applyHistoryBrushPixels,
   applyArtHistoryBrushPixels,
   interpolateArtHistoryPoints,
+  interpolateBrushStrokePoints,
   applyMixerBrushPixels,
   effectiveHistoryBrush,
   effectiveArtHistoryBrush,
@@ -85,6 +86,13 @@ test('Mixer Brush wet media deterministically picks up destination colour when l
     load: 50,
     mix: 100,
   }).slice(48, 52)));
+});
+
+test('wet brush stroke interpolation fills fast pointer gaps deterministically', () => {
+  const points = interpolateBrushStrokePoints({ x: 0, y: 4, pressure: 1 }, { x: 20, y: 4, pressure: 0.5 }, 5);
+  assert.deepEqual(points.map(({ x, y }) => [x, y]), [[5, 4], [10, 4], [15, 4], [20, 4]]);
+  assert.equal(points.at(-1)?.pressure, 0.5);
+  assert.throws(() => interpolateBrushStrokePoints({ x: 0, y: 0 }, { x: 1, y: 1 }, 0), /interpolation/);
 });
 
 test('History Brush restores a prior raster through a soft alpha mask', () => {
