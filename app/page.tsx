@@ -1148,7 +1148,6 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Image Size…', shortcut: 'Alt+Ctrl+I', command: 'resize' },
     { label: 'Generative Upscale…', command: 'generative-upscale' },
     { label: 'Canvas Size…', command: 'canvas-size' },
-    { label: 'Resize image…', command: 'resize' },
     { label: 'Crop', shortcut: 'C', command: 'crop' },
     { label: 'Perspective Crop…', command: 'perspective-crop' },
     { label: 'Slice tool', shortcut: 'C', command: 'slice' },
