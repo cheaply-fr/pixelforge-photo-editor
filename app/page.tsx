@@ -2289,6 +2289,7 @@ export default function Home() {
       history: Frame[];
       assets: typeof assets.current;
       name: string;
+      documentMetadata: DocumentMetadata;
     } | null>(null),
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [batchActionId, setBatchActionId] = useState<string>(),
@@ -12700,6 +12701,7 @@ export default function Home() {
         history: history.current.slice(),
         assets: { ...assets.current },
         name,
+        documentMetadata: { ...metadata },
       });
     else if (command === 'batch-images') {
       batchActionRef.current = undefined;

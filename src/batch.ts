@@ -10,6 +10,7 @@ import {
 import { renderFrame, type Assets, type Frame } from './document';
 import { convertCanvasProfile } from './export';
 import type { ColorProfile } from './colorProfile';
+import type { DocumentMetadata } from './metadata';
 
 export type BatchManifestEntry = {
   file: string;
@@ -24,6 +25,7 @@ export type BatchManifest = {
   format: ExportFormat;
   quality: number;
   colorProfile: ColorProfile;
+  documentMetadata: DocumentMetadata;
   snapshotCount: number;
   documentName: string;
   generatedAt: string;
@@ -48,6 +50,7 @@ export async function buildBatchExport(
   format: ExportFormat,
   quality: number,
   colorProfile: ColorProfile = 'srgb',
+  documentMetadata: DocumentMetadata = { title: '', description: '', author: '' },
   onProgress?: (completed: number, total: number) => void,
   signal?: AbortSignal,
 ): Promise<BatchExportResult> {
@@ -90,6 +93,7 @@ export async function buildBatchExport(
     format,
     quality,
     colorProfile,
+    documentMetadata: { ...documentMetadata },
     snapshotCount: frames.length,
     documentName: name,
     generatedAt: new Date().toISOString(),
