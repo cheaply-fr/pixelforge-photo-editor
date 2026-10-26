@@ -193,6 +193,32 @@ The repository contains broad partial implementations across all eight stages. T
 
 Progress percentages in status reports are estimates derived from this rubric and must identify the stage evidence that is still missing. They must never be increased solely because source files changed.
 
+## Deferred implementation queue and blockers
+
+The following items remain explicitly staged and must be scheduled as bounded,
+tested increments rather than implied by the current high-use workflow:
+
+1. Editable layered PSD/PSB interchange, including masks, text, vectors and
+   an honest capability/loss manifest.
+2. Full colour-profile, metadata and non-destructive document round trips,
+   including profile-aware export and import boundaries.
+3. Full wet-media brush simulation, physical bristle behaviour and the
+   remaining mesh/face-aware Liquify semantics.
+4. Language-specific shaping, hyphenation, font embedding and complete
+   variable-axis interpolation for typography.
+5. Physical-device and assistive-technology certification, broader offline
+   recovery, and production-scale performance budgets.
+6. Provider-backed/nested smart links, plugin APIs, folder watchers and
+   synchronized cloud recipes, subject to the local-first privacy contract.
+
+The deployed release has passed local and protected validation, production
+deployment, readiness and live editor-render checks. The independent live
+export-pixel check is still blocked by intermittent browser/network download
+behaviour; no completion claim should be made until a downloaded export is
+captured and compared against the expected rendered pixels. This blocker is an
+acceptance gap, not evidence that the export implementation itself is complete
+for all deferred formats.
+
 The Polygon tool now persists a bounded parametric variant (`polygon`,
 `triangle`, or `star`) and a 3–32 side count in local settings and project
 files. Stars also expose a bounded 10–90% inner-radius control. Rendering,
