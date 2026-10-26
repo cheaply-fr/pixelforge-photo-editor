@@ -1,6 +1,6 @@
 # Roadmap progress rubric
 
-## Current implementation audit — 2026-10-25
+## Current implementation audit — 2026-10-26
 
 This audit is the authoritative separation between capabilities present in the
 current source tree and capabilities still requiring implementation or release
@@ -22,14 +22,13 @@ when its contract and tests exist, and release/live gates remain separate.
 
 The current source tree has local contracts and tests across all eight stages.
 The latest local pure suite is **906/906**, and local lint, typecheck and build
-pass. The production readiness endpoint reports deployed commit
-`0ad096772bfa33f67f8bae4874f0986ad9137f02`; the deployment verifier now prefers
-IPv4 because this verifier host cannot reliably route the advertised IPv6 edge.
-Protected CI, production deployment and independent live editor/export checks
-must still be recorded for the exact candidate release before the roadmap can
-be called complete. The new variable-font-axis controls have local pure
-coverage and passing desktop and mobile acceptance tests; protected release
-gates remain to be recorded.
+pass. Protected workflow run **40252797399** completed successfully for
+`dfde45d771c34fe209cf46b38837c6dcd73ab425`, including all four desktop/mobile
+validation shards and the production deployment job. The public editor shell
+returns HTTP 200 at `https://photoeditor.cheaply.fr` with the expected PixelForge
+title. Independent live export-pixel verification remains blocked by
+intermittent browser/network download behaviour, so the roadmap does not claim
+full live acceptance or completion.
 
 ## Latest protected release evidence
 
