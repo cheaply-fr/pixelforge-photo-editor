@@ -211,9 +211,10 @@ tested increments rather than implied by the current high-use workflow:
    synchronized cloud recipes, subject to the local-first privacy contract.
 
 Implementation order is intentionally reprioritized for the next cycle:
-layered PSD/PSB is deferred; the next active milestone is bounded profile and
-metadata round-trip support, followed by wet-media brush dynamics and advanced
-Liquify semantics. Each increment must add pure pixel/validation tests and
+layered PSD/PSB is deferred; the bounded profile/export slices are now shipped,
+so the next candidate milestones are wet-media brush dynamics and advanced
+Liquify semantics. Those require new deterministic contracts before they can be
+called unblocked. Each increment must add pure pixel/validation tests and
 desktop/mobile persistence or export coverage before it is promoted.
 
 The deployed release has passed local and protected validation, production
