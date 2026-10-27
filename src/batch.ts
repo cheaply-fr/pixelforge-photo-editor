@@ -6,11 +6,11 @@ import {
   safeBatchStem,
   type ExportFormat,
   type ZipEntry,
-} from './export';
-import { renderFrame, type Assets, type Frame } from './document';
-import { convertCanvasProfile } from './export';
-import type { ColorProfile } from './colorProfile';
-import type { DocumentMetadata } from './metadata';
+} from './export.ts';
+import { renderFrame, type Assets, type Frame } from './document.ts';
+import { convertCanvasProfile } from './export.ts';
+import type { ColorProfile } from './colorProfile.ts';
+import { normalizeDocumentMetadata, type DocumentMetadata } from './metadata.ts';
 
 export type BatchManifestEntry = {
   file: string;
@@ -38,6 +38,11 @@ export type BatchExportResult = {
   manifest: BatchManifest;
 };
 
+/** Validate and trim the local metadata copied into a batch manifest. */
+export function normalizeBatchDocumentMetadata(value: unknown): DocumentMetadata {
+  return normalizeDocumentMetadata(value);
+}
+
 /**
  * Render each editable history state and package the flattened images locally.
  * The source assets are never placed in the archive, preserving the same
@@ -59,6 +64,7 @@ export async function buildBatchExport(
   if (!validExportQuality(quality))
     throw new Error('Choose a valid export quality.');
   const stem = safeBatchStem(name);
+  const normalizedDocumentMetadata = normalizeBatchDocumentMetadata(documentMetadata);
   const extension = format === 'jpeg' ? 'jpg' : format;
   const entries: ZipEntry[] = [];
   const manifestEntries: BatchManifestEntry[] = [];
@@ -93,7 +99,7 @@ export async function buildBatchExport(
     format,
     quality,
     colorProfile,
-    documentMetadata: { ...documentMetadata },
+    documentMetadata: normalizedDocumentMetadata,
     snapshotCount: frames.length,
     documentName: name,
     generatedAt: new Date().toISOString(),
