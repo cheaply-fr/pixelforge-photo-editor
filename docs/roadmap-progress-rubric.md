@@ -245,7 +245,9 @@ every rendered snapshot and records that target in the privacy manifest. Source
 assets, EXIF/GPS metadata and editable project layers remain local and are not
 placed in the ZIP. The batch dialog and manifest assertion are covered by the
 desktop/mobile batch export acceptance suite; full ICC embedding and external
-metadata round trips remain staged.
+metadata round trips remain staged. The manifest now also normalizes the local
+title, description and author fields at the export boundary and rejects forged
+metadata keys, with pure validation coverage.
 
 ## Latest local increment
 

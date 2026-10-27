@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createZip, crc32, safeBatchStem } from '../src/export.ts';
+import { normalizeBatchDocumentMetadata } from '../src/batch.ts';
 
 function readStoredZip(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -77,4 +78,15 @@ test('ZIP writer rejects path traversal and duplicate names', async () => {
 test('batch names are filesystem-safe', () => {
   assert.equal(safeBatchStem('  holiday / raw: 01  '), 'holiday-raw-01');
   assert.equal(safeBatchStem('///'), 'pixelforge-edit');
+});
+
+test('batch manifest metadata is normalized and rejects forged fields', () => {
+  assert.deepEqual(
+    normalizeBatchDocumentMetadata({ title: '  Draft  ', description: ' Notes\r\n', author: ' Faro ' }),
+    { title: 'Draft', description: 'Notes', author: 'Faro' },
+  );
+  assert.throws(
+    () => normalizeBatchDocumentMetadata({ title: '', description: '', author: '', gps: 'secret' }),
+    /only title, description and author/,
+  );
 });
