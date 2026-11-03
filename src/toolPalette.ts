@@ -81,6 +81,87 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   pen: ['pen', 'freeform-pen', 'curvature-pen'],
 };
 
+/**
+ * Lucide icon export used for each palette tool. Every tool has its own
+ * glyph so a flyout never shows several variants with the same picture and
+ * the representative slot changes visibly when a subtool is chosen. Names
+ * must be canonical Lucide exports (not aliases such as `Wand2`, which is the
+ * same drawing as `WandSparkles`).
+ */
+export const TOOL_ICONS = {
+  move: 'MousePointer2',
+  hand: 'Hand',
+  zoom: 'ZoomIn',
+  'rotate-view': 'RotateCw',
+  eyedropper: 'Pipette',
+  'color-sampler': 'Crosshair',
+  ruler: 'Ruler',
+  note: 'StickyNote',
+  count: 'Hash',
+  select: 'SquareDashed',
+  'ellipse-select': 'CircleDashed',
+  'row-select': 'Rows3',
+  'column-select': 'Columns3',
+  lasso: 'Lasso',
+  'polygonal-lasso': 'Waypoints',
+  'magnetic-lasso': 'Magnet',
+  'selection-brush': 'Highlighter',
+  'quick-selection': 'WandSparkles',
+  'magic-wand': 'Wand',
+  crop: 'Crop',
+  'perspective-crop': 'Scan',
+  slice: 'Slice',
+  'slice-select': 'SquareMousePointer',
+  frame: 'Frame',
+  clone: 'Stamp',
+  'pattern-stamp': 'Grid3x3',
+  heal: 'Bandage',
+  'spot-heal': 'Target',
+  patch: 'ScissorsLineDashed',
+  'red-eye': 'Eye',
+  smudge: 'FingerprintPattern',
+  blur: 'Droplets',
+  sharpen: 'Triangle',
+  dodge: 'Sun',
+  burn: 'Moon',
+  sponge: 'Contrast',
+  'history-brush': 'RotateCcwClock',
+  'art-history-brush': 'Feather',
+  brush: 'Brush',
+  pencil: 'Pencil',
+  'color-replace': 'Replace',
+  'mixer-brush': 'Blend',
+  gradient: 'Rainbow',
+  fill: 'PaintBucket',
+  eraser: 'Eraser',
+  'background-eraser': 'ImageMinus',
+  'magic-eraser': 'Sparkles',
+  'mask-brush': 'VenetianMask',
+  'mask-eraser': 'BrushCleaning',
+  'adjustment-brush': 'SlidersHorizontal',
+  pen: 'PenTool',
+  'freeform-pen': 'Signature',
+  'curvature-pen': 'Spline',
+  'direct-select': 'SplinePointer',
+  text: 'Type',
+  rectangle: 'RectangleHorizontal',
+  ellipse: 'Circle',
+  line: 'Minus',
+  polygon: 'Hexagon',
+} as const satisfies Record<PaletteToolId, string>;
+
+export type ToolIconName = (typeof TOOL_ICONS)[PaletteToolId];
+
+/** Tools whose palette icon is shared with another tool (should be empty). */
+export function duplicateToolIcons(
+  icons: Readonly<Record<string, string>> = TOOL_ICONS,
+): string[][] {
+  const byIcon = new Map<string, string[]>();
+  for (const [tool, icon] of Object.entries(icons))
+    byIcon.set(icon, [...(byIcon.get(icon) ?? []), tool]);
+  return [...byIcon.values()].filter((tools) => tools.length > 1);
+}
+
 export function familyForTool(tool: string): string | undefined {
   return Object.entries(TOOL_FAMILIES).find(([, tools]) => tools.includes(tool as PaletteToolId))?.[0];
 }

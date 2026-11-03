@@ -425,3 +425,108 @@ test('toolbar tool icons use a uniform box and dense packing', async ({ page }) 
   expect(metrics.boxes.every((box) => box.flexBasis === '26px')).toBe(true);
   expect(metrics.buttons.every((height) => height >= 56)).toBe(true);
 });
+
+// The SVG body without wrapper classes: equal strings mean an identical
+// picture even when two Lucide names alias the same drawing. Pages return the
+// raw markup and normalisation happens here, in the test process.
+const svgDrawing = (markup: string | null | undefined) =>
+  (markup ?? '').replace(/\s+/g, ' ').trim();
+
+test('every toolbar slot shows its own icon in a uniform box', async ({ page }) => {
+  await openEditor(page);
+  const slots = await page.getByTestId('tool-palette').evaluate((palette) =>
+    [...palette.querySelectorAll<HTMLButtonElement>('button[data-tool-id]')]
+      .filter((button) => !button.closest('[role="menu"]'))
+      .map((button) => {
+        const box = button.querySelector('.tool-icon')!.getBoundingClientRect();
+        return {
+          label: button.getAttribute('aria-label')!,
+          markup: button.querySelector('.tool-icon svg')?.innerHTML,
+          box: `${Math.round(box.width)}x${Math.round(box.height)}`,
+        };
+      }),
+  );
+  expect(slots.length).toBeGreaterThan(20);
+  const owners = new Map<string, string>();
+  for (const slot of slots) {
+    const drawing = svgDrawing(slot.markup);
+    expect(drawing, slot.label).not.toBe('');
+    expect(owners.get(drawing), `${slot.label} repeats an icon`).toBeUndefined();
+    owners.set(drawing, slot.label);
+  }
+  expect(new Set(slots.map((slot) => slot.box)).size).toBe(1);
+});
+
+test('every family flyout lists subtools with distinct icons', async ({ page }) => {
+  await openEditor(page);
+  const labels = await page
+    .getByTestId('tool-palette')
+    .locator('button[aria-haspopup="menu"][data-tool-id]')
+    .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')!));
+  expect(labels.length).toBeGreaterThanOrEqual(14);
+  const everyDrawing = new Map<string, string>();
+  for (const label of labels) {
+    const trigger = page.getByRole('button', { name: label, exact: true });
+    await trigger.focus();
+    await page.keyboard.press('ArrowDown');
+    const flyout = page.locator('[role="menu"]:visible');
+    await expect(flyout, label).toHaveCount(1);
+    const items = (
+      await flyout.evaluate((menu) =>
+        [...menu.querySelectorAll('[role="menuitem"]')].map((item) => ({
+          name: item.getAttribute('aria-label') ?? item.textContent!.trim(),
+          markup: item.querySelector('svg')?.innerHTML,
+        })),
+      )
+    ).map((item) => ({ name: item.name, drawing: svgDrawing(item.markup) }));
+    expect(items.length, label).toBeGreaterThanOrEqual(2);
+    for (const item of items) expect(item.drawing, `${label}: ${item.name}`).not.toBe('');
+    expect(new Set(items.map((item) => item.drawing)).size, `${label} repeats an icon`).toBe(
+      items.length,
+    );
+    for (const item of items) {
+      const owner = everyDrawing.get(item.drawing);
+      expect(owner === undefined || owner === item.name, `${item.name} reuses ${owner}'s icon`).toBe(
+        true,
+      );
+      everyDrawing.set(item.drawing, item.name);
+    }
+    await page.keyboard.press('Escape');
+    await expect(flyout).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  }
+});
+
+test('choosing a subtool swaps the slot icon to the subtool icon', async ({ page }) => {
+  await openEditor(page);
+  const slotIcon = async (name: string) =>
+    svgDrawing(
+      await page
+        .getByRole('button', { name, exact: true })
+        .evaluate((button) => button.querySelector('.tool-icon svg')?.innerHTML),
+    );
+  const cases = [
+    ['Crop tool', 'Slice', 'Slice tool'],
+    ['Lasso tool', 'Magnetic Lasso', 'Magnetic Lasso tool'],
+    ['Healing tool', 'Patch', 'Patch tool'],
+  ] as const;
+  for (const [trigger, item, result] of cases) {
+    const before = await slotIcon(trigger);
+    await page.getByRole('button', { name: trigger, exact: true }).focus();
+    await page.keyboard.press('ArrowDown');
+    const menuItem = page
+      .locator('[role="menu"]:visible')
+      .getByRole('menuitem', { name: item, exact: true });
+    const menuIcon = svgDrawing(
+      await menuItem.evaluate((node) => node.querySelector('svg')?.innerHTML),
+    );
+    await menuItem.click();
+    await expect(page.getByRole('button', { name: result, exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    const after = await slotIcon(result);
+    expect(after).toBe(menuIcon);
+    expect(after).not.toBe(before);
+  }
+});
