@@ -7906,7 +7906,9 @@ export default function Home() {
               visible: true,
               opacity: 1,
               blend: 'source-over',
-              adjustments: { ...neutral },
+              // Bake live filter effects and adjustments into the new pixels,
+              // as Photoshop bakes Smart Filters when rasterizing.
+              adjustments: layer.adjustments,
             },
           ],
         },
@@ -7921,7 +7923,7 @@ export default function Home() {
         opacity: layer.opacity,
         blend: layer.blend,
         visible: layer.visible,
-        adjustments: layer.adjustments,
+        adjustments: { ...neutral },
         groupId: layer.groupId,
       };
       const changed = commit({
