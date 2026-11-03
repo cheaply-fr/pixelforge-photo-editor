@@ -546,6 +546,19 @@ categories from leaving placeholder gaps. The focused desktop/mobile browser
 regression passes **2/2**; protected CI and release deployment remain the
 authoritative acceptance gates.
 
+Distinct tool icons (audit 2026-11-03): the live release `0394bc3` rendered
+icons in every flyout, but many were the same drawing. All five Crop & Slice
+variants used Crop; all three Lasso variants, Selection Brush, Quick
+Selection, Magic Wand, Healing, Spot Healing and Patch shared one wand (`Wand2`
+is a Lucide alias of `WandSparkles`); the three Pen variants used Pencil; and
+Rectangular Marquee used the Crop glyph. `TOOL_ICONS` in `src/toolPalette.ts`
+now assigns each of the 59 palette tools its own canonical Lucide icon. Pure
+tests render every icon and reject shared names, aliases and identical
+drawings, per flyout and across the palette. Desktop/mobile Playwright opens
+every flyout by keyboard and compares the rendered SVGs, and checks that
+choosing a subtool swaps the representative slot's icon. Those three browser
+tests fail against the live `0394bc3` site and pass on the branch.
+
 Keyboard Shortcuts now provides editable local tool and menu-command binding
 sections. Tools accept validated alphanumeric chords, while commands accept
 validated alphanumeric, punctuation and function-key chords. Collisions,

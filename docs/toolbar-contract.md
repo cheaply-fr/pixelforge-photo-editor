@@ -3,7 +3,7 @@
 The left palette keeps every implemented tool reachable in a compact two-column
 layout, expanding to three columns on wide editor viewports. Tools are grouped
 under Navigate, Measure, Marquee, Lasso, Selection, Crop & Slice, Retouch,
-Paint & Fill, and Draw & Type headings. Category grids use the same two/three
+Paint & Fill, Mask Refinement, and Draw & Type headings. Category grids use the same two/three
 column geometry as the palette. One-slot categories occupy one global track,
 two-slot categories occupy two tracks, and larger categories span the row; this
 packs sparse categories together without placeholder cells or large blank
@@ -40,7 +40,16 @@ replaces that representative slot and the remembered choice survives reload.
 Measurement tools remain independent slots so Eyedropper, Color Sampler, Ruler,
 Note and Count are visible without being incorrectly collapsed into one family.
 
-Coverage lives in `src/toolPalette.ts`, `tests/tool-palette.test.mjs`, and the
+Every palette tool has its own icon, defined once in `TOOL_ICONS`
+(`src/toolPalette.ts`) and rendered through `src/toolIcons.ts`. No two tools
+may share an icon name or an identical drawing, so variants in a flyout are
+told apart visually and the representative slot's icon changes when a subtool
+is chosen. Icon names must be canonical Lucide exports; aliases such as
+`Wand2`, `Fingerprint` or `History` are rejected because they duplicate
+another export's drawing under a different name.
+
+Coverage lives in `src/toolPalette.ts`, `tests/tool-palette.test.mjs`,
+`tests/tool-icons.test.mjs`, and the
 desktop/mobile `tests/browser/toolbar-layout.spec.ts` acceptance tests. The
 tests assert category completeness, family cycling, explicit menu names,
 single-popup anchoring, viewport bounds, short activation, press-and-hold and
