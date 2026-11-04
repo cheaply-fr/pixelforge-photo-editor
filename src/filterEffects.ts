@@ -265,7 +265,48 @@ export type FilterEffects = {
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
   deinterlace?: DeinterlaceSettings;
+  /**
+   * Photoshop-style Render Clouds: mix the two colours with seeded noise.
+   * Omitted on legacy records, which keep the grayscale overlay.
+   */
+  cloudRender?: CloudRenderSettings;
 };
+
+export type CloudRenderSettings = {
+  /** Colour at noise value 1 (the drawing colour when created from the menu). */
+  foreground: string;
+  /** Colour at noise value 0 (the background colour when created from the menu). */
+  background: string;
+  /** Largest noise feature size in source pixels, 2–2048. */
+  scale: number;
+  /** Render into transparent pixels too, making them opaque. */
+  fill: boolean;
+};
+
+export const MIN_CLOUD_RENDER_SCALE = 2;
+export const MAX_CLOUD_RENDER_SCALE = 2048;
+
+export function validCloudRenderSettings(value: unknown): value is CloudRenderSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<CloudRenderSettings>;
+  return (
+    typeof settings.foreground === 'string' && /^#[0-9a-f]{6}$/i.test(settings.foreground) &&
+    typeof settings.background === 'string' && /^#[0-9a-f]{6}$/i.test(settings.background) &&
+    typeof settings.scale === 'number' && Number.isInteger(settings.scale) &&
+    settings.scale >= MIN_CLOUD_RENDER_SCALE && settings.scale <= MAX_CLOUD_RENDER_SCALE &&
+    typeof settings.fill === 'boolean'
+  );
+}
+
+/**
+ * Default cloud size for a layer: about a quarter of its shorter side, so a
+ * 4096 px canvas gets ~1000 px billows instead of fine static.
+ */
+export function defaultCloudScale(width: number, height: number): number {
+  const shorter = Math.min(width, height);
+  if (!(shorter > 0)) return 256;
+  return Math.min(MAX_CLOUD_RENDER_SCALE, Math.max(MIN_CLOUD_RENDER_SCALE, Math.round(shorter / 4)));
+}
 
 export const neutralFilterEffects: FilterEffects = {
   type: 'none',
@@ -331,6 +372,9 @@ export function effectiveFilterEffects(
   }
   if (type === 'lens-correction') {
     normalized.lensDirection = source.lensDirection === 'outward' ? 'outward' : 'inward';
+  }
+  if (type === 'clouds' && validCloudRenderSettings(source.cloudRender)) {
+    normalized.cloudRender = { ...source.cloudRender };
   }
   if (type === 'path-blur' && Array.isArray(source.path)) {
     const path = source.path.slice(0, 8).filter(
@@ -552,6 +596,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
+    (effect.cloudRender === undefined || (effect.type === 'clouds' && validCloudRenderSettings(effect.cloudRender))) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -1985,8 +2030,16 @@ function applyClouds(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const scale = Math.max(2, Math.min(128, Math.round(effect.radius * 2)));
+  const render = effect.cloudRender;
+  const scale = render
+    ? render.scale
+    : Math.max(2, Math.min(128, Math.round(effect.radius * 2)));
   const seed = effect.seed >>> 0;
+  // Legacy records keep four octaves. Colour clouds add octaves down to ~2 px
+  // so large billows still carry fine detail.
+  const octaves = render ? Math.max(4, Math.min(11, Math.ceil(Math.log2(scale)))) : 4;
+  const foreground = render ? hexRgb(render.foreground) : undefined;
+  const background = render ? hexRgb(render.background) : undefined;
   const hash = (x: number, y: number, salt: number): number => {
     let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(salt | 0, 1442695041) + seed) | 0;
     value = Math.imul(value ^ (value >>> 13), 1274126177);
@@ -2009,15 +2062,34 @@ function applyClouds(
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
-      if (!source[offset + 3]) continue;
+      if (!source[offset + 3] && !render?.fill) continue;
       let value = 0;
       let amplitude = 1;
       let amplitudeTotal = 0;
-      for (let octave = 0; octave < 4; octave += 1) {
+      for (let octave = 0; octave < octaves; octave += 1) {
         const frequency = 2 ** octave;
         value += valueNoise((x / scale) * frequency, (y / scale) * frequency, octave + 1) * amplitude;
         amplitudeTotal += amplitude;
         amplitude *= 0.5;
+      }
+      if (foreground && background) {
+        const t = value / amplitudeTotal;
+        const color = [0, 1, 2].map((channel) =>
+          background[channel] + (foreground[channel] - background[channel]) * t,
+        );
+        const alpha = source[offset + 3];
+        if (alpha === 0) {
+          // Filling a transparent pixel: its RGB is hidden, so take the cloud
+          // colour outright and let strength set the new coverage.
+          output[offset] = clampByte(color[0]);
+          output[offset + 1] = clampByte(color[1]);
+          output[offset + 2] = clampByte(color[2]);
+          output[offset + 3] = clampByte(255 * strength);
+        } else {
+          blendPixel(output, offset, [color[0], color[1], color[2], alpha], strength);
+          if (render?.fill) output[offset + 3] = clampByte(alpha + (255 - alpha) * strength);
+        }
+        continue;
       }
       const cloud = (value / amplitudeTotal) * 255;
       blendPixel(output, offset, [cloud, cloud, cloud, source[offset + 3]], strength);
