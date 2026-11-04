@@ -179,6 +179,8 @@ import {
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
+import NewDocumentDialog from '../src/NewDocumentDialog';
+import { backgroundFill, type NewDocumentRequest } from '../src/newDocument';
 import TrimDialog from '../src/TrimDialog';
 import {
   DEFAULT_DOCUMENT_METADATA,
@@ -645,6 +647,7 @@ type Command =
   | 'project-open'
   | 'new-white'
   | 'new-transparent'
+  | 'new-document'
   | 'open'
   | 'png'
   | 'jpg'
@@ -1060,6 +1063,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'File Info / Privacy…', command: 'file-info' },
     { label: 'Batch export history…', command: 'batch-export' },
     { label: 'Batch export images…', command: 'batch-images' },
+    { label: 'New…', command: 'new-document' },
     { label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' },
     { label: 'New transparent document', command: 'new-transparent' },
     { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' },
@@ -2400,6 +2404,7 @@ export default function Home() {
     );
   };
   const [trimming, setTrimming] = useState(false);
+  const [newDocumentOpen, setNewDocumentOpen] = useState(false);
   /**
    * A crop drag is deliberately staged before it changes the document.  The
    * preview keeps the current history frame immutable while the user checks
@@ -6085,6 +6090,20 @@ export default function Home() {
     }
     startRaster(image, transparent ? 'untitled-transparent' : 'untitled');
     setNotice(transparent ? 'New transparent document' : 'New document');
+  };
+  /** File → New…: a document of any allowed size and background. */
+  const createDocument = (request: NewDocumentRequest) => {
+    const image = surface(request.width, request.height);
+    const fill = backgroundFill(request.background, backgroundColor);
+    if (fill) {
+      const context = image.getContext('2d')!;
+      context.fillStyle = fill;
+      context.fillRect(0, 0, request.width, request.height);
+    }
+    if (startRaster(image, request.name || 'untitled')) {
+      setNewDocumentOpen(false);
+      setNotice(`New document ${request.width} × ${request.height} px`);
+    }
   };
   const duplicateDocument = async () => {
     if (!frame) {
@@ -12804,6 +12823,7 @@ export default function Home() {
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
+    else if (command === 'new-document') setNewDocumentOpen(true);
     else if (command === 'open') openFile();
     else if (command === 'png') download('png');
     else if (command === 'jpg') download('jpeg');
@@ -13960,6 +13980,9 @@ export default function Home() {
           close={() => setGenerateImageOpen(false)}
           apply={applyGenerateImage}
         />
+      )}
+      {newDocumentOpen && (
+        <NewDocumentDialog close={() => setNewDocumentOpen(false)} apply={createDocument} />
       )}
       {canvasSizing && (
         <CanvasSizeDialog

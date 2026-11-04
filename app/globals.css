@@ -237,3 +237,13 @@
    from its top-left instead of overflowing off the start edge. */
 .stage{place-items:safe center}.canvas-wrap{min-width:0;max-width:none;flex:none;transition:none}
 .canvas-wrap[data-pixelated="true"] canvas{image-rendering:pixelated}
+/* File → New…: labels sit above their fields so the form stays readable on
+   phones; width and height share a row with a compact swap button. Scoped
+   under .editor-dialog to override the generic 150 px number inputs. */
+.editor-dialog.new-document-dialog{width:min(460px,94vw)}
+.editor-dialog.new-document-dialog label{display:grid;justify-content:stretch;gap:5px;margin:0 0 12px;min-width:0}
+.editor-dialog.new-document-dialog label>span{font-size:11px;color:#c5c9d2}
+.editor-dialog.new-document-dialog input,.editor-dialog.new-document-dialog select{box-sizing:border-box;width:100%;min-width:0;max-width:none}
+.editor-dialog.new-document-dialog .new-document-size{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:end;gap:8px;margin:0 0 12px}
+.editor-dialog.new-document-dialog .new-document-size label{margin:0}
+.editor-dialog.new-document-dialog .new-document-swap{width:40px;height:38px;display:grid;place-items:center;padding:0}
