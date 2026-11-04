@@ -367,6 +367,17 @@ import {
 } from '../src/toolPalette';
 import { toolIcon } from '../src/toolIcons';
 import {
+  LEGACY_STAGE_ZOOM,
+  ZOOM_STEPS,
+  anchorScrollDelta,
+  clampViewZoom,
+  fitViewZoom,
+  formatViewZoom,
+  nearestZoomStepIndex,
+  stepViewZoom,
+  validViewZoom,
+} from '../src/viewZoom';
+import {
   pastePlacementMatrix,
   type PasteSpecialMode,
 } from '../src/pasteSpecial';
@@ -960,6 +971,22 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'quick-selection', label: 'Quick Selection', icon: toolIcon('quick-selection'), key: 'W' },
   { id: 'magic-wand', label: 'Magic Wand', icon: toolIcon('magic-wand'), key: 'W' },
 ];
+/** Fitted view zoom for an image inside the stage, excluding its padding. */
+function fittedZoom(element: HTMLElement | null, width: number, height: number) {
+  if (!element) return 100;
+  const style = window.getComputedStyle(element);
+  return fitViewZoom({
+    imageWidth: width,
+    imageHeight: height,
+    stageWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+    stageHeight: element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+  });
+}
+/** Fitted zoom for a draft's current frame (used when it has no viewZoom). */
+function fittedDraftZoom(element: HTMLElement | null, draft: Draft) {
+  const frame = draft.history[draft.index];
+  return frame ? fittedZoom(element, frame.w, frame.h) : undefined;
+}
 const toolSelectionNotice = (tool: Tool, label: string) =>
   tool === 'magnetic-lasso'
     ? 'Magnetic Lasso: drag along an edge, release to close'
@@ -2116,7 +2143,8 @@ export default function Home() {
       useState<HTMLButtonElement | null>(null),
     [selectionOperation, setSelectionOperation] =
       useState<SelectionOperation>('replace'),
-    [zoom, setZoom] = useState(72),
+    // True pixel zoom: 100 = one image pixel per CSS pixel.
+    [viewZoom, setViewZoomState] = useState(100),
     [viewRotation, setViewRotation] = useState(0),
     [screenMode, setScreenMode] = useState<ScreenMode>(() => {
       if (typeof window === 'undefined') return 'standard';
@@ -2511,9 +2539,78 @@ export default function Home() {
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
   const paintSpan = useRef<PerformanceSpan | null>(null);
+  const viewZoomRef = useRef(viewZoom);
+  /** Image box and client anchor captured before a zoom, applied after commit. */
+  const zoomAnchor = useRef<{ before: DOMRect; x: number; y: number } | null>(null);
+  /**
+   * Change the view zoom, keeping the image point under `anchor` (client
+   * coordinates; the stage centre by default) in place.
+   */
+  const setZoomAround = (target: number, anchor?: { x: number; y: number }) => {
+    const next = clampViewZoom(target);
+    const previous = viewZoomRef.current;
+    const element = stage.current,
+      wrap = element?.querySelector<HTMLElement>('.canvas-wrap');
+    if (!element || !wrap || next === previous) {
+      setViewZoomState(next);
+      viewZoomRef.current = next;
+      return next;
+    }
+    const stageRect = element.getBoundingClientRect();
+    const anchorX = (anchor?.x ?? stageRect.left + element.clientWidth / 2) - stageRect.left,
+      anchorY = (anchor?.y ?? stageRect.top + element.clientHeight / 2) - stageRect.top;
+    zoomAnchor.current = {
+      before: wrap.getBoundingClientRect(),
+      x: stageRect.left + anchorX,
+      y: stageRect.top + anchorY,
+    };
+    setViewZoomState(next);
+    viewZoomRef.current = next;
+    return next;
+  };
+  const zoomBy = (direction: 1 | -1, anchor?: { x: number; y: number }) =>
+    setZoomAround(stepViewZoom(viewZoomRef.current, direction), anchor);
+  const fitZoom = () => {
+    const next = fittedZoom(stage.current, frame?.w ?? 0, frame?.h ?? 0);
+    setViewZoomState(next);
+    viewZoomRef.current = next;
+    requestAnimationFrame(() => stage.current?.scrollTo({ left: 0, top: 0 }));
+    return next;
+  };
+  const zoomByRef = useRef(zoomBy);
+  useLayoutEffect(() => {
+    viewZoomRef.current = viewZoom;
+    zoomByRef.current = zoomBy;
+  });
+  // Once the new size is laid out, scroll so the anchored image point is
+  // back under the pointer (or the stage centre).
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current,
+      element = stage.current,
+      wrap = element?.querySelector<HTMLElement>('.canvas-wrap');
+    zoomAnchor.current = null;
+    if (!anchor || !element || !wrap) return;
+    const { dx, dy } = anchorScrollDelta(anchor.before, wrap.getBoundingClientRect(), anchor.x, anchor.y);
+    element.scrollLeft += dx;
+    element.scrollTop += dy;
+  }, [viewZoom]);
+  // Ctrl/Cmd + wheel (and trackpad pinch) zooms around the pointer.
+  useEffect(() => {
+    const element = stage.current;
+    if (!element) return;
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      if (event.deltaY === 0) return;
+      zoomByRef.current(event.deltaY < 0 ? 1 : -1, { x: event.clientX, y: event.clientY });
+    };
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  }, []);
   const settings = (): Settings => ({
     tool,
-    zoom,
+    zoom: LEGACY_STAGE_ZOOM,
+    viewZoom,
     viewRotation,
     color,
     backgroundColor,
@@ -2589,9 +2686,11 @@ export default function Home() {
   const cloudDocumentValue = (): Draft => {
     return stripPrivateMetadata(documentValue());
   };
-  const restoreSettings = useCallback((s: Settings) => {
+  const restoreSettings = useCallback((s: Settings, fallbackZoom?: number) => {
     setTool(s.tool);
-    setZoom(s.zoom);
+    if (validViewZoom(s.viewZoom)) setViewZoomState(s.viewZoom);
+    // Older drafts stored a stage-relative zoom; fit those to the window.
+    else if (fallbackZoom !== undefined) setViewZoomState(fallbackZoom);
     setViewRotation(normalizeViewRotation(s.viewRotation ?? 0));
     setColor(s.color);
     setBackgroundColor(s.backgroundColor || '#ffffff');
@@ -2655,7 +2754,6 @@ export default function Home() {
     setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
     setTool,
-    setZoom,
     setViewRotation,
     setColor,
     setBackgroundColor,
@@ -5963,7 +6061,7 @@ export default function Home() {
       clearCloud();
       setName(title.slice(0, 160));
       setMetadata({ ...DEFAULT_DOCUMENT_METADATA });
-      setZoom(72);
+      setViewZoomState(fittedZoom(stage.current, image.width, image.height));
       return true;
     }
     return false;
@@ -5991,7 +6089,7 @@ export default function Home() {
       setDraftId(createDraftId());
       setName(copy.name);
       setMetadata(effectiveDocumentMetadata(copy.metadata));
-      restoreSettings(copy.settings);
+      restoreSettings(copy.settings, fittedDraftZoom(stage.current, copy));
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
@@ -6020,7 +6118,7 @@ export default function Home() {
             openingDraftId.current,
             saved.localRevision || 0,
           );
-          restoreSettings(saved.settings);
+          restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved));
           const restoredMask = saved.history[saved.index].quickMask;
           if (restoredMask?.active) {
             try {
@@ -6090,6 +6188,7 @@ export default function Home() {
         x.stroke();
       }
       commit(rasterFrame(c, assets.current), true);
+      setViewZoomState(fittedZoom(stage.current, c.width, c.height));
       setReady(true);
     })();
     return () => {
@@ -6111,7 +6210,8 @@ export default function Home() {
       name,
       settings: {
         tool,
-        zoom,
+        zoom: LEGACY_STAGE_ZOOM,
+        viewZoom,
         color,
         backgroundColor,
         size,
@@ -6215,7 +6315,7 @@ export default function Home() {
     cloud,
     name,
     tool,
-    zoom,
+    viewZoom,
     color,
     backgroundColor,
     size,
@@ -6383,7 +6483,7 @@ export default function Home() {
         generation: result.generation,
         owner: member.id,
       });
-      restoreSettings(result.document.settings);
+      restoreSettings(result.document.settings, fittedDraftZoom(stage.current, result.document));
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
@@ -6431,7 +6531,7 @@ export default function Home() {
       clearCloud();
       setName(saved.name);
       setMetadata(effectiveDocumentMetadata(saved.metadata));
-      restoreSettings(saved.settings);
+      restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved));
       setNotice('Project opened with editable layers and history');
     } catch (error) {
       setNotice(
@@ -6689,7 +6789,7 @@ export default function Home() {
       setName(latest.name);
       setMetadata(effectiveDocumentMetadata(latest.metadata));
       setCloud(latest.cloud);
-      restoreSettings(latest.settings);
+      restoreSettings(latest.settings, fittedDraftZoom(stage.current, latest));
       localVersions.current.set(draftId, latest.localRevision);
       quickMaskRef.current = null;
       setQuickMask(null);
@@ -9202,8 +9302,9 @@ export default function Home() {
       return;
     }
     if (tool === 'zoom') {
-      setZoom((value) => Math.min(140, value + 10));
-      setNotice('Zoomed in');
+      const out = e.altKey;
+      const next = zoomBy(out ? -1 : 1, { x: e.clientX, y: e.clientY });
+      setNotice(`Zoomed ${out ? 'out' : 'in'} to ${formatViewZoom(next)}`);
       return;
     }
     if (tool === 'rotate-view') {
@@ -12181,9 +12282,8 @@ export default function Home() {
     setNotice('Rotate View reset');
   };
   const fitToScreen = () => {
-      setZoom(72);
-      stage.current?.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
-      setNotice('Fit to screen');
+      const next = fitZoom();
+      setNotice(`Fit to screen (${formatViewZoom(next)})`);
     },
     openFile = () => file.current?.click();
   const setWorkspaceScreenMode = (next: ScreenMode) => {
@@ -12591,15 +12691,15 @@ export default function Home() {
       }
       if (e.key === '1') {
         e.preventDefault();
-        setZoom(100);
+        setZoomAround(100);
       }
       if (e.key === '+' || e.key === '=') {
         e.preventDefault();
-        setZoom((v) => Math.min(140, v + 10));
+        zoomBy(1);
       }
       if (e.key === '-') {
         e.preventDefault();
-        setZoom((v) => Math.max(20, v - 10));
+        zoomBy(-1);
       }
     };
     window.addEventListener('keydown', key);
@@ -13135,10 +13235,13 @@ export default function Home() {
     else if (command === 'screen-full-menu')
       setWorkspaceScreenMode('full-menu');
     else if (command === 'screen-full') setWorkspaceScreenMode('full');
-    else if (command === 'zoom-in') setZoom((v) => Math.min(140, v + 10));
-    else if (command === 'zoom-out') setZoom((v) => Math.max(20, v - 10));
+    else if (command === 'zoom-in') zoomBy(1);
+    else if (command === 'zoom-out') zoomBy(-1);
     else if (command === 'fit') fitToScreen();
-    else if (command === 'actual') setZoom(100);
+    else if (command === 'actual') {
+      setZoomAround(100);
+      setNotice('Actual size (100%)');
+    }
   };
   const runActionRecipe = async (id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
@@ -14811,13 +14914,15 @@ export default function Home() {
             className="canvas-wrap"
             data-testid="canvas-wrap"
             style={{
-              width: `${zoom}%`,
+              width: `${((frame?.w ?? 1200) * viewZoom) / 100}px`,
               transform: `rotate(${normalizeViewRotation(viewRotation)}deg)`,
               transformOrigin: 'center center',
             }}
             data-artboard-count={frame?.artboards?.length ?? 0}
             data-active-artboard={frame?.activeArtboardId ?? ''}
             data-view-rotation={normalizeViewRotation(viewRotation)}
+            data-view-zoom={viewZoom}
+            data-pixelated={viewZoom >= 200 ? 'true' : 'false'}
           >
             <canvas
               ref={canvas}
@@ -15148,22 +15253,24 @@ export default function Home() {
           <div className="zoom">
             <button
               aria-label="Zoom out"
-              onClick={() => setZoom(Math.max(20, zoom - 10))}
+              onClick={() => zoomBy(-1)}
             >
               <ZoomOut />
             </button>
             <input
               aria-label="Zoom"
               type="range"
-              min="20"
-              max="140"
-              value={zoom}
-              onChange={(e) => setZoom(+e.target.value)}
+              min="0"
+              max={ZOOM_STEPS.length - 1}
+              step="1"
+              value={nearestZoomStepIndex(viewZoom)}
+              aria-valuetext={formatViewZoom(viewZoom)}
+              onChange={(e) => setZoomAround(ZOOM_STEPS[+e.target.value] ?? 100)}
             />
-            <span>{zoom}%</span>
+            <span data-testid="zoom-level">{formatViewZoom(viewZoom)}</span>
             <button
               aria-label="Zoom in"
-              onClick={() => setZoom(Math.min(140, zoom + 10))}
+              onClick={() => zoomBy(1)}
             >
               <ZoomIn />
             </button>

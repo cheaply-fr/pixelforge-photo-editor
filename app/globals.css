@@ -232,3 +232,8 @@
 .editor-shell{grid-template-columns:minmax(0,1fr)}
 @media(min-width:681px) and (max-width:1240px){.editor-shell{grid-template-rows:96px 40px minmax(0,1fr) 28px}.topbar{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:52px 44px;gap:0 10px;padding:0 10px;min-width:0}.topbar>.brand-lockup{grid-row:1;grid-column:1}.topbar>.top-actions{grid-row:1;grid-column:2;min-width:0;margin-left:0;justify-content:flex-end}.topbar>nav{grid-row:2;grid-column:1/-1;min-width:0;border-top:1px solid var(--line)}.top-actions>*{flex-shrink:0}.top-actions>.release-status{flex-shrink:1;min-width:0}}
 @media(min-width:681px) and (max-width:900px){.account-trigger-copy{display:none}}
+/* True pixel zoom: the canvas is sized in image pixels × zoom, with no
+   width cap. "safe" centring keeps an image larger than the stage scrollable
+   from its top-left instead of overflowing off the start edge. */
+.stage{place-items:safe center}.canvas-wrap{min-width:0;max-width:none;flex:none;transition:none}
+.canvas-wrap[data-pixelated="true"] canvas{image-rendering:pixelated}
