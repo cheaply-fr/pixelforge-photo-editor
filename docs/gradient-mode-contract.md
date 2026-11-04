@@ -25,3 +25,21 @@ and uses its legacy midpoint behaviour. This contract does not claim Photoshop's
 full gradient-map or Adobe algorithm parity. A separate deterministic RGB Noise
 control is bounded to 0%-100%, skips transparent pixels, preserves alpha, and
 defaults to zero for older drafts.
+
+## Selection confinement
+
+With an active selection, the Gradient and Paint Bucket tools change pixels
+only inside it, as in Photoshop. The edit is rendered over the layer as
+before and then blended back with the original pixels by the selection
+coverage in the layer's own pixel space (the same mask the Brush uses), so a
+feathered selection fades the edit in without darkening transparent edges
+(the blend is premultiplied). A Paint Bucket click outside the selection
+changes nothing and says "Click inside the selection to fill". Without a
+selection both tools behave exactly as before.
+
+Evidence: `src/selectionClip.ts` with `tests/selection-clip.test.mjs`
+(full/zero/partial coverage, premultiplied edges, immutability, size checks)
+and `tests/browser/selection-clipped-fills.spec.ts` on desktop and mobile
+(rectangular gradient with undo, feathered edge, bucket inside/outside, and an
+unchanged no-selection gradient). The three selection cases fail on the code
+before this change.

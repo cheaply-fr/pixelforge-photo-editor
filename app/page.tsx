@@ -279,6 +279,7 @@ import { decodePdfComposite } from '../src/pdf';
 import { decodeTiffComposite } from '../src/tiff';
 import { prepareSvgBytes } from '../src/svg';
 import { renderSelection } from '../src/selections';
+import { maskCoverageAt, mixByMask } from '../src/selectionClip';
 import {
   refineSelectionAlpha,
   type SelectionRefineMode,
@@ -1975,6 +1976,25 @@ const smudgeCanvasSegment = (
  * selection once at pointer-down keeps every subsequent segment clipped to
  * the same feathered/inverted selection even when the layer is transformed.
  */
+/** Keep an edit only inside the selection mask (layer pixel space). */
+const confineToSelection = (
+  original: HTMLImageElement | HTMLCanvasElement,
+  edited: HTMLCanvasElement,
+  mask: Uint8ClampedArray,
+) => {
+  const width = edited.width, height = edited.height;
+  const base = surface(width, height), baseContext = base.getContext('2d')!;
+  baseContext.drawImage(original, 0, 0);
+  const editedContext = edited.getContext('2d')!;
+  const mixed = mixByMask(
+    baseContext.getImageData(0, 0, width, height).data,
+    editedContext.getImageData(0, 0, width, height).data,
+    mask,
+  );
+  const image = editedContext.createImageData(width, height);
+  image.data.set(mixed);
+  editedContext.putImageData(image, 0, 0);
+};
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
   frame: Frame,
@@ -9451,10 +9471,19 @@ export default function Home() {
         const image = await decodeAsset(assets.current[layer.asset]),
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
+        // Photoshop fills only inside the active selection.
+        const selectionMask = await selectionMaskForLayer(
+          f.selection, f, layer, assets.current, buffer.width, buffer.height,
+        );
+        if (selectionMask && maskCoverageAt(selectionMask, buffer.width, buffer.height, local.x, local.y) === 0) {
+          setNotice('Click inside the selection to fill');
+          return;
+        }
         if (!floodFill(buffer, local.x, local.y, color)) {
           setNotice('No contiguous pixels matched at that point');
           return;
         }
+        if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -11879,6 +11908,10 @@ export default function Home() {
         const image = await decodeAsset(assets.current[g.layer.asset]),
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
+        // Photoshop confines a gradient to the active selection.
+        const selectionMask = await selectionMaskForLayer(
+          f.selection, f, g.layer, assets.current, buffer.width, buffer.height,
+        );
         const context = buffer.getContext('2d')!,
           gradient = gradientMode === 'radial'
             ? context.createRadialGradient(
@@ -11924,6 +11957,7 @@ export default function Home() {
           imageData.data.set(pixels);
           context.putImageData(imageData, 0, 0);
         }
+        if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
