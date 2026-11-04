@@ -26,10 +26,21 @@ const project = async (page: Page) => {
   };
 };
 
+// Compare a fingerprint computed in the page instead of copying every pixel
+// over the browser protocol: a 1200x800 canvas is 3.84M numbers per call,
+// which made this spec exceed its time budget on loaded CI runners.
 const canvasPixels = (page: Page) =>
-  page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
-    Array.from(canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data),
-  );
+  page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => {
+    const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+    // Two independent 32-bit FNV-1a hashes plus the size: any pixel change
+    // alters the fingerprint, and a collision is vanishingly unlikely.
+    let a = 0x811c9dc5, b = 0x01000193 ^ 0x5bd1e995;
+    for (let i = 0; i < data.length; i += 1) {
+      a = Math.imul(a ^ data[i], 0x01000193);
+      b = Math.imul(b ^ data[i] ^ (i & 0xff), 0x01000193);
+    }
+    return `${canvas.width}x${canvas.height}:${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
+  });
 
 test('Layer Styles decorate an editable layer and survive undo, reload and project round trip', async ({ page }) => {
   // Pixel-level full-frame renders and project downloads are intentionally
