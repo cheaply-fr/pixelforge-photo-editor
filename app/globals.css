@@ -247,3 +247,5 @@
 .editor-dialog.new-document-dialog .new-document-size{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:end;gap:8px;margin:0 0 12px}
 .editor-dialog.new-document-dialog .new-document-size label{margin:0}
 .editor-dialog.new-document-dialog .new-document-swap{width:40px;height:38px;display:grid;place-items:center;padding:0}
+/* Sign-in unavailable: same look as the primary link, as a real button. */
+.account-popup>button.account-primary{width:100%;min-height:36px;display:flex;align-items:center;gap:9px;padding:8px 9px;border:0;border-radius:8px;background:#ff5c35;color:#17181d;font-size:10px;font-weight:750;cursor:pointer}.account-popup>button.account-primary:hover:not(:disabled){background:#ff7959}.account-popup>button.account-primary:disabled{opacity:.6;cursor:default}.account-popup>button.account-primary svg{width:14px}.account-unavailable svg{color:#f0b46a}
