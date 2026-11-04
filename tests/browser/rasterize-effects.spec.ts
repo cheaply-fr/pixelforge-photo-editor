@@ -57,8 +57,12 @@ const pixels = (page: Page) =>
       Array.from(canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data),
     );
 
-/** Number of distinct red values: 1 for a flat image, many for a texture. */
-const distinctReds = (data: number[]) => new Set(data.filter((_, i) => i % 4 === 0)).size;
+/** Number of distinct RGB colours: 1 for a flat image, many for a texture. */
+const distinctReds = (data: number[]) => {
+  const colours = new Set<number>();
+  for (let i = 0; i < data.length; i += 4) colours.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+  return colours.size;
+};
 
 async function project(page: Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
