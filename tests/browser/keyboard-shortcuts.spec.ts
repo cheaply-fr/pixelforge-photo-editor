@@ -58,19 +58,20 @@ test('Keyboard Shortcuts can persist and invoke a custom menu command chord', as
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   const zoom = page.getByLabel('Zoom', { exact: true });
-  await expect(zoom).toHaveValue('72');
+  const fitted = Number(await zoom.inputValue());
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Keyboard Shortcuts…', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Keyboard Shortcuts' });
   await dialog.getByLabel('Zoom in custom command shortcut', { exact: true }).fill('shift+9');
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await page.keyboard.press('Shift+9');
-  await expect(zoom).toHaveValue('82');
+  await expect(zoom).toHaveValue(String(fitted + 1));
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('82');
+  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue(String(fitted + 1));
   await page.keyboard.press('Shift+9');
-  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('92');
+  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue(String(fitted + 2));
 });
 
 test('Keyboard Shortcuts can bind a menu command that has no built-in shortcut', async ({ page }) => {

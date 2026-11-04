@@ -30,6 +30,46 @@ title. Independent live export-pixel verification remains blocked by
 intermittent browser/network download behaviour, so the roadmap does not claim
 full live acceptance or completion.
 
+## Release evidence — 2026-11-04 (`1218cd5`)
+
+Merged on 2026-11-03/04 from a dogfooding pass that recreates a dense
+reference artwork in the live editor:
+
+| PR | Change | Protected PR CI | Main run | Live |
+| --- | --- | --- | --- | --- |
+| #171 | Every palette tool has a distinct, canonical icon | green | 41737850466 cancelled (superseded) | icons verified distinct (27/27 visible slots) |
+| #172 | Layer → Rasterize bakes live filter effects | green | 41738215678 cancelled (superseded) | Clouds → Rasterize → Gradient Map keeps the texture |
+| #173 | Editor fits 681–1240 px windows (two-row header) | green | **41739009345 success, deployed** | 707 px window: no overflow, inspector reachable |
+
+`/release.json`, `/health` and `/api/readyz.json` report
+`1218cd5ef932cfa09f51056a13a06bd30b8a76f1`, built 2026-11-03T23:27:01Z,
+`ready: true`. The earlier `main` run for `fdf819c` (docs only) failed on
+`layer-styles.spec.ts:34`, which also fails locally; that test is an open
+release risk because a failing shard skips deployment.
+
+### Gaps logged from the artwork pass (not yet implemented)
+
+1. **True pixel zoom** — implemented on `feat/pixel-zoom`
+   (`docs/view-zoom-contract.md`). The shipped zoom is a stage-width
+   percentage capped at 1200 CSS px, so large images cannot be viewed at 100%.
+2. **Render Clouds** ignores foreground/background colours, does nothing on a
+   transparent layer, and caps scale at 64 px (too small for 4096 px images).
+   Implemented on `feat/clouds-colors` (`docs/clouds-effect-contract.md`).
+3. **One live filter per layer**; there is no Smart Filter stack, and Filter →
+   Convert for Smart Filters is disabled while Layer → Convert for Smart Filters
+   is enabled.
+4. **Tool options are buried** ~7,000 px down the inspector; an options bar
+   near the canvas is needed.
+5. **No sized File → New dialog**; new documents are fixed at 1200×800.
+6. Add paint layer switches the active tool to Brush. This is deliberate
+   (`addPaint` calls `setTool('brush')`) and several specs rely on it; it
+   differs from Photoshop and is a product decision, not a defect.
+7. `layer-styles.spec.ts:34` fails intermittently in CI and locally. Cause:
+   the spec copies the full 1200×800 canvas (3.84M numbers) over the browser
+   protocol four times and deep-compares the arrays, exceeding its 120 s
+   budget under load. Fixed on `test/layer-styles-pixel-hash` by comparing an
+   in-page fingerprint.
+
 ## Latest protected release evidence
 
 The protected workflow run for the current merged release completed

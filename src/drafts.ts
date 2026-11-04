@@ -135,7 +135,10 @@ export type Tool =
 export type Shot = { url: string; w: number; h: number };
 export type Settings = {
   tool: Tool;
+  /** Legacy stage-relative zoom (20–140), still written for older builds. */
   zoom: number;
+  /** True pixel zoom percentage (1–3200); preferred when present. */
+  viewZoom?: number;
   /** Ephemeral viewport rotation in degrees; it never mutates document pixels. */
   viewRotation?: number;
   color: string;
@@ -424,6 +427,7 @@ function validSettings(settings: unknown): settings is Settings {
     return false;
   const ranges: [number, number, number][] = [
     [candidate.zoom as number, 20, 140],
+    [candidate.viewZoom === undefined ? 100 : (candidate.viewZoom as number), 1, 3200],
     [candidate.viewRotation ?? 0, -180, 180],
     [candidate.size as number, 2, 100],
     [candidate.fontSize as number, 16, 160],

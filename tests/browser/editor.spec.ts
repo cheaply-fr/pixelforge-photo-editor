@@ -828,13 +828,16 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
     'true',
   );
   const zoom = page.getByLabel('Zoom', { exact: true });
-  await expect(zoom).toHaveValue('72');
+  const fitted = await zoom.inputValue();
+  const fittedLabel = await page.getByTestId('zoom-level').textContent();
   await page.keyboard.press('+');
-  await expect(zoom).toHaveValue('82');
+  await expect(zoom).toHaveValue(String(Number(fitted) + 1));
   await page.keyboard.press('1');
-  await expect(zoom).toHaveValue('100');
+  await expect(page.getByTestId('zoom-level')).toHaveText('100%');
+  await expect(zoom).toHaveAttribute('aria-valuetext', '100%');
   await page.keyboard.press('0');
-  await expect(zoom).toHaveValue('72');
+  await expect(zoom).toHaveValue(fitted);
+  await expect(page.getByTestId('zoom-level')).toHaveText(fittedLabel!);
 
   const setColorInput = async (label: string, value: string) =>
     page.getByLabel(label).evaluate((input, next) => {

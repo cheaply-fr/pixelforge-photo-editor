@@ -692,9 +692,19 @@ test('zoom tool increases the document view without changing pixels', async ({
   page,
 }) => {
   const before = await pixels(page);
+  const zoom = page.getByLabel('Zoom', { exact: true });
+  const fitted = Number(await zoom.inputValue());
+  const width = (await page.getByTestId('editor-canvas').boundingBox())!.width;
   await selectTool(page, 'Zoom');
   await page.getByTestId('editor-canvas').click();
-  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('82');
+  await expect(zoom).toHaveValue(String(fitted + 1));
+  await expect
+    .poll(async () => (await page.getByTestId('editor-canvas').boundingBox())!.width)
+    .toBeGreaterThan(width);
+  expect(await pixels(page)).toBe(before);
+  // Alt-click zooms back out to the previous step.
+  await page.getByTestId('editor-canvas').click({ modifiers: ['Alt'] });
+  await expect(zoom).toHaveValue(String(fitted));
   expect(await pixels(page)).toBe(before);
 });
 
