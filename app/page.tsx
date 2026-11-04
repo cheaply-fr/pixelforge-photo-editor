@@ -509,6 +509,9 @@ import {
 import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_FIBERS_SETTINGS,
+  MAX_CLOUD_RENDER_SCALE,
+  MIN_CLOUD_RENDER_SCALE,
+  defaultCloudScale,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_NEURAL_ENHANCE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
@@ -5915,6 +5918,14 @@ export default function Home() {
                 ...(type === 'deinterlace' ? { deinterlace: { ...DEFAULT_DEINTERLACE_SETTINGS } } : {}),
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
+                } : {}),
+                ...(type === 'clouds' ? {
+                  cloudRender: {
+                    foreground: color,
+                    background: backgroundColor,
+                    scale: defaultCloudScale(frame?.w ?? 0, frame?.h ?? 0),
+                    fill: true,
+                  },
                 } : {}),
                 ...(type === 'gradient-map' ? {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
@@ -16724,7 +16735,9 @@ export default function Home() {
               <p>Bounded seeded recursive branch and leaf approximation. Branch count, leafiness, origin and seed remain editable; Photoshop&apos;s exact botanical generator and foreground/background controls remain planned.</p>
             )}
             {filterEffects.type === 'clouds' && (
-              <p>Seeded multi-octave value-noise overlay. Scale, amount and seed remain editable; Photoshop foreground/background cloud synthesis and turbulence controls remain planned.</p>
+              <p>{filterEffects.cloudRender
+                ? 'Seeded multi-octave clouds mixed from the foreground and background colours. Colours, size, fill, amount and seed remain editable; Photoshop turbulence controls and exact noise remain planned.'
+                : 'Seeded multi-octave grayscale overlay from an older project. Re-apply Render → Clouds for colour clouds.'}</p>
             )}
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
@@ -16960,7 +16973,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
@@ -17485,6 +17498,45 @@ export default function Home() {
                 )}
                 {filterEffects.type === 'tree' && (
               <p>Bounded seeded recursive branch and leaf approximation. Branch count, leafiness, origin and seed remain editable; Photoshop&apos;s exact botanical generator and foreground/background controls remain planned.</p>
+            )}
+            {filterEffects.type === 'clouds' && filterEffects.cloudRender && (
+              <>
+                <label className="layer-field">
+                  Cloud foreground colour
+                  <input
+                    aria-label="Cloud foreground colour"
+                    type="color"
+                    value={filterEffects.cloudRender.foreground}
+                    onChange={(event) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, foreground: event.target.value } })}
+                  />
+                </label>
+                <label className="layer-field">
+                  Cloud background colour
+                  <input
+                    aria-label="Cloud background colour"
+                    type="color"
+                    value={filterEffects.cloudRender.background}
+                    onChange={(event) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, background: event.target.value } })}
+                  />
+                </label>
+                <Slider
+                  label="Cloud size"
+                  value={filterEffects.cloudRender.scale}
+                  min={MIN_CLOUD_RENDER_SCALE}
+                  max={MAX_CLOUD_RENDER_SCALE}
+                  set={(value) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, scale: Math.round(value) } })}
+                  suffix="px"
+                />
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label="Fill transparent pixels"
+                    checked={filterEffects.cloudRender.fill}
+                    onChange={(event) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, fill: event.target.checked } })}
+                  />
+                  Fill transparent pixels
+                </label>
+              </>
             )}
             {filterEffects.type === 'clouds' && (
                   <label className="slider">

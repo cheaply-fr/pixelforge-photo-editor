@@ -40,6 +40,7 @@ export function filterActionParameters(
       ...(effect.adaptiveWideAngle ? { adaptiveWideAngle: effect.adaptiveWideAngle } : {}),
       ...(effect.deinterlace ? { deinterlace: effect.deinterlace } : {}),
       ...(effect.neuralEnhance ? { neuralEnhance: effect.neuralEnhance } : {}),
+      ...(effect.cloudRender ? { cloudRender: effect.cloudRender } : {}),
     }),
   };
 }
