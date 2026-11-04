@@ -3746,13 +3746,15 @@ function applyAddNoise(
       let value = (Math.imul((effect.seed >>> 0) ^ 0x9e3779b9, index + 1) ^ Math.imul(channelKey + 1, 0x85ebca6b)) >>> 0;
       value ^= value >>> 16;
       value = Math.imul(value, 0x7feb352d) >>> 0;
-      value ^= value >>> 15;
+      // `^` yields a signed int32; keep the hash unsigned so samples cover
+      // the whole -1..1 range instead of only the negative half.
+      value = (value ^ (value >>> 15)) >>> 0;
       const first = value / 0xffffffff;
       if (effect.noiseDistribution !== 'gaussian') return first * 2 - 1;
       let second = (value ^ 0xa5a5a5a5) >>> 0;
       second ^= second >>> 16;
       second = Math.imul(second, 0x7feb352d) >>> 0;
-      second ^= second >>> 15;
+      second = (second ^ (second >>> 15)) >>> 0;
       const u = Math.max(1e-6, first);
       const v = Math.max(1e-6, second / 0xffffffff);
       return Math.max(-1, Math.min(1, Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) / 2.5));
