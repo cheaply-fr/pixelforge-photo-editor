@@ -2046,53 +2046,98 @@ function applyClouds(
     return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
   };
   const smooth = (value: number) => value * value * (3 - 2 * value);
-  const valueNoise = (x: number, y: number, salt: number): number => {
-    const left = Math.floor(x);
-    const top = Math.floor(y);
-    const tx = smooth(x - left);
-    const ty = smooth(y - top);
-    const topLeft = hash(left, top, salt);
-    const topRight = hash(left + 1, top, salt);
-    const bottomLeft = hash(left, top + 1, salt);
-    const bottomRight = hash(left + 1, top + 1, salt);
-    const topMix = topLeft + (topRight - topLeft) * tx;
-    const bottomMix = bottomLeft + (bottomRight - bottomLeft) * tx;
-    return topMix + (bottomMix - topMix) * ty;
-  };
+  // Lattice values only change once per noise cell, so each octave caches its
+  // per-column cell index/weight and the two lattice rows around the current
+  // row. The coordinate expressions match the per-pixel form exactly, so the
+  // output is bit-identical while hashing drops from 4 per pixel per octave
+  // to about 2 per lattice cell.
+  const columns = Array.from({ length: octaves }, (_, octave) => {
+    const frequency = 2 ** octave;
+    const left = new Int32Array(width);
+    const weight = new Float64Array(width);
+    for (let x = 0; x < width; x += 1) {
+      const fx = (x / scale) * frequency;
+      left[x] = Math.floor(fx);
+      weight[x] = smooth(fx - left[x]);
+    }
+    const first = left[0];
+    const span = left[width - 1] - first + 2;
+    return { frequency, left, weight, first, span, top: new Float64Array(span), bottom: new Float64Array(span), row: Number.NaN };
+  });
+  const sums = new Float64Array(width);
+  // Colour clouds are stretched to their own range so they always span the
+  // background to foreground colours, even when the cloud size approaches
+  // the image size and the raw noise sits in a narrow band.
+  const field = foreground && background ? new Float32Array(width * height) : undefined;
+  let amplitudeTotal = 0;
+  for (let octave = 0, amplitude = 1; octave < octaves; octave += 1, amplitude *= 0.5)
+    amplitudeTotal += amplitude;
+  for (let y = 0; y < height; y += 1) {
+    sums.fill(0);
+    let amplitude = 1;
+    for (let octave = 0; octave < octaves; octave += 1) {
+      const column = columns[octave];
+      const fy = (y / scale) * column.frequency;
+      const top = Math.floor(fy);
+      const ty = smooth(fy - top);
+      if (column.row !== top) {
+        for (let i = 0; i < column.span; i += 1) {
+          column.top[i] = hash(column.first + i, top, octave + 1);
+          column.bottom[i] = hash(column.first + i, top + 1, octave + 1);
+        }
+        column.row = top;
+      }
+      const { left, weight, first, top: upper, bottom: lower } = column;
+      for (let x = 0; x < width; x += 1) {
+        const i = left[x] - first;
+        const tx = weight[x];
+        const topMix = upper[i] + (upper[i + 1] - upper[i]) * tx;
+        const bottomMix = lower[i] + (lower[i + 1] - lower[i]) * tx;
+        sums[x] += (topMix + (bottomMix - topMix) * ty) * amplitude;
+      }
+      amplitude *= 0.5;
+    }
+    if (field) {
+      field.set(sums, y * width);
+      continue;
+    }
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (!source[offset + 3] && !render?.fill) continue;
+      const value = sums[x];
+      const cloud = (value / amplitudeTotal) * 255;
+      blendPixel(output, offset, [cloud, cloud, cloud, source[offset + 3]], strength);
+    }
+  }
+  if (!field || !foreground || !background) return;
+  let low = Infinity, high = -Infinity;
+  for (let i = 0; i < field.length; i += 1) {
+    if (field[i] < low) low = field[i];
+    if (field[i] > high) high = field[i];
+  }
+  const range = high - low > 1e-9 ? high - low : 1;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
       if (!source[offset + 3] && !render?.fill) continue;
-      let value = 0;
-      let amplitude = 1;
-      let amplitudeTotal = 0;
-      for (let octave = 0; octave < octaves; octave += 1) {
-        const frequency = 2 ** octave;
-        value += valueNoise((x / scale) * frequency, (y / scale) * frequency, octave + 1) * amplitude;
-        amplitudeTotal += amplitude;
-        amplitude *= 0.5;
-      }
-      if (foreground && background) {
-        const t = value / amplitudeTotal;
-        const color = [0, 1, 2].map((channel) =>
-          background[channel] + (foreground[channel] - background[channel]) * t,
-        );
+      {
+        const t = (field[y * width + x] - low) / range;
+        const red = background[0] + (foreground[0] - background[0]) * t;
+        const green = background[1] + (foreground[1] - background[1]) * t;
+        const blue = background[2] + (foreground[2] - background[2]) * t;
         const alpha = source[offset + 3];
         if (alpha === 0) {
           // Filling a transparent pixel: its RGB is hidden, so take the cloud
           // colour outright and let strength set the new coverage.
-          output[offset] = clampByte(color[0]);
-          output[offset + 1] = clampByte(color[1]);
-          output[offset + 2] = clampByte(color[2]);
+          output[offset] = clampByte(red);
+          output[offset + 1] = clampByte(green);
+          output[offset + 2] = clampByte(blue);
           output[offset + 3] = clampByte(255 * strength);
         } else {
-          blendPixel(output, offset, [color[0], color[1], color[2], alpha], strength);
+          blendPixel(output, offset, [red, green, blue, alpha], strength);
           if (render?.fill) output[offset + 3] = clampByte(alpha + (255 - alpha) * strength);
         }
-        continue;
       }
-      const cloud = (value / amplitudeTotal) * 255;
-      blendPixel(output, offset, [cloud, cloud, cloud, source[offset + 3]], strength);
     }
   }
 }

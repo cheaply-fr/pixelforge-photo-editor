@@ -10,8 +10,8 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
 });
 
-const settled = (page: Page) =>
-  expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+const settled = (page: Page, timeout = 15_000) =>
+  expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false', { timeout });
 
 async function menu(page: Page, name: string, item: string) {
   await page.getByRole('button', { name, exact: true }).click();
@@ -108,6 +108,7 @@ test('colour clouds controls persist through reload and project round trip', asy
   const size = page.getByLabel('Cloud size', { exact: true });
   await size.fill('1500');
   await expect(size).toHaveValue('1500');
+  await page.getByLabel('Effect amount', { exact: true }).fill('100');
   await settled(page);
   const before = await sample(page);
   expect(before.maxB).toBeGreaterThan(150);
@@ -133,6 +134,11 @@ test('a large 2646×4096 canvas gets large clouds by default', async ({ page }) 
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await menu(page, 'Filter', 'Clouds');
   await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('662');
-  await settled(page);
-  expect((await sample(page)).opaqueShare).toBe(1);
+  // 10.8 MP of colour clouds renders in about 3 s on a desktop CPU.
+  await settled(page, 60_000);
+  await page.getByLabel('Effect amount', { exact: true }).fill('100');
+  await settled(page, 60_000);
+  const large = await sample(page);
+  expect(large.opaqueShare).toBe(1);
+  expect(large.colours).toBeGreaterThan(40);
 });

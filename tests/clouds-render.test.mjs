@@ -140,3 +140,14 @@ test('default cloud scale follows the layer size within bounds', () => {
   assert.equal(defaultCloudScale(100000, 100000), MAX_CLOUD_RENDER_SCALE);
   assert.equal(defaultCloudScale(0, 10), 256);
 });
+
+test('colour clouds span the full colour range even when the cloud size exceeds the image', () => {
+  for (const scale of [8, 200, 2048]) {
+    const out = applyFilterEffectsPixels(transparent(160, 120), 160, 120,
+      effect({}, { foreground: '#ffffff', background: '#000000', scale }));
+    let low = 255, high = 0;
+    for (let i = 0; i < out.length; i += 4) { low = Math.min(low, out[i]); high = Math.max(high, out[i]); }
+    assert.equal(low, 0, `scale ${scale} reaches the background colour`);
+    assert.equal(high, 255, `scale ${scale} reaches the foreground colour`);
+  }
+});

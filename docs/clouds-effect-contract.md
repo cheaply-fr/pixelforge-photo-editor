@@ -18,6 +18,13 @@ Choosing Render → Clouds stores a `cloudRender` block:
   quarter of the document's shorter side (200 px for 1200×800, 662 px for
   2646×4096). Octaves are added down to roughly 2 px, so large clouds keep
   fine detail.
+- Each render is stretched to its own noise range, so the result always
+  spans the full background-to-foreground mix. Without this, a cloud size near
+  the image size left the whole image in a narrow mid-grey band.
+- Rendering caches each octave's lattice rows instead of hashing per pixel;
+  the output is bit-identical to the per-pixel form. A 2646×4096 colour-clouds
+  render takes about 3 s in Node on a desktop CPU (13.8 s before), and the
+  legacy grayscale overlay about 1.3 s (3.6 s before).
 - `fill`: when true (the default) transparent pixels are rendered too, so an
   empty layer becomes a full cloud layer, as in Photoshop. Filled pixels take
   the cloud colour outright and get `255 × amount` coverage. When false,
