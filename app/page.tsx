@@ -50,6 +50,9 @@ import {
 } from '../src/cloud';
 import {
   addAsset,
+  formatMegapixels,
+  LAYER_PIXEL_BUDGET,
+  layerPixelUsage,
   identity,
   colorSelectMask,
   commonLayer,
@@ -198,6 +201,13 @@ import {
   type TrimMode,
   type TrimSides,
 } from '../src/canvasSize';
+import {
+  canExpandRasterLayer,
+  canTrimRasterLayer,
+  EXPANDING_PAINT_TOOLS,
+  planLayerExpansion,
+  planLayerTrim,
+} from '../src/layerTrim';
 import {
   alignmentDelta,
   distributionDeltas,
@@ -678,6 +688,7 @@ type Command =
   | 'load-default-type-styles'
   | 'save-default-type-styles'
   | 'rasterize-layer'
+  | 'trim-layer'
   | 'matting'
   | 'duplicate-layer'
   | 'copy-svg'
@@ -1220,6 +1231,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Link Layers', command: 'link-layers' },
     { label: 'Unlink Layers', command: 'unlink-layers' },
     { label: 'Rasterize', command: 'rasterize-layer' },
+    { label: 'Trim Layer to Content', command: 'trim-layer' },
     { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
     { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
@@ -2566,6 +2578,11 @@ export default function Home() {
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
+  // Pointer whose paint gesture waits for a trimmed layer to expand.
+  const expansionPointer = useRef<{
+    pointerId: number;
+    release?: React.PointerEvent<HTMLCanvasElement>;
+  } | null>(null);
   const paintSpan = useRef<PerformanceSpan | null>(null);
   const viewZoomRef = useRef(viewZoom);
   /** Image box and client anchor captured before a zoom, applied after commit. */
@@ -8086,6 +8103,121 @@ export default function Home() {
       setNotice('Could not rasterize layer');
     }
   };
+  // Store a plain raster layer at its non-transparent bounding box so sparse
+  // layers only spend their content on the layer pixel budget. The layer
+  // matrix keeps every pixel in place; paint tools expand it again on demand.
+  const trimLayerToContent = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !canTrimRasterLayer(layer)) {
+      setNotice(
+        'Trim Layer to Content needs an unlocked, unrotated paint layer without styles, vector masks, live filters or cleanup edits',
+      );
+      return;
+    }
+    const source = assets.current[layer.asset];
+    try {
+      const image = await decodeAsset(source),
+        buffer = surface(source.w, source.h),
+        context = buffer.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Trim canvas is unavailable');
+      context.drawImage(image, 0, 0);
+      const plan = planLayerTrim(
+        context.getImageData(0, 0, source.w, source.h).data,
+        source.w,
+        source.h,
+        layer.matrix,
+      );
+      if (current() !== f) return;
+      if (!plan) {
+        setNotice('Layer already fits its content');
+        return;
+      }
+      const cropped = surface(plan.crop.width, plan.crop.height);
+      cropped
+        .getContext('2d')!
+        .drawImage(image, -plan.crop.x, -plan.crop.y);
+      const asset = addAsset(assets.current, cropped);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+          ),
+        })
+      )
+        setNotice(
+          plan.empty
+            ? `Empty layer trimmed; ${formatMegapixels(plan.savedPixels)} MP of the layer pixel budget freed`
+            : `Layer trimmed to ${plan.crop.width} × ${plan.crop.height} px; ${formatMegapixels(plan.savedPixels)} MP of the layer pixel budget freed`,
+        );
+    } catch {
+      setNotice('Could not trim layer');
+    }
+  };
+  // A trimmed (or moved) paint layer only stores part of the canvas. Before a
+  // pixel tool writes to it, grow the asset to cover the whole canvas (plus
+  // any pixels already outside it) as its own undoable step, so strokes and
+  // fills never silently stop at the stored bounds.
+  const rasterExpansionTarget = (f: Frame) => {
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (
+      !layer ||
+      layer.kind !== 'raster' ||
+      !layer.visible ||
+      layerIsLocked(f, layer) ||
+      !canExpandRasterLayer(layer)
+    )
+      return null;
+    const source = assets.current[layer.asset];
+    if (!source) return null;
+    const plan = planLayerExpansion(source.w, source.h, layer.matrix, f.w, f.h);
+    return plan ? { layer, source, plan } : null;
+  };
+  /**
+   * Returns false only when the budget refuses the expansion and the press
+   * starts outside the stored pixels, where the tool could not store anything.
+   */
+  const expandRasterLayerForPaint = async (press: {
+    x: number;
+    y: number;
+  }): Promise<boolean> => {
+    const f = current(),
+      target = rasterExpansionTarget(f);
+    if (!target) return true;
+    const { layer, source, plan } = target;
+    const required =
+      layerPixelUsage(f, assets.current) - source.w * source.h + plan.w * plan.h;
+    if (required > LAYER_PIXEL_BUDGET) {
+      setNotice(
+        `Layer pixel budget reached: this layer stays ${source.w} × ${source.h} px, so paint outside it is not stored. Merge or trim other layers to paint the whole canvas.`,
+      );
+      const local = inversePoint(layer.matrix, press);
+      return Boolean(
+        local &&
+          local.x >= 0 &&
+          local.y >= 0 &&
+          local.x < source.w &&
+          local.y < source.h,
+      );
+    }
+    try {
+      const image = await decodeAsset(source);
+      if (current() !== f) return true;
+      const buffer = surface(plan.w, plan.h);
+      buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
+      const asset = addAsset(assets.current, buffer);
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+        ),
+      });
+    } catch {
+      // Painting continues inside the layer's existing bounds.
+    }
+    return true;
+  };
   const applyMatting = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object')) {
@@ -8794,7 +8926,10 @@ export default function Home() {
       setNotice('Could not create a curvature path');
     }
   };
-  const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const pointerDown = async (
+    e: React.PointerEvent<HTMLCanvasElement>,
+    skipExpansion = false,
+  ): Promise<void> => {
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
       paintSpan.current?.cancel();
@@ -9143,6 +9278,35 @@ export default function Home() {
     }
     if (gesture.current || !frame) return;
     if (
+      !skipExpansion &&
+      !quickMasking &&
+      EXPANDING_PAINT_TOOLS.includes(tool) &&
+      rasterExpansionTarget(current())
+    ) {
+      // Grow a trimmed paint layer before the tool reads its pixels. A quick
+      // tap can be released while the asset decodes, so remember the release
+      // and replay it once the tool has started its gesture.
+      const pending: { pointerId: number; release?: React.PointerEvent<HTMLCanvasElement> } = {
+        pointerId: e.pointerId,
+      };
+      expansionPointer.current = pending;
+      try {
+        canvas.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // The pointer may already be gone; the release replay handles it.
+      }
+      let proceed = true;
+      try {
+        proceed = await expandRasterLayerForPaint(point(e));
+      } finally {
+        expansionPointer.current = null;
+      }
+      if (!proceed) return;
+      await pointerDown(e, true);
+      if (pending.release) await pointerUp(pending.release);
+      return;
+    }
+    if (
       quickMasking ||
       [
         'brush',
@@ -9182,7 +9346,12 @@ export default function Home() {
       (layer.kind === 'raster' || layer.kind === 'path' || (isVectorMaskableLayer(layer) && Boolean(layer.vectorMask)))
         ? inversePoint(layer.matrix, p) || p
         : p;
-    canvas.current!.setPointerCapture(e.pointerId);
+    try {
+      canvas.current!.setPointerCapture(e.pointerId);
+    } catch {
+      // A replayed tap (see the trimmed-layer expansion above) has already
+      // released its pointer; the tool still runs at the recorded point.
+    }
     if (tool === 'slice-select') {
       const selected = sliceAtPoint(f.slices, p.x, p.y);
       if (!selected) {
@@ -11346,6 +11515,10 @@ export default function Home() {
     g.last = g.layer?.kind === 'raster' || g.layer?.kind === 'path' ? local : p;
   };
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (expansionPointer.current?.pointerId === e.pointerId) {
+      expansionPointer.current.release = e;
+      return;
+    }
     const completedPaint = paintSpan.current;
     paintSpan.current = null;
     completedPaint?.finish();
@@ -12913,6 +13086,7 @@ export default function Home() {
     else if (command === 'save-default-type-styles') return saveDefaultTypeStyles();
     else if (command === 'load-default-type-styles') return loadDefaultTypeStyles();
     else if (command === 'rasterize-layer') return rasterize();
+    else if (command === 'trim-layer') return trimLayerToContent();
     else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
@@ -13424,6 +13598,8 @@ export default function Home() {
         return !hasClipboard || frame.layers.length >= 32;
       case 'new-layer':
         return frame.layers.length >= 32;
+      case 'trim-layer':
+        return !layer || locked || !canTrimRasterLayer(layer);
       case 'clear-layer':
       case 'fill-layer':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
@@ -15348,6 +15524,7 @@ export default function Home() {
           {frame && (
             <LayersPanel
               frame={frame}
+              pixelUsage={layerPixelUsage(frame, assets.current)}
               select={select}
               selectAll={selectAllLayers}
               deselectLayers={deselectLayers}
