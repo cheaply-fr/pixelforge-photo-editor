@@ -289,6 +289,7 @@ import {
   paintSelectionBrushSegment,
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
+import { boundSelectionPolygon, ellipsePolygon } from '../src/selectionPolygon';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
 import { colorRangeMask } from '../src/colorRange';
@@ -5062,37 +5063,42 @@ export default function Home() {
       }
     })();
   };
-  const finishPolygonalLasso = (g: Gesture) => {
-    const points = g.points || [];
-    if (points.length < 3) {
+  /**
+   * Clip a lasso path to the canvas and merge it as a polygon selection.
+   * Returns false, with a notice and the selection unchanged, when nothing of
+   * the path remains on the canvas.
+   */
+  const commitLassoPolygon = (
+    g: Gesture,
+    label: 'Lasso' | 'Polygonal lasso' | 'Magnetic Lasso' | 'Elliptical marquee',
+  ) => {
+    const bounded = boundSelectionPolygon(g.points || [], g.frame.w, g.frame.h);
+    if (!bounded.ok) {
       void paint(g.frame);
-      setNotice('Polygonal lasso needs at least three points');
-      return;
-    }
-    const bounded = points.map((point) => ({
-      x: Math.max(0, Math.min(g.frame.w, point.x)),
-      y: Math.max(0, Math.min(g.frame.h, point.y)),
-    }));
-    const x = Math.min(...bounded.map((point) => point.x)),
-      y = Math.min(...bounded.map((point) => point.y)),
-      right = Math.max(...bounded.map((point) => point.x)),
-      bottom = Math.max(...bounded.map((point) => point.y));
-    if (right - x <= 0 || bottom - y <= 0) {
-      void paint(g.frame);
-      setNotice('Polygonal lasso needs a non-zero area');
-      return;
+      setNotice(
+        bounded.reason === 'too-few-points'
+          ? `${label} needs at least three points`
+          : bounded.reason === 'outside'
+            ? `${label} selection is outside the image`
+            : `${label} needs a non-zero area`,
+      );
+      return false;
     }
     mergeSelection({
       shape: 'polygon',
-      x,
-      y,
-      w: right - x,
-      h: bottom - y,
-      points: bounded,
+      x: bounded.x,
+      y: bounded.y,
+      w: bounded.w,
+      h: bounded.h,
+      points: bounded.points,
       feather: 0,
       inverted: false,
     });
-    setNotice('Polygonal selection created');
+    return true;
+  };
+  const finishPolygonalLasso = (g: Gesture) => {
+    if (commitLassoPolygon(g, 'Polygonal lasso'))
+      setNotice('Polygonal selection created');
   };
   const invertSelection = () => {
     const f = current();
@@ -8838,7 +8844,9 @@ export default function Home() {
         if (g.tool === 'curvature-pen') {
           g.points = appendCurvaturePoint(points, bounded);
         } else {
-          points.push(bounded);
+          // Keep the raw vertex; the finished path is clipped exactly to the
+          // canvas, so an off-canvas vertex keeps its edges' true direction.
+          points.push(p);
         }
         g.last = p;
         g.moved = (g.points || points).length > 1;
@@ -11398,8 +11406,8 @@ export default function Home() {
         setNotice('Magnetic Lasso: drag along an edge, release to close');
       } else {
         gesture.current = null;
-        finishPolygonalLasso(g);
-        setNotice('Magnetic selection created');
+        if (commitLassoPolygon(g, 'Magnetic Lasso'))
+          setNotice('Magnetic selection created');
       }
       return;
     }
@@ -11789,11 +11797,26 @@ export default function Home() {
       (g.tool === 'select' || g.tool === 'ellipse-select') &&
       g.moved
     ) {
-      const x = Math.max(0, Math.min(g.start.x, p.x)),
-        y = Math.max(0, Math.min(g.start.y, p.y)),
-        w = Math.min(f.w - x, Math.abs(p.x - g.start.x)),
-        h = Math.min(f.h - y, Math.abs(p.y - g.start.y));
-      if (w > 0 && h > 0)
+      const left = Math.min(g.start.x, p.x),
+        top = Math.min(g.start.y, p.y),
+        width = Math.abs(p.x - g.start.x),
+        height = Math.abs(p.y - g.start.y),
+        x = Math.max(0, left),
+        y = Math.max(0, top),
+        w = Math.min(f.w, left + width) - x,
+        h = Math.min(f.h, top + height) - y;
+      const offCanvas = left < 0 || top < 0 || left + width > f.w || top + height > f.h;
+      if (g.tool === 'ellipse-select' && offCanvas && width >= 1 && height >= 1) {
+        // Keep the true ellipse and clip it to the canvas instead of
+        // squashing it into the clamped box.
+        if (
+          commitLassoPolygon(
+            { ...g, points: ellipsePolygon(left, top, width, height) },
+            'Elliptical marquee',
+          )
+        )
+          setNotice('Elliptical selection created (clipped to the canvas)');
+      } else if (w >= 1 && h >= 1)
         mergeSelection({
           shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle',
           x,
@@ -11805,23 +11828,9 @@ export default function Home() {
         });
       else void paint(f);
     } else if (g.tool === 'lasso' && g.moved) {
-      const points = g.points || [];
-      if (points.length >= 3) {
-        const x = Math.max(0, Math.min(...points.map((point) => point.x))),
-          y = Math.max(0, Math.min(...points.map((point) => point.y))),
-          right = Math.min(f.w, Math.max(...points.map((point) => point.x))),
-          bottom = Math.min(f.h, Math.max(...points.map((point) => point.y)));
-        mergeSelection({
-          shape: 'polygon',
-          x,
-          y,
-          w: right - x,
-          h: bottom - y,
-          points,
-          feather: 0,
-          inverted: false,
-        });
-      } else void paint(f);
+      // Too short a drag is treated like a click; otherwise clip to the canvas.
+      if ((g.points?.length ?? 0) >= 3) commitLassoPolygon(g, 'Lasso');
+      else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       try {
         const plan = planRectangularCrop(f.w, f.h, g.start, p);
