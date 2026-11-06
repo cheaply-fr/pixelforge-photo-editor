@@ -442,6 +442,7 @@ import {
 } from '../src/gradientNoise';
 import {
   MAX_GRADIENT_STOPS,
+  buildGradientColorStops,
   normalizeGradientStops,
   type GradientStop,
 } from '../src/gradientStops';
@@ -11928,26 +11929,18 @@ export default function Home() {
               local.x,
               local.y,
             );
-        const endColor = gradientEnd === 'background' ? backgroundColor : '#ffffff00';
-        const midpointStop = gradientMidpoint === 'none'
-          ? 0.5
-          : Math.max(0.01, Math.min(0.99, gradientMidpointPosition / 100));
-        const startColor = gradientReverse ? endColor : color,
-          finalColor = gradientReverse ? color : endColor;
-        if (gradientMode === 'reflected') {
-          gradient.addColorStop(0, color);
-          gradient.addColorStop(midpointStop, gradientMidpoint === 'none' ? endColor : gradientMidpoint);
-          gradient.addColorStop(1, color);
-        } else {
-          gradient.addColorStop(0, startColor);
-          const authoredStops = normalizeGradientStops(gradientStops);
-          if (authoredStops.length > 0) {
-            for (const stop of authoredStops) gradient.addColorStop(stop.position / 100, stop.color);
-          } else if (gradientMidpoint !== 'none') {
-            gradient.addColorStop(midpointStop, gradientMidpoint);
-          }
-          gradient.addColorStop(1, finalColor);
-        }
+        // A transparent end fades the adjacent colour's alpha (not toward
+        // transparent white, which leaves a pale fringe in canvas gradients).
+        for (const stop of buildGradientColorStops({
+          mode: gradientMode,
+          color,
+          backgroundColor,
+          end: gradientEnd,
+          reverse: gradientReverse,
+          midpoint: gradientMidpoint,
+          midpointPosition: gradientMidpointPosition,
+          stops: gradientStops,
+        })) gradient.addColorStop(stop.offset, stop.color);
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
         if (gradientNoise > 0 || gradientDither > 0) {
