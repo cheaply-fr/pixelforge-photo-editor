@@ -1,4 +1,18 @@
 import { validPatternId, type PatternId } from './patternStamp.ts';
+import { blendColorAt, validBlendMode, type LayerBlendMode } from './blendModes.ts';
+
+/**
+ * Bounds that scale to large documents. Shadow and glow blurs are sliding
+ * window box passes whose cost does not grow with the radius, and the inner
+ * shadow edge uses a separable van Herk/Gil-Werman erosion, so raising these
+ * limits only grows the cropped working area (painted bounds plus padding).
+ */
+export const STYLE_MAX_BLUR = 250;
+export const STYLE_MAX_OFFSET = 1000;
+export const INNER_SHADOW_MAX_DISTANCE = 250;
+export const GLOW_MAX_SIZE = 250;
+export const GLOW_SOURCES = ['edge', 'center'] as const;
+export type GlowSource = (typeof GLOW_SOURCES)[number];
 
 /**
  * Bounded, nondestructive layer decorations.  These values intentionally live
@@ -65,6 +79,28 @@ export type PatternOverlayStyle = {
   tileSize: number;
 };
 
+export type OuterGlowStyle = {
+  enabled: boolean;
+  color: string;
+  opacity: number;
+  /** Blur extent in pixels, `0..GLOW_MAX_SIZE`. */
+  size: number;
+  /** Percentage `0..100` that hardens the glow before it fades. */
+  spread: number;
+  blend: LayerBlendMode;
+};
+
+export type InnerGlowStyle = {
+  enabled: boolean;
+  color: string;
+  opacity: number;
+  size: number;
+  /** Percentage `0..100` that hardens the glow before it fades. */
+  choke: number;
+  source: GlowSource;
+  blend: LayerBlendMode;
+};
+
 export type LayerStyles = {
   dropShadow: DropShadowStyle;
   innerShadow: InnerShadowStyle;
@@ -73,6 +109,8 @@ export type LayerStyles = {
   colorOverlay: ColorOverlayStyle;
   gradientOverlay: GradientOverlayStyle;
   patternOverlay: PatternOverlayStyle;
+  outerGlow: OuterGlowStyle;
+  innerGlow: InnerGlowStyle;
 };
 
 export const neutralLayerStyles: LayerStyles = {
@@ -129,6 +167,23 @@ export const neutralLayerStyles: LayerStyles = {
     opacity: 1,
     tileSize: 32,
   },
+  outerGlow: {
+    enabled: false,
+    color: '#ffffbe',
+    opacity: 0.75,
+    size: 16,
+    spread: 0,
+    blend: 'screen',
+  },
+  innerGlow: {
+    enabled: false,
+    color: '#ffffbe',
+    opacity: 0.75,
+    size: 16,
+    choke: 0,
+    source: 'edge',
+    blend: 'screen',
+  },
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -136,6 +191,38 @@ const finite = (value: unknown, min: number, max: number): value is number =>
 
 const hex = (value: unknown): value is string =>
   typeof value === 'string' && /^#[a-f\d]{6}$/i.test(value);
+
+const glowSource = (value: unknown): value is GlowSource =>
+  GLOW_SOURCES.includes(value as GlowSource);
+
+function validOuterGlow(value: unknown): value is OuterGlowStyle {
+  const glow = value as Partial<OuterGlowStyle> | undefined;
+  return Boolean(
+    glow &&
+      typeof glow === 'object' &&
+      typeof glow.enabled === 'boolean' &&
+      hex(glow.color) &&
+      finite(glow.opacity, 0, 1) &&
+      finite(glow.size, 0, GLOW_MAX_SIZE) &&
+      finite(glow.spread, 0, 100) &&
+      validBlendMode(glow.blend),
+  );
+}
+
+function validInnerGlow(value: unknown): value is InnerGlowStyle {
+  const glow = value as Partial<InnerGlowStyle> | undefined;
+  return Boolean(
+    glow &&
+      typeof glow === 'object' &&
+      typeof glow.enabled === 'boolean' &&
+      hex(glow.color) &&
+      finite(glow.opacity, 0, 1) &&
+      finite(glow.size, 0, GLOW_MAX_SIZE) &&
+      finite(glow.choke, 0, 100) &&
+      glowSource(glow.source) &&
+      validBlendMode(glow.blend),
+  );
+}
 
 export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): LayerStyles {
   const shadow = value?.dropShadow;
@@ -145,6 +232,9 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
   const colorOverlay = value?.colorOverlay;
   const gradientOverlay = value?.gradientOverlay;
   const patternOverlay = value?.patternOverlay;
+  const outerGlow = value?.outerGlow;
+  const innerGlow = value?.innerGlow;
+  const neutralOuter = neutralLayerStyles.outerGlow, neutralInner = neutralLayerStyles.innerGlow;
   return {
     dropShadow: {
       ...neutralLayerStyles.dropShadow,
@@ -153,13 +243,13 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
       opacity: finite(shadow?.opacity, 0, 1)
         ? shadow!.opacity
         : neutralLayerStyles.dropShadow.opacity,
-      offsetX: finite(shadow?.offsetX, -256, 256)
+      offsetX: finite(shadow?.offsetX, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET)
         ? shadow!.offsetX
         : neutralLayerStyles.dropShadow.offsetX,
-      offsetY: finite(shadow?.offsetY, -256, 256)
+      offsetY: finite(shadow?.offsetY, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET)
         ? shadow!.offsetY
         : neutralLayerStyles.dropShadow.offsetY,
-      blur: finite(shadow?.blur, 0, 64)
+      blur: finite(shadow?.blur, 0, STYLE_MAX_BLUR)
         ? shadow!.blur
         : neutralLayerStyles.dropShadow.blur,
       enabled: typeof shadow?.enabled === 'boolean'
@@ -173,16 +263,16 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
       opacity: finite(innerShadow?.opacity, 0, 1)
         ? innerShadow!.opacity
         : neutralLayerStyles.innerShadow.opacity,
-      offsetX: finite(innerShadow?.offsetX, -256, 256)
+      offsetX: finite(innerShadow?.offsetX, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET)
         ? innerShadow!.offsetX
         : neutralLayerStyles.innerShadow.offsetX,
-      offsetY: finite(innerShadow?.offsetY, -256, 256)
+      offsetY: finite(innerShadow?.offsetY, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET)
         ? innerShadow!.offsetY
         : neutralLayerStyles.innerShadow.offsetY,
-      blur: finite(innerShadow?.blur, 0, 64)
+      blur: finite(innerShadow?.blur, 0, STYLE_MAX_BLUR)
         ? innerShadow!.blur
         : neutralLayerStyles.innerShadow.blur,
-      distance: finite(innerShadow?.distance, 1, 32)
+      distance: finite(innerShadow?.distance, 1, INNER_SHADOW_MAX_DISTANCE)
         ? innerShadow!.distance
         : neutralLayerStyles.innerShadow.distance,
       enabled: typeof innerShadow?.enabled === 'boolean'
@@ -283,6 +373,23 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
         ? patternOverlay.enabled
         : neutralLayerStyles.patternOverlay.enabled,
     },
+    outerGlow: {
+      enabled: typeof outerGlow?.enabled === 'boolean' ? outerGlow.enabled : neutralOuter.enabled,
+      color: hex(outerGlow?.color) ? outerGlow!.color : neutralOuter.color,
+      opacity: finite(outerGlow?.opacity, 0, 1) ? outerGlow!.opacity : neutralOuter.opacity,
+      size: finite(outerGlow?.size, 0, GLOW_MAX_SIZE) ? outerGlow!.size : neutralOuter.size,
+      spread: finite(outerGlow?.spread, 0, 100) ? outerGlow!.spread : neutralOuter.spread,
+      blend: validBlendMode(outerGlow?.blend) ? outerGlow!.blend : neutralOuter.blend,
+    },
+    innerGlow: {
+      enabled: typeof innerGlow?.enabled === 'boolean' ? innerGlow.enabled : neutralInner.enabled,
+      color: hex(innerGlow?.color) ? innerGlow!.color : neutralInner.color,
+      opacity: finite(innerGlow?.opacity, 0, 1) ? innerGlow!.opacity : neutralInner.opacity,
+      size: finite(innerGlow?.size, 0, GLOW_MAX_SIZE) ? innerGlow!.size : neutralInner.size,
+      choke: finite(innerGlow?.choke, 0, 100) ? innerGlow!.choke : neutralInner.choke,
+      source: glowSource(innerGlow?.source) ? innerGlow!.source : neutralInner.source,
+      blend: validBlendMode(innerGlow?.blend) ? innerGlow!.blend : neutralInner.blend,
+    },
   };
 }
 
@@ -301,19 +408,19 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
       typeof shadow.enabled === 'boolean' &&
       hex(shadow.color) &&
       finite(shadow.opacity, 0, 1) &&
-      finite(shadow.offsetX, -256, 256) &&
-      finite(shadow.offsetY, -256, 256) &&
-      finite(shadow.blur, 0, 64) &&
+      finite(shadow.offsetX, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
+      finite(shadow.offsetY, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
+      finite(shadow.blur, 0, STYLE_MAX_BLUR) &&
       (innerShadow === undefined || (
         innerShadow &&
         typeof innerShadow === 'object' &&
         typeof innerShadow.enabled === 'boolean' &&
         hex(innerShadow.color) &&
         finite(innerShadow.opacity, 0, 1) &&
-        finite(innerShadow.offsetX, -256, 256) &&
-        finite(innerShadow.offsetY, -256, 256) &&
-        finite(innerShadow.blur, 0, 64) &&
-        finite(innerShadow.distance, 1, 32)
+        finite(innerShadow.offsetX, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
+        finite(innerShadow.offsetY, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
+        finite(innerShadow.blur, 0, STYLE_MAX_BLUR) &&
+        finite(innerShadow.distance, 1, INNER_SHADOW_MAX_DISTANCE)
       )) &&
       (bevelEmboss === undefined || (
         bevelEmboss &&
@@ -359,14 +466,17 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
         finite(patternOverlay.opacity, 0, 1) &&
         finite(patternOverlay.tileSize, 4, 128) &&
         Number.isInteger(patternOverlay.tileSize)
-      )),
+      )) &&
+      (candidate.outerGlow === undefined || validOuterGlow(candidate.outerGlow)) &&
+      (candidate.innerGlow === undefined || validInnerGlow(candidate.innerGlow)),
   );
 }
 
 export function isNeutralLayerStyles(value: Partial<LayerStyles> | undefined): boolean {
   const styles = effectiveLayerStyles(value);
   return !styles.dropShadow.enabled && !styles.innerShadow.enabled && !styles.bevelEmboss.enabled && !styles.outline.enabled &&
-    !styles.colorOverlay.enabled && !styles.gradientOverlay.enabled && !styles.patternOverlay.enabled;
+    !styles.colorOverlay.enabled && !styles.gradientOverlay.enabled && !styles.patternOverlay.enabled &&
+    !styles.outerGlow.enabled && !styles.innerGlow.enabled;
 }
 
 function color(value: string): [number, number, number] {
@@ -417,6 +527,70 @@ function blurAlpha(source: Uint8ClampedArray, width: number, height: number, rad
     }
   }
   return output;
+}
+
+/**
+ * Sliding minimum over a centred window of `radius` along one axis using the
+ * van Herk/Gil-Werman block decomposition: three comparisons per sample
+ * regardless of the radius. Samples outside the line read as `outside`.
+ */
+function minLine(
+  input: Uint8ClampedArray,
+  output: Uint8ClampedArray,
+  start: number,
+  stride: number,
+  length: number,
+  radius: number,
+  outside: number,
+  prefix: Uint8ClampedArray,
+  suffix: Uint8ClampedArray,
+) {
+  const window = radius * 2 + 1, padded = length + radius * 2;
+  const at = (i: number) => {
+    const source = i - radius;
+    return source >= 0 && source < length ? input[start + source * stride] : outside;
+  };
+  for (let blockStart = 0; blockStart < padded; blockStart += window) {
+    const blockEnd = Math.min(padded, blockStart + window);
+    let running = 255;
+    for (let i = blockStart; i < blockEnd; i += 1) prefix[i] = running = Math.min(running, at(i));
+    running = 255;
+    for (let i = blockEnd - 1; i >= blockStart; i -= 1) suffix[i] = running = Math.min(running, at(i));
+  }
+  // Output sample x covers padded indices [x, x + 2r].
+  for (let x = 0; x < length; x += 1) output[start + x * stride] = Math.min(suffix[x], prefix[x + window - 1]);
+}
+
+/** Square-window erosion (minimum) with transparent samples outside the area. */
+function erodeAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
+  if (radius <= 0) return source.slice();
+  const horizontal = new Uint8ClampedArray(width * height), output = new Uint8ClampedArray(width * height);
+  const scratchLength = Math.max(width, height) + radius * 2;
+  const prefix = new Uint8ClampedArray(scratchLength), suffix = new Uint8ClampedArray(scratchLength);
+  for (let y = 0; y < height; y += 1) minLine(source, horizontal, y * width, 1, width, radius, 0, prefix, suffix);
+  for (let x = 0; x < width; x += 1) minLine(horizontal, output, x, width, height, radius, 0, prefix, suffix);
+  return output;
+}
+
+/**
+ * Three box passes approximate a Gaussian falloff whose visible extent is
+ * about `size` pixels. Each pass is a radius-independent sliding window.
+ */
+function glowBlurRadius(size: number) {
+  return size > 0 ? Math.ceil(size / 3) : 0;
+}
+
+function blurAlphaSmooth(source: Uint8ClampedArray, width: number, height: number, size: number) {
+  const radius = glowBlurRadius(size);
+  if (radius <= 0) return source.slice();
+  return blurAlpha(blurAlpha(blurAlpha(source, width, height, radius), width, height, radius), width, height, radius);
+}
+
+/** Spread/choke hardens the blurred mask like a levels clip: 100% is a hard edge. */
+function hardenMask(value: number, percent: number) {
+  if (percent <= 0) return value;
+  if (percent >= 100) return value > 0 ? 255 : 0;
+  return Math.min(255, value / (1 - percent / 100));
 }
 
 type AlphaBounds = { minX: number; minY: number; maxX: number; maxY: number };
@@ -474,6 +648,32 @@ export function applyLayerStylesPixels(
           over(output, (dy * width + dx) * 4, r, g, b, shadowAlpha[y * sourceWidth + x] * styles.dropShadow.opacity);
       }
   }
+  if (styles.outerGlow.enabled && styles.outerGlow.opacity > 0) {
+    const glow = styles.outerGlow, size = Math.round(glow.size);
+    const padding = glowBlurRadius(size) * 3 + 1;
+    const sourceX = Math.max(0, bounds.minX - padding), sourceY = Math.max(0, bounds.minY - padding);
+    const sourceRight = Math.min(width - 1, bounds.maxX + padding), sourceBottom = Math.min(height - 1, bounds.maxY + padding);
+    const sourceWidth = sourceRight - sourceX + 1, sourceHeight = sourceBottom - sourceY + 1;
+    const crop = new Uint8ClampedArray(sourceWidth * sourceHeight);
+    for (let y = 0; y < sourceHeight; y += 1)
+      for (let x = 0; x < sourceWidth; x += 1)
+        crop[y * sourceWidth + x] = alpha[(sourceY + y) * width + sourceX + x];
+    const mask = blurAlphaSmooth(crop, sourceWidth, sourceHeight, size);
+    const [r, g, b] = color(glow.color), scratch: [number, number, number] = [0, 0, 0];
+    for (let y = 0; y < sourceHeight; y += 1)
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const value = mask[y * sourceWidth + x];
+        if (value === 0) continue;
+        blendColorAt(
+          output,
+          ((sourceY + y) * width + sourceX + x) * 4,
+          r, g, b,
+          hardenMask(value, glow.spread) * glow.opacity,
+          glow.blend,
+          scratch,
+        );
+      }
+  }
   if (styles.outline.enabled) {
     const [r, g, b] = color(styles.outline.color), radius = Math.round(styles.outline.width);
     const minX = Math.max(0, bounds.minX - radius), maxX = Math.min(width - 1, bounds.maxX + radius);
@@ -508,22 +708,26 @@ export function applyLayerStylesPixels(
     const sourceBottom = Math.min(height - 1, bounds.maxY + padding);
     const sourceWidth = sourceRight - sourceX + 1;
     const sourceHeight = sourceBottom - sourceY + 1;
+    // Erode an area padded by `distance` so every crop sample sees the same
+    // square neighbourhood as a full-frame minimum. Samples outside the layer
+    // read as transparent, exactly like the historical per-pixel window, and
+    // the separable pass costs the same at any distance.
+    const erodeX = Math.max(0, sourceX - distance), erodeY = Math.max(0, sourceY - distance);
+    const erodeRight = Math.min(width - 1, sourceRight + distance);
+    const erodeBottom = Math.min(height - 1, sourceBottom + distance);
+    const erodeWidth = erodeRight - erodeX + 1, erodeHeight = erodeBottom - erodeY + 1;
+    const erodeSource = new Uint8ClampedArray(erodeWidth * erodeHeight);
+    for (let y = 0; y < erodeHeight; y += 1)
+      for (let x = 0; x < erodeWidth; x += 1)
+        erodeSource[y * erodeWidth + x] = alpha[(erodeY + y) * width + erodeX + x];
+    const eroded = erodeAlpha(erodeSource, erodeWidth, erodeHeight, distance);
     const edge = new Uint8ClampedArray(sourceWidth * sourceHeight);
     for (let y = 0; y < sourceHeight; y += 1)
       for (let x = 0; x < sourceWidth; x += 1) {
         const gx = sourceX + x, gy = sourceY + y;
         const own = alpha[gy * width + gx];
         if (own === 0) continue;
-        let minimum = 255;
-        for (let oy = -distance; oy <= distance; oy += 1)
-          for (let ox = -distance; ox <= distance; ox += 1) {
-            const nx = gx + ox, ny = gy + oy;
-            const neighbour = nx >= 0 && nx < width && ny >= 0 && ny < height
-              ? alpha[ny * width + nx]
-              : 0;
-            minimum = Math.min(minimum, neighbour);
-          }
-        edge[y * sourceWidth + x] = Math.max(0, own - minimum);
+        edge[y * sourceWidth + x] = Math.max(0, own - eroded[(gy - erodeY) * erodeWidth + gx - erodeX]);
       }
     const softened = blurAlpha(edge, sourceWidth, sourceHeight, blur);
     const [r, g, b] = color(styles.innerShadow.color);
@@ -539,6 +743,35 @@ export function applyLayerStylesPixels(
         const amount = softened[sy * sourceWidth + sx] *
           (source[destination + 3] / 255) * styles.innerShadow.opacity;
         over(output, destination, r, g, b, amount);
+      }
+  }
+  if (styles.innerGlow.enabled && styles.innerGlow.opacity > 0) {
+    const glow = styles.innerGlow, size = Math.round(glow.size);
+    // The inverse alpha is opaque outside the layer. Pad the crop by twice
+    // the blur extent so the box passes' zero border cannot reach the
+    // painted bounds.
+    const padding = glowBlurRadius(size) * 6 + 1;
+    const sourceX = bounds.minX - padding, sourceY = bounds.minY - padding;
+    const sourceWidth = bounds.maxX - bounds.minX + 1 + padding * 2;
+    const sourceHeight = bounds.maxY - bounds.minY + 1 + padding * 2;
+    const inverse = new Uint8ClampedArray(sourceWidth * sourceHeight);
+    for (let y = 0; y < sourceHeight; y += 1)
+      for (let x = 0; x < sourceWidth; x += 1) {
+        const gx = sourceX + x, gy = sourceY + y;
+        inverse[y * sourceWidth + x] = gx >= 0 && gx < width && gy >= 0 && gy < height
+          ? 255 - alpha[gy * width + gx]
+          : 255;
+      }
+    const mask = blurAlphaSmooth(inverse, sourceWidth, sourceHeight, size);
+    const [r, g, b] = color(glow.color), scratch: [number, number, number] = [0, 0, 0];
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const destination = (y * width + x) * 4;
+        const sourceAlpha = source[destination + 3];
+        if (sourceAlpha === 0) continue;
+        const edgeAmount = hardenMask(mask[(y - sourceY) * sourceWidth + x - sourceX], glow.choke);
+        const amount = glow.source === 'edge' ? edgeAmount : 255 - edgeAmount;
+        blendColorAt(output, destination, r, g, b, amount * (sourceAlpha / 255) * glow.opacity, glow.blend, scratch);
       }
   }
   if (styles.bevelEmboss.enabled) {

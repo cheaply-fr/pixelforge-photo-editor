@@ -14,8 +14,25 @@ flattened overlap rather than each child independently. Non-contiguous members
 therefore have deterministic stacking: ungrouped layers between the members
 are rendered at their own position after the folder's first-member slot.
 
-`source-over`, `multiply`, `screen`, `overlay`, `darken`, `lighten` and
-`difference` are supported. A hidden or zero-opacity folder does not allocate
+Folders and layers share one blend catalogue (`src/blendModes.ts`), shown
+grouped as Normal; Darken, Multiply, Color Burn, Linear Burn, Darker Color;
+Lighten, Screen, Color Dodge, Linear Dodge (Add), Lighter Color; Overlay, Soft
+Light, Hard Light, Vivid Light, Linear Light, Pin Light, Hard Mix; Difference,
+Exclusion, Subtract, Divide; Hue, Saturation, Color, Luminosity. Stored values
+are stable identifiers (`source-over` is Normal). Modes Canvas 2D implements
+(`multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`,
+`color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`,
+`saturation`, `color`, `luminosity`) use the browser compositor. The others
+are composited in software with the same W3C source-over equation
+(`Cs' = (1 - ab) Cs + ab B(Cb, Cs)`): the layer or folder is rendered once at
+Normal/100% into an isolated frame surface, then opacity and the blend are
+applied once. Linear Dodge is deliberately software rather than Canvas
+`lighter`, because `lighter` also adds alpha and differs for partially
+transparent pixels. Soft Light follows the W3C formula. These are local
+approximations and are not claimed to match any other editor bit-for-bit.
+Because the renderer, worker, export, merge/flatten, PSD and PDF composites all
+use `renderFrame`, every path produces the same pixels. Documents saved with
+the original seven modes load unchanged; unknown values fail validation. A hidden or zero-opacity folder does not allocate
 or render its child surface. Group locks disable folder controls and all member
 edits. Folder changes are ordinary document revisions, so undo/redo, local
 reload, portable project export and project import preserve the folder and its

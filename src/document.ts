@@ -144,6 +144,7 @@ import {
   type LayerStyles,
 } from './layerStyles.ts';
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
+import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
 import {
   applyClippingAlpha,
@@ -730,6 +731,8 @@ export const commonLayer = (name: string): Common => ({
     colorOverlay: { ...neutralLayerStyles.colorOverlay },
     gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
     patternOverlay: { ...neutralLayerStyles.patternOverlay },
+    outerGlow: { ...neutralLayerStyles.outerGlow },
+    innerGlow: { ...neutralLayerStyles.innerGlow },
   },
 });
 export function multiply(a: Matrix, b: Matrix): Matrix {
@@ -2160,6 +2163,44 @@ function applyRasterLayerStyles(
   return styled;
 }
 
+/**
+ * Composite a frame-space surface onto the output with a layer/folder blend.
+ * Canvas-native modes use the compositor directly (one drawImage, unchanged
+ * from the historical path); PixelForge's software modes read both surfaces
+ * once and apply the shared W3C source-over reference from `blendModes.ts`.
+ */
+function compositeFrameSurface(
+  context: CanvasRenderingContext2D,
+  image: CanvasImageSource,
+  width: number,
+  height: number,
+  opacity: number,
+  blend: Layer['blend'],
+) {
+  if (isNativeCanvasBlendMode(blend)) {
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalAlpha = opacity;
+    context.globalCompositeOperation = blend;
+    context.filter = 'none';
+    context.drawImage(image, 0, 0);
+    context.restore();
+    return;
+  }
+  if (opacity <= 0) return;
+  const source = surface(width, height),
+    sourceContext = source.getContext('2d')!;
+  sourceContext.drawImage(image, 0, 0);
+  const sourcePixels = sourceContext.getImageData(0, 0, width, height).data,
+    backdrop = context.getImageData(0, 0, width, height);
+  blendPixelsInPlace(backdrop.data, sourcePixels, opacity, blend);
+  context.putImageData(backdrop, 0, 0);
+}
+
+/** True when a layer's blend cannot be expressed by Canvas compositing. */
+const softwareBlend = (layer: Pick<Layer, 'blend'>) =>
+  !isNativeCanvasBlendMode(layer.blend);
+
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
@@ -2215,13 +2256,7 @@ export async function renderFrame(
       );
       if (options?.isCancelled?.())
         throw new DOMException('Document rendering cancelled', 'AbortError');
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = group.opacity;
-      context.globalCompositeOperation = group.blend;
-      context.filter = 'none';
-      context.drawImage(isolated, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, isolated, frame.w, frame.h, group.opacity, group.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2285,13 +2320,7 @@ export async function renderFrame(
         clippedPixels = applyClippingAlpha(sourcePixels.data, basePixels.data);
       sourcePixels.data.set(clippedPixels);
       sourceContext.putImageData(sourcePixels, 0, 0);
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = layer.opacity;
-      context.globalCompositeOperation = layer.blend;
-      context.filter = 'none';
-      context.drawImage(sourceSurface, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2319,13 +2348,7 @@ export async function renderFrame(
           options?.onProgress ? { ...options, onProgress: undefined } : options,
         ),
         masked = applyVectorMaskSurface(nested, frame.w, frame.h, layer);
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = layer.opacity;
-      context.globalCompositeOperation = layer.blend;
-      context.filter = 'none';
-      context.drawImage(masked, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, masked, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2375,13 +2398,28 @@ export async function renderFrame(
           correctedContext.putImageData(correctedImage, 0, 0);
         }
       }
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = layer.opacity;
-      context.globalCompositeOperation = layer.blend;
-      context.filter = 'none';
-      context.drawImage(corrected, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, corrected, frame.w, frame.h, layer.opacity, layer.blend);
+      reportProgress(layerIndex);
+      continue;
+    }
+    if (softwareBlend(layer)) {
+      // Canvas has no operator for this mode. Render the layer once with
+      // Normal/100% into an isolated surface (same local stage, cache and
+      // transforms), then apply opacity and the software blend exactly once.
+      const isolated = await renderFrame(
+        {
+          ...frame,
+          layers: [{ ...layer, groupId: undefined, opacity: 1, blend: 'source-over' } as Layer],
+          groups: [],
+          active: layer.id,
+        },
+        assets,
+        overrides,
+        options?.onProgress ? { ...options, onProgress: undefined } : options,
+      );
+      if (options?.isCancelled?.())
+        throw new DOMException('Document rendering cancelled', 'AbortError');
+      compositeFrameSurface(context, isolated, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2755,6 +2793,8 @@ export async function renderFrame(
                 colorOverlay: { ...neutralLayerStyles.colorOverlay },
                 gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
                 patternOverlay: { ...neutralLayerStyles.patternOverlay },
+                outerGlow: { ...neutralLayerStyles.outerGlow },
+                innerGlow: { ...neutralLayerStyles.innerGlow },
               },
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),
@@ -2796,11 +2836,7 @@ export async function renderFrame(
       applyAutoAdjustments(styled, layer.adjustments);
       applyFilterEffects(styled, layer.adjustments.filterEffects);
       applyPhotoAdjustments(styled, layer.adjustments.photoAdjustments);
-      context.save();
-      context.globalAlpha = layer.opacity * groupOpacity;
-      context.globalCompositeOperation = layer.blend;
-      context.drawImage(styled, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, styled, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2863,11 +2899,7 @@ export async function renderFrame(
         );
         maskContext.putImageData(maskedImage, 0, 0);
       }
-      context.save();
-      context.globalAlpha = layer.opacity * groupOpacity;
-      context.globalCompositeOperation = layer.blend;
-      context.drawImage(masked, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, masked, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2911,18 +2943,15 @@ export async function renderFrame(
       applyCurves(leveled, layer.adjustments);
       applyAutoAdjustments(leveled, layer.adjustments);
       applyPhotoAdjustments(leveled, layer.adjustments.photoAdjustments);
-      context.save();
-      context.globalAlpha = layer.opacity * groupOpacity;
-      context.globalCompositeOperation = layer.blend;
-      context.drawImage(leveled, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, leveled, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
     context.save();
     context.setTransform(...layer.matrix);
     context.globalAlpha = layer.opacity * groupOpacity;
-    context.globalCompositeOperation = layer.blend;
+    // Software modes returned through the isolated branch above.
+    context.globalCompositeOperation = layer.blend as GlobalCompositeOperation;
     context.filter = filterCSS(layer.adjustments);
     if (override) {
       context.drawImage(rasterSource!, 0, 0);
