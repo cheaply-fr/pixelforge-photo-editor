@@ -53,3 +53,16 @@ The ten workflows are aligned with Adobe's own [Photoshop certification
 objectives](https://certifiedprofessional.adobe.com/photoshop) and its
 [non-destructive editing guidance](https://helpx.adobe.com/photoshop/using/nondestructive-editing.html),
 while keeping implementation claims limited to features covered by tests.
+
+## Large-document painting findings (2026-11-07)
+
+A live 2646×4096 painting session exercised the layer, selection, painting, filter and export
+workflows (2, 4, 6, 8, 9) at 10.8 MP and
+produced #181–#187 (merged; deploy status per PR in the rubric), open #189
+(larger undo/redo), in-development huge-project limits and coalesced stroke
+previews, and a
+prioritized backlog led by large-document responsiveness (stroke-start
+decode, per-stroke PNG commits, per-event stroke previews, undo depth). The
+list is recorded in
+[`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07);
+it does not change the applied status of the core ten.

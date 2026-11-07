@@ -71,11 +71,92 @@ release risk because a failing shard skips deployment.
    in-page fingerprint.
 8. **Layer pixel budget was opaque**: at 2646×4096 the sixth full paint layer
    failed with `Invalid layer document` while the panel said `5 / 32`.
-   Addressed on `feat/layer-pixel-budget` (`docs/layer-pixel-budget-contract.md`):
+   Addressed on `feat/layer-pixel-budget` (`docs/layer-pixel-budget-contract.md`),
+   merged as #183 (`8a82ad6`, see the 2026-11-07 section below):
    a specific budget notice, a Layers-panel usage hint, Layer → Trim Layer to
    Content, and paint-time expansion for the brush/eraser/fill/gradient/retouch
    tools. Remaining: automatic trimming of new layers, expansion for Spot
    Healing/Patch/Red Eye/History brushes and filters on trimmed layers.
+
+## Large-document painting findings (2026-11-07)
+
+Source: painting a 2646×4096 (10.8 MP) "cosmic eye" poster in the live
+editor on 2026-11-07. This section adds evidence lines only; the weighted
+percentages and the 2026-10-26 audit table are unchanged until a full
+re-audit reconciles them. Nothing here claims Photoshop parity.
+
+### Shipped
+
+#181–#185 are merged to `main`. Protected `CI and deploy` run
+**42326133241** succeeded for `f5e4135` (it contains #181–#183 and #185; the
+run for `fab25db` was cancelled as superseded) and run **42330980594**
+succeeded for `cba6253` (#184). On 2026-11-07 `/release.json` and
+`/api/readyz.json` at `https://photoeditor.cheaply.fr` reported
+`cba6253bc8763f05064c4a16a55ac31f2af2e7e4` (built 2026-11-07T02:48:42Z,
+`ready: true`), which contains #181–#185. That is release-identity
+evidence; per-feature live acceptance of each fix has not been independently
+re-run for this record.
+
+| PR | Change | Merge SHA | Deployed in | Remaining limitations |
+| --- | --- | --- | --- | --- |
+| #181 | Gradient "Transparent" end fades the adjacent colour to alpha 0 (it previously faded to transparent white, leaving a grey fringe) | `8def856` | `f5e4135`, `cba6253` | — |
+| #182 | Lasso, Polygonal Lasso and Magnetic Lasso selections that leave the canvas are clipped to it instead of rejected with "Invalid layer document"; an off-canvas Elliptical Marquee keeps its true shape; Rectangular Marquee off-edge overshoot fixed | `fab25db` | `f5e4135`, `cba6253` | — |
+| #183 | Layer pixel budget (64 MP total) explained with a specific message and a Layers-panel readout; Layer → Trim Layer to Content; paint tools grow trimmed layers on demand | `8a82ad6` | `f5e4135`, `cba6253` | No automatic trim; Spot Healing, Patch, Red Eye, History and Art History brushes do not grow trimmed layers; painting a trimmed layer costs two undo steps (expansion + stroke) |
+| #185 | Per-layer filter-result cache and decoded-asset cache (≈2.5–3× faster unrelated edits on large documents, local measurement) | `f5e4135` | `f5e4135`, `cba6253` | Tiled blur path not cached; ~2 s compositing remains at 10.8 MP; pointer-down decode wait unchanged |
+| #184 | Brush, Pencil, Eraser, Mask Brush/Eraser and Adjustment Brush confined to the active selection with feathered edges | `cba6253` | `cba6253` | Clone/Heal stamping still ignores the selection; "Mask from selection" leaves the selection active (Photoshop consumes it) |
+| #186 | Incremental local draft saves: content-addressed IndexedDB asset records (`asset:<draftId>:<sha256>`) so autosave writes only new assets instead of re-serialising tens of MB per edit; one read-write transaction per save, fail-closed reads | `f95ec93` | `f95ec93` | Assets remain base64 PNG data URLs; benchmark is local only |
+| #187 | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps, fast large dabs | `6a42943` | `6a42943` | — |
+
+Later releases: `CI and deploy` run **42331771754** succeeded for `f95ec93`
+(#186) and `/release.json` reported
+`f95ec93e3fdc5039df972e1e37b06231509a426d` (built 2026-11-07T02:59:08Z).
+Run **42332588876** succeeded for `6a42943` (#187) and `/release.json` then
+reported `6a429436acc6595468f808961eb1c053cbdae97f` (built
+2026-11-07T03:09:13Z). Release identity only; per-feature live acceptance
+was not re-run.
+
+**"This draft changed in another tab" root cause (fixed in #186).** The
+spurious conflict seen with a single visible tab was cross-tab, not an
+in-tab race: New document writes `localStorage['pixelforge:last-draft']`,
+and any `/editor` tab opened without a `#draft=` hash in the same browser
+profile attached to that draft and saved on load, bumping its revision, so
+the original tab's next save reported a conflict. Each editor tab now holds a
+shared Web Lock `pixelforge:draft-open:<id>`; a hashless open that would fall
+back to `last-draft` checks `navigator.locks.query()` and starts a new draft
+(with a notice) if that draft is open elsewhere. Explicit `#draft=` bookmarks
+keep the conflict flow. Locks are advisory; browsers without Web Locks behave
+as before.
+
+### In progress (not merged; status as of this record)
+
+| Branch | PR | Scope | Status |
+| --- | --- | --- | --- |
+| `feat/larger-undo-history` | #189 (open) | User request: 10× undo **and** redo depth — 240 steps, device-aware image budget (320 MiB desktop, 128 MiB mobile/≤4 GB, 96 MiB ≤2 GB) instead of 24 steps / 32 MB, which left one undo step on a 2646×4096 document; History panel states capacity and marks memory-only states; persisted window stays ≤24 states / ~48 MiB | Under review; not on `main` |
+| `feat/huge-projects` | not yet opened | User request "don't flatten — handle huge projects": raise the project limits ~10× — 320+ layers (was 32), 640 MP of stored layer pixels (was 64 MP), ~640 MB asset/draft/project caps (was 64 MB) | In development; no remote branch yet |
+| `perf/coalesce-stroke-previews` | not yet opened | Coalesce live stroke previews to one per animation frame; every `pointermove` currently triggers a full-canvas preview render (a 12k-point stroke took ~5 min) | In development; no remote branch yet |
+
+### Requested or found, not started
+
+Priority is a suggestion: **P1** blocks or seriously slows large-document
+painting, **P2** is a visible capability gap, **P3** is polish or
+investigation.
+
+| # | Item | Priority | Area / contract |
+| --- | --- | --- | --- |
+| 1 | Stroke-start latency: ~2 s decode of the active 10.8 MP layer at pointer-down; reuse decoded layers as a first-class gesture input (builds on #185's decoded-asset cache) | P1 | `performance-budgets.md` |
+| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`); evaluate dirty-rect commits or tiled layer storage | P1 | `performance-budgets.md`, `layer-document-format.md` |
+| 3 | Clone Stamp / Healing Brush should respect the active selection (follow-up of #184) | P1 | `brush-tool-contract.md` |
+| 4 | Clipboard: Ctrl+V of an OS clipboard image did not reach the paste handler when the editor's own Ctrl+V shortcut was active and no internal clipboard existed — reproduce, then fix | P1 | `paste-special-contract.md` |
+| 5 | Blend modes are limited to normal/multiply/screen/overlay/darken/lighten/difference; add colour dodge, linear dodge (add), soft light, hard light, colour, luminosity and the remaining light/contrast/component modes used for glow and light painting | P2 | Layer blending, `group-compositing-contract.md` |
+| 6 | Layer Styles: Drop Shadow blur max 64 px is too small for large documents; add Outer Glow and Inner Glow (users currently fake glow with a zero-offset drop shadow) | P2 | `layer-styles-contract.md` |
+| 7 | One live filter per raster layer: stacking needs Rasterize between filters; consider a multi-filter stack (Smart Filters UX) | P2 | `smart-filters-contract.md` |
+| 8 | Radial Blur centre X/Y are integer percentages (1% ≈ 41 px at 4096 px); allow fractional or pixel centres and on-canvas centre placement for centred filters | P2 | `blur-effects-contract.md` |
+| 9 | Reference/guide image: place an image as a non-exported, non-printing reference layer or side panel with eyedropper sampling, outside the layer pixel budget | P2 | `layer-pixel-budget-contract.md`, export |
+| 10 | Brush: treat near-zero pressure as a supported pen lift; dab-only / stamp mode for star fields; scatter/spacing above 100% of size for sparse stamping | P2 | `brush-dynamics-contract.md`, `brush-pressure-contract.md` |
+| 11 | "Mask from selection" should consume (deselect) the selection as Photoshop does | P3 | `layer-mask-contract.md` |
+| 12 | Gradient: a second gradient on the same layer composites over existing pixels; document this or offer a replace mode | P3 | `gradient-mode-contract.md` |
+| 13 | History panel should show in-memory and persisted undo depth — covered by open #189 (capacity note, memory-only markers); close when it merges | P3 | `history-timeline-contract.md` |
+| 14 | Export downloads: in the Claude desktop built-in browser a PNG export reported "downloaded" but no file was written, while `.pixelforge` ZIP downloads worked (files landed as GUID `.tmp`). Determine whether the host browser or the app (object-URL revoke timing, MIME type, user activation) is responsible; document a workaround such as a File System Access "Save to file" path where available | P3 | `export-contract.md` |
 
 ## Latest protected release evidence
 

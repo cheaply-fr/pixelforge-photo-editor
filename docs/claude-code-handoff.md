@@ -160,6 +160,16 @@ Known remaining families and release work:
    recipes only after contracts cover authentication, privacy, explicit
    consent, limits and recovery. Search online or manufacture safe fixtures
    when needed; do not block unrelated local-first work waiting for a vendor.
+7. **Large-document painting (added 2026-11-07):** a live 2646×4096 painting
+   session produced #181–#187 (merged and deployed; `/release.json` reported `6a42943`;
+   includes incremental draft saves and 1–5000 px brush sizes) plus open or
+   in-development work on larger undo/redo history (#189), ~10× huge-project
+   limits (`feat/huge-projects`) and per-frame stroke previews, and a prioritized
+   backlog (stroke-start decode, per-stroke PNG commits, Clone/Heal selection
+   confinement, OS-clipboard paste, extra blend modes, glow styles, filter
+   stacks, reference images, export downloads in embedded browsers). See
+   "Large-document painting findings (2026-11-07)" in
+   `docs/roadmap-progress-rubric.md`.
 
 The user specifically asked to keep developing until all unblocked features
 are complete and to log remaining blockers in the roadmap. Choose the next

@@ -82,3 +82,14 @@ the bounded subset and failure behavior are documented in
 the import boundary with a develop/flatten-first message. PixelForge does not
 claim lossless HEIC, TIFF, layered PSD or RAW round trips, and batch import
 uses the same labels in its per-file failure manifest.
+
+## Embedded-browser download gap (2026-11-07)
+
+Observed once, unresolved: in the Claude desktop app's built-in browser a PNG
+export reported "downloaded" but no file was written, while `.pixelforge` ZIP
+downloads worked (landing as GUID-named `.tmp` files). It is not yet known
+whether the host browser or the app (object-URL revoke timing, MIME type, user
+activation) is responsible. Next steps: reproduce in standard Chromium and the
+embedded browser, compare the PNG and ZIP download paths, and document a
+workaround such as a File System Access "Save to file" path where available.
+This is not a regression claim for standard browsers.
