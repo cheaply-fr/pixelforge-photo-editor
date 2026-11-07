@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { ChevronDown, LogIn, LogOut, UserRound, Cloud, ShieldCheck } from 'lucide-react';
+import { ChevronDown, LogIn, LogOut, UserRound, Cloud, ShieldCheck, CloudOff, RotateCw } from 'lucide-react';
 import { SIGN_IN, type Member } from './cloud';
 
 /** The Marketplace owns the shared session; Pixel only links to its canonical routes. */
@@ -80,15 +80,20 @@ function ArtisticAvatar({ seed, label }: { seed: string; label: string }) {
 export default function AccountMenu({
   member,
   checking = false,
+  unavailable = false,
+  retry,
 }: {
   member: Member | null;
   checking?: boolean;
+  /** The Cheaply account service could not be reached. */
+  unavailable?: boolean;
+  retry?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const seed = useMemo(() => avatarSeed(member), [member]);
   const name = checking ? 'Checking account…' : member?.name || 'Guest editor';
-  const detail = member ? 'Cheaply account' : 'Anonymous · local only';
+  const detail = member ? 'Cheaply account' : unavailable ? 'Sign-in unavailable · local only' : 'Anonymous · local only';
 
   useEffect(() => {
     if (!open) return;
@@ -149,10 +154,29 @@ export default function AccountMenu({
             </>
           ) : (
             <>
-              <p className="account-popup-note"><ShieldCheck aria-hidden="true" /> Editing is free without an account. Sign in only when you want private projects across devices.</p>
-              <a role="menuitem" className="account-primary" href={SIGN_IN}>
-                <LogIn aria-hidden="true" /> Sign in with Cheaply
-              </a>
+              {unavailable ? (
+                <>
+                  <output className="account-popup-note account-unavailable">
+                    <CloudOff aria-hidden="true" /> Sign-in is unavailable right now because the Cheaply account service is not responding. Your work is still saved on this device; download a project file to keep a backup.
+                  </output>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="account-primary"
+                    disabled={checking}
+                    onClick={() => retry?.()}
+                  >
+                    <RotateCw aria-hidden="true" /> {checking ? 'Checking…' : 'Try again'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="account-popup-note"><ShieldCheck aria-hidden="true" /> Editing is free without an account. Sign in only when you want private projects across devices.</p>
+                  <a role="menuitem" className="account-primary" href={SIGN_IN}>
+                    <LogIn aria-hidden="true" /> Sign in with Cheaply
+                  </a>
+                </>
+              )}
             </>
           )}
         </div>

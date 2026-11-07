@@ -2549,7 +2549,7 @@ export default function Home() {
   const saveSequence = useRef(0),
     saving = useRef(false),
     discarding = useRef(false);
-  const { member, checking } = useMember();
+  const { member, checking, unavailable: signInUnavailable, retry: retrySignIn } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [recovering, setRecovering] = useState(false),
@@ -14636,7 +14636,7 @@ export default function Home() {
             <Download /> Export
           </button>
           <ReleaseStatus />
-          <AccountMenu member={member} checking={checking} />
+          <AccountMenu member={member} checking={checking} unavailable={signInUnavailable} retry={retrySignIn} />
         </div>
       </header>
       <section className="docbar">
