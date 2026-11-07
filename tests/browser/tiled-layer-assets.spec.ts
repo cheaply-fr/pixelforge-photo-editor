@@ -85,6 +85,7 @@ type Stored = {
   format: number;
   historyLength: number;
   layerAsset: string;
+  layers: Array<{ id: string; kind: string; asset?: string }>;
   assetRefs: Record<string, Ref>;
   tileRefs: Record<string, string>;
   records: Record<string, string>;
@@ -116,6 +117,11 @@ const stored = (page: Page, id: string) =>
               format: value.format,
               historyLength: value.history.length,
               layerAsset: frame.layers.at(-1).asset,
+              layers: frame.layers.map((layer: { id: string; kind: string; asset?: string }) => ({
+                id: layer.id,
+                kind: layer.kind,
+                asset: layer.asset,
+              })),
               assetRefs: value.assetRefs,
               tileRefs: value.tileRefs || {},
               records,
@@ -330,4 +336,127 @@ test('a tiled document exports single-PNG .pixelforge assets that import, render
   expect(await settledDigest(page)).toBe(painted);
   await menu(page, 'Edit', /^Redo/);
   expect(await settledDigest(page)).toBe(after);
+});
+
+/** Image point at `radius` from (cx, cy), `degrees` clockwise from +x. */
+const polar = (cx: number, cy: number, radius: number, degrees: number): [number, number] => [
+  cx + radius * Math.cos((degrees * Math.PI) / 180),
+  cy + radius * Math.sin((degrees * Math.PI) / 180),
+];
+
+const pixelAt = (page: Page, x: number, y: number) =>
+  canvas(page).evaluate(
+    (element: HTMLCanvasElement, point) =>
+      Array.from(element.getContext('2d')!.getImageData(Math.round(point.x), Math.round(point.y), 1, 1).data),
+    { x, y },
+  );
+
+async function setColor(page: Page, value: string) {
+  await page.getByLabel('Drawing color', { exact: true }).evaluate((input: HTMLInputElement, next) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, next);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+
+/** Tile indexes whose key differs between two tiled refs. */
+const changedTiles = (before: Ref, after: Ref) =>
+  after.tiles!.flatMap((key, index) => (key === before.tiles![index] ? [] : [index]));
+
+test('symmetry strokes and Stroke Path with Brush on a large tiled layer store only touched tiles and survive reload', async ({ page }) => {
+  test.setTimeout(300_000);
+  await importPhoto(page);
+  const id = draftId(page);
+  const first = await storedWhen(page, id, (value) => value.assetRefs[value.layerAsset]?.w === W);
+  const photoLayer = first.layers.at(-1)!;
+  const photo = first.assetRefs[photoLayer.asset!];
+  expect(photo.tiles).toHaveLength(TILES);
+  const original = await settledDigest(page);
+
+  // Radial symmetry (8 copies about the canvas centre) on the photo layer.
+  await selectTool(page, 'Brush');
+  await page.getByLabel('Size', { exact: true }).fill('20');
+  await setColor(page, '#ff0000');
+  await page.getByLabel('Paint symmetry', { exact: true }).selectOption('radial');
+  await expect(page.getByTestId('paint-symmetry-summary')).toHaveText('8 copies per dab');
+  const [cx, cy] = [W / 2, H / 2];
+  const from = polar(cx, cy, 380, 0), to = polar(cx, cy, 440, 0);
+  await stroke(page, 81, from[0], to[0], from[1]);
+  const second = await storedWhen(page, id, (value) => value.historyLength === first.historyLength + 1);
+  const mirrored = second.assetRefs[second.layers.find((layer) => layer.id === photoLayer.id)!.asset!];
+  expect(mirrored.tiles).toHaveLength(TILES);
+  const symmetryTiles = changedTiles(photo, mirrored);
+  // Eight short copies touch a handful of tiles each side of the centre, not the layer.
+  expect(symmetryTiles.length).toBeGreaterThanOrEqual(8);
+  expect(symmetryTiles.length).toBeLessThan(TILES / 2);
+  const added = Object.keys(second.records).filter((key) => !(key in first.records));
+  expect(added).toHaveLength(symmetryTiles.length);
+  for (const k of [0, 2, 3, 5]) {
+    const [x, y] = polar(cx, cy, 410, 45 * k);
+    expect((await pixelAt(page, x, y)).slice(0, 3), `copy ${k}`).toEqual([255, 0, 0]);
+  }
+  const symmetric = await settledDigest(page);
+  expect(symmetric).not.toBe(original);
+  await page.getByLabel('Paint symmetry', { exact: true }).selectOption('off');
+
+  // Stroke Path with Brush: a Curvature Pen path stroked onto the photo layer.
+  await selectTool(page, 'Curvature Pen');
+  for (const [x, y] of [[300, 300], [800, 180], [1300, 420], [300, 300]]) {
+    const box = (await canvas(page).boundingBox())!;
+    await page.mouse.click(box.x + (x / W) * box.width, box.y + (y / H) * box.height);
+  }
+  await expect(page.locator('footer')).toContainText('Editable curvature path layer added');
+  await settled(page);
+  await selectTool(page, 'Brush');
+  await page.getByLabel('Size', { exact: true }).fill('24');
+  await page.getByLabel('Size', { exact: true }).press('Enter');
+  await setColor(page, '#0000ff');
+  const withPath = await storedWhen(page, id, (value) => value.layers.some((layer) => layer.kind === 'path'));
+  const beforePath = await settledDigest(page);
+  await page.getByRole('button', { name: 'Layer', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Stroke Path with Brush…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Stroke Path with Brush' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('Stroke target layer').selectOption(photoLayer.id);
+  await dialog.getByRole('button', { name: 'Stroke path', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Path stroked with Brush');
+  await settled(page);
+  const third = await storedWhen(page, id, (value) => value.historyLength === withPath.historyLength + 1);
+  const pathed = third.assetRefs[third.layers.find((layer) => layer.id === photoLayer.id)!.asset!];
+  expect(pathed.tiles).toHaveLength(TILES);
+  const pathTiles = changedTiles(mirrored, pathed);
+  expect(pathTiles.length).toBeGreaterThanOrEqual(3);
+  expect(pathTiles.length).toBeLessThan(TILES);
+  const pathAdded = Object.keys(third.records).filter((key) => !(key in withPath.records));
+  expect(pathAdded).toHaveLength(pathTiles.length);
+  // Tiles neither edit touched are still the imported photo's tile objects' keys.
+  const untouched = photo.tiles!.filter((key, index) => !symmetryTiles.includes(index) && !pathTiles.includes(index));
+  for (const key of untouched) expect(pathed.tiles).toContain(key);
+  const stroked = await settledDigest(page);
+  expect(stroked).not.toBe(beforePath);
+
+  // Undo / redo across both edits.
+  await menu(page, 'Edit', /^Undo/);
+  expect(await settledDigest(page)).toBe(beforePath);
+  await menu(page, 'Edit', /^Redo/);
+  expect(await settledDigest(page)).toBe(stroked);
+
+  // Format 4 draft reload: identical pixels, refs and records; history undoable.
+  await saved(page);
+  const final = await stored(page, id);
+  expect(final.format).toBe(4);
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
+  await expect(canvas(page)).toHaveJSProperty('width', W);
+  expect(await settledDigest(page)).toBe(stroked);
+  await saved(page);
+  const reloaded = await stored(page, id);
+  expect(reloaded.assetRefs).toEqual(final.assetRefs);
+  expect(Object.keys(reloaded.records).sort()).toEqual(Object.keys(final.records).sort());
+  await menu(page, 'Edit', /^Undo/);
+  expect(await settledDigest(page)).toBe(beforePath);
+  await menu(page, 'Edit', /^Undo/);
+  expect(await settledDigest(page)).toBe(symmetric);
+  await menu(page, 'Edit', /^Undo/);
+  expect(await settledDigest(page)).toBe(original);
 });
