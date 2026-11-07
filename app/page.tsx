@@ -5430,7 +5430,7 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : `${label} failed`);
     }
   };
-  const applyPerspectiveWarp = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
+  const perspectiveWarpLayer = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
@@ -5471,7 +5471,7 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : `Could not apply ${mode}`);
     }
   };
-  const applyPuppetWarp = async () => {
+  const puppetWarpLayer = async () => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
@@ -8064,9 +8064,11 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Fade could not be applied');
     }
   };
-  // Apply Image and Calculations work in canvas space: grow a paint layer
-  // stored at its content bounds to the canvas first (a pixel-identical
-  // in-place step), and restore its stored bounds if the command is cancelled.
+  // Apply Image, Calculations and the destructive warps work in canvas space:
+  // grow a paint layer stored at its content bounds to the canvas first (a
+  // pixel-identical in-place step), and restore its stored bounds if the
+  // command is cancelled. Warp handles are therefore canvas coordinates for
+  // every paint layer, however it is stored.
   const onCanvasSizedLayer = (run: () => Promise<void>) => async () => {
     await expandRasterLayerForPaint();
     try {
@@ -8075,6 +8077,9 @@ export default function Home() {
       dropUnusedExpansion();
     }
   };
+  const applyPerspectiveWarp = (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') =>
+    onCanvasSizedLayer(() => perspectiveWarpLayer(mode))();
+  const applyPuppetWarp = onCanvasSizedLayer(puppetWarpLayer);
   const applyImage = onCanvasSizedLayer(async () => {
     const beforeFrame = current();
     const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
