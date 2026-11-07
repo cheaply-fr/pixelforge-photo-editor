@@ -282,3 +282,4 @@
 .reference-panel .reference-check { justify-content:flex-start; }
 .reference-panel .reference-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 .reference-panel .reference-actions button { min-height:28px; padding:4px 8px; border:1px solid #374151; border-radius:6px; background:#252d39; color:#d4d7dc; font-size:10px; }
+.brush-preset-library{border:0;padding:0;margin:0;min-width:0}.brush-preset-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.brush-preset-actions button{flex:1 1 auto;min-height:32px;font-size:12px}
