@@ -130,3 +130,40 @@ These tables record the visible commands verbatim where practical. Groups provid
 | F — Advanced assistance | Content-aware warps/fills, raw/lens/mesh pipelines, subject/sky/object tools, harmonization, optional generation, remote connections and plugins | Quality/licensing/privacy/free-operation criteria, quotas, opt-in remote processing where needed and cancellation/provider failure tests |
 
 This is a dependency schedule, not a calendar commitment. Advanced local features may ship before an unrelated provider integration when their prerequisites and tests are complete. Filter Gallery is a browsable effect workflow, not proof that every individual effect works. Adobe Fonts/Stock/PDF preset references are capability prompts; no Adobe service, content library or compatible file format is claimed until explicitly integrated and validated.
+
+## Large-document painting findings (2026-11-07)
+
+Menu-command items from a live 2646×4096 painting session; release evidence
+and priorities are in
+[`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07).
+
+- **Layer → Trim Layer to Content** and the layer pixel budget notice are
+  shipped (#183, merged `8a82ad6`, deployed in `f5e4135`/`cba6253`). No
+  automatic trim yet.
+- **Edit → Undo/Redo depth:** user request for 10× undo and redo depth
+  (240 steps / ~320 MB on desktop, device-aware; today 24 steps / 32 MB,
+  which is one step on a 2646×4096 document) is in development on
+  `feat/larger-undo-history`. **Window → History** should then show in-memory
+  and persisted depth (P3).
+- **Edit → Paste (P1):** an OS clipboard image did not reach the paste
+  handler via Ctrl+V when the editor's shortcut was active and no internal
+  clipboard existed; reproduce and fix.
+- **Layer → Layer Style (P2):** Drop Shadow blur max 64 px is too small for
+  large documents; add Outer Glow and Inner Glow.
+- **Layer blend modes (P2):** add colour dodge, linear dodge (add), soft
+  light, hard light, colour, luminosity and the remaining modes beyond
+  normal/multiply/screen/overlay/darken/lighten/difference.
+- **Filter → Convert for Smart Filters / filter stacking (P2):** one live
+  filter per raster layer; stacking needs Layer → Rasterize between filters.
+- **Filter → Blur → Radial Blur (P2):** centre X/Y are integer percentages
+  (1% ≈ 41 px at 4096 px); allow fractional or pixel centres and on-canvas
+  placement.
+- **"Mask from selection" (P3):**
+  should deselect afterwards as Photoshop does.
+- **Reference image (proposed File/View command, P2):** non-exported, non-printing
+  reference layer or panel with eyedropper sampling, outside the layer
+  budget.
+- **File → Export (P3):** in the Claude desktop built-in browser a PNG export
+  reported "downloaded" but wrote no file while `.pixelforge` ZIPs worked;
+  determine host vs. app cause and document a workaround (for example a File
+  System Access "Save to file" path).

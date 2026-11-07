@@ -43,3 +43,16 @@ and `tests/browser/selection-clipped-fills.spec.ts` on desktop and mobile
 (rectangular gradient with undo, feathered edge, bucket inside/outside, and an
 unchanged no-selection gradient). The three selection cases fail on the code
 before this change.
+
+## Transparent end and repeated gradients (2026-11-07)
+
+With the Transparent end, the colour adjacent to the transparent stop fades
+to alpha 0 in that same colour, so a foreground-to-transparent gradient no
+longer passes through transparent white and leaves a grey fringe (#181,
+merged `8def856`; `src/gradientStops.ts` with
+`tests/gradient-transparent-end.test.mjs` and
+`tests/browser/gradient-transparent-end.spec.ts`).
+
+Open roadmap item (P3): a second gradient on the same layer composites over
+the existing pixels rather than replacing them. Either document this as the
+intended normal-mode behaviour or offer an explicit replace mode.

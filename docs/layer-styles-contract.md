@@ -63,3 +63,13 @@ This contract deliberately excludes selections, masks, filters, and rasterize:
 Layer Styles decorate the rendered result and never bake or rewrite any of
 those data structures. Gradient stops and editable style ordering remain
 staged until each has its own pixel and persistence contract.
+
+## Large-document gaps (2026-11-07)
+
+Recorded from a 2646×4096 painting session, not yet implemented: the 64 px
+blur bound on Drop Shadow and Inner Shadow is too small for large documents
+and should scale (or be raised with a measured cost bound), and Outer Glow and
+Inner Glow decorations are missing (users approximate glow with a zero-offset
+drop shadow). Additional layer blend modes (colour dodge, linear dodge/add,
+soft light, hard light, colour, luminosity and others) are tracked alongside
+in `roadmap-progress-rubric.md`.
