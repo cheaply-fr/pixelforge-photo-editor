@@ -1701,6 +1701,12 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   await expect(
     editMenu.getByRole('menuitem', { name: /^Copy Layer/ }),
   ).toBeFocused();
+  // Paste Image from Clipboard reads the OS clipboard, so it stays enabled
+  // without an internal layer clip.
+  await page.keyboard.press('ArrowDown');
+  await expect(
+    editMenu.getByRole('menuitem', { name: 'Paste Image from Clipboard', exact: true }),
+  ).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(
     editMenu.getByRole('menuitem', { name: /^Copy Merged/ }),
