@@ -1512,8 +1512,10 @@ type Gesture = {
   maskRefinementStroke?: MaskRefinementStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
-  /** Unconfined Brush/Pencil/Eraser/mask stroke, present only while a selection confines it. */
+  /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
   selectionStroke?: SelectionStroke;
+  /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
+  cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
   selectionBase?: Uint8ClampedArray;
   /** Existing resolved alpha is retained for replace no-op detection. */
@@ -2148,27 +2150,75 @@ const frameSelectionMask = async (
   return mask;
 };
 /**
- * Stamp a Brush/Pencil/Eraser segment into the gesture buffer, confined to the
- * selection when one was active at pointer-down. Without a selection this is
- * exactly `stampCanvasSegment` on the buffer.
+ * Run one stroke segment of a buffer-based paint or retouch tool, confined to
+ * the selection when one was active at pointer-down. `draw` edits the canvas
+ * it is given and must not change pixels further than `reach` from the
+ * from→to segment. Without a selection it simply draws on the gesture buffer.
+ */
+const confinedGestureEdit = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  reach: number,
+  draw: (target: HTMLCanvasElement) => boolean,
+) => {
+  const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (!stroke) return draw(buffer);
+  const changed = draw(stroke.raw);
+  if (changed)
+    confineStrokeRect(stroke, buffer, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
+  return changed;
+};
+/**
+ * Stamp a Brush/Pencil/Eraser/Clone/Healing segment into the gesture buffer,
+ * confined to the selection when one was active at pointer-down. Without a
+ * selection this is exactly `stampCanvasSegment` on the buffer.
  */
 const stampGestureSegment = (
   g: Gesture,
   from: { x: number; y: number },
   to: { x: number; y: number },
   options: Parameters<typeof stampCanvasSegment>[3],
-) => {
-  const buffer = g.buffer!, stroke = g.selectionStroke;
-  if (!stroke) return stampCanvasSegment(buffer, from, to, options);
-  const changed = stampCanvasSegment(stroke.raw, from, to, options);
-  if (changed)
-    confineStrokeRect(
-      stroke,
-      buffer,
-      brushSegmentRect(from, to, brushStampReach(options.size, options.scatter), buffer.width, buffer.height),
-    );
-  return changed;
-};
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size, options.scatter), (target) =>
+    stampCanvasSegment(target, from, to, options));
+/** Pattern Stamp counterpart of `stampGestureSegment`. */
+const patternGestureSegment = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof patternCanvasSegment>[3],
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
+    patternCanvasSegment(target, from, to, options));
+/** Red Eye counterpart of `stampGestureSegment`. */
+const redEyeGestureStroke = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof redEyeCanvasStroke>[3],
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.radius * 2), (target) =>
+    redEyeCanvasStroke(target, from, to, options));
+/**
+ * Color Replacement and Background Eraser read the stroke-start pixels from
+ * `g.source` and write to the gesture buffer, confined like the stamps above.
+ */
+const sampledGestureStroke = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: { size: number; tolerance: number; opacity: number } & (
+    | { kind: 'replace'; color: string }
+    | { kind: 'background-erase' }
+  ),
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
+    options.kind === 'replace'
+      ? replaceColorStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
+        options.color, options.size, options.tolerance, options.opacity)
+      : eraseBackgroundStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
+        options.size, options.tolerance, options.opacity));
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
   frame: Frame,
@@ -2198,6 +2248,24 @@ const selectionMaskForLayer = async (
         mask[y * width + x] = frameData[(frameY * frame.w + frameX) * 4 + 3];
     }
   return mask;
+};
+/**
+ * Sample the active selection in the layer's pixel space and prepare the
+ * confined stroke over `buffer` (the stroke-start layer pixels). Without a
+ * selection the result is empty and the stroke stays unconfined. Callers
+ * assign the fields only once the gesture is still current.
+ */
+const prepareGestureSelection = async (
+  buffer: HTMLCanvasElement,
+  frame: Frame,
+  layer: Extract<Layer, { kind: 'raster' }>,
+  assets: Assets,
+): Promise<Pick<Gesture, 'selectionMask' | 'selectionStroke'>> => {
+  if (!frame.selection) return {};
+  const selectionMask = await selectionMaskForLayer(
+    frame.selection, frame, layer, assets, buffer.width, buffer.height,
+  );
+  return { selectionMask, selectionStroke: beginSelectionStroke(buffer, selectionMask) };
 };
 
 function readToolbarPreferences() {
@@ -2454,6 +2522,19 @@ export default function Home() {
     x: number;
     y: number;
   } | null>(null);
+  // The latest source point, readable synchronously by the next pointer-down
+  // even before React re-renders (an Alt-click right after a stroke on a
+  // large document must not be lost or read stale).
+  const cloneSourceRef = useRef<{ x: number; y: number } | null>(null);
+  const chooseCloneSource = (point: { x: number; y: number }) => {
+    const next = { x: point.x, y: point.y };
+    cloneSourceRef.current = next;
+    setCloneSource(next);
+  };
+  const clearCloneSource = () => {
+    cloneSourceRef.current = null;
+    setCloneSource(null);
+  };
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
@@ -5337,16 +5418,31 @@ export default function Home() {
       setNotice('Unlock this layer before editing its mask');
       return;
     }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return;
+    }
     const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
+    if (current() !== f) {
+      setNotice('Mask from selection cancelled because the document changed');
+      return;
+    }
     const maskId = addAsset(assets.current, mask);
+    // Like Photoshop, the selection is consumed into the mask: one undo step
+    // adds the mask and deselects, and Select > Reselect restores it.
     if (
-      editLayer({
-        mask: maskId,
-        maskEnabled: true,
-        maskInverted: false,
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id
+            ? ({ ...item, mask: maskId, maskEnabled: true, maskInverted: false } as Layer)
+            : item,
+        ),
+        selection: undefined,
+        previousSelection: f.selection,
       })
     )
-      setNotice('Nondestructive layer mask created');
+      setNotice('Nondestructive layer mask created; selection cleared (Select > Reselect restores it)');
   };
   const invertLayerMask = () => {
     const f = current(),
@@ -9543,6 +9639,22 @@ export default function Home() {
       await g.pending;
       return;
     }
+    // Option/Alt-click sets the Clone/Healing source, as in Photoshop. It
+    // changes no pixels and creates no history, so it is honoured even while
+    // the previous stroke is still decoding or committing: the next stroke
+    // reads the new anchor, and a stroke already in flight keeps its own.
+    if ((tool === 'clone' || tool === 'heal') && e.altKey && frame) {
+      const f = current(),
+        layer = f.layers.find((item) => item.id === f.active);
+      if (layer?.kind === 'raster') {
+        const p = point(e);
+        chooseCloneSource(inversePoint(layer.matrix, p) || p);
+        setNotice(
+          `${tool === 'heal' ? 'Healing' : 'Clone'} source set; drag on the image to paint it`,
+        );
+        return;
+      }
+    }
     if (gesture.current || !frame) return;
     if (
       !skipExpansion &&
@@ -9950,10 +10062,19 @@ export default function Home() {
         const image = await decodeAsset(assets.current[layer.asset]),
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
+        // Like Fill, Magic Eraser only removes pixels inside the selection.
+        const selectionMask = await selectionMaskForLayer(
+          f.selection, f, layer, assets.current, buffer.width, buffer.height,
+        );
+        if (selectionMask && maskCoverageAt(selectionMask, buffer.width, buffer.height, local.x, local.y) === 0) {
+          setNotice('Click inside the selection to erase');
+          return;
+        }
         if (!eraseMagicRegion(buffer, local.x, local.y, colorTolerance)) {
           setNotice('No contiguous pixels matched at that point');
           return;
         }
+        if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -10008,6 +10129,9 @@ export default function Home() {
             1,
             1,
           ).data;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.source = source;
           g.buffer = buffer;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
@@ -10019,18 +10143,12 @@ export default function Home() {
               pointerType: g.pointerType,
             },
           ]) {
-            eraseBackgroundStroke(
-              source,
-              buffer,
-              g.replaceTarget,
-              from.x,
-              from.y,
-              point.x,
-              point.y,
-              localSize(layer.matrix, size),
-              colorTolerance,
-              brushOpacity / 100,
-            );
+            sampledGestureStroke(g, from, point, {
+              kind: 'background-erase',
+              size: localSize(layer.matrix, size),
+              tolerance: colorTolerance,
+              opacity: brushOpacity / 100,
+            });
             from = point;
           }
           g.queued = undefined;
@@ -10376,8 +10494,9 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before Patch');
         return;
       }
+      const cloneSource = cloneSourceRef.current;
       if (!cloneSource) {
-        setCloneSource(local);
+        chooseCloneSource(local);
         setNotice('Patch source set; drag on the image to paint the patch');
         return;
       }
@@ -10434,16 +10553,11 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before retouching');
         return;
       }
-      // Match Photoshop's Option/Alt-click source workflow.  A source can be
-      // re-anchored between strokes without switching tools; the click only
-      // updates the source point and must never create a history entry.
-      if (tool === 'clone' && e.altKey) {
-        setCloneSource(local);
-        setNotice('Clone source set; drag on the image to paint it');
-        return;
-      }
-      if (!cloneSource) {
-        setCloneSource(local);
+      // Option/Alt-click is handled before the gesture guard above so a
+      // source click is never dropped; a first plain click also sets it.
+      const sourceAnchor = cloneSourceRef.current;
+      if (!sourceAnchor) {
+        chooseCloneSource(local);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
@@ -10456,49 +10570,61 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
+        cloneAnchor: sourceAnchor,
         spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
         ],
       } as Gesture;
-      const sourceAnchor = cloneSource;
       gesture.current = g;
       g.pending = (async () => {
-        const sourceImage = await decodeAsset(assets.current[layer.asset]),
-          source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
-        source.getContext('2d')!.drawImage(sourceImage, 0, 0);
-        if (gesture.current !== g) return;
-        g.source = source;
-        g.buffer = surface(source.width, source.height);
-        g.buffer.getContext('2d')!.drawImage(source, 0, 0);
-        let from = g.start;
-        for (const point of g.queued || [
-          { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
-        ]) {
-          stampCanvasSegment(g.buffer, from, point, {
-            spacingState: g.spacingState,
-            size: localSize(layer.matrix, size),
-            hardness,
-            opacity: brushOpacity / 100,
-            pointerType: point.pointerType,
-            pressure: point.pressure,
-            pressureSize,
-            pressureOpacity,
-            pressureCurve,
-            spacing: brushSpacing,
-            angle: brushAngle,
-            roundness: brushRoundness,
-            flipX: brushFlipX,
-            flipY: brushFlipY,
-            mode: tool === 'heal' ? 'heal' : 'clone',
-            source,
-            sourceAnchor,
-            destinationAnchor: g.start,
-          });
-          from = point;
+        try {
+          const sourceImage = await decodeAsset(assets.current[layer.asset]),
+            source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
+          source.getContext('2d')!.drawImage(sourceImage, 0, 0);
+          if (gesture.current !== g) return;
+          const buffer = surface(source.width, source.height);
+          buffer.getContext('2d')!.drawImage(source, 0, 0);
+          // Photoshop confines Clone Stamp and Healing Brush to the selection.
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
+          g.buffer = buffer;
+          g.source = source;
+          let from = g.start;
+          for (const point of g.queued || [
+            { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
+          ]) {
+            stampGestureSegment(g, from, point, {
+              spacingState: g.spacingState,
+              size: localSize(layer.matrix, size),
+              hardness,
+              opacity: brushOpacity / 100,
+              pointerType: point.pointerType,
+              pressure: point.pressure,
+              pressureSize,
+              pressureOpacity,
+              pressureCurve,
+              spacing: brushSpacing,
+              angle: brushAngle,
+              roundness: brushRoundness,
+              flipX: brushFlipX,
+              flipY: brushFlipY,
+              mode: tool === 'heal' ? 'heal' : 'clone',
+              source,
+              sourceAnchor,
+              destinationAnchor: g.start,
+            });
+            from = point;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          if (gesture.current !== g) return;
+          gesture.current = null;
+          void paint(f);
+          setNotice(`Could not prepare ${tool === 'heal' ? 'Healing' : 'Clone'} stroke`);
         }
-        g.queued = undefined;
-        void paint(f, { [layer.id]: g.buffer });
       })();
       await g.pending;
       return;
@@ -10540,6 +10666,9 @@ export default function Home() {
             );
           buffer.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [
@@ -10550,7 +10679,7 @@ export default function Home() {
             },
           ]) {
             g.changed =
-              patternCanvasSegment(g.buffer, from, point, {
+              patternGestureSegment(g, from, point, {
                 spacingState: g.spacingState,
                 size: localSize(layer.matrix, size),
                 hardness,
@@ -10613,10 +10742,13 @@ export default function Home() {
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [g.start]) {
-            redEyeCanvasStroke(buffer, from, point, {
+            redEyeGestureStroke(g, from, point, {
               radius: localSize(layer.matrix, size) / 2,
               threshold: g.redEyeThreshold ?? 36,
               amount: (g.redEyeAmount ?? 100) / 100,
@@ -10670,24 +10802,22 @@ export default function Home() {
               1,
               1,
             ).data;
+          const buffer = surface(source.width, source.height);
+          buffer.getContext('2d')!.drawImage(source, 0, 0);
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.source = source;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
-          g.buffer = surface(source.width, source.height);
-          g.buffer.getContext('2d')!.drawImage(source, 0, 0);
-          replaceColorStroke(
-            source,
-            g.buffer,
-            g.replaceTarget,
-            local.x,
-            local.y,
-            local.x,
-            local.y,
+          g.buffer = buffer;
+          sampledGestureStroke(g, local, local, {
+            kind: 'replace',
             color,
             size,
-            colorTolerance,
-            brushOpacity / 100,
-          );
-          void paint(f, { [layer.id]: g.buffer });
+            tolerance: colorTolerance,
+            opacity: brushOpacity / 100,
+          });
+          void paint(f, { [layer.id]: buffer });
         } catch {
           gesture.current = null;
           setNotice('Could not prepare color replacement');
@@ -11190,9 +11320,9 @@ export default function Home() {
       (g.tool === 'clone' || g.tool === 'heal') &&
       g.buffer &&
       g.source &&
-      cloneSource
+      g.cloneAnchor
     ) {
-      stampCanvasSegment(g.buffer, g.last, local, {
+      stampGestureSegment(g, g.last, local, {
         spacingState: g.spacingState,
         size: localSize(g.layer!.matrix, size),
         hardness,
@@ -11209,7 +11339,7 @@ export default function Home() {
         flipY: brushFlipY,
         mode: g.tool === 'heal' ? 'heal' : 'clone',
         source: g.source,
-        sourceAnchor: cloneSource,
+        sourceAnchor: g.cloneAnchor,
         destinationAnchor: g.start,
       });
       previewGesture(g);
@@ -11218,7 +11348,7 @@ export default function Home() {
     }
     if (g.tool === 'pattern-stamp' && g.buffer) {
       g.changed =
-        patternCanvasSegment(g.buffer, g.last, local, {
+        patternGestureSegment(g, g.last, local, {
           spacingState: g.spacingState,
           size: localSize(g.layer!.matrix, size),
           hardness,
@@ -11243,7 +11373,7 @@ export default function Home() {
       return;
     }
     if (g.tool === 'red-eye' && g.buffer) {
-      redEyeCanvasStroke(g.buffer, g.last, local, {
+      redEyeGestureStroke(g, g.last, local, {
         radius: localSize(g.layer!.matrix, size) / 2,
         threshold: g.redEyeThreshold ?? 36,
         amount: (g.redEyeAmount ?? 100) / 100,
@@ -11318,18 +11448,12 @@ export default function Home() {
       g.source &&
       g.replaceTarget
     ) {
-      eraseBackgroundStroke(
-        g.source,
-        g.buffer,
-        g.replaceTarget,
-        g.last.x,
-        g.last.y,
-        local.x,
-        local.y,
-        localSize(g.layer!.matrix, size),
-        colorTolerance,
-        brushOpacity / 100,
-      );
+      sampledGestureStroke(g, g.last, local, {
+        kind: 'background-erase',
+        size: localSize(g.layer!.matrix, size),
+        tolerance: colorTolerance,
+        opacity: brushOpacity / 100,
+      });
       previewGesture(g);
       g.last = local;
       return;
@@ -11491,19 +11615,13 @@ export default function Home() {
       g.replaceTarget &&
       g.layer
     ) {
-      replaceColorStroke(
-        g.source,
-        g.buffer,
-        g.replaceTarget,
-        g.last.x,
-        g.last.y,
-        local.x,
-        local.y,
+      sampledGestureStroke(g, g.last, local, {
+        kind: 'replace',
         color,
         size,
-        colorTolerance,
-        brushOpacity / 100,
-      );
+        tolerance: colorTolerance,
+        opacity: brushOpacity / 100,
+      });
       previewGesture(g);
       g.last = local;
       return;
@@ -12481,7 +12599,7 @@ export default function Home() {
     } else if (g.tool === 'pattern-stamp' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
         g.changed =
-          patternCanvasSegment(g.buffer, g.last, local, {
+          patternGestureSegment(g, g.last, local, {
             spacingState: g.spacingState,
             size: localSize(g.layer.matrix, size),
             hardness,
@@ -12570,7 +12688,7 @@ export default function Home() {
         setNotice('Selection Brush selection created');
     } else if (g.tool === 'red-eye' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
-        redEyeCanvasStroke(g.buffer, g.last, local, {
+        redEyeGestureStroke(g, g.last, local, {
           radius: localSize(g.layer.matrix, size) / 2,
           threshold: g.redEyeThreshold ?? 36,
           amount: (g.redEyeAmount ?? 100) / 100,
@@ -12592,18 +12710,12 @@ export default function Home() {
         g.replaceTarget &&
         (g.last.x !== local.x || g.last.y !== local.y)
       )
-        eraseBackgroundStroke(
-          g.source,
-          g.buffer,
-          g.replaceTarget,
-          g.last.x,
-          g.last.y,
-          local.x,
-          local.y,
-          localSize(g.layer.matrix, size),
-          colorTolerance,
-          brushOpacity / 100,
-        );
+        sampledGestureStroke(g, g.last, local, {
+          kind: 'background-erase',
+          size: localSize(g.layer.matrix, size),
+          tolerance: colorTolerance,
+          opacity: brushOpacity / 100,
+        });
       const asset = addAsset(assets.current, g.buffer);
       if (
         commit({
@@ -13415,7 +13527,7 @@ export default function Home() {
     else if (command === 'combine-shapes-exclude') return combineSelectedShapes('exclude');
     else if (command === 'patch-tool') {
       setTool('patch');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Patch tool selected; click a source, then drag a destination');
     } else if (command === 'mixer-brush-tool') {
       setTool('mixer-brush');
@@ -13738,11 +13850,11 @@ export default function Home() {
       if (cropPreview) cancelCropPreview();
       if (perspectiveCropPreview) cancelPerspectiveCropPreview();
       setTool('slice');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Drag on the image to select a slice');
     } else if (command === 'slice-select') {
       setTool('slice-select');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice(
         current().slices?.length
           ? 'Click a saved slice to select and edit it'
@@ -13751,7 +13863,7 @@ export default function Home() {
     } else if (command === 'frame') {
       if (slicePreview) cancelSlicePreview();
       setTool('frame');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
     else if (command === 'rotate-right') return transform('right');
@@ -14295,7 +14407,7 @@ export default function Home() {
       void paint(current());
     }
     setTool(id);
-    setCloneSource(null);
+    clearCloneSource();
     closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
   };
@@ -15475,6 +15587,32 @@ export default function Home() {
               onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
+            {frame && cloneSource && (tool === 'clone' || tool === 'heal')
+              ? (() => {
+                  // The source is stored in the active layer's pixel space;
+                  // show it where the next stroke will sample on the canvas.
+                  const active = frame.layers.find((item) => item.id === frame.active),
+                    [a, b, c, d, e, f] = active?.kind === 'raster' ? active.matrix : [1, 0, 0, 1, 0, 0],
+                    x = a * cloneSource.x + c * cloneSource.y + e,
+                    y = b * cloneSource.x + d * cloneSource.y + f,
+                    arm = Math.max(10, Math.max(frame.w, frame.h) / 60);
+                  return (
+                    <svg
+                      className="clone-source-overlay"
+                      data-testid="clone-source-marker"
+                      data-x={Math.round(x)}
+                      data-y={Math.round(y)}
+                      viewBox={`0 0 ${frame.w} ${frame.h}`}
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <circle cx={x} cy={y} r={arm * 0.6} />
+                      <line x1={x - arm} y1={y} x2={x + arm} y2={y} />
+                      <line x1={x} y1={y - arm} x2={x} y2={y + arm} />
+                    </svg>
+                  );
+                })()
+              : null}
             {quickMasking && (
               <canvas
                 ref={quickMaskOverlayCanvas}

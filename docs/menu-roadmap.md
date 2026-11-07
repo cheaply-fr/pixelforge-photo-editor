@@ -167,8 +167,8 @@ and priorities are in
 - **Filter → Blur → Radial Blur (P2, queued after C):** centre X/Y are integer percentages
   (1% ≈ 41 px at 4096 px); allow fractional or pixel centres and on-canvas
   placement.
-- **"Mask from selection" (P3, in development D):** consumes (deselects)
-  the selection on `fix/retouch-selection-and-clone-source`.
+- **"Mask from selection" (P3, in review D):** consumes (deselects)
+  the selection in one undo step on `fix/retouch-selection-and-clone-source`.
 - **Reference image (proposed File/View command, P2, in development G):** non-exported, non-printing
   reference layer or panel with eyedropper sampling, outside the layer
   budget.

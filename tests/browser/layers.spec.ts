@@ -774,7 +774,8 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   const exported = await project(page),
     frame = exported.value.history[exported.value.index],
     layer = frame.layers[0];
-  expect(frame.selection).toMatchObject({ inverted: false });
+  expect(frame.selection).toBeUndefined();
+  expect(frame.previousSelection).toMatchObject({ inverted: false });
   expect(layer.mask).toEqual(expect.any(String));
   expect(exported.value.assets[layer.mask].w).toBe(frame.w);
   expect(exported.value.assets[layer.mask].h).toBe(frame.h);
@@ -1052,13 +1053,13 @@ test('polygonal lasso closes by vertex, masks representative pixels and survives
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
   const reloaded = await project(page),
     reloadedFrame = reloaded.value.history[reloaded.value.index];
-  expect(reloadedFrame.selection.points).toHaveLength(3);
+  expect(reloadedFrame.previousSelection.points).toHaveLength(3);
   expect(reloadedFrame.layers[0].mask).toEqual(expect.any(String));
   await page.getByTestId('project-input').setInputFiles(roundTrip.path);
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
   const imported = await project(page),
     importedFrame = imported.value.history[imported.value.index];
-  expect(importedFrame.selection.points).toEqual(reloadedFrame.selection.points);
+  expect(importedFrame.previousSelection.points).toEqual(reloadedFrame.previousSelection.points);
   expect(importedFrame.layers[0].mask).toEqual(expect.any(String));
 });
 
@@ -1136,7 +1137,7 @@ test('selection add mode composes geometry and masks pixels nondestructively', a
   const exported = await project(page),
     frame = exported.value.history[exported.value.index],
     layer = frame.layers[0];
-  expect(frame.selection.parts.map((part: { operation: string }) => part.operation)).toEqual(['replace', 'add']);
+  expect(frame.previousSelection.parts.map((part: { operation: string }) => part.operation)).toEqual(['replace', 'add']);
   expect(layer.mask).toEqual(expect.any(String));
   await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => {
     const data = item.getContext('2d')!.getImageData(0, 0, item.width, item.height).data;

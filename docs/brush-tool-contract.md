@@ -168,26 +168,41 @@ space. Quick Mask edits the selection itself and is not confined. Without a
 selection every tool takes the previous, unconfined path with no extra work.
 
 Sampling the selection is a whole-layer pass at stroke start, the same cost
-Gradient, Paint Bucket and the retouch tools already pay. "Mask from
-selection" keeps the selection active, so painting the new mask outside it
-needs Select > Deselect first.
+Gradient, Paint Bucket and the retouch tools already pay.
+
+Clone Stamp, Healing Brush, Pattern Stamp, Red Eye, Color Replacement and
+Background Eraser use the same confined stroke (`confinedGestureEdit` in
+`app/page.tsx`): each segment is drawn into the unconfined copy, reading the
+immutable stroke-start source, and only the rectangle it can reach is blended
+back by selection coverage, so preview and commit match. Magic Eraser, like
+Fill, ignores clicks outside the selection and blends its result by coverage.
+Smudge, Blur/Sharpen, Dodge/Burn/Sponge and Mixer/History/Art History brushes
+already applied the layer-space selection mask through their own pixel
+kernels. Spot Healing and Patch store nondestructive stroke metadata that is
+rendered later; they do not yet honour vector (rectangle/ellipse/lasso)
+selections — Patch only keeps a pixel-mask selection of matching size.
+
+Option/Alt-click on Clone or Healing sets the source without touching pixels
+or history and is handled before the in-flight gesture guard, so a source
+chosen while the previous stroke is still decoding or committing (2646×4096
+documents) is honoured by the next stroke; a stroke already in flight keeps the
+anchor it started with. A white crosshair (`clone-source-marker`) shows the
+source on the canvas while Clone or Healing is active.
+
+"Mask from selection" consumes the selection as Photoshop does: one undo step
+adds the mask and deselects (Select > Reselect restores it), so the new mask
+can be painted outside the old selection straight away.
 
 Evidence: `mixRectByMask`, `brushStampReach` and `brushSegmentRect` in
-`src/selectionClip.ts` with `tests/selection-clip.test.mjs`, and
+`src/selectionClip.ts` with `tests/selection-clip.test.mjs`,
 `tests/browser/brush-selection.spec.ts` on desktop and mobile (brush with live
 preview and undo, eraser, pencil with an inverted selection, feathered edge,
-no-selection stroke, Mask Eraser).
+no-selection stroke, Mask Eraser), and `tests/browser/retouch-selection.spec.ts`
+on desktop and mobile (Clone across a rectangular selection with live preview
+and undo/redo, feathered Clone edge, Healing, Pattern Stamp and Color Replace
+confinement, Alt-click source during a pending commit on a 2646×4096 poster,
+Mask from selection then Mask Brush outside with one-step undo/redo).
 
-Open follow-ups recorded 2026-11-07 (see the large-document findings in
-`roadmap-progress-rubric.md`): Clone Stamp and Healing Brush stamping does not
-yet honour the selection (P1), and "Mask from selection" should consume the
-selection as Photoshop does (P3). Painting Size up to 5000 px shipped in
-#187 (`6a42943`); near-zero pressure as a pen lift, a dab-only stamp mode and scatter or
-spacing above 100% of size are not started.
-
-In development (fix wave 2, 2026-11-07): `fix/retouch-selection-and-clone-source`
-confines Clone Stamp, Healing Brush and the other retouch tools to the
-selection, keeps an Alt-click clone source set while the previous stroke is
-still committing, and makes "Mask from selection" consume the selection.
-`feat/brush-gradient-options` adds spacing and scatter above 100%, count and
-count jitter, and a true pen lift at pressure 0. Neither is merged.
+Painting Size up to 5000 px shipped in #187 (`6a42943`). In development (fix
+wave 2): `feat/brush-gradient-options` adds spacing and scatter above 100%,
+count and count jitter, and a true pen lift at pressure 0; it is not merged.
