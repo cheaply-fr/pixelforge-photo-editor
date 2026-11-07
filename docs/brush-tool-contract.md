@@ -41,7 +41,7 @@ Extend `Settings` with validated, backward-compatible values:
 | `hardness` | 0–100 (percent) | 100 | Radius at which a stamp reaches full alpha; 0 is a fully soft edge and 100 is a hard circle |
 | `pressureSize` | boolean | false | Apply supported pen pressure to diameter |
 | `pressureOpacity` | boolean | false | Apply supported pen pressure to stamp alpha |
-| `spacing` | 1–100 (percent) | 25 | Distance between dabs as a percentage of the resolved diameter |
+| `spacing` | 1–1000 (percent) | 25 | Distance between dabs as a percentage of the resolved diameter |
 | `angle` | -180–180 (degrees) | 0 | Rotation of the local tip ellipse |
 | `roundness` | 1–100 (percent) | 100 | Circular tip at 100; lower values compress the local vertical axis |
 | `flipX`, `flipY` | boolean | false | Explicit local tip mirror controls; symmetric tips may render identical pixels |
@@ -61,8 +61,10 @@ size is a separate performance change.
 
 Use one shared stamp primitive for Brush, Eraser, Clone and Healing:
 
-1. Clamp pointer pressure to `[0, 1]`; use `1` when the event pressure is
-   missing or zero for a mouse/touch fallback.
+1. Clamp pointer pressure to `[0, 1]`; use `1` for mouse input and when the
+   event pressure is missing, out of range, or a zero touch reading. A pen
+   reading of `0` is kept: with a pressure mapping enabled, pressure at or
+   below `0.01` is a pen lift and the dab paints nothing.
 2. If `pressureSize` is enabled, multiply the configured diameter by pressure
    (with a documented minimum diameter, for example `0.25 × size`); otherwise
    retain the configured diameter.

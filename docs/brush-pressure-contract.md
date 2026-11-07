@@ -18,3 +18,19 @@ This is a bounded local pressure response, not a claim of tablet-driver
 calibration, tilt/rotation sensing, velocity response or Photoshop parity.
 Physical pen/touch acceptance and device-specific latency budgets remain part
 of the scale/accessibility release gate.
+
+## Pen lift (2026-11-07)
+
+A pen reporting pressure `0` was previously treated like a missing reading
+(full pressure). It is now kept as `0`: with **Pressure affects size** or
+**Pressure affects opacity** enabled, a normalized pressure at or below `0.01`
+is a pen lift and the dab paints (or erases) nothing, for every curve; each
+curve already maps `0` to `0`. With both options off, pen pressure is ignored as
+before. Mouse input always uses full pressure, and touch pressure `0` keeps the
+full-pressure fallback because many touch screens report `0` when they cannot
+sense force. Pointer-up still reuses the last in-stroke pressure.
+
+Evidence: `src/brush.ts` (`normalizeBrushPressure`, `isBrushPenLift`),
+`tests/brush-pen-lift.test.mjs`, and the desktop/mobile Playwright case in
+`tests/browser/brush-gradient-options.spec.ts` where a pen stroke at pressure 0
+leaves the layer blank and the same stroke at pressure 1 paints.

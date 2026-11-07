@@ -363,10 +363,23 @@ import {
   BRUSH_DEFAULT_ANGLE,
   BRUSH_DEFAULT_ROUNDNESS,
   BRUSH_DEFAULT_SPACING,
+  BRUSH_SPACING_MAX,
+  BRUSH_SPACING_MIN,
+  normalizeBrushPressure,
   resolveBrushStamp,
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
+import {
+  GRADIENT_BLEND_DEFAULT,
+  GRADIENT_BLEND_LABELS,
+  GRADIENT_BLEND_MODES,
+  GRADIENT_OPACITY_DEFAULT,
+  compositeGradientPixels,
+  normalizeGradientBlendMode,
+  normalizeGradientOpacity,
+  type GradientBlendMode,
+} from '../src/gradientBlend';
 import {
   BRUSH_SIZE_MAX,
   BRUSH_SIZE_MIN,
@@ -440,8 +453,15 @@ import {
   stabilizeBrushPoint,
 } from '../src/brushSmoothing';
 import {
+  BRUSH_COUNT_MAX,
+  BRUSH_COUNT_MIN,
   BRUSH_SCATTER_DEFAULT,
-  scatterBrushPoint,
+  BRUSH_SCATTER_MAX,
+  DEFAULT_BRUSH_DYNAMICS,
+  brushDabsAt,
+  normalizeBrushDynamics,
+  wrapBrushAngle,
+  type BrushDynamics,
 } from '../src/brushDynamics';
 import {
   BRUSH_TEXTURE_DEFAULT,
@@ -1579,6 +1599,8 @@ type StampCanvasOptions = {
   pressureCurve?: BrushPressureCurve;
   spacing?: number;
   scatter?: number;
+  /** Scatter axes, Count and jitter; omitted means one unjittered dab per step. */
+  dynamics?: BrushDynamics;
   texture?: number;
   dual?: number;
   secondaryPreset?: SecondaryBrushPreset;
@@ -1604,8 +1626,10 @@ const stampCanvas = (
   const texturedOpacity = options.opacity * brushTextureOpacity(options.x, options.y, options.texture ?? 0) *
     dualBrushOpacity(options.x, options.y, options.dual ?? 0) *
     bristleOpacity(options.x, options.y, options.bristle ?? 0),
-    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity }),
-    radius = resolved.radius,
+    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity });
+  // A pen lift (near-zero pressure with pressure mapping on) paints nothing.
+  if (resolved.opacity <= 0) return false;
+  const radius = resolved.radius,
     left = Math.max(0, Math.floor(options.x - radius)),
     top = Math.max(0, Math.floor(options.y - radius)),
     right = Math.min(target.width, Math.floor(options.x + radius) + 1),
@@ -1750,10 +1774,11 @@ const stampCanvasSegment = (
     interval = Math.max(1, resolved.size * resolved.spacing / 100),
     positions = brushSegmentPositions(distance, interval, options.spacingState);
   let changed = false;
+  const direction = { x: to.x - from.x, y: to.y - from.y },
+    dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS;
   for (const t of positions) {
     const x = from.x + (to.x - from.x) * t,
       y = from.y + (to.y - from.y) * t,
-      scattered = scatterBrushPoint({ x, y }, resolved.size, options.scatter ?? 0),
       sourceX = options.sourceAnchor
         ? options.sourceAnchor.x +
           (x - (options.destinationAnchor?.x ?? from.x))
@@ -1762,14 +1787,20 @@ const stampCanvasSegment = (
         ? options.sourceAnchor.y +
           (y - (options.destinationAnchor?.y ?? from.y))
         : undefined;
-    changed =
-      stampCanvas(target, {
-        ...options,
-        x: scattered.x,
-        y: scattered.y,
-        sourceX,
-        sourceY,
-      }) || changed;
+    // Count dabs per spacing step, each with deterministic scatter and jitter.
+    for (const dab of brushDabsAt({ x, y }, resolved.size, options.scatter ?? 0, dynamics, direction)) {
+      changed =
+        stampCanvas(target, {
+          ...options,
+          size: dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
+          angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          opacity: options.opacity * dab.opacityScale,
+          x: dab.x,
+          y: dab.y,
+          sourceX,
+          sourceY,
+        }) || changed;
+    }
   }
   return changed;
 };
@@ -2349,6 +2380,7 @@ export default function Home() {
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
+    [brushDynamics, setBrushDynamics] = useState<BrushDynamics>(() => ({ ...DEFAULT_BRUSH_DYNAMICS })),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
     [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
@@ -2363,6 +2395,8 @@ export default function Home() {
     [gradientReverse, setGradientReverse] = useState(false),
     [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
     [gradientNoise, setGradientNoise] = useState(GRADIENT_NOISE_DEFAULT),
+    [gradientBlend, setGradientBlend] = useState<GradientBlendMode>(GRADIENT_BLEND_DEFAULT),
+    [gradientOpacity, setGradientOpacity] = useState(GRADIENT_OPACITY_DEFAULT),
     [gradientStops, setGradientStops] = useState<GradientStop[]>([]),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
@@ -2824,6 +2858,7 @@ export default function Home() {
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushDynamics,
     brushTexture,
     brushDual,
     brushBristle,
@@ -2838,6 +2873,8 @@ export default function Home() {
     gradientReverse,
     gradientDither,
     gradientNoise,
+    gradientBlend,
+    gradientOpacity,
     gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -2909,6 +2946,7 @@ export default function Home() {
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
+    setBrushDynamics(normalizeBrushDynamics(s.brushDynamics));
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
     setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
@@ -2923,6 +2961,8 @@ export default function Home() {
     setGradientReverse(s.gradientReverse ?? false);
     setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
     setGradientNoise(s.gradientNoise ?? GRADIENT_NOISE_DEFAULT);
+    setGradientBlend(normalizeGradientBlendMode(s.gradientBlend));
+    setGradientOpacity(normalizeGradientOpacity(s.gradientOpacity));
     setGradientStops(normalizeGradientStops(s.gradientStops));
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
@@ -2972,6 +3012,7 @@ export default function Home() {
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
+    setBrushDynamics,
     setBrushTexture,
     setBrushDual,
     setBrushBristle,
@@ -2986,6 +3027,8 @@ export default function Home() {
     setGradientReverse,
     setGradientDither,
     setGradientNoise,
+    setGradientBlend,
+    setGradientOpacity,
     setGradientStops,
     setBrushAngle,
     setBrushRoundness,
@@ -3048,6 +3091,7 @@ export default function Home() {
     setPressureCurve(normalizeBrushPressureCurve(preset.pressureCurve));
     setBrushSmoothing(preset.brushSmoothing);
     setBrushScatter(preset.brushScatter);
+    setBrushDynamics(normalizeBrushDynamics(preset.brushDynamics));
     setBrushTexture(preset.brushTexture);
     setBrushDual(preset.brushDual);
     setSecondaryBrushPreset(preset.secondaryBrushPreset);
@@ -3079,6 +3123,7 @@ export default function Home() {
         pressureCurve,
         brushSmoothing,
         brushScatter,
+        brushDynamics,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -6478,6 +6523,7 @@ export default function Home() {
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
+        brushDynamics,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -6493,6 +6539,8 @@ export default function Home() {
         gradientDither,
         gradientStops,
         gradientNoise,
+        gradientBlend,
+        gradientOpacity,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -6596,6 +6644,7 @@ export default function Home() {
     brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushDynamics,
     brushTexture,
     brushDual,
     brushBristle,
@@ -6611,6 +6660,8 @@ export default function Home() {
     gradientDither,
     gradientStops,
     gradientNoise,
+    gradientBlend,
+    gradientOpacity,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -8927,12 +8978,9 @@ export default function Home() {
       viewRotation,
     );
   };
+  // Pen pressure 0 is a real pen lift; mouse and zero touch pressure stay full.
   const pressure = (e: React.PointerEvent<HTMLCanvasElement>) =>
-    (e.pointerType === 'pen' || e.pointerType === 'touch') &&
-    e.pressure > 0 &&
-    e.pressure <= 1
-      ? e.pressure
-      : 1;
+    normalizeBrushPressure(e.pointerType, e.pressure);
   /** Apply a canvas-space alpha stroke to a detached mask preview. */
   const refineMaskCanvas = (
     target: HTMLCanvasElement,
@@ -10911,6 +10959,7 @@ export default function Home() {
               pressureCurve,
               spacing: brushSpacing,
               scatter: brushScatter,
+              dynamics: brushDynamics,
               texture: brushTexture,
               dual: brushDual,
               secondaryPreset: secondaryBrushPreset,
@@ -11485,8 +11534,10 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+        pressureCurve,
         spacing: brushSpacing,
         scatter: brushScatter,
+        dynamics: brushDynamics,
         texture: brushTexture,
         dual: brushDual,
         secondaryPreset: secondaryBrushPreset,
@@ -12093,6 +12144,7 @@ export default function Home() {
           pressureCurve,
           spacing: brushSpacing,
           scatter: brushScatter,
+          dynamics: brushDynamics,
           texture: brushTexture,
           dual: brushDual,
           secondaryPreset: secondaryBrushPreset,
@@ -12327,7 +12379,10 @@ export default function Home() {
         const selectionMask = await selectionMaskForLayer(
           f.selection, f, g.layer, assets.current, buffer.width, buffer.height,
         );
-        const context = buffer.getContext('2d')!,
+        // Render the gradient on its own surface, then composite it onto the
+        // layer with the chosen Mode and Opacity (Normal paints over).
+        const gradientSurface = surface(buffer.width, buffer.height),
+          context = gradientSurface.getContext('2d')!,
           gradient = gradientMode === 'radial'
             ? context.createRadialGradient(
               g.start.x,
@@ -12357,13 +12412,20 @@ export default function Home() {
         })) gradient.addColorStop(stop.offset, stop.color);
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
+        let gradientPixels: Uint8ClampedArray = context.getImageData(0, 0, buffer.width, buffer.height).data;
         if (gradientNoise > 0 || gradientDither > 0) {
-          const imageData = context.getImageData(0, 0, buffer.width, buffer.height);
-          let pixels = applyGradientNoise(imageData.data, buffer.width, buffer.height, gradientNoise);
-          pixels = applyGradientDither(pixels, buffer.width, buffer.height, gradientDither);
-          imageData.data.set(pixels);
-          context.putImageData(imageData, 0, 0);
+          gradientPixels = applyGradientNoise(gradientPixels, buffer.width, buffer.height, gradientNoise);
+          gradientPixels = applyGradientDither(gradientPixels, buffer.width, buffer.height, gradientDither);
         }
+        const bufferContext = buffer.getContext('2d')!,
+          layerPixels = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+        layerPixels.data.set(compositeGradientPixels(
+          layerPixels.data,
+          gradientPixels,
+          gradientBlend,
+          normalizeGradientOpacity(gradientOpacity) / 100,
+        ));
+        bufferContext.putImageData(layerPixels, 0, 0);
         if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
@@ -16372,6 +16434,37 @@ export default function Home() {
                 </label>
               )}
               {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient mode</span>
+                  <select
+                    aria-label="Gradient mode"
+                    value={gradientBlend}
+                    onChange={(event) => setGradientBlend(normalizeGradientBlendMode(event.target.value))}
+                  >
+                    {GRADIENT_BLEND_MODES.map((mode) => (
+                      <option key={mode} value={mode}>{GRADIENT_BLEND_LABELS[mode]}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Gradient opacity"
+                  value={gradientOpacity}
+                  min={1}
+                  max={100}
+                  set={setGradientOpacity}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <p className="adjust-note">
+                  Normal paints over existing pixels, so a second gradient builds on the first;
+                  Replace discards the layer’s pixels (inside any selection). Blend modes combine
+                  the gradient with what is already painted.
+                </p>
+              )}
+              {tool === 'gradient' && (
                 <Slider
                   label="Dither"
                   value={gradientDither}
@@ -16643,8 +16736,8 @@ export default function Home() {
                       <Slider
                         label="Spacing"
                         value={brushSpacing}
-                        min={1}
-                        max={100}
+                        min={BRUSH_SPACING_MIN}
+                        max={BRUSH_SPACING_MAX}
                         set={setBrushSpacing}
                         suffix="%"
                       />
@@ -16662,9 +16755,57 @@ export default function Home() {
                             label="Scatter"
                             value={brushScatter}
                             min={0}
-                            max={100}
+                            max={BRUSH_SCATTER_MAX}
                             set={setBrushScatter}
                             suffix="%"
+                          />
+                          <label className="check-row">
+                            <input
+                              aria-label="Scatter both axes"
+                              type="checkbox"
+                              checked={brushDynamics.scatterBothAxes}
+                              onChange={(event) => {
+                                const scatterBothAxes = event.target.checked;
+                                setBrushDynamics((current) => ({ ...current, scatterBothAxes }));
+                              }}
+                            />
+                            Scatter both axes
+                          </label>
+                          <Slider
+                            label="Count"
+                            value={brushDynamics.count}
+                            min={BRUSH_COUNT_MIN}
+                            max={BRUSH_COUNT_MAX}
+                            set={(count) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, count }))}
+                            suffix=""
+                          />
+                          <Slider
+                            label="Count jitter"
+                            value={brushDynamics.countJitter}
+                            min={0}
+                            max={100}
+                            set={(countJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, countJitter }))}
+                          />
+                          <Slider
+                            label="Size jitter"
+                            value={brushDynamics.sizeJitter}
+                            min={0}
+                            max={100}
+                            set={(sizeJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, sizeJitter }))}
+                          />
+                          <Slider
+                            label="Angle jitter"
+                            value={brushDynamics.angleJitter}
+                            min={0}
+                            max={100}
+                            set={(angleJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, angleJitter }))}
+                          />
+                          <Slider
+                            label="Opacity jitter"
+                            value={brushDynamics.opacityJitter}
+                            min={0}
+                            max={100}
+                            set={(opacityJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, opacityJitter }))}
                           />
                           <Slider
                             label="Texture"
@@ -16756,7 +16897,9 @@ export default function Home() {
                         dynamics; Wet edges and Build-up are deterministic local
                         opacity approximations, while full physical tip
                         simulation and wet-media buildup remain staged. Scatter is a deterministic local
-                        stamp offset.
+                        stamp offset (up to 1,000% of the diameter; perpendicular to the stroke unless
+                        both axes is on). Count places several dabs per spacing step; jitter varies each
+                        dab deterministically, so replaying a stroke gives the same pixels.
                       </p>
                     </>
                   )}
@@ -16800,7 +16943,9 @@ export default function Home() {
                         <p className="adjust-note">
                           Pressure mapping is off by default. Pen and touch
                           inputs use full size and opacity until each option is
-                          enabled.
+                          enabled. With an option on, near-zero pen pressure is a
+                          pen lift and paints nothing; mouse input always paints
+                          at full pressure.
                         </p>
                       </>
                     )}

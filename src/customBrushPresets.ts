@@ -1,4 +1,6 @@
 import { normalizeSecondaryBrushPreset, type SecondaryBrushPreset } from './brushSecondary.ts';
+import { BRUSH_SPACING_MAX } from './brush.ts';
+import { BRUSH_SCATTER_MAX, normalizeBrushDynamics, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
 
 export const CUSTOM_BRUSH_PRESET_LIMIT = 32;
 
@@ -25,6 +27,8 @@ export type CustomBrushPreset = {
   brushWetEdges: number;
   brushBuildUp: number;
   brushFlow: number;
+  /** Optional scatter axes, Count and jitter; presets saved before these existed omit it. */
+  brushDynamics?: BrushDynamics;
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -37,14 +41,15 @@ export function validCustomBrushPreset(value: unknown): value is CustomBrushPres
     typeof candidate.id === 'string' && /^[a-f0-9-]{36}$/i.test(candidate.id) &&
     typeof candidate.label === 'string' && candidate.label.trim().length >= 1 && candidate.label.length <= 80 &&
     finite(candidate.size, 1, 10000) && finite(candidate.hardness, 0, 100) &&
-    finite(candidate.spacing, 1, 100) && finite(candidate.angle, -180, 180) &&
+    finite(candidate.spacing, 1, BRUSH_SPACING_MAX) && finite(candidate.angle, -180, 180) &&
     finite(candidate.roundness, 1, 100) &&
     typeof candidate.flipX === 'boolean' && typeof candidate.flipY === 'boolean' &&
     typeof candidate.pressureSize === 'boolean' && typeof candidate.pressureOpacity === 'boolean' &&
     (candidate.pressureCurve === undefined || ['linear', 'soft', 'firm'].includes(candidate.pressureCurve)) &&
-    finite(candidate.brushSmoothing, 0, 100) && finite(candidate.brushScatter, 0, 100) &&
+    finite(candidate.brushSmoothing, 0, 100) && finite(candidate.brushScatter, 0, BRUSH_SCATTER_MAX) &&
     finite(candidate.brushTexture, 0, 100) && finite(candidate.brushDual, 0, 100) && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) === (candidate.secondaryBrushPreset ?? 'none') &&
-    finite(candidate.brushBristle, 0, 100) && finite(candidate.brushWetEdges ?? 0, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100)
+    finite(candidate.brushBristle, 0, 100) && finite(candidate.brushWetEdges ?? 0, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100) &&
+    (candidate.brushDynamics === undefined || validBrushDynamics(candidate.brushDynamics))
   );
 }
 
@@ -59,7 +64,7 @@ export function normalizeCustomBrushPresets(value: unknown): CustomBrushPreset[]
       return true;
     })
     .slice(-CUSTOM_BRUSH_PRESET_LIMIT)
-    .map((item) => ({ ...item, label: item.label.trim().slice(0, 80), secondaryBrushPreset: normalizeSecondaryBrushPreset(item.secondaryBrushPreset), brushWetEdges: item.brushWetEdges ?? 0, brushBuildUp: item.brushBuildUp ?? 0 }));
+    .map((item) => ({ ...item, label: item.label.trim().slice(0, 80), secondaryBrushPreset: normalizeSecondaryBrushPreset(item.secondaryBrushPreset), brushWetEdges: item.brushWetEdges ?? 0, brushBuildUp: item.brushBuildUp ?? 0, ...(item.brushDynamics === undefined ? {} : { brushDynamics: normalizeBrushDynamics(item.brushDynamics) }) }));
 }
 
 export function createCustomBrushPreset(
