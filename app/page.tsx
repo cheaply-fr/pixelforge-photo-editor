@@ -1,7 +1,12 @@
 'use client';
 
 import {
+  ArrowDown,
+  ArrowUp,
   Brush,
+  Eye,
+  EyeOff,
+  Trash2,
   Bookmark,
   Crop,
   Download,
@@ -583,7 +588,23 @@ import {
   neutralFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
-import { appendSmartFilter } from '../src/smartFilters';
+import {
+  appendSmartFilter,
+  moveSmartFilter,
+  removeSmartFilter,
+  setSmartFilterEnabled,
+  smartFilterEntries,
+  SMART_FILTER_MAX,
+  type SmartFilterEntry,
+} from '../src/smartFilters';
+import {
+  filterCenterFromFrame,
+  filterCenterFromPercent,
+  filterCenterPercent,
+  filterCenterToFrame,
+  isCenteredFilter,
+  nudgeFilterCenter,
+} from '../src/filterCenter';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -6396,6 +6417,23 @@ export default function Home() {
     if (editLayer({ smartFilters: [] }))
       setNotice(`Smart Filter stack cleared${layer?.smartFilters?.length ? '; undo restores it' : ''}`);
   };
+  /** Apply one undoable reorder/toggle/remove edit to the active layer's filter stack. */
+  const editSmartFilterStack = (
+    change: (stack: SmartFilterEntry[]) => SmartFilterEntry[],
+    message: string,
+  ) => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer?.smartFilters?.length) return;
+    try {
+      if (editLayer({ smartFilters: change(layer.smartFilters) })) setNotice(message);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not change the filter stack');
+    }
+  };
+  const filterTypeLabel = (type: string) =>
+    type.split('-').map((word, index) => (index ? word : word[0].toUpperCase() + word.slice(1))).join(' ');
+  /** Live filter-centre drag preview (frame space) before the edit commits. */
+  const [filterCenterDrag, setFilterCenterDrag] = useState<{ centerX: number; centerY: number } | null>(null);
   const chooseFilter = (filter: string, label: string) => {
     if (adjust({ filter }))
       setNotice(`${label} applied to selected layer; remains editable`);
@@ -15621,6 +15659,70 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
+            {(() => {
+              // On-canvas centre handle for centred filters. Dragging previews
+              // locally and commits one undoable edit on release; arrow keys
+              // nudge by one layer pixel (Shift: ten), Home recentres.
+              if (
+                !frame ||
+                !active ||
+                !isRasterContentLayer(active) ||
+                !active.visible ||
+                !isCenteredFilter(filterEffects.type)
+              )
+                return null;
+              const asset = assets.current[active.asset];
+              if (!asset) return null;
+              const center = filterCenterDrag ?? {
+                centerX: filterEffects.centerX,
+                centerY: filterEffects.centerY,
+              };
+              const at = filterCenterToFrame(active.matrix, asset.w, asset.h, center.centerX, center.centerY);
+              const fromPointer = (event: React.PointerEvent<HTMLButtonElement>) =>
+                filterCenterFromFrame(active.matrix, asset.w, asset.h, point(event));
+              const commitCenter = (next: { centerX: number; centerY: number }) => {
+                if (next.centerX !== filterEffects.centerX || next.centerY !== filterEffects.centerY)
+                  setFilterEffects(next);
+              };
+              return (
+                <div className="filter-center-overlay" data-testid="filter-center-overlay">
+                  <button
+                    type="button"
+                    className="filter-center-handle"
+                    data-testid="filter-center-handle"
+                    data-center-x={center.centerX}
+                    data-center-y={center.centerY}
+                    style={{ left: `${(at.x / frame.w) * 100}%`, top: `${(at.y / frame.h) * 100}%` }}
+                    aria-label={`Filter center ${filterCenterPercent(center.centerX)}% across, ${filterCenterPercent(center.centerY)}% down. Drag, or use arrow keys to move one pixel, Shift for ten, Home to recenter.`}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.currentTarget.setPointerCapture?.(event.pointerId);
+                      const next = fromPointer(event);
+                      if (next) setFilterCenterDrag(next);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!filterCenterDrag) return;
+                      const next = fromPointer(event);
+                      if (next) setFilterCenterDrag(next);
+                    }}
+                    onPointerUp={(event) => {
+                      if (!filterCenterDrag) return;
+                      const next = fromPointer(event) ?? filterCenterDrag;
+                      setFilterCenterDrag(null);
+                      commitCenter(next);
+                    }}
+                    onPointerCancel={() => setFilterCenterDrag(null)}
+                    onKeyDown={(event) => {
+                      const next = nudgeFilterCenter(center, asset.w, asset.h, event.key, event.shiftKey);
+                      if (!next) return;
+                      event.preventDefault();
+                      commitCenter(next);
+                    }}
+                  />
+                </div>
+              );
+            })()}
             {frame && (frame.measurements?.length || measurementPreview) ? (
               <svg
                 className="measurement-overlay"
@@ -17827,18 +17929,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Pinch center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Pinch center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17857,26 +17959,26 @@ export default function Home() {
                         <option value="bloat">Bloat</option>
                       </select>
                     </label>
-                    <Slider label="Liquify center X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
-                    <Slider label="Liquify center Y" value={Math.round(filterEffects.centerY * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
+                    <Slider label="Liquify center X" value={filterCenterPercent(filterEffects.centerX)} min={0} max={100} set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })} suffix="%" />
+                    <Slider label="Liquify center Y" value={filterCenterPercent(filterEffects.centerY)} min={0} max={100} set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })} suffix="%" />
                   </>
                 )}
                 {filterEffects.type === 'ripple' && (
                   <>
                     <Slider
                       label="Ripple center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Ripple center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17885,18 +17987,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Spherize center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Spherize center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17916,18 +18018,18 @@ export default function Home() {
                     </label>
                     <Slider
                       label="Correction centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Correction centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17937,18 +18039,18 @@ export default function Home() {
                     <p>Bounded anisotropic wide-angle correction with editable line-preservation biases. The authored centre stays fixed and transparent padding remains untouched; Photoshop constraint drawing and camera calibration remain staged.</p>
                     <Slider
                       label="Correction centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Correction centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -17973,18 +18075,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Flare centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Flare centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -18031,18 +18133,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Focal centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Focal centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -18064,18 +18166,18 @@ export default function Home() {
                     )}
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center X' : 'Blur center X'}
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center Y' : 'Blur center Y'}
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -18084,18 +18186,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Path center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Path center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -18104,18 +18206,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Focus centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Focus height"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -18332,18 +18434,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Flame origin X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Flame origin Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={20}
                       max={95}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <label className="slider">
@@ -18370,8 +18472,8 @@ export default function Home() {
                 )}
                 {filterEffects.type === 'tree' && (
                   <>
-                    <Slider label="Tree origin X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
-                    <Slider label="Tree origin Y" value={Math.round(filterEffects.centerY * 100)} min={20} max={98} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
+                    <Slider label="Tree origin X" value={filterCenterPercent(filterEffects.centerX)} min={0} max={100} set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })} suffix="%" />
+                    <Slider label="Tree origin Y" value={filterCenterPercent(filterEffects.centerY)} min={20} max={98} set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })} suffix="%" />
                     <Slider label="Branch count" value={filterEffects.tree?.branches ?? 5} min={2} max={8} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), branches: value } })} />
                     <Slider label="Leafiness" value={filterEffects.tree?.leafiness ?? 55} min={0} max={100} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), leafiness: value } })} suffix="%" />
                     <label className="slider"><span><b>Tree seed (0–4294967295)</b><output>{filterEffects.seed}</output></span><input className="text-input tree-seed-input" aria-label="Tree seed" type="number" min={0} max={0xffffffff} step={1} value={filterEffects.seed} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) setFilterEffects({ seed: value }); }} /></label>
@@ -18408,12 +18510,163 @@ export default function Home() {
                     </label>
                   </>
                 )}
+                {(filterEffects.type === 'twirl' || filterEffects.type === 'polar-coordinates') && (
+                  <>
+                    <Slider
+                      label={filterEffects.type === 'twirl' ? 'Twirl center X' : 'Polar center X'}
+                      value={filterCenterPercent(filterEffects.centerX)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label={filterEffects.type === 'twirl' ? 'Twirl center Y' : 'Polar center Y'}
+                      value={filterCenterPercent(filterEffects.centerY)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {isCenteredFilter(filterEffects.type) && active && isRasterContentLayer(active) && assets.current[active.asset] && (() => {
+                  // Exact, sub-pixel centre entry in layer pixels; the sliders
+                  // above stay in whole percent for quick keyboard steps.
+                  const { w, h } = assets.current[active.asset];
+                  const field = (axis: 'x' | 'y') => {
+                    const span = Math.max(0, (axis === 'x' ? w : h) - 1);
+                    const fraction = axis === 'x' ? filterEffects.centerX : filterEffects.centerY;
+                    return (
+                      <label className="slider">
+                        <span>
+                          <b>{`Filter center ${axis.toUpperCase()} (px)`}</b>
+                          <output>{`${filterCenterPercent(fraction)}%`}</output>
+                        </span>
+                        <input
+                          className="text-input"
+                          aria-label={`Filter center ${axis.toUpperCase()} in pixels`}
+                          type="number"
+                          min={0}
+                          max={span}
+                          step={0.1}
+                          value={Math.round(fraction * span * 10) / 10}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (event.target.value === '' || !Number.isFinite(value) || !span) return;
+                            const next = filterCenterFromPercent((Math.min(span, Math.max(0, value)) / span) * 100);
+                            setFilterEffects(axis === 'x' ? { centerX: next } : { centerY: next });
+                          }}
+                        />
+                      </label>
+                    );
+                  };
+                  return (
+                    <>
+                      {field('x')}
+                      {field('y')}
+                      <p className="adjust-note">
+                        Drag the crosshair on the canvas to place the center,
+                        or focus it and use the arrow keys (Shift moves ten
+                        pixels, Home recenters).
+                      </p>
+                    </>
+                  );
+                })()}
                 <p className="adjust-note">
                   This effect stays editable in the project and is applied to
                   the rendered layer. The original asset remains unchanged.
                 </p>
               </>
             )}
+            {active && isRasterContentLayer(active) && (() => {
+              const entries = smartFilterEntries(active.smartFilters);
+              const liveNeutral = isNeutralFilterEffects(effectiveFilterEffects(filterEffects));
+              return (
+                <fieldset className="filter-stack" aria-label="Filter stack">
+                  <button
+                    type="button"
+                    disabled={liveNeutral || entries.length >= SMART_FILTER_MAX}
+                    onClick={convertForSmartFilters}
+                  >
+                    Add filter to stack ({entries.length}/{SMART_FILTER_MAX})
+                  </button>
+                  {entries.length > 0 && (
+                    <>
+                      <p className="adjust-note">
+                        Stacked filters render first, in this order, then the
+                        filter above. Choose another filter to stack it too.
+                      </p>
+                      <ol aria-label="Stacked filters">
+                        {entries.map(({ effect, enabled }, index) => {
+                          const name = `${index + 1}. ${filterTypeLabel(effect.type)}`;
+                          return (
+                            <li key={`${index}-${effect.type}`} data-enabled={enabled ? 'true' : 'false'}>
+                              <span title={name}>{name}</span>
+                              <button
+                                type="button"
+                                aria-pressed={enabled}
+                                aria-label={`${enabled ? 'Hide' : 'Show'} stacked filter ${name}`}
+                                title={enabled ? 'Hide' : 'Show'}
+                                onClick={() =>
+                                  editSmartFilterStack(
+                                    (stack) => setSmartFilterEnabled(stack, index, !enabled),
+                                    `${filterTypeLabel(effect.type)} ${enabled ? 'hidden' : 'shown'} in the filter stack`,
+                                  )
+                                }
+                              >
+                                {enabled ? <Eye size={15} /> : <EyeOff size={15} />}
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Apply stacked filter ${name} earlier`}
+                                title="Apply earlier"
+                                disabled={index === 0}
+                                onClick={() =>
+                                  editSmartFilterStack(
+                                    (stack) => moveSmartFilter(stack, index, -1),
+                                    `${filterTypeLabel(effect.type)} now applies earlier`,
+                                  )
+                                }
+                              >
+                                <ArrowUp size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Apply stacked filter ${name} later`}
+                                title="Apply later"
+                                disabled={index === entries.length - 1}
+                                onClick={() =>
+                                  editSmartFilterStack(
+                                    (stack) => moveSmartFilter(stack, index, 1),
+                                    `${filterTypeLabel(effect.type)} now applies later`,
+                                  )
+                                }
+                              >
+                                <ArrowDown size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Remove stacked filter ${name}`}
+                                title="Remove"
+                                onClick={() =>
+                                  editSmartFilterStack(
+                                    (stack) => removeSmartFilter(stack, index),
+                                    `${filterTypeLabel(effect.type)} removed from the filter stack; undo restores it`,
+                                  )
+                                }
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </>
+                  )}
+                </fieldset>
+              );
+            })()}
           </section>
           <section className="panel cloud-panel">
             <h3>My projects</h3>

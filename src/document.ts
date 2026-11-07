@@ -73,7 +73,7 @@ import {
   validFilterEffects,
   type FilterEffects,
 } from './filterEffects.ts';
-import { effectiveSmartFilters, validSmartFilters } from './smartFilters.ts';
+import { effectiveSmartFilters, validSmartFilters, type SmartFilterEntry } from './smartFilters.ts';
 import {
   applyTiledNeighborhoodEffect,
   isTiledNeighborhoodBlur,
@@ -257,7 +257,7 @@ type Common = {
   /** Optional nondestructive known-matte colour decontamination. */
   matting?: MattingSettings;
   /** Optional bounded ordered nondestructive filter stack. */
-  smartFilters?: FilterEffects[];
+  smartFilters?: SmartFilterEntry[];
   /** Optional source-to-base relationship for a nondestructive clipping mask. */
   clippingTo?: string;
   /** Optional local transform-link identity shared by ordinary layers. */

@@ -133,6 +133,18 @@
 .canvas-wrap .measurement-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .canvas-wrap .clone-source-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .clone-source-overlay circle, .clone-source-overlay line { fill:none; stroke:#fff; stroke-width:1.5; vector-effect:non-scaling-stroke; filter:drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000); }
+.canvas-wrap .filter-center-overlay { position:absolute; inset:0; pointer-events:none; }
+.filter-center-overlay .filter-center-handle { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; padding:0; border:2px solid #ffb347; border-radius:50%; background:rgba(18,20,24,.35); pointer-events:auto; cursor:move; touch-action:none; box-shadow:0 0 0 1px rgba(0,0,0,.6); }
+.filter-center-overlay .filter-center-handle::before, .filter-center-overlay .filter-center-handle::after { content:""; position:absolute; background:#fff6db; left:50%; top:50%; transform:translate(-50%,-50%); }
+.filter-center-overlay .filter-center-handle::before { width:40px; height:1.5px; }
+.filter-center-overlay .filter-center-handle::after { width:1.5px; height:40px; }
+.filter-center-overlay .filter-center-handle:focus-visible { outline:3px solid #7cc4ff; outline-offset:2px; }
+.filter-stack { border:0; padding:0; margin:10px 0 0; min-width:0; }
+.filter-stack ol { list-style:none; margin:0; padding:0; display:grid; gap:4px; }
+.filter-stack li { display:flex; align-items:center; gap:4px; min-height:32px; }
+.filter-stack li > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.filter-stack li[data-enabled="false"] > span { opacity:.5; text-decoration:line-through; }
+.filter-stack li button { display:inline-grid; place-items:center; min-width:32px; min-height:32px; padding:0; }
 .canvas-wrap .crop-preview-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .canvas-wrap .perspective-crop-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .canvas-wrap .slice-preview-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
