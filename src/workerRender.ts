@@ -7,6 +7,7 @@ import {
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
 import { CompositeCache } from './compositeCache.ts';
+import { assetsToSend } from './workerAssets.ts';
 
 /** Main-thread prefix composite (used by stroke previews and the fallback). */
 const mainThreadCompositeCache = new CompositeCache<HTMLCanvasElement>();
@@ -25,6 +26,17 @@ import {
   type TiledNeighborhoodProgress,
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
+import { validFilterBandProgress, type FilterBandProgress } from './filterBands.ts';
+
+/**
+ * Test/diagnostic override for the filter worker pool size, forwarded to the
+ * render worker (whose globals are separate from the page's).
+ */
+function filterWorkerOverride(): number | undefined {
+  const value = (globalThis as typeof globalThis & { __PIXELFORGE_FILTER_WORKERS__?: unknown })
+    .__PIXELFORGE_FILTER_WORKERS__;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
 
 export type WorkerRenderOptions = {
   signal?: AbortSignal;
@@ -43,6 +55,8 @@ export type WorkerRenderOptions = {
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
   /** Monotonic progress for the latest eligible tiled effect. */
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
+  /** Completed row bands of a parallel full-frame filter. */
+  onFilterProgress?: (progress: FilterBandProgress) => void;
 };
 
 /** Minimum watchdog window, kept for small frames and as the stall floor. */
@@ -193,6 +207,7 @@ export function primeWorkerDecodedAsset(
   }
 }
 
+
 /** Primes for this request's assets, plus the buffers to transfer. */
 function takeWorkerPrimes(keys: Record<string, string>): {
   decodedPixels?: Array<{ id: string; key: string; pixels: ArrayBuffer }>;
@@ -277,6 +292,11 @@ export async function renderFrameWithWorker(
         if (!validTiledNeighborhoodProgress(progress))
           throw new Error('Invalid tiled progress from the fallback renderer.');
         options.onTiledProgress?.(progress);
+      },
+      onFilterProgress: (progress) => {
+        if (!validFilterBandProgress(progress))
+          throw new Error('Invalid filter band progress from the fallback renderer.');
+        options.onFilterProgress?.(progress);
       },
     });
     if (isCancelled()) throw abortError();
@@ -401,6 +421,18 @@ export async function renderFrameWithWorker(
         } catch (error) {
           finish(() => reject(error));
         }
+      } else if (value.kind === 'filter-progress') {
+        // Each completed filter band restarts the no-progress window.
+        if (!validFilterBandProgress(value.progress)) {
+          finish(() => reject(new Error('Worker returned invalid filter progress.')));
+          return;
+        }
+        watchdog.touch();
+        try {
+          options.onFilterProgress?.(value.progress);
+        } catch (error) {
+          finish(() => reject(error));
+        }
       } else if (
         value.kind === 'result' &&
         value.width === frame.w &&
@@ -476,6 +508,7 @@ export async function renderFrameWithWorker(
         assetKeys,
         decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
+        filterWorkers: filterWorkerOverride(),
       }, primes.transfer);
     } catch (error) {
       finish(() => reject(error));
@@ -485,6 +518,8 @@ export async function renderFrameWithWorker(
 
 type PersistentFallback = () => Promise<CanvasImageSource>;
 type PersistentTask = {
+  /** Set after one resend because the worker was missing an asset. */
+  assetRetry?: boolean;
   id: number;
   frame: Frame;
   assets: Assets;
@@ -507,6 +542,11 @@ type PersistentTask = {
  */
 class PersistentWorkerSession {
   private worker?: Worker;
+  /**
+   * Fingerprints of the assets the live worker holds: exactly those of the
+   * last request it received (it keeps that set and drops the rest).
+   */
+  private workerAssetKeys = new Set<string>();
   private active?: PersistentTask;
   private queued?: PersistentTask;
   private idleTimer?: ReturnType<typeof setTimeout>;
@@ -557,6 +597,7 @@ class PersistentWorkerSession {
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
+    this.workerAssetKeys = new Set();
     this.worker = new Worker(
       new URL('./document-render.worker.ts', import.meta.url),
       { type: 'module' },
@@ -582,15 +623,20 @@ class PersistentWorkerSession {
       const used = referencedAssets([task.frame], task.assets);
       const assetKeys = assetFingerprints(used);
       const primes = takeWorkerPrimes(assetKeys);
+      // Send only assets the worker does not already hold (by content), so a
+      // large document is not structured-cloned again on every edit.
+      const send = assetsToSend(used, assetKeys, this.workerAssetKeys);
       worker.postMessage({
         kind: 'render',
         id: task.id,
         frame: task.frame,
-        assets: used,
+        assets: send,
         assetKeys,
         decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
+        filterWorkers: filterWorkerOverride(),
       }, primes.transfer);
+      this.workerAssetKeys = new Set(Object.values(assetKeys));
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
       // still busy. Retire it before falling back and servicing a queued
@@ -646,6 +692,17 @@ class PersistentWorkerSession {
         this.finish(task);
         void this.startNext();
       }
+      return;
+    }
+    if (value.kind === 'error' && value.name === 'WorkerAssetMissing' && !task.assetRetry) {
+      // The worker no longer holds an asset this session assumed it had:
+      // resend the request once with every asset.
+      task.assetRetry = true;
+      task.watchdog?.clear();
+      task.watchdog = undefined;
+      this.workerAssetKeys = new Set();
+      this.active = undefined;
+      this.start(task);
       return;
     }
     if (value.kind === 'error' && typeof value.message === 'string') {
@@ -705,6 +762,19 @@ class PersistentWorkerSession {
       task.watchdog?.touch();
       try {
         task.options.onTiledProgress?.(value.progress);
+      } catch (error) {
+        this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
+      }
+      return;
+    }
+    if (value.kind === 'filter-progress') {
+      if (!validFilterBandProgress(value.progress)) {
+        this.onWorkerFailure(new Error('Worker returned invalid filter progress.'));
+        return;
+      }
+      task.watchdog?.touch();
+      try {
+        task.options.onFilterProgress?.(value.progress);
       } catch (error) {
         this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
       }
@@ -823,6 +893,7 @@ class PersistentWorkerSession {
 
   /** Ask a live worker to drop its layer-filter surfaces; no-op otherwise. */
   clearLayerCache(): void {
+    this.workerAssetKeys = new Set();
     try {
       this.worker?.postMessage({ kind: 'clear-layer-cache' });
     } catch {

@@ -97,6 +97,26 @@ function decodeBase64(value: string): Uint8Array {
   }
 }
 
+/**
+ * PNG bytes as a base64 data URL. Uses the native `Uint8Array#toBase64` or,
+ * in browsers without it, FileReader (both native); the JavaScript fallback
+ * took about a second per 10 MP layer when opening large projects.
+ */
+export async function pngDataUrl(bytes: Uint8Array): Promise<string> {
+  const native = (bytes as Uint8Array & { toBase64?: () => string }).toBase64;
+  if (typeof native === 'function') return `data:image/png;base64,${native.call(bytes)}`;
+  if (typeof FileReader === 'function') {
+    const url = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(reader.error ?? new Error('Portable asset could not be read'));
+      reader.readAsDataURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/png' }));
+    });
+    if (url.startsWith('data:image/png;base64,')) return url;
+  }
+  return `data:image/png;base64,${encodeBase64(bytes)}`;
+}
+
 function encodeBase64(bytes: Uint8Array): string {
   let binary = '';
   // Chunking avoids argument and string limits when a large source is imported.
@@ -319,7 +339,7 @@ export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob 
     if (entry.data.byteLength !== item.byteLength || await sha256(entry.data) !== item.sha256) throw new Error('Portable asset checksum mismatch');
     const dimensions = readPngDimensions(entry.data);
     if (dimensions.w !== item.w || dimensions.h !== item.h) throw new Error('Portable asset dimensions do not match the manifest');
-    assets[item.id] = { url: `data:image/png;base64,${encodeBase64(entry.data)}`, w: item.w, h: item.h } satisfies Asset;
+    assets[item.id] = { url: await pngDataUrl(entry.data), w: item.w, h: item.h } satisfies Asset;
   }
   if (!isRecord(document)) throw new Error('Portable document is invalid');
   return validateDraft({ ...document, version: 2, assets });

@@ -760,7 +760,10 @@ function accumulateBilinear(
   x: number,
   y: number,
   sums: Float64Array,
+  rowOffset = 0,
 ): void {
+  // `height` and `y` are in full-image rows; `source` may hold only a band
+  // of rows starting at `rowOffset` (which must cover every sampled row).
   const maxX = width - 1, maxY = height - 1;
   const sampleX = x < 0 ? 0 : x > maxX ? maxX : x;
   const sampleY = y < 0 ? 0 : y > maxY ? maxY : y;
@@ -768,7 +771,7 @@ function accumulateBilinear(
   const right = left + 1 < maxX ? left + 1 : maxX;
   const bottom = top + 1 < maxY ? top + 1 : maxY;
   const tx = sampleX - left, ty = sampleY - top;
-  const topRow = top * width, bottomRow = bottom * width;
+  const topRow = (top - rowOffset) * width, bottomRow = (bottom - rowOffset) * width;
   let alpha = 0, red = 0, green = 0, blue = 0;
   let offset = (topRow + left) * 4;
   let weight = (1 - tx) * (1 - ty) * UNIT_ALPHA[source[offset + 3]];
@@ -919,6 +922,7 @@ function legacyPathRow(
   source: Uint8ClampedArray,
   width: number,
   height: number,
+  rowOffset: number,
   y: number,
   reachX: number,
   reachY: number,
@@ -935,7 +939,7 @@ function legacyPathRow(
 ): void {
   const taps = steps.length;
   for (let x = 0; x < width; x += 1) {
-    const destination = (y * width + x) * 4;
+    const destination = ((y - rowOffset) * width + x) * 4;
     if (source[destination + 3] === 0) continue;
     // Points farther from the centre bend more strongly.
     const centreOffset = ((x - centrePixelX) * normalX + (y - centrePixelY) * normalY) / maxDimension;
@@ -944,13 +948,31 @@ function legacyPathRow(
     sums[0] = 0; sums[1] = 0; sums[2] = 0; sums[3] = 0;
     for (let tap = 0; tap < taps; tap += 1) {
       const t = steps[tap];
-      accumulateBilinear(source, width, height, x + reachX * t + bendX * t * t, y + reachY * t + bendY * t * t, sums);
+      accumulateBilinear(source, width, height, x + reachX * t + bendX * t * t, y + reachY * t + bendY * t * t, sums, rowOffset);
     }
     blendSums(source, output, destination, sums, mix);
   }
 }
 
-/** Legacy centre/angle Path Blur (records without points). Byte-identical. */
+/**
+ * Vertical reach of legacy Path Blur in rows: the tangent moves a sample by
+ * at most `bounded` rows and the bend by at most 0.85·`bounded`, plus one row
+ * for the bilinear neighbour.
+ */
+export function legacyPathBlurReach(radius: number): number {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
+  return Math.ceil(bounded * 1.85) + 2;
+}
+
+/**
+ * Legacy centre/angle Path Blur (records without points). Byte-identical.
+ *
+ * With `band`, `source`/`output` hold only image rows
+ * [band.rowOffset, band.rowOffset + height) of an image `band.fullHeight`
+ * rows tall, and only rows [band.start, band.end) are rendered. Geometry is
+ * computed in full-image coordinates, so a band whose rows cover
+ * `legacyPathBlurReach` around its output rows matches the full render.
+ */
 export function fastLegacyPathBlur(
   source: Uint8ClampedArray,
   width: number,
@@ -961,22 +983,26 @@ export function fastLegacyPathBlur(
   centerY: number,
   output: Uint8ClampedArray,
   strength: number,
+  band?: { rowOffset: number; fullHeight: number; start: number; end: number },
 ): void {
+  const rowOffset = band?.rowOffset ?? 0;
+  const fullHeight = band?.fullHeight ?? height;
   const bounded = Math.max(1, Math.min(64, Math.round(radius)));
   const radians = (angle * Math.PI) / 180;
   const tangentX = Math.cos(radians), tangentY = Math.sin(radians);
   const normalX = -tangentY, normalY = tangentX;
   const centrePixelX = clampUnit(centerX) * (width - 1);
-  const centrePixelY = clampUnit(centerY) * (height - 1);
-  const maxDimension = Math.max(1, Math.max(width, height));
+  const centrePixelY = clampUnit(centerY) * (fullHeight - 1);
+  const maxDimension = Math.max(1, Math.max(width, fullHeight));
   const sampleCount = 8;
   const steps = new Float64Array(sampleCount * 2 + 1);
   for (let index = -sampleCount; index <= sampleCount; index += 1) steps[index + sampleCount] = index / sampleCount;
   const sums = new Float64Array(4);
   const mix = clampUnit(strength);
-  for (let y = 0; y < height; y += 1)
+  const start = band?.start ?? 0, end = band?.end ?? height;
+  for (let y = start; y < end; y += 1)
     legacyPathRow(
-      source, width, height, y, tangentX * bounded, tangentY * bounded, normalX, normalY,
+      source, width, fullHeight, rowOffset, y, tangentX * bounded, tangentY * bounded, normalX, normalY,
       centrePixelX, centrePixelY, maxDimension, bounded, steps, sums, output, mix,
     );
 }

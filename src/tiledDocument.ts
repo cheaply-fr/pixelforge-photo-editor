@@ -272,6 +272,22 @@ export type TiledDocumentOptions = {
   signal?: AbortSignal;
   isCancelled?: () => boolean;
   onTelemetry?: (telemetry: TiledRenderTelemetry) => void;
+  /**
+   * Optional tile kernel, e.g. one that runs in the filter worker pool. It
+   * must return exactly what `applyFilterEffectsPixels` returns.
+   */
+  renderTile?: (
+    input: Uint8ClampedArray,
+    width: number,
+    height: number,
+    effect: FilterEffects,
+    renderCenter?: { x: number; y: number },
+  ) => Promise<Uint8ClampedArray>;
+  /**
+   * Tiles rendered at once (default 1). It is lowered so that the in-flight
+   * input/output/sink bytes of the largest tile stay inside the working budget.
+   */
+  concurrency?: number;
 };
 
 export type TiledDocumentResult = {
@@ -405,59 +421,90 @@ export async function renderTiledNeighborhoodEffect(
     maxCacheBytes: cache?.maxBytes ?? 0,
   };
   let completed = 0;
-  for (const batch of plan.schedule.batches) {
-    for (let batchTileIndex = 0; batchTileIndex < batch.tiles.length; batchTileIndex += 1) {
+  let started = 0;
+  let inFlightBytes = 0;
+  const tiles = plan.schedule.batches.flatMap((batch) => batch.tiles);
+  const largestTileBytes = tiles.reduce(
+    (largest, tile) => Math.max(largest, tile.readWidth * tile.readHeight * 8 + tile.width * tile.height * 4),
+    1,
+  );
+  const concurrency = Math.max(1, Math.min(
+    Math.floor(options.concurrency ?? 1),
+    Math.floor(maxWorkingBytes / largestTileBytes),
+    tiles.length,
+  ));
+  const renderOne = async (tile: Tile, tileIndex: number): Promise<void> => {
+    assertAbort(options.signal, options.isCancelled);
+    const context = { plan, tileIndex };
+    const cacheKey = cache ? keyFor(options.revision, effect, tile) : undefined;
+    let rendered: Uint8ClampedArray | undefined;
+    const inputBytes = tile.readWidth * tile.readHeight * 4;
+    const sinkBytes = tile.width * tile.height * 4;
+    if (cacheKey && cache) {
+      const cached = cache.get(cacheKey);
+      if (cached) rendered = Uint8ClampedArray.from(cached);
+    }
+    if (!rendered) {
+      const input = await source(tile, context);
       assertAbort(options.signal, options.isCancelled);
-      const tile = batch.tiles[batchTileIndex];
-      const context = { plan, tileIndex: completed };
-      const cacheKey = cache ? keyFor(options.revision, effect, tile) : undefined;
-      let rendered: Uint8ClampedArray | undefined;
-      const inputBytes = tile.readWidth * tile.readHeight * 4;
-      const sinkBytes = tile.width * tile.height * 4;
-      if (cacheKey && cache) {
-        const cached = cache.get(cacheKey);
-        if (cached) rendered = Uint8ClampedArray.from(cached);
-      }
-      if (!rendered) {
-        const input = await source(tile, context);
-        assertAbort(options.signal, options.isCancelled);
-        assertPixels(input, tile.readWidth, tile.readHeight, 'Tiled source');
-        const actualInputBytes = input.byteLength;
-        if (actualInputBytes > maxWorkingBytes)
-          throw new TiledMemoryBudgetError('Tiled source exceeds the working-byte budget');
-        rendered = applyFilterEffectsPixels(
-          input,
-          tile.readWidth,
-          tile.readHeight,
-          effect,
-          tileRenderCenter(effect, tile, width, height),
-        );
-        assertAbort(options.signal, options.isCancelled);
-        assertPixels(rendered, tile.readWidth, tile.readHeight, 'Tiled effect output');
-        const workingBytes = actualInputBytes + rendered.byteLength + sinkBytes;
-        if (workingBytes > maxWorkingBytes)
-          throw new TiledMemoryBudgetError('Tiled effect input/output exceeds the working-byte budget');
-        ledger.peakWorkingBytes = Math.max(ledger.peakWorkingBytes, workingBytes);
-        if (cacheKey && cache) cache.set(cacheKey, Uint8ClampedArray.from(rendered), rendered.byteLength);
-      }
-      const workingBytes = inputBytes + rendered.byteLength + sinkBytes;
+      assertPixels(input, tile.readWidth, tile.readHeight, 'Tiled source');
+      const actualInputBytes = input.byteLength;
+      if (actualInputBytes > maxWorkingBytes)
+        throw new TiledMemoryBudgetError('Tiled source exceeds the working-byte budget');
+      const center = tileRenderCenter(effect, tile, width, height);
+      rendered = options.renderTile
+        ? await options.renderTile(input, tile.readWidth, tile.readHeight, effect, center)
+        : applyFilterEffectsPixels(input, tile.readWidth, tile.readHeight, effect, center);
+      assertAbort(options.signal, options.isCancelled);
+      assertPixels(rendered, tile.readWidth, tile.readHeight, 'Tiled effect output');
+      const workingBytes = actualInputBytes + rendered.byteLength + sinkBytes;
       if (workingBytes > maxWorkingBytes)
         throw new TiledMemoryBudgetError('Tiled effect input/output exceeds the working-byte budget');
-      ledger.peakWorkingBytes = Math.max(ledger.peakWorkingBytes, workingBytes);
-      assertAbort(options.signal, options.isCancelled);
-      await sink(rendered, tile, context);
-      assertAbort(options.signal, options.isCancelled);
-      ledger.cacheBytes = cache?.bytes ?? 0;
-      ledger.peakBytes = Math.max(
-        ledger.peakBytes,
-        destinationBytes + ledger.peakWorkingBytes + ledger.cacheBytes,
-      );
-      completed += 1;
-      options.onProgress?.(completed, plan.schedule.tileCount, {
-        tileSize: plan.request.tileSize,
-        tileCount: plan.schedule.tileCount,
-      });
+      if (cacheKey && cache) cache.set(cacheKey, Uint8ClampedArray.from(rendered), rendered.byteLength);
     }
+    const workingBytes = inputBytes + rendered.byteLength + sinkBytes;
+    if (workingBytes > maxWorkingBytes)
+      throw new TiledMemoryBudgetError('Tiled effect input/output exceeds the working-byte budget');
+    ledger.peakWorkingBytes = Math.max(ledger.peakWorkingBytes, inFlightBytes - largestTileBytes + workingBytes);
+    assertAbort(options.signal, options.isCancelled);
+    await sink(rendered, tile, context);
+    assertAbort(options.signal, options.isCancelled);
+    ledger.cacheBytes = cache?.bytes ?? 0;
+    ledger.peakBytes = Math.max(
+      ledger.peakBytes,
+      destinationBytes + ledger.peakWorkingBytes + ledger.cacheBytes,
+    );
+    completed += 1;
+    options.onProgress?.(completed, plan.schedule.tileCount, {
+      tileSize: plan.request.tileSize,
+      tileCount: plan.schedule.tileCount,
+    });
+  };
+  // Serial (concurrency 1) keeps the original row-major tile order exactly.
+  // With a worker pool, up to `concurrency` tiles are in flight; each tile
+  // writes only its own inner rectangle, so completion order never changes
+  // the result, and progress stays monotonic.
+  let stopped = false;
+  const lane = async (): Promise<void> => {
+    while (!stopped && started < tiles.length) {
+      const tileIndex = started++;
+      inFlightBytes += largestTileBytes;
+      try {
+        await renderOne(tiles[tileIndex], tileIndex);
+      } catch (error) {
+        stopped = true;
+        throw error;
+      } finally {
+        inFlightBytes -= largestTileBytes;
+      }
+    }
+  };
+  if (concurrency === 1) await lane();
+  else {
+    const lanes = Array.from({ length: concurrency }, () => lane());
+    const results = await Promise.allSettled(lanes);
+    const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failure) throw failure.reason;
   }
   assertAbort(options.signal, options.isCancelled);
   options.onTelemetry?.({

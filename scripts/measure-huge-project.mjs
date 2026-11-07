@@ -31,6 +31,8 @@ const rootPid = server.process().pid;
 const browser = await chromium.connect(server.wsEndpoint());
 const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, acceptDownloads: true });
 const page = await context.newPage();
+page.on('crash', () => console.error('PAGE CRASHED'));
+page.on('console', (message) => { if (message.type() === 'error' || message.text().startsWith('PFTIME')) console.error('console:', message.text().slice(0, 200)); });
 await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) =>
   route.fulfill({ json: { authenticated: false } }),
 );
@@ -65,17 +67,21 @@ results.baselineHeapMiB = await heapMiB();
 results.baselineBrowserMiB = treeMemoryMiB(rootPid);
 
 await time('importAndFirstRenderMs', async () => {
+  // Playwright copies the file into the browser before the input fires;
+  // report that harness cost separately from the editor's own import.
+  const transferStart = performance.now();
   await page.getByTestId('project-input').setInputFiles(projectPath);
+  results.harnessFileTransferMs = Math.round(performance.now() - transferStart);
   const done = footer.filter({ hasText: /Project opened|could not|exceed|Invalid/i });
   const started = performance.now();
   while (!(await done.isVisible())) {
     if (performance.now() - started > 1_200_000) throw new Error('Import did not finish within 20 minutes');
     await page.waitForTimeout(30_000);
-    console.error(`[${Math.round((performance.now() - started) / 1000)} s] ${(await footer.innerText()).replace(/\s+/g, ' ').slice(0, 160)} heap ${await heapMiB()} MiB browser ${treeMemoryMiB(rootPid)} MiB`);
+    console.error(`[${Math.round((performance.now() - started) / 1000)} s] ${(await footer.innerText({ timeout: 600_000 })).replace(/\s+/g, ' ').slice(0, 160)} heap ${await heapMiB()} MiB browser ${treeMemoryMiB(rootPid)} MiB`);
   }
   await settled();
 });
-results.importNotice = (await footer.innerText()).split('\n').find((line) => /Project|exceed|Invalid/.test(line));
+results.importNotice = (await footer.innerText({ timeout: 600_000 })).split('\n').find((line) => /Project|exceed|Invalid/.test(line));
 results.layersHeading = await page.getByRole('heading', { name: /^Layers \d+ \/ \d+$/ }).innerText();
 results.budgetReadout = await page.getByTestId('layer-pixel-budget').innerText().catch(() => undefined);
 results.afterImportHeapMiB = await heapMiB();
@@ -107,9 +113,12 @@ await time('strokeToRenderedMs', async () => {
   await page.waitForTimeout(50);
   await canvas.dispatchEvent('pointermove', { ...common, ...at(0.35, 0.32), buttons: 1 });
   await canvas.dispatchEvent('pointerup', { ...common, ...at(0.35, 0.32), buttons: 0 });
+  // The commit (layer growth, encode, content-bounds storage) finishes after
+  // the pointer events; wait for its notice before the final render.
+  await footer.filter({ hasText: /Paint layer updated|budget|could not/i }).waitFor({ timeout: 600_000 });
   await settled();
 });
-results.afterStrokeNotice = (await footer.innerText()).split('\n')[0];
+results.afterStrokeNotice = (await footer.innerText({ timeout: 600_000 })).split('\n')[0];
 await time('strokeDraftSaveMs', async () => {
   await page.waitForTimeout(400);
   await saved();
