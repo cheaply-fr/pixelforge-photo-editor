@@ -6,8 +6,9 @@
  * Every eligible kernel reads at most `halo` rows above or below an output
  * pixel and clips (or clamps) only at the real image edges, so the
  * assembled bands are byte-identical to one full-frame render. Legacy Path
- * Blur depends on the full image height for its geometry; it renders with an
- * explicit band frame instead of as a stand-alone smaller image.
+ * Blur and generated Light Rays depend on the full image height for their
+ * geometry; they render with an explicit band frame instead of as a
+ * stand-alone smaller image.
  *
  * This module is pure (no workers, no DOM); `filterWorkerPool.ts` runs the
  * same band requests in parallel workers.
@@ -20,6 +21,7 @@ import {
   type FilterEffects,
 } from './filterEffects.ts';
 import { fastLegacyPathBlur, legacyPathBlurReach } from './fastNeighborhoodFilters.ts';
+import { lightRaysBandSafe, renderLightRays } from './lightRays.ts';
 
 export type FilterBandRequest = {
   effect: FilterEffects;
@@ -48,6 +50,8 @@ export function filterBandHalo(value: Partial<FilterEffects> | undefined): numbe
   if (effect.type === 'lens-blur') return Math.min(64, radius);
   if (effect.type === 'path-blur' && !(effect.path && effect.path.length >= 2))
     return legacyPathBlurReach(effect.radius);
+  // Generated Light Rays are pointwise; their geometry uses an explicit frame.
+  if (effect.type === 'light-rays' && lightRaysBandSafe(effect.lightRays)) return 0;
   return undefined;
 }
 
@@ -97,6 +101,17 @@ export function renderFilterBand(request: FilterBandRequest): Uint8ClampedArray 
       pixels, width, readRows, normalized.radius, normalized.angle, normalized.centerX, normalized.centerY,
       output, normalized.amount / 100, { rowOffset: readStart, fullHeight: height, start, end },
     );
+    return output.slice(first, last);
+  }
+  if (normalized.type === 'light-rays') {
+    const output = new Uint8ClampedArray(pixels);
+    renderLightRays(pixels, output, width, readRows, {
+      settings: normalized.lightRays,
+      centerX: normalized.centerX,
+      centerY: normalized.centerY,
+      seed: normalized.seed,
+      strength: normalized.amount / 100,
+    }, { rowOffset: readStart, fullHeight: height, start, end });
     return output.slice(first, last);
   }
   // Halo rows are only read, never rendered.

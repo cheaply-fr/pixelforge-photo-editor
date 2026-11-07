@@ -1,6 +1,7 @@
 /**
  * Bounded deterministic brush dynamics for raster brush-family stamps:
- * scatter, dab count, and size/angle/opacity jitter. Every random choice is
+ * scatter, dab count, size/angle/opacity jitter and colour dynamics
+ * (hue/saturation/brightness and foreground/background mix jitter). Every random choice is
  * derived from the stroke point and dab index (never global randomness), so
  * a replayed stroke produces the same pixels. This is a bounded local
  * approximation of common brush-engine dynamics, not a Photoshop clone.
@@ -35,7 +36,18 @@ export type BrushDynamics = {
   angleJitter: number;
   /** Per-dab random opacity reduction, 0–100%. */
   opacityJitter: number;
+  /** Per-dab random hue rotation, 0–100% of ±180°. */
+  hueJitter: number;
+  /** Per-dab random saturation offset, 0–100% of ±1 (clamped). */
+  saturationJitter: number;
+  /** Per-dab random brightness offset, 0–100% of ±1 (clamped). */
+  brightnessJitter: number;
+  /** Per-dab random mix from the foreground towards the background colour, 0–100%. */
+  colorMixJitter: number;
 };
+
+/** The colour-dynamics keys; legacy settings omit them and default to 0. */
+export const BRUSH_COLOR_DYNAMICS_KEYS = ['hueJitter', 'saturationJitter', 'brightnessJitter', 'colorMixJitter'] as const;
 
 export const DEFAULT_BRUSH_DYNAMICS: Readonly<BrushDynamics> = Object.freeze({
   scatterBothAxes: true,
@@ -44,6 +56,10 @@ export const DEFAULT_BRUSH_DYNAMICS: Readonly<BrushDynamics> = Object.freeze({
   sizeJitter: 0,
   angleJitter: 0,
   opacityJitter: 0,
+  hueJitter: 0,
+  saturationJitter: 0,
+  brightnessJitter: 0,
+  colorMixJitter: 0,
 });
 
 /** One dab produced by the dynamics for a single spacing step. */
@@ -54,6 +70,14 @@ export type BrushDab = BrushPoint & {
   angleOffset: number;
   /** Multiplier for the dab opacity, [0, 1]. */
   opacityScale: number;
+  /** Colour dynamics, present only when the matching jitter is above 0: degrees of hue rotation. */
+  hueShift?: number;
+  /** Added to HSB saturation, [-1, 1]. */
+  saturationShift?: number;
+  /** Added to HSB brightness, [-1, 1]. */
+  brightnessShift?: number;
+  /** Fraction of the way from the foreground to the background colour, [0, 1]. */
+  backgroundMix?: number;
 };
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
@@ -84,7 +108,8 @@ export function validBrushDynamics(value: unknown): value is Partial<BrushDynami
     (candidate.countJitter === undefined || inRange(candidate.countJitter, 0, BRUSH_JITTER_MAX)) &&
     (candidate.sizeJitter === undefined || inRange(candidate.sizeJitter, 0, BRUSH_JITTER_MAX)) &&
     (candidate.angleJitter === undefined || inRange(candidate.angleJitter, 0, BRUSH_JITTER_MAX)) &&
-    (candidate.opacityJitter === undefined || inRange(candidate.opacityJitter, 0, BRUSH_JITTER_MAX))
+    (candidate.opacityJitter === undefined || inRange(candidate.opacityJitter, 0, BRUSH_JITTER_MAX)) &&
+    BRUSH_COLOR_DYNAMICS_KEYS.every((key) => candidate[key] === undefined || inRange(candidate[key], 0, BRUSH_JITTER_MAX))
   );
 }
 
@@ -104,6 +129,10 @@ export function normalizeBrushDynamics(value: unknown): BrushDynamics {
     sizeJitter: jitter(candidate.sizeJitter),
     angleJitter: jitter(candidate.angleJitter),
     opacityJitter: jitter(candidate.opacityJitter),
+    hueJitter: jitter(candidate.hueJitter),
+    saturationJitter: jitter(candidate.saturationJitter),
+    brightnessJitter: jitter(candidate.brightnessJitter),
+    colorMixJitter: jitter(candidate.colorMixJitter),
   };
 }
 
@@ -223,7 +252,111 @@ export function brushDabsAt(
       opacityScale: dynamics.opacityJitter > 0
         ? 1 - (dynamics.opacityJitter / 100) * brushDabRandom(point, index, 4)
         : 1,
+      ...brushDabColorJitter(point, index, dynamics),
     });
   }
   return dabs;
+}
+
+type BrushDabColorOffsets = Pick<BrushDab, 'hueShift' | 'saturationShift' | 'brightnessShift' | 'backgroundMix'>;
+type Rgba = readonly [number, number, number, number];
+
+const jitterAmount = (value: unknown) =>
+  finite(value) ? Math.max(0, Math.min(BRUSH_JITTER_MAX, value)) / 100 : 0;
+
+/** True when any colour-dynamics control is above 0. */
+export function hasBrushColorDynamics(dynamics: Partial<BrushDynamics> | undefined): boolean {
+  return Boolean(dynamics) && BRUSH_COLOR_DYNAMICS_KEYS.some((key) => jitterAmount(dynamics![key]) > 0);
+}
+
+/**
+ * Deterministic per-dab colour offsets. They use hash channels 5–8, so
+ * enabling colour dynamics never moves, resizes, rotates or fades a dab.
+ * Keys are omitted when the matching jitter is 0, keeping legacy dabs equal.
+ */
+export function brushDabColorJitter(
+  point: BrushPoint,
+  index: number,
+  dynamics: Partial<BrushDynamics>,
+): BrushDabColorOffsets {
+  const result: BrushDabColorOffsets = {},
+    hue = jitterAmount(dynamics.hueJitter),
+    saturation = jitterAmount(dynamics.saturationJitter),
+    brightness = jitterAmount(dynamics.brightnessJitter),
+    mix = jitterAmount(dynamics.colorMixJitter);
+  if (hue > 0) result.hueShift = (brushDabRandom(point, index, 5) * 2 - 1) * 180 * hue;
+  if (saturation > 0) result.saturationShift = (brushDabRandom(point, index, 6) * 2 - 1) * saturation;
+  if (brightness > 0) result.brightnessShift = (brushDabRandom(point, index, 7) * 2 - 1) * brightness;
+  if (mix > 0) result.backgroundMix = brushDabRandom(point, index, 8) * mix;
+  return result;
+}
+
+/** Convert 0–255 RGB to hue (0–360°) plus saturation and brightness (0–1). */
+export function rgbToHsb(red: number, green: number, blue: number): { hue: number; saturation: number; brightness: number } {
+  const channel = (value: number) => Math.max(0, Math.min(255, finite(value) ? value : 0)) / 255,
+    r = channel(red),
+    g = channel(green),
+    b = channel(blue),
+    max = Math.max(r, g, b),
+    delta = max - Math.min(r, g, b);
+  let hue = 0;
+  if (delta > 0) {
+    if (max === r) hue = 60 * (((g - b) / delta) % 6);
+    else if (max === g) hue = 60 * ((b - r) / delta + 2);
+    else hue = 60 * ((r - g) / delta + 4);
+  }
+  if (hue < 0) hue += 360;
+  return { hue, saturation: max === 0 ? 0 : delta / max, brightness: max };
+}
+
+/** Convert hue (any degrees, wrapped) and saturation/brightness (clamped 0–1) to rounded 0–255 RGB. */
+export function hsbToRgb(hue: number, saturation: number, brightness: number): [number, number, number] {
+  const h = (((finite(hue) ? hue : 0) % 360) + 360) % 360,
+    s = Math.max(0, Math.min(1, finite(saturation) ? saturation : 0)),
+    v = Math.max(0, Math.min(1, finite(brightness) ? brightness : 0)),
+    chroma = v * s,
+    x = chroma * (1 - Math.abs(((h / 60) % 2) - 1)),
+    m = v - chroma,
+    sectors: Array<[number, number, number]> = [
+      [chroma, x, 0],
+      [x, chroma, 0],
+      [0, chroma, x],
+      [0, x, chroma],
+      [x, 0, chroma],
+      [chroma, 0, x],
+    ],
+    [r, g, b] = sectors[Math.floor(h / 60) % 6];
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+/**
+ * Apply one dab's colour offsets to the foreground colour: first mix towards
+ * the background colour, then rotate hue and offset saturation/brightness in
+ * HSB. Alpha is preserved. A dab without colour offsets returns the
+ * foreground itself, so legacy strokes render byte-identically.
+ */
+export function brushDabColor<T extends Rgba>(
+  foreground: T,
+  background: Rgba | undefined,
+  dab: BrushDabColorOffsets,
+): T | [number, number, number, number] {
+  const mix = finite(dab.backgroundMix) ? Math.max(0, Math.min(1, dab.backgroundMix)) : 0,
+    hueShift = finite(dab.hueShift) ? dab.hueShift : 0,
+    saturationShift = finite(dab.saturationShift) ? dab.saturationShift : 0,
+    brightnessShift = finite(dab.brightnessShift) ? dab.brightnessShift : 0,
+    mixes = mix > 0 && background !== undefined;
+  if (!mixes && hueShift === 0 && saturationShift === 0 && brightnessShift === 0) return foreground;
+  let red = foreground[0],
+    green = foreground[1],
+    blue = foreground[2];
+  if (mixes) {
+    red = Math.round(red + (background[0] - red) * mix);
+    green = Math.round(green + (background[1] - green) * mix);
+    blue = Math.round(blue + (background[2] - blue) * mix);
+  }
+  if (hueShift !== 0 || saturationShift !== 0 || brightnessShift !== 0) {
+    const hsb = rgbToHsb(red, green, blue);
+    [red, green, blue] = hsbToRgb(hsb.hue + hueShift, hsb.saturation + saturationShift, hsb.brightness + brightnessShift);
+  }
+  return [red, green, blue, foreground[3]];
 }

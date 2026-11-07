@@ -183,6 +183,7 @@ export const REPLAYABLE_ACTION_COMMANDS = new Set([
   'filter-wave',
   'filter-clear-effect',
   'filter-lens-flare',
+  'filter-light-rays',
   'filter-flame',
   'filter-deinterlace',
   'filter-ntsc-colors',

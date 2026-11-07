@@ -61,3 +61,30 @@ with 100% jitter paints a strict superset of Count 1 and a strict subset of
 Count 2 along the same pointer path; ten strokes that, with both axes on,
 deterministically move a first dab before the stroke start never do so with
 both axes off).
+
+## Colour dynamics (2026-11-07)
+
+Branch `feat/brush-color-dynamics-presets`. Brush and Pencil add **Hue
+jitter**, **Saturation jitter**, **Brightness jitter** and
+**Foreground/background jitter** (each 0–100%) next to the other jitter
+controls. Per dab, the foreground colour is first mixed towards the
+background colour by up to the mix jitter, then converted to HSB: hue rotates
+by up to ±180° × jitter, and saturation and brightness move by up to ±jitter
+(clamped to 0–1). Alpha, pressure, opacity/flow, selection confinement and
+the dab's position, size, angle and opacity are unchanged: colour offsets use
+their own hash channels (5–8) of the stroke point and dab index, so strokes
+replay identically and enabling colour dynamics never moves a dab. A white or
+grey foreground has no hue, so Hue jitter alone leaves it unchanged; use
+Saturation or Foreground/background jitter to tint it. Eraser ignores colour
+dynamics.
+
+The keys persist inside `settings.brushDynamics` and custom brush presets;
+older settings omit them, load 0, and render byte-identically (a dab without
+colour offsets returns the exact foreground colour). Evidence:
+`tests/brush-color-dynamics.test.mjs` (HSB round-trip, bounds, determinism,
+geometry independence, mix/HSB maths, legacy byte identity through
+`applyRadialStamp`) and `tests/browser/brush-color-presets.spec.ts` on desktop
+and mobile (Hue jitter paints at least four hue families from a red
+foreground while the plain stroke stays exactly red; Foreground/background
+jitter stays between red and blue). This is a bounded deterministic
+approximation of common brush-engine colour dynamics, not Photoshop parity.

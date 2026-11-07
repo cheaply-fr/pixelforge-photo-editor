@@ -297,3 +297,4 @@
 .editor-dialog.stroke-path-dialog .stroke-path-affects{display:flex;gap:16px;flex-wrap:wrap;border:1px solid #3a404b;border-radius:8px;padding:4px 12px;margin:10px 0}
 .editor-dialog.stroke-path-dialog .stroke-path-affects legend{font-size:11px;color:#c5c9d2;padding:0 4px}
 .editor-dialog.stroke-path-dialog .stroke-path-affects:disabled{opacity:.55}
+.brush-preset-library{border:0;padding:0;margin:0;min-width:0}.brush-preset-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.brush-preset-actions button{flex:1 1 auto;min-height:32px;font-size:12px}

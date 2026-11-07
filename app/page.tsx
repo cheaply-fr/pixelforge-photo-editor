@@ -113,9 +113,19 @@ import { normalizeTextLanguage, type TextLanguageSettings } from '../src/textLan
 import { normalizeTextPathBinding } from '../src/textOnPath';
 import {
   createCustomBrushPreset,
-  normalizeCustomBrushPresets,
   type CustomBrushPreset,
 } from '../src/customBrushPresets';
+import {
+  BUILT_IN_BRUSH_PRESETS,
+  browserPresetStorage,
+  builtInBrushPresetById,
+  deleteCustomBrushPreset,
+  mergeBrushPresetLibraries,
+  readStoredBrushPresets,
+  renameCustomBrushPreset,
+  writeStoredBrushPresets,
+} from '../src/brushPresetLibrary';
+import { BrushPresetLibraryControls } from '../src/BrushPresetLibraryControls';
 import {
   createCustomPatternPreset,
   normalizeCustomPatternPresets,
@@ -503,6 +513,7 @@ import {
   BRUSH_SCATTER_DEFAULT,
   BRUSH_SCATTER_MAX,
   DEFAULT_BRUSH_DYNAMICS,
+  brushDabColor,
   brushDabsAt,
   deferFirstBrushDab,
   normalizeBrushDynamics,
@@ -658,6 +669,7 @@ import {
   isCenteredFilter,
   nudgeFilterCenter,
 } from '../src/filterCenter';
+import LightRaysControls, { lightRaysEffectDefaults } from '../src/LightRaysControls';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -967,6 +979,7 @@ type Command =
   | 'filter-lens-correction'
   | 'filter-adaptive-wide-angle'
   | 'filter-lens-flare'
+  | 'filter-light-rays'
   | 'filter-vanishing-point'
   | 'filter-displace'
   | 'filter-pinch'
@@ -1518,6 +1531,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'filter-fibers' },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
+    { label: 'Light Rays…', command: 'filter-light-rays' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'filter-sharpen' },
     { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
@@ -1722,6 +1736,8 @@ type StampCanvasOptions = {
   flipY?: boolean;
   mode: BrushMode;
   color?: BrushColor;
+  /** Background colour for the colour dynamics foreground/background mix jitter. */
+  colorBackground?: BrushColor;
   source?: HTMLCanvasElement;
   sourceX?: number;
   sourceY?: number;
@@ -1900,6 +1916,8 @@ const stampCanvasSegment = (
           size: dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
           angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
           opacity: options.opacity * dab.opacityScale,
+          // Colour dynamics; dabs without colour offsets keep the exact colour.
+          color: options.color && brushDabColor(options.color, options.colorBackground, dab),
           x: dab.x,
           y: dab.y,
           sourceX,
@@ -2630,7 +2648,9 @@ export default function Home() {
     [pressureOpacity, setPressureOpacity] = useState(false),
     [pressureCurve, setPressureCurve] = useState<BrushPressureCurve>('linear'),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
-    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
+    // Saved brush presets start from this device's library (localStorage).
+    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>(() => readStoredBrushPresets(browserPresetStorage())),
+    [selectedBrushLibraryId, setSelectedBrushLibraryId] = useState(''),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
@@ -2860,6 +2880,10 @@ export default function Home() {
   const recordingActionRef = useRef<string | undefined>(undefined),
     replayingActionRef = useRef(false),
     batchActionRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    // Storage failures are reported as false and never block editing.
+    writeStoredBrushPresets(browserPresetStorage(), customBrushPresets);
+  }, [customBrushPresets]);
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -3438,7 +3462,8 @@ export default function Home() {
     setPressureOpacity(s.pressureOpacity ?? false);
     setPressureCurve(normalizeBrushPressureCurve(s.pressureCurve));
     setBrushPreset(s.brushPreset ?? 'round-hard');
-    setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
+    // Keep this device's library and add any presets carried by the draft/project.
+    setCustomBrushPresets((currentPresets) => mergeBrushPresetLibraries(currentPresets, s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
@@ -3602,7 +3627,33 @@ export default function Home() {
     setBrushWetEdges(preset.brushWetEdges);
     setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
+    if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
+    setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const selectBrushLibraryPreset = (id: string) => {
+    const preset = builtInBrushPresetById(id) ?? customBrushPresets.find((item) => item.id === id);
+    if (preset) applyCustomBrushPreset(preset);
+    else setSelectedBrushLibraryId('');
+  };
+  const renameBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing) return;
+    const label = window.prompt('Rename this brush preset', existing.label);
+    if (label === null) return;
+    try {
+      setCustomBrushPresets(renameCustomBrushPreset(customBrushPresets, existing.id, label));
+      setNotice(`Brush preset renamed to “${label.trim().slice(0, 80)}”`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Brush preset could not be renamed');
+    }
+  };
+  const deleteBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing || !window.confirm(`Delete the brush preset “${existing.label}” from this device?`)) return;
+    setCustomBrushPresets(deleteCustomBrushPreset(customBrushPresets, existing.id));
+    setSelectedBrushLibraryId('');
+    setNotice(`Brush preset “${existing.label}” deleted from this device`);
   };
   const defineBrushPreset = () => {
     const label = window.prompt('Name this brush preset', 'Custom brush');
@@ -3634,6 +3685,7 @@ export default function Home() {
         brushWetEdges,
         brushBuildUp,
         brushFlow,
+        brushOpacity,
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -6805,6 +6857,7 @@ export default function Home() {
                     : type === 'shear'
                       ? 90
                       : 0,
+                ...(type === 'light-rays' ? lightRaysEffectDefaults() : {}),
               },
       )
     )
@@ -12075,6 +12128,7 @@ export default function Home() {
               flipY: brushFlipY,
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
               color: tool === 'eraser' ? undefined : brushColor(color),
+              colorBackground: brushColor(backgroundColor),
             });
             from = destination;
             stabilized = destination;
@@ -12651,6 +12705,7 @@ export default function Home() {
         flipY: brushFlipY,
         mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
         color: g.tool === 'eraser' ? undefined : brushColor(color),
+        colorBackground: brushColor(backgroundColor),
       });
       previewGesture(g);
       g.smoothedLast = destination;
@@ -13261,6 +13316,7 @@ export default function Home() {
           flipY: brushFlipY,
           mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
           color: g.tool === 'eraser' ? undefined : brushColor(color),
+          colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
       const asset = addPaintedAsset(g.buffer);
@@ -14761,6 +14817,8 @@ export default function Home() {
       chooseFilterEffect('adaptive-wide-angle', 'Adaptive Wide Angle (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
+    else if (command === 'filter-light-rays')
+      chooseFilterEffect('light-rays', 'Light Rays (local approximation)');
     else if (command === 'filter-vanishing-point') return applyPerspectiveWarp('Vanishing Point');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
@@ -15131,6 +15189,7 @@ export default function Home() {
       case 'filter-tree':
       case 'filter-clouds':
       case 'filter-lens-flare':
+      case 'filter-light-rays':
       case 'filter-picture-frame':
       case 'filter-fibers':
       case 'filter-difference-clouds':
@@ -17804,26 +17863,15 @@ export default function Home() {
                           ))}
                         </select>
                       </label>
-                      {customBrushPresets.length > 0 && (
-                        <label className="select-row">
-                          <span>Saved brush preset</span>
-                          <select
-                            aria-label="Saved brush preset"
-                            defaultValue=""
-                            onChange={(event) => {
-                              const preset = customBrushPresets.find((item) => item.id === event.target.value);
-                              if (preset) applyCustomBrushPreset(preset);
-                            }}
-                          >
-                            <option value="">Choose saved preset</option>
-                            {customBrushPresets.map((preset) => (
-                              <option key={preset.id} value={preset.id}>
-                                {preset.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
+                      <BrushPresetLibraryControls
+                        builtIns={BUILT_IN_BRUSH_PRESETS}
+                        saved={customBrushPresets}
+                        selectedId={selectedBrushLibraryId}
+                        onSelect={selectBrushLibraryPreset}
+                        onSave={defineBrushPreset}
+                        onRename={renameBrushLibraryPreset}
+                        onDelete={deleteBrushLibraryPreset}
+                      />
                     </>
                   )}
                   {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
@@ -17987,6 +18035,38 @@ export default function Home() {
                             max={100}
                             set={(opacityJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, opacityJitter }))}
                           />
+                          {(tool === 'brush' || tool === 'pencil') && (
+                            <>
+                              <Slider
+                                label="Hue jitter"
+                                value={brushDynamics.hueJitter}
+                                min={0}
+                                max={100}
+                                set={(hueJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, hueJitter }))}
+                              />
+                              <Slider
+                                label="Saturation jitter"
+                                value={brushDynamics.saturationJitter}
+                                min={0}
+                                max={100}
+                                set={(saturationJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, saturationJitter }))}
+                              />
+                              <Slider
+                                label="Brightness jitter"
+                                value={brushDynamics.brightnessJitter}
+                                min={0}
+                                max={100}
+                                set={(brightnessJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, brightnessJitter }))}
+                              />
+                              <Slider
+                                label="Foreground/background jitter"
+                                value={brushDynamics.colorMixJitter}
+                                min={0}
+                                max={100}
+                                set={(colorMixJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, colorMixJitter }))}
+                              />
+                            </>
+                          )}
                           <Slider
                             label="Texture"
                             value={brushTexture}
@@ -18539,6 +18619,9 @@ export default function Home() {
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
+            {filterEffects.type === 'light-rays' && (
+              <p>Seeded local light-ray approximation: generated rays or Starburst spikes, or radial streaks of the layer&apos;s own bright pixels, around an editable centre. It is a bounded local render, not a physical light simulation.</p>
+            )}
             {filterEffects.type === 'lens-flare' && (
               <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
             )}
@@ -18741,6 +18824,9 @@ export default function Home() {
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
+                {filterEffects.type === 'light-rays' && (
+                  <LightRaysControls effect={filterEffects} change={setFilterEffects} />
+                )}
             {filterEffects.type === 'picture-frame' && (
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
@@ -18770,7 +18856,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
