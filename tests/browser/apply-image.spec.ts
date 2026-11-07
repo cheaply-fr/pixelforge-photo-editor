@@ -65,7 +65,7 @@ test('Image > Apply Image grows an empty paint layer to the canvas first', async
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   page.once('dialog', (dialog) => dialog.accept('100'));
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Apply Imageâ€¦', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Apply Image…', exact: true }).click();
   await expect(page.locator('footer')).toContainText('Apply Image composited the visible image at 100%');
   await expect(page.locator('footer')).not.toContainText('match the document dimensions');
   const pending = page.waitForEvent('download');
@@ -94,7 +94,7 @@ test('Image > Apply Image cancelled on an empty paint layer leaves it at one pix
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Apply Imageâ€¦', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Apply Image…', exact: true }).click();
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();

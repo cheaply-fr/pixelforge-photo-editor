@@ -306,8 +306,12 @@ export function useDocument(onError: (message: string) => void) {
           },
           () => undefined,
         );
+        // A newer import or render superseded this one: report it as such,
+        // whichever step noticed first.
+        assertCurrentInstall();
         // A failed asset decode cancels the render; report the decode failure.
         await validation;
+        assertCurrentInstall();
         throw error;
       }
       try {
