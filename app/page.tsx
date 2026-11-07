@@ -2497,6 +2497,10 @@ export default function Home() {
     cloneSourceRef.current = next;
     setCloneSource(next);
   };
+  const clearCloneSource = () => {
+    cloneSourceRef.current = null;
+    setCloneSource(null);
+  };
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
@@ -13461,7 +13465,7 @@ export default function Home() {
     else if (command === 'combine-shapes-exclude') return combineSelectedShapes('exclude');
     else if (command === 'patch-tool') {
       setTool('patch');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Patch tool selected; click a source, then drag a destination');
     } else if (command === 'mixer-brush-tool') {
       setTool('mixer-brush');
@@ -13784,11 +13788,11 @@ export default function Home() {
       if (cropPreview) cancelCropPreview();
       if (perspectiveCropPreview) cancelPerspectiveCropPreview();
       setTool('slice');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Drag on the image to select a slice');
     } else if (command === 'slice-select') {
       setTool('slice-select');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice(
         current().slices?.length
           ? 'Click a saved slice to select and edit it'
@@ -13797,7 +13801,7 @@ export default function Home() {
     } else if (command === 'frame') {
       if (slicePreview) cancelSlicePreview();
       setTool('frame');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
     else if (command === 'rotate-right') return transform('right');
@@ -14341,7 +14345,7 @@ export default function Home() {
       void paint(current());
     }
     setTool(id);
-    setCloneSource(null);
+    clearCloneSource();
     closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
   };
