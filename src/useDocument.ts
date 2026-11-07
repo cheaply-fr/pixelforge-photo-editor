@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   assertAssetByteBudgetForEdit,
   assertLayerPixelBudgetForEdit,
-  decodeAsset,
+  assetsDecodedByRender,
+  verifyAssetsDecode,
   referencedAssets,
   validateFrame,
   type Assets,
@@ -254,18 +255,26 @@ export function useDocument(onError: (message: string) => void) {
     setTiledTelemetry(null);
     setTiledProgress(null);
     try {
-      // Validate every history asset before switching, so undo never discovers a corrupt import.
-      for (const asset of Object.values(draft.assets)) {
-        assertCurrentInstall();
-        await decodeAsset(asset);
-        assertCurrentInstall();
-      }
       // Release the previous document's retained filtered layers before the
       // installed one fills the cache. Keys are content-based, so this bounds
       // memory rather than preventing stale reuse.
       clearLayerFilterCaches();
+      // Validate every history asset before switching, so undo never
+      // discovers a corrupt import. Decodes run a few at a time, are not
+      // retained, and overlap the render below instead of preceding it.
+      // Sources the render below decodes anyway (a failure there fails the
+      // install too) are not decoded twice.
+      const rendered = assetsDecodedByRender(draft.history[draft.index], draft.assets);
+      const unrendered = Object.entries(draft.assets)
+        .filter(([id]) => !rendered.has(id))
+        .map(([, asset]) => asset);
+      const validation = verifyAssetsDecode(unrendered, {
+        concurrency: 4,
+        assertCurrent: assertCurrentInstall,
+      });
+      validation.catch(() => installController.abort());
       // Decode and render before switching documents, preserving the current work on import failure.
-      const image = await renderFrameWithWorker(
+      const rendering = renderFrameWithWorker(
         draft.history[draft.index],
         draft.assets,
         undefined,
@@ -287,6 +296,20 @@ export function useDocument(onError: (message: string) => void) {
           },
         },
       );
+      let image: CanvasImageSource;
+      try {
+        [, image] = await Promise.all([validation, rendering]);
+      } catch (error) {
+        void rendering.then(
+          (rendered) => {
+            if ('close' in rendered && typeof rendered.close === 'function') rendered.close();
+          },
+          () => undefined,
+        );
+        // A failed asset decode cancels the render; report the decode failure.
+        await validation;
+        throw error;
+      }
       try {
         assertCurrentInstall();
         if (history.current[index.current] !== expected)

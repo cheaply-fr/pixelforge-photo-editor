@@ -7,6 +7,7 @@ import {
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
 import { CompositeCache } from './compositeCache.ts';
+import { assetsToSend } from './workerAssets.ts';
 
 /** Main-thread prefix composite (used by stroke previews and the fallback). */
 const mainThreadCompositeCache = new CompositeCache<HTMLCanvasElement>();
@@ -192,6 +193,7 @@ export function primeWorkerDecodedAsset(
     return false;
   }
 }
+
 
 /** Primes for this request's assets, plus the buffers to transfer. */
 function takeWorkerPrimes(keys: Record<string, string>): {
@@ -485,6 +487,8 @@ export async function renderFrameWithWorker(
 
 type PersistentFallback = () => Promise<CanvasImageSource>;
 type PersistentTask = {
+  /** Set after one resend because the worker was missing an asset. */
+  assetRetry?: boolean;
   id: number;
   frame: Frame;
   assets: Assets;
@@ -507,6 +511,11 @@ type PersistentTask = {
  */
 class PersistentWorkerSession {
   private worker?: Worker;
+  /**
+   * Fingerprints of the assets the live worker holds: exactly those of the
+   * last request it received (it keeps that set and drops the rest).
+   */
+  private workerAssetKeys = new Set<string>();
   private active?: PersistentTask;
   private queued?: PersistentTask;
   private idleTimer?: ReturnType<typeof setTimeout>;
@@ -557,6 +566,7 @@ class PersistentWorkerSession {
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
+    this.workerAssetKeys = new Set();
     this.worker = new Worker(
       new URL('./document-render.worker.ts', import.meta.url),
       { type: 'module' },
@@ -582,15 +592,19 @@ class PersistentWorkerSession {
       const used = referencedAssets([task.frame], task.assets);
       const assetKeys = assetFingerprints(used);
       const primes = takeWorkerPrimes(assetKeys);
+      // Send only assets the worker does not already hold (by content), so a
+      // large document is not structured-cloned again on every edit.
+      const send = assetsToSend(used, assetKeys, this.workerAssetKeys);
       worker.postMessage({
         kind: 'render',
         id: task.id,
         frame: task.frame,
-        assets: used,
+        assets: send,
         assetKeys,
         decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
       }, primes.transfer);
+      this.workerAssetKeys = new Set(Object.values(assetKeys));
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
       // still busy. Retire it before falling back and servicing a queued
@@ -646,6 +660,17 @@ class PersistentWorkerSession {
         this.finish(task);
         void this.startNext();
       }
+      return;
+    }
+    if (value.kind === 'error' && value.name === 'WorkerAssetMissing' && !task.assetRetry) {
+      // The worker no longer holds an asset this session assumed it had:
+      // resend the request once with every asset.
+      task.assetRetry = true;
+      task.watchdog?.clear();
+      task.watchdog = undefined;
+      this.workerAssetKeys = new Set();
+      this.active = undefined;
+      this.start(task);
       return;
     }
     if (value.kind === 'error' && typeof value.message === 'string') {
@@ -823,6 +848,7 @@ class PersistentWorkerSession {
 
   /** Ask a live worker to drop its layer-filter surfaces; no-op otherwise. */
   clearLayerCache(): void {
+    this.workerAssetKeys = new Set();
     try {
       this.worker?.postMessage({ kind: 'clear-layer-cache' });
     } catch {

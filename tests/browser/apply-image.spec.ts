@@ -56,3 +56,50 @@ test('Image > Apply Image clips the rendered source to an active selection', asy
   const project = await downloadedProject((await (await pending).path())!);
   expect(project.history.at(-1)?.selection).toBeTruthy();
 });
+
+test('Image > Apply Image grows an empty paint layer to the canvas first', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  // A new paint layer stores one transparent pixel until something is written.
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  page.once('dialog', (dialog) => dialog.accept('100'));
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Apply Imageâ€¦', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Apply Image composited the visible image at 100%');
+  await expect(page.locator('footer')).not.toContainText('match the document dimensions');
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const project = await downloadedProject((await (await pending).path())!);
+  const frame = project.history[project.index];
+  const layer = frame.layers.find((item: { id: string }) => item.id === frame.active);
+  expect([project.assets[layer.asset].w, project.assets[layer.asset].h]).toEqual([frame.w, frame.h]);
+  // One undo step: undo returns to the empty one-pixel layer.
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const undone = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const before = await downloadedProject((await (await undone).path())!);
+  const beforeFrame = before.history[before.index];
+  const beforeLayer = beforeFrame.layers.find((item: { id: string }) => item.id === layer.id);
+  expect([before.assets[beforeLayer.asset].w, before.assets[beforeLayer.asset].h]).toEqual([1, 1]);
+});
+
+test('Image > Apply Image cancelled on an empty paint layer leaves it at one pixel', async ({ page }) => {
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Apply Imageâ€¦', exact: true }).click();
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+  const project = await downloadedProject((await (await pending).path())!);
+  const frame = project.history[project.index];
+  const layer = frame.layers.find((item: { id: string }) => item.id === frame.active);
+  expect([project.assets[layer.asset].w, project.assets[layer.asset].h]).toEqual([1, 1]);
+});
