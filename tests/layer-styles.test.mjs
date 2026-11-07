@@ -35,6 +35,10 @@ test('Layer Style metadata is bounded and legacy values normalize safely', () =>
     offsetX: neutralLayerStyles.dropShadow.offsetX,
     offsetY: neutralLayerStyles.dropShadow.offsetY,
     blur: neutralLayerStyles.dropShadow.blur,
+    // A stored shadow without the newer fields is a legacy document: Normal
+    // mode and the historical box falloff, so its pixels do not change.
+    blend: 'source-over',
+    falloff: 'box',
   });
   assert.deepEqual(value.outline, {
     enabled: true,

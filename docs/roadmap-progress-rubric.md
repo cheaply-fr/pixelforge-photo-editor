@@ -177,6 +177,24 @@ not yet in its branch.
 | 16 | Alt-click clone source dropped while the previous stroke commits | P2 | D | `brush-tool-contract.md` |
 | 17 | Project limits force flattening on large posters (layers, stored pixels, asset/draft caps) | P1 | A | `layer-pixel-budget-contract.md`, `draft-storage-contract.md` |
 
+### Fix wave 2 polish — effects (branch `feat/effects-retouch-polish`)
+
+Follow-ups of limitations documented by #197 and #199. Implemented locally
+on `feat/effects-retouch-polish`; not merged. The companion retouch/brush
+items (Spot Healing/Patch selections, live gradient preview, Count jitter) are
+on `feat/retouch-brush-polish` (#201).
+
+| Item | Change | Contract | Remaining limitations |
+| --- | --- | --- | --- |
+| Glow/shadow blend modes blended only against the layer's own pixels (#197) | A non-Normal Outer Glow or Drop Shadow composites onto the pixels beneath the layer in its own pass; Drop Shadow gains a blend mode (default Normal); same `renderFrame` path for viewport, worker, export and merge/flatten | `layer-styles-contract.md` | Folder members see only the folder's lower members; clipped layers' outer effects see no backdrop; no Knockout/Fill opacity |
+| Drop/Inner shadow falloff linear at large radii (#197) | **Falloff: Gaussian / Linear (legacy)**; Gaussian (three matched box passes from #191, up to 250 px) is the default for new layers; stored shadows without the field keep the box pass and identical pixels | `layer-styles-contract.md` | ≈20% slower than the box pass at large radii (local measurement) |
+| Stacked filters could not be edited in place (#199) | **Edit stacked filter** points the Filter effects controls at a stack entry; one undo step per change; position and hidden state kept; #185 key follows the normalised stack | `smart-filters-contract.md` | Per-filter blend modes and masks still staged |
+
+Evidence: `tests/effects-polish.test.mjs` and
+`tests/browser/effects-polish.spec.ts` (desktop and mobile). Local results
+and CI are reported on the PR; nothing here is CI-verified, deployed or live
+accepted until recorded separately.
+
 ## Latest protected release evidence
 
 The protected workflow run for the current merged release completed

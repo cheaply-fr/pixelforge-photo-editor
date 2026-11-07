@@ -140,9 +140,12 @@ import {
 import {
   applyLayerStylesPixels,
   isNeutralLayerStyles,
+  layerStyleBackdropPasses,
   validLayerStyles,
   neutralLayerStyles,
+  withLayerStylePart,
   type LayerStyles,
+  type LayerStylesWithPart,
 } from './layerStyles.ts';
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
@@ -2292,7 +2295,7 @@ function applyRasterLayerStyles(
   source: CanvasImageSource,
   width: number,
   height: number,
-  styles: Partial<LayerStyles> | undefined,
+  styles: LayerStylesWithPart | undefined,
 ): HTMLCanvasElement | CanvasImageSource {
   if (isNeutralLayerStyles(styles)) return source;
   const styled = surface(width, height), context = styled.getContext('2d')!;
@@ -2533,6 +2536,49 @@ export async function renderFrame(
       sourcePixels.data.set(clippedPixels);
       sourceContext.putImageData(sourcePixels, 0, 0);
       compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
+      reportProgress(layerIndex);
+      continue;
+    }
+    const backdropPasses = layer.kind === 'adjustment' ? [] : layerStyleBackdropPasses(layer.styles);
+    if (backdropPasses.length) {
+      // A Drop Shadow or Outer Glow with its own blend mode composites onto
+      // the pixels beneath this layer (the current output), as in editors that
+      // blend each effect separately. Each outer effect renders alone through
+      // the layer's full local/frame pipeline (filters, transform, masks,
+      // adjustments), then the body without outer effects uses the layer's
+      // own blend. Layer opacity scales every pass. The nested one-layer
+      // renders carry a part tag, so they never re-enter this branch.
+      const nestedOptions = options?.onProgress ? { ...options, onProgress: undefined } : options;
+      const renderPart = (part: 'body' | 'drop-shadow' | 'outer-glow') =>
+        renderFrame(
+          {
+            ...frame,
+            layers: [
+              {
+                ...layer,
+                groupId: undefined,
+                opacity: 1,
+                blend: 'source-over',
+                styles: withLayerStylePart(layer.styles, part),
+              } as Layer,
+            ],
+            groups: [],
+            active: layer.id,
+          },
+          assets,
+          overrides,
+          nestedOptions,
+        );
+      for (const pass of backdropPasses) {
+        const effect = await renderPart(pass.part);
+        if (options?.isCancelled?.())
+          throw new DOMException('Document rendering cancelled', 'AbortError');
+        compositeFrameSurface(context, effect, frame.w, frame.h, layer.opacity, pass.blend);
+      }
+      const body = await renderPart('body');
+      if (options?.isCancelled?.())
+        throw new DOMException('Document rendering cancelled', 'AbortError');
+      compositeFrameSurface(context, body, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
