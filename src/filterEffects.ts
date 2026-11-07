@@ -830,6 +830,12 @@ function applySmartBlur(
 ): void {
   const bounded = Math.max(1, Math.min(8, Math.round(radius)));
   const similarityScale = 18 + bounded * 2;
+  // The spatial Gaussian depends only on the offset; tabulate it once.
+  const side = bounded * 2 + 1,
+    spatialTable = new Float64Array(side * side);
+  for (let dy = -bounded; dy <= bounded; dy += 1)
+    for (let dx = -bounded; dx <= bounded; dx += 1)
+      spatialTable[(dy + bounded) * side + dx + bounded] = Math.exp(-(dx * dx + dy * dy) / (2 * bounded * bounded));
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const destination = (y * width + x) * 4;
@@ -847,7 +853,7 @@ function applySmartBlur(
           const sampleOffset = (sy * width + sx) * 4;
           const alpha = source[sampleOffset + 3] / 255;
           if (!alpha) continue;
-          const spatial = Math.exp(-(dx * dx + dy * dy) / (2 * bounded * bounded));
+          const spatial = spatialTable[(dy + bounded) * side + dx + bounded];
           const sampleLuma =
             source[sampleOffset] * 0.2126 +
             source[sampleOffset + 1] * 0.7152 +
@@ -1182,12 +1188,120 @@ function applyFieldBlur(
 }
 
 /**
- * Apply a separable Gaussian kernel while weighting colour by alpha.
+ * Radii up to this bound use the exact truncated Gaussian kernel (bit-identical
+ * to the historical renderer). Larger radii use a cascade of box filters whose
+ * running sums cost O(1) per pixel regardless of radius.
+ */
+const GAUSSIAN_EXACT_MAX_RADIUS = 8;
+/** Number of cascaded box passes used to approximate a large Gaussian. */
+const GAUSSIAN_BOX_PASSES = 3;
+/** Columns gathered together so the vertical pass reads whole cache lines. */
+const GAUSSIAN_COLUMN_BLOCK = 16;
+
+/**
+ * Integer half-widths for `passes` cascaded centred box filters whose combined
+ * variance best matches the truncated Gaussian kernel used for `radius`, while
+ * the cascade support (sum of half-widths) never exceeds the radius. The tiled
+ * renderer depends on that support bound: its tile overlap is the radius.
+ */
+export function gaussianBoxHalfWidths(radius: number, passes = GAUSSIAN_BOX_PASSES): number[] {
+  const bounded = Math.max(1, Math.min(64, Math.round(radius))),
+    sigma = Math.max(0.5, bounded / 3);
+  let total = 0,
+    variance = 0;
+  for (let offset = -bounded; offset <= bounded; offset += 1) {
+    const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
+    total += weight;
+    variance += weight * offset * offset;
+  }
+  variance /= total;
+  // A centred box of half-width k has variance k(k + 1) / 3; variances add.
+  let best: number[] = [],
+    bestError = Infinity;
+  const base = Math.max(0, Math.floor((Math.sqrt(1 + (12 * variance) / passes) - 1) / 2));
+  for (let low = Math.max(0, base - 1); low <= base + 1; low += 1) {
+    for (let wide = 0; wide <= passes; wide += 1) {
+      const widths = Array.from({ length: passes }, (_, index) => (index < wide ? low + 1 : low));
+      const support = widths.reduce((sum, value) => sum + value, 0);
+      if (support > bounded) continue;
+      const error = Math.abs(widths.reduce((sum, value) => sum + (value * (value + 1)) / 3, 0) - variance);
+      if (error < bestError - 1e-12) {
+        best = widths;
+        bestError = error;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Zero-padded centred box sum using a running window, so the cost is
+ * independent of the half-width. The sum is deliberately unnormalised: fed
+ * integer samples it stays an exact integer (well below 2^53 for every
+ * supported radius), so a value never depends on where its line started.
+ * That keeps tiled renders pixel-identical to a full-frame render.
+ */
+function boxLine(input: Float64Array, output: Float64Array, length: number, half: number): void {
+  let sum = 0;
+  const firstRight = Math.min(length - 1, half);
+  for (let index = 0; index <= firstRight; index += 1) sum += input[index];
+  for (let index = 0; index < length; index += 1) {
+    output[index] = sum;
+    const entering = index + half + 1,
+      leaving = index - half;
+    if (entering < length) sum += input[entering];
+    if (leaving >= 0) sum -= input[leaving];
+  }
+}
+
+/**
+ * Zero-padded truncated kernel convolution. Taps are accumulated in the same
+ * ascending order as the historical per-pixel loop so results stay identical.
+ */
+function kernelLine(
+  input: Float64Array,
+  output: Float64Array,
+  length: number,
+  kernel: Float32Array,
+  bounded: number,
+): void {
+  for (let index = 0; index < length; index += 1) {
+    const low = Math.max(-bounded, -index),
+      high = Math.min(bounded, length - 1 - index);
+    let sum = 0;
+    for (let offset = low; offset <= high; offset += 1)
+      sum += input[index + offset] * kernel[offset + bounded];
+    output[index] = sum;
+  }
+}
+
+/**
+ * Apply a separable Gaussian blur while weighting colour by alpha.
  *
  * The source alpha channel is never sampled into the output. Fully
  * transparent pixels therefore retain their hidden RGB padding and partially
- * transparent edges cannot introduce dark halos. The kernel is normalized at
- * the image edge so a tiny image remains stable for every valid radius.
+ * transparent edges cannot introduce dark halos. Samples outside the image
+ * are absent (zero weight) and the result is renormalised by the accumulated
+ * alpha weight, so the image edge stays stable for every valid radius.
+ *
+ * Radius ≤ GAUSSIAN_EXACT_MAX_RADIUS uses the exact truncated kernel
+ * (sigma = radius / 3, support ±radius). Larger radii use
+ * GAUSSIAN_BOX_PASSES cascaded box filters with matched variance and support
+ * ≤ radius; each pass is a running sum, so a radius-64 blur costs the same as
+ * radius 9. Numerator and alpha weight pass through the same linear operator,
+ * so edge renormalisation and alpha weighting are preserved exactly. The box
+ * path works on integer samples (colour × alpha byte, alpha byte) so its
+ * running sums are exact and every value is a pure function of its window:
+ * tiled and full-frame renders match bit for bit. The documented tolerance
+ * against the exact kernel is in docs/performance-budgets.md and enforced by
+ * tests/gaussian-blur.test.mjs.
+ *
+ * Working memory is at most two Float32 planes (one for a fully opaque
+ * source) plus O(width + 16 × height) line buffers; nothing is allocated per
+ * pixel. The vertical pass gathers 16-column blocks so reads stay
+ * cache-friendly on tall images. A fully opaque source shares one alpha
+ * weight row and column profile instead of filtering a weight plane, which
+ * is bit-identical because every row then carries the same weights.
  */
 function applyGaussianBlur(
   source: Uint8ClampedArray,
@@ -1199,63 +1313,175 @@ function applyGaussianBlur(
 ): void {
   const bounded = Math.max(1, Math.min(64, Math.round(radius))),
     sigma = Math.max(0.5, bounded / 3),
-    kernel = new Float32Array(bounded * 2 + 1),
-    count = width * height;
-  let kernelTotal = 0;
-  for (let offset = -bounded; offset <= bounded; offset += 1) {
-    const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
-    kernel[offset + bounded] = weight;
-    kernelTotal += weight;
+    count = width * height,
+    mix = clamp(strength, 0, 1),
+    exact = bounded <= GAUSSIAN_EXACT_MAX_RADIUS;
+  let filter: (input: Float64Array, result: Float64Array, length: number) => void;
+  if (exact) {
+    const kernel = new Float32Array(bounded * 2 + 1);
+    let kernelTotal = 0;
+    for (let offset = -bounded; offset <= bounded; offset += 1) {
+      const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
+      kernel[offset + bounded] = weight;
+      kernelTotal += weight;
+    }
+    for (let index = 0; index < kernel.length; index += 1) kernel[index] /= kernelTotal;
+    filter = (input, result, length) => kernelLine(input, result, length, kernel, bounded);
+  } else {
+    // Run the cascade on a zero-padded line so intermediate passes keep the
+    // energy that spills past the edge. The cascade is then exactly one
+    // convolution with a fixed kernel, edges included, like the exact path.
+    const halves = gaussianBoxHalfWidths(bounded),
+      pad = halves.reduce((sum, value) => sum + value, 0),
+      padded = Math.max(width, height) + pad * 2,
+      first = new Float64Array(padded),
+      second = new Float64Array(padded);
+    filter = (input, result, length) => {
+      const total = length + pad * 2;
+      first.fill(0, 0, pad);
+      first.fill(0, pad + length, total);
+      for (let index = 0; index < length; index += 1) first[pad + index] = input[index];
+      let from = first,
+        to = second;
+      for (let pass = 0; pass < halves.length; pass += 1) {
+        boxLine(from, to, total, halves[pass]);
+        const swap = from;
+        from = to;
+        to = swap;
+      }
+      for (let index = 0; index < length; index += 1) result[index] = from[pad + index];
+    };
   }
-  for (let index = 0; index < kernel.length; index += 1)
-    kernel[index] /= kernelTotal;
 
-  const horizontal = new Float32Array(count),
+  let opaque = true;
+  for (let offset = 3; offset < source.length; offset += 4)
+    if (source[offset] !== 255) {
+      opaque = false;
+      break;
+    }
+  const line = new Float64Array(width),
+    lineResult = new Float64Array(width),
+    block = GAUSSIAN_COLUMN_BLOCK,
+    columnValues = new Float64Array(block * height),
+    columnWeights = new Float64Array(block * height),
+    verticalValue = new Float64Array(height),
+    verticalWeight = new Float64Array(height);
+
+  // The exact path keeps the historical normalised alpha (byte / 255); the
+  // box path uses integer bytes so its running sums are exact.
+  // Horizontal alpha weight is shared by all three colour channels. An opaque
+  // source has the same weight row everywhere, so one row stands in for it.
+  let rowWeight: Float32Array | undefined,
+    horizontalWeight: Float32Array | undefined;
+  if (opaque) {
+    line.fill(exact ? 1 : 255);
+    filter(line, lineResult, width);
+    rowWeight = Float32Array.from(lineResult);
+  } else {
     horizontalWeight = new Float32Array(count);
-  for (let channel = 0; channel < 3; channel += 1) {
-    // Horizontal pass. At an edge the available kernel weights are
-    // renormalized through the accumulated alpha-weight, avoiding a dark
-    // border without inventing samples outside the source image.
     for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        let sum = 0;
-        let weight = 0;
-        for (let offset = -bounded; offset <= bounded; offset += 1) {
-          const sx = x + offset;
-          if (sx < 0 || sx >= width) continue;
-          const sourceOffset = (y * width + sx) * 4,
-            alpha = source[sourceOffset + 3] / 255,
-            kernelWeight = kernel[offset + bounded];
-          sum += source[sourceOffset + channel] * alpha * kernelWeight;
-          weight += alpha * kernelWeight;
-        }
-        const index = y * width + x;
-        horizontal[index] = sum;
-        horizontalWeight[index] = weight;
+      const row = y * width;
+      if (exact)
+        for (let x = 0; x < width; x += 1) line[x] = source[(row + x) * 4 + 3] / 255;
+      else for (let x = 0; x < width; x += 1) line[x] = source[(row + x) * 4 + 3];
+      filter(line, lineResult, width);
+      for (let x = 0; x < width; x += 1) horizontalWeight[row + x] = lineResult[x];
+    }
+  }
+  // The approximate path filters the weight plane vertically once, in place.
+  // The exact path refilters weights per channel so it stays bit-identical
+  // to the historical double-precision vertical accumulation.
+  const sharedWeights = !opaque && !exact;
+  if (sharedWeights && horizontalWeight) {
+    for (let x0 = 0; x0 < width; x0 += block) {
+      const columns = Math.min(block, width - x0);
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1)
+          columnWeights[column * height + y] = horizontalWeight[row + column];
+      }
+      for (let column = 0; column < columns; column += 1) {
+        const start = column * height;
+        filter(columnWeights.subarray(start, start + height), verticalWeight, height);
+        columnWeights.set(verticalWeight, start);
+      }
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1)
+          horizontalWeight[row + column] = columnWeights[column * height + y];
       }
     }
+  }
 
-    // Vertical pass. Keep the original alpha and only replace RGB on source
-    // pixels that contain coverage; transparent pixels remain byte-for-byte.
-    for (let x = 0; x < width; x += 1) {
-      for (let y = 0; y < height; y += 1) {
-        let sum = 0;
-        let weight = 0;
-        for (let offset = -bounded; offset <= bounded; offset += 1) {
-          const sy = y + offset;
-          if (sy < 0 || sy >= height) continue;
-          const index = sy * width + x,
-            kernelWeight = kernel[offset + bounded];
-          sum += horizontal[index] * kernelWeight;
-          weight += horizontalWeight[index] * kernelWeight;
+  const horizontal = new Float32Array(count);
+  let profileWeight = Number.NaN;
+  for (let channel = 0; channel < 3; channel += 1) {
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      if (exact)
+        for (let x = 0; x < width; x += 1) {
+          const offset = (row + x) * 4;
+          line[x] = source[offset + channel] * (source[offset + 3] / 255);
         }
-        const index = y * width + x,
-          outputOffset = index * 4,
-          mix = clamp(strength, 0, 1);
-        if (source[outputOffset + 3] && weight > 0)
-          output[outputOffset + channel] = clampByte(
-            source[outputOffset + channel] * (1 - mix) + (sum / weight) * mix,
-          );
+      else
+        for (let x = 0; x < width; x += 1) {
+          const offset = (row + x) * 4;
+          line[x] = source[offset + channel] * source[offset + 3];
+        }
+      filter(line, lineResult, width);
+      for (let x = 0; x < width; x += 1) horizontal[row + x] = lineResult[x];
+    }
+
+    for (let x0 = 0; x0 < width; x0 += block) {
+      const columns = Math.min(block, width - x0);
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1)
+          columnValues[column * height + y] = horizontal[row + column];
+        if (horizontalWeight && !sharedWeights)
+          for (let column = 0; column < columns; column += 1)
+            columnWeights[column * height + y] = horizontalWeight[row + column];
+      }
+      for (let column = 0; column < columns; column += 1) {
+        const start = column * height;
+        filter(columnValues.subarray(start, start + height), verticalValue, height);
+        columnValues.set(verticalValue, start);
+        if (rowWeight) {
+          // Opaque: the weight column is constant, so reuse its profile while
+          // the constant repeats (every column away from the side edges).
+          const constant = rowWeight[x0 + column];
+          if (constant !== profileWeight) {
+            columnWeights.fill(constant, start, start + height);
+            filter(columnWeights.subarray(start, start + height), verticalWeight, height);
+            // The box path stores shared weights as Float32 when the source
+            // is not opaque; round the same way so a tile that happens to be
+            // opaque matches the full-frame render bit for bit.
+            if (!exact)
+              for (let y = 0; y < height; y += 1) verticalWeight[y] = Math.fround(verticalWeight[y]);
+            profileWeight = constant;
+          }
+          columnWeights.set(verticalWeight, start);
+        } else if (!sharedWeights) {
+          filter(columnWeights.subarray(start, start + height), verticalWeight, height);
+          columnWeights.set(verticalWeight, start);
+        }
+      }
+      // Write row-major. Keep the original alpha and only replace RGB on
+      // covered pixels; transparent pixels remain byte-for-byte.
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1) {
+          const outputOffset = (row + column) * 4;
+          if (!source[outputOffset + 3]) continue;
+          const weight = sharedWeights && horizontalWeight
+            ? horizontalWeight[row + column]
+            : columnWeights[column * height + y];
+          if (weight > 0)
+            output[outputOffset + channel] = clampByte(
+              source[outputOffset + channel] * (1 - mix) +
+                (columnValues[column * height + y] / weight) * mix,
+            );
+        }
       }
     }
   }
@@ -1280,26 +1506,69 @@ function applyMotionBlur(
   const radians = (angle * Math.PI) / 180;
   const dx = Math.cos(radians);
   const dy = Math.sin(radians);
+  const mix = clamp(strength, 0, 1);
+  // Nearest-neighbour step offsets are the same for every pixel; precompute
+  // them so the inner loop does no rounding or per-sample allocation.
+  const taps = bounded * 2 + 1,
+    stepX = new Float64Array(taps),
+    stepY = new Float64Array(taps),
+    // Integer byte offsets for pixels whose whole footprint is in bounds.
+    // For an integer x, Math.round(x + f) === x + Math.round(f) unless the
+    // fraction of f sits within double rounding error of one half; such
+    // angles simply keep the general path, so output stays bit-identical.
+    tapOffsets = new Int32Array(taps);
+  let reachX = 0,
+    reachY = 0,
+    fastPath = true;
+  for (let step = -bounded; step <= bounded; step += 1) {
+    const index = step + bounded;
+    stepX[index] = dx * step;
+    stepY[index] = dy * step;
+    const offsetX = Math.round(stepX[index]),
+      offsetY = Math.round(stepY[index]);
+    for (const value of [stepX[index], stepY[index]]) {
+      const fraction = Math.abs(value - Math.floor(value) - 0.5);
+      if (fraction !== 0 && fraction < 1e-6) fastPath = false;
+    }
+    reachX = Math.max(reachX, Math.abs(offsetX));
+    reachY = Math.max(reachY, Math.abs(offsetY));
+    tapOffsets[index] = (offsetY * width + offsetX) * 4;
+  }
   for (let y = 0; y < height; y += 1) {
+    const rowInside = fastPath && y - reachY >= 0 && y + reachY < height;
     for (let x = 0; x < width; x += 1) {
       const destination = (y * width + x) * 4;
       if (source[destination + 3] === 0) continue;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let step = -bounded; step <= bounded; step += 1) {
-        const sample = sourcePixel(source, width, height, x + dx * step, y + dy * step);
-        const alpha = sample[3] / 255;
+      let red = 0,
+        green = 0,
+        blue = 0,
+        weight = 0;
+      if (rowInside && x - reachX >= 0 && x + reachX < width) {
+        for (let index = 0; index < taps; index += 1) {
+          const offset = destination + tapOffsets[index],
+            alpha = source[offset + 3] / 255;
+          if (!alpha) continue;
+          red += source[offset] * alpha;
+          green += source[offset + 1] * alpha;
+          blue += source[offset + 2] * alpha;
+          weight += alpha;
+        }
+      } else for (let index = 0; index < taps; index += 1) {
+        // Same clamp(round()) sampling as sourcePixel(), inlined.
+        const sx = clamp(Math.round(x + stepX[index]), 0, width - 1),
+          sy = clamp(Math.round(y + stepY[index]), 0, height - 1),
+          offset = (sy * width + sx) * 4,
+          alpha = source[offset + 3] / 255;
         if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
+        red += source[offset] * alpha;
+        green += source[offset + 1] * alpha;
+        blue += source[offset + 2] * alpha;
         weight += alpha;
       }
       if (!weight) continue;
-      const mix = clamp(strength, 0, 1);
-      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
+      output[destination] = clampByte(source[destination] * (1 - mix) + (red / weight) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (green / weight) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (blue / weight) * mix);
       output[destination + 3] = source[destination + 3];
     }
   }
@@ -3368,6 +3637,78 @@ function applyGradientMap(
   }
 }
 
+/**
+ * Visit every covered (alpha > 0) pixel with the per-channel median of the
+ * visible samples in its image-clipped (2·span + 1)² window, i.e. exactly
+ * `sorted[floor(count / 2)]` of those samples. Sliding 256-bin histograms
+ * replace the per-pixel sort: moving one column costs O(span), and each
+ * channel's median cursor only steps by the change in rank. With
+ * `excludeCenter`, the destination pixel itself is left out of its window;
+ * `count` is then 0 when it has no visible neighbours (medians are 0).
+ */
+function visitWindowMedians(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  span: number,
+  excludeCenter: boolean,
+  visit: (offset: number, red: number, green: number, blue: number, count: number) => void,
+): void {
+  // histogram[channel * 256 + value]; state = [median r/g/b, below r/g/b],
+  // where "below" counts window samples strictly less than that median.
+  const histogram = new Int32Array(768),
+    state = new Int32Array(6);
+  let count = 0;
+  const update = (offset: number, sign: number) => {
+    if (!source[offset + 3]) return;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const value = source[offset + channel];
+      histogram[channel * 256 + value] += sign;
+      if (value < state[channel]) state[channel + 3] += sign;
+    }
+    count += sign;
+  };
+  const column = (x: number, top: number, bottom: number, sign: number) => {
+    for (let sy = top; sy <= bottom; sy += 1) update((sy * width + x) * 4, sign);
+  };
+  const median = (channel: number, rank: number) => {
+    const base = channel * 256;
+    let value = state[channel],
+      below = state[channel + 3];
+    while (below > rank) {
+      value -= 1;
+      below -= histogram[base + value];
+    }
+    while (below + histogram[base + value] <= rank) {
+      below += histogram[base + value];
+      value += 1;
+    }
+    state[channel] = value;
+    state[channel + 3] = below;
+    return value;
+  };
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - span),
+      bottom = Math.min(height - 1, y + span);
+    histogram.fill(0);
+    state.fill(0);
+    count = 0;
+    for (let x = 0; x <= Math.min(width - 1, span); x += 1) column(x, top, bottom, 1);
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (source[offset + 3]) {
+        if (excludeCenter) update(offset, -1);
+        const rank = count >> 1;
+        if (count > 0) visit(offset, median(0, rank), median(1, rank), median(2, rank), count);
+        else visit(offset, 0, 0, 0, 0);
+        if (excludeCenter) update(offset, 1);
+      }
+      if (x - span >= 0) column(x - span, top, bottom, -1);
+      if (x + span + 1 < width) column(x + span + 1, top, bottom, 1);
+    }
+  }
+}
+
 /** Apply a bounded median neighbourhood filter while retaining source alpha. */
 function applyMedian(
   source: Uint8ClampedArray,
@@ -3378,31 +3719,12 @@ function applyMedian(
   strength: number,
 ): void {
   const span = Math.min(8, Math.max(1, Math.round(radius)));
-  const values: [number[], number[], number[]] = [[], [], []];
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const offset = (y * width + x) * 4;
-      if (!source[offset + 3]) continue;
-      values[0].length = 0;
-      values[1].length = 0;
-      values[2].length = 0;
-      for (let sy = Math.max(0, y - span); sy <= Math.min(height - 1, y + span); sy += 1) {
-        for (let sx = Math.max(0, x - span); sx <= Math.min(width - 1, x + span); sx += 1) {
-          const sample = (sy * width + sx) * 4;
-          if (!source[sample + 3]) continue;
-          values[0].push(source[sample]);
-          values[1].push(source[sample + 1]);
-          values[2].push(source[sample + 2]);
-        }
-      }
-      for (const channel of values) channel.sort((a, b) => a - b);
-      const median = values.map((channel) => channel[Math.floor(channel.length / 2)] ?? source[offset]);
-      output[offset] = clampByte(source[offset] + (median[0] - source[offset]) * strength);
-      output[offset + 1] = clampByte(source[offset + 1] + (median[1] - source[offset + 1]) * strength);
-      output[offset + 2] = clampByte(source[offset + 2] + (median[2] - source[offset + 2]) * strength);
-      output[offset + 3] = source[offset + 3];
-    }
-  }
+  visitWindowMedians(source, width, height, span, false, (offset, red, green, blue) => {
+    output[offset] = clampByte(source[offset] + (red - source[offset]) * strength);
+    output[offset + 1] = clampByte(source[offset + 1] + (green - source[offset + 1]) * strength);
+    output[offset + 2] = clampByte(source[offset + 2] + (blue - source[offset + 2]) * strength);
+    output[offset + 3] = source[offset + 3];
+  });
 }
 
 /** Bounded Dust & Scratches approximation: replace only local tonal outliers. */
@@ -3416,30 +3738,14 @@ function applyDustScratches(
 ): void {
   const radius = clamp(Math.round(effect.radius), 1, 8);
   const threshold = clamp(Math.round(effect.threshold ?? 12), 0, 255);
-  const samples: number[][] = [[], [], []];
-  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    const offset = (y * width + x) * 4;
-    const alpha = source[offset + 3];
-    if (alpha === 0) continue;
-    samples[0].length = 0; samples[1].length = 0; samples[2].length = 0;
-    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
-      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
-        const sample = (sy * width + sx) * 4;
-        if (source[sample + 3] === 0) continue;
-        samples[0].push(source[sample]); samples[1].push(source[sample + 1]); samples[2].push(source[sample + 2]);
-      }
-    const medians = samples.map((channel) => {
-      if (!channel.length) return 0;
-      channel.sort((a, b) => a - b);
-      return channel[Math.floor(channel.length / 2)];
-    });
-    const distance = Math.max(Math.abs(source[offset] - medians[0]), Math.abs(source[offset + 1] - medians[1]), Math.abs(source[offset + 2] - medians[2]));
-    if (distance <= threshold) continue;
-    const mix = clamp(strength, 0, 1);
-    output[offset] = clampByte(source[offset] + (medians[0] - source[offset]) * mix);
-    output[offset + 1] = clampByte(source[offset + 1] + (medians[1] - source[offset + 1]) * mix);
-    output[offset + 2] = clampByte(source[offset + 2] + (medians[2] - source[offset + 2]) * mix);
-  }
+  const mix = clamp(strength, 0, 1);
+  visitWindowMedians(source, width, height, radius, false, (offset, red, green, blue) => {
+    const distance = Math.max(Math.abs(source[offset] - red), Math.abs(source[offset + 1] - green), Math.abs(source[offset + 2] - blue));
+    if (distance <= threshold) return;
+    output[offset] = clampByte(source[offset] + (red - source[offset]) * mix);
+    output[offset + 1] = clampByte(source[offset + 1] + (green - source[offset + 1]) * mix);
+    output[offset + 2] = clampByte(source[offset + 2] + (blue - source[offset + 2]) * mix);
+  });
 }
 
 /**
@@ -3462,44 +3768,24 @@ function applyReflectionRemoval(
   const radius = clamp(Math.round(effect.radius), 1, 8);
   const threshold = clamp(Math.round(effect.threshold ?? 28), 0, 255);
   const luma = (r: number, g: number, b: number) => r * 0.2126 + g * 0.7152 + b * 0.0722;
-  const channels: number[][] = [[], [], []];
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      const alpha = source[destination + 3];
-      if (!alpha) continue;
-      channels[0].length = 0;
-      channels[1].length = 0;
-      channels[2].length = 0;
-      for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1) {
-        for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
-          const sample = (sy * width + sx) * 4;
-          if (!source[sample + 3] || (sx === x && sy === y)) continue;
-          channels[0].push(source[sample]);
-          channels[1].push(source[sample + 1]);
-          channels[2].push(source[sample + 2]);
-        }
-      }
-      if (!channels[0].length) continue;
-      const medians = channels.map((channel) => {
-        channel.sort((a, b) => a - b);
-        return channel[Math.floor(channel.length / 2)] ?? 0;
-      });
-      const currentLuma = luma(source[destination], source[destination + 1], source[destination + 2]);
-      const medianLuma = luma(medians[0], medians[1], medians[2]);
-      const highlight = clamp((currentLuma - 160) / 95, 0, 1);
-      const saturation = Math.max(source[destination], source[destination + 1], source[destination + 2]) -
-        Math.min(source[destination], source[destination + 1], source[destination + 2]);
-      const neutrality = 1 - clamp(saturation / 96, 0, 1);
-      const outlier = clamp((currentLuma - medianLuma - threshold) / 80, 0, 1);
-      const mix = clamp(strength, 0, 1) * highlight * neutrality * outlier;
-      if (mix <= 0) continue;
-      output[destination] = clampByte(source[destination] + (medians[0] - source[destination]) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] + (medians[1] - source[destination + 1]) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] + (medians[2] - source[destination + 2]) * mix);
-      output[destination + 3] = alpha;
-    }
-  }
+  // The destination is excluded from its own neighbour median.
+  visitWindowMedians(source, width, height, radius, true, (destination, red, green, blue, count) => {
+    if (!count) return;
+    const alpha = source[destination + 3];
+    const currentLuma = luma(source[destination], source[destination + 1], source[destination + 2]);
+    const medianLuma = luma(red, green, blue);
+    const highlight = clamp((currentLuma - 160) / 95, 0, 1);
+    const saturation = Math.max(source[destination], source[destination + 1], source[destination + 2]) -
+      Math.min(source[destination], source[destination + 1], source[destination + 2]);
+    const neutrality = 1 - clamp(saturation / 96, 0, 1);
+    const outlier = clamp((currentLuma - medianLuma - threshold) / 80, 0, 1);
+    const mix = clamp(strength, 0, 1) * highlight * neutrality * outlier;
+    if (mix <= 0) return;
+    output[destination] = clampByte(source[destination] + (red - source[destination]) * mix);
+    output[destination + 1] = clampByte(source[destination + 1] + (green - source[destination + 1]) * mix);
+    output[destination + 2] = clampByte(source[destination + 2] + (blue - source[destination + 2]) * mix);
+    output[destination + 3] = alpha;
+  });
 }
 
 /** Bounded edge-aware Reduce Noise approximation using a colour-weighted kernel. */
