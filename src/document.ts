@@ -1967,6 +1967,57 @@ export function releaseRetiredDecodedAssets(): void {
 export function decodedAssetCacheStats(): { entries: number; pixels: number; maxPixels: number } {
   return { entries: decoded.size, pixels: decodedPixels, maxPixels: decodedAssetBudgetPixels() };
 }
+/**
+ * Check that every asset decodes to its declared size without keeping the
+ * decoded pixels: installs validate whole projects (including undo history)
+ * and must not flood the bounded decoded-asset cache. Runs `concurrency`
+ * decodes at a time; the first failure rejects.
+ */
+/**
+ * Asset ids a fresh render of `frame` is guaranteed to decode: the source of
+ * every visible, plainly composited raster layer (opacity above zero, not in
+ * a hidden folder, not skipped by `layerRenderSkippable`). A decode failure
+ * there fails the render, so install-time verification can leave these to
+ * the render and verify only the rest (hidden layers, masks, undo history).
+ */
+export function assetsDecodedByRender(frame: Frame, assets: Assets): Set<string> {
+  const groups = new Map((frame.groups || []).map((group) => [group.id, group]));
+  const ids = new Set<string>();
+  for (const layer of frame.layers) {
+    if (layer.kind !== 'raster' || layer.fillColor !== undefined || !layer.visible || !(layer.opacity > 0))
+      continue;
+    const group = layer.groupId ? groups.get(layer.groupId) : undefined;
+    if (layer.groupId && (!group || !group.visible || !(group.opacity > 0))) continue;
+    if (layerRenderSkippable(layer, frame, assets)) continue;
+    if (Object.hasOwn(assets, layer.asset)) ids.add(layer.asset);
+  }
+  return ids;
+}
+export async function verifyAssetsDecode(
+  list: readonly Asset[],
+  options: { concurrency?: number; assertCurrent?: () => void } = {},
+): Promise<void> {
+  const queue = [...list];
+  const lanes = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 4)));
+  let failure: unknown;
+  const lane = async () => {
+    while (queue.length && failure === undefined) {
+      options.assertCurrent?.();
+      const asset = queue.shift()!;
+      try {
+        const image = await decodeNewAsset(asset);
+        const closable = image as unknown as { close?: () => void };
+        if (typeof closable.close === 'function') closable.close();
+        else (image as HTMLImageElement).src = '';
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(lanes, queue.length) }, lane));
+  if (failure !== undefined) throw failure;
+  options.assertCurrent?.();
+}
 export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
   // Full validation (regex + PNG header) runs once per content in decodeNewAsset.
   if (!asset || typeof asset !== 'object' || typeof asset.url !== 'string')
@@ -2059,6 +2110,28 @@ export function primeDecodedAssetPixels(
   );
   return true;
 }
+/**
+ * Bytes of a validated base64 PNG data URL as a Blob. Uses the native
+ * `Uint8Array.fromBase64` where available and otherwise a plain indexed loop:
+ * the previous `Uint8Array.from(binary, mapFn)` cost about a second per
+ * 10 MP layer in the render worker. (The production CSP does not allow
+ * fetching data: URLs, so `fetch` is not used.)
+ */
+export async function dataUrlBlob(url: string): Promise<Blob> {
+  const encoded = url.slice(url.indexOf(',') + 1);
+  const native = (Uint8Array as unknown as { fromBase64?: (value: string) => Uint8Array }).fromBase64;
+  if (typeof native === 'function') {
+    try {
+      return new Blob([native(encoded) as Uint8Array<ArrayBuffer>], { type: 'image/png' });
+    } catch {
+      // Fall through to the manual decode.
+    }
+  }
+  const binary = atob(encoded),
+    bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: 'image/png' });
+}
 async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
   if (!validAsset(asset)) throw new Error('Invalid or oversized project image');
   if (typeof Image === 'function') {
@@ -2070,10 +2143,7 @@ async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
     return image;
   }
   if (typeof createImageBitmap === 'function' && typeof Blob === 'function') {
-    const encoded = asset.url.slice(asset.url.indexOf(',') + 1),
-      binary = atob(encoded),
-      bytes = Uint8Array.from(binary, (value) => value.charCodeAt(0)),
-      image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    const image = await createImageBitmap(await dataUrlBlob(asset.url));
     if (image.width !== asset.w || image.height !== asset.h)
       throw new Error('Project image dimensions do not match');
     return image as unknown as HTMLImageElement;

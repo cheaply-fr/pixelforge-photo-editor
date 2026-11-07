@@ -7816,7 +7816,18 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Fade could not be applied');
     }
   };
-  const applyImage = async () => {
+  // Apply Image and Calculations work in canvas space: grow a paint layer
+  // stored at its content bounds to the canvas first (a pixel-identical
+  // in-place step), and restore its stored bounds if the command is cancelled.
+  const onCanvasSizedLayer = (run: () => Promise<void>) => async () => {
+    await expandRasterLayerForPaint();
+    try {
+      await run();
+    } finally {
+      dropUnusedExpansion();
+    }
+  };
+  const applyImage = onCanvasSizedLayer(async () => {
     const beforeFrame = current();
     const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
     if (!layer || layer.kind !== 'raster') {
@@ -7896,8 +7907,8 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Apply Image could not be applied');
     }
-  };
-  const calculateImage = async () => {
+  });
+  const calculateImage = onCanvasSizedLayer(async () => {
     const beforeFrame = current();
     const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
     if (!layer || layer.kind !== 'raster') {
@@ -7987,7 +7998,7 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Calculations could not be applied');
     }
-  };
+  });
   const copyLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);

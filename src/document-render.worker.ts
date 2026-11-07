@@ -13,6 +13,7 @@ import type {
 } from './tiledDocument.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
 import { CompositeCache } from './compositeCache.ts';
+import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
 import {
   clearLayerFilterCache,
   layerFilterCacheDelta,
@@ -64,6 +65,13 @@ const scope = globalThis as typeof globalThis & {
   postMessage: (message: Response, transfer?: Transferable[]) => void;
 };
 const cancelled = new Set<number>();
+/**
+ * Encoded assets of the latest request, by content fingerprint. The main
+ * thread only sends assets this worker does not already hold, so unchanged
+ * layers are not structured-cloned again on every render.
+ */
+let assetStore = new Map<string, Assets[string]>();
+
 /** Composite below the active layer, reused while the layers below are unchanged. */
 const compositeCache = new CompositeCache<HTMLCanvasElement>();
 let activeId: number | undefined;
@@ -132,6 +140,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     clearLayerFilterCache();
     clearDecodedAssetCache();
     compositeCache.clear();
+    assetStore = new Map();
     if (activeId === undefined) releaseRetiredDecodedAssets();
     return;
   }
@@ -153,8 +162,17 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     let output: OffscreenCanvas | undefined;
     const cacheBefore = sharedLayerFilterCache().stats();
     try {
+      const resolved = resolveRequestAssets(request.assets, request.assetKeys, assetStore);
+      if (resolved.missing.length) {
+        const error = new Error('Worker render assets are missing');
+        error.name = 'WorkerAssetMissing';
+        throw error;
+      }
+      request.assets = resolved.assets;
       validateFrame(request.frame, request.assets);
       primeAssetFingerprints(request.assets, request.assetKeys);
+      // Keep exactly this request's assets for the next one.
+      assetStore = retainedAssetStore(request.assets, request.assetKeys);
       if (Array.isArray(request.decodedPixels))
         for (const prime of request.decodedPixels.slice(0, 1)) {
           const asset = prime && typeof prime.id === 'string' ? request.assets[prime.id] : undefined;
