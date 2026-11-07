@@ -65,6 +65,19 @@ with nearer samples weighted more heavily. This gives a stable non-circular
 shape variant while custom user-supplied kernels and the full Photoshop shape
 preset library remain future work.
 
+Implementation note (`src/fastNeighborhoodFilters.ts`): Smart, Surface and
+Shape Blur, Lens, Radial, Spin and Path Blur (plus Smart Sharpen and Reduce
+Noise) use rewritten kernels whose output is pinned to the previous per-pixel
+code by `tests/fast-remaining-filters.test.mjs`. Surface Blur, Reduce Noise,
+Lens Blur, zoom Radial Blur and both Path Blur modes are byte-identical.
+Smart Blur factors its range weight into per-pixel exponentials and Shape Blur
+sums exact integers (each kernel row is a 1-D tent read from double prefix
+sums), so a channel may round one level differently from the old
+floating-point sums. Spin Radial Blur and Spin Blur rotate the centre offset
+with a cosine/sine table, so only a sample that sits on a pixel-rounding tie
+may pick the neighbouring source pixel. Tiled and full-frame renders remain
+identical.
+
 Radial Blur is the spin variant: seventeen samples follow each covered
 pixel's polar ring around the editable **Blur center X/Y**. The centre uses
 normalized 0–1 coordinates and defaults to the centre of the source layer;
