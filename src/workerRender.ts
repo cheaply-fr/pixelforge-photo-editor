@@ -40,7 +40,114 @@ export type WorkerRenderOptions = {
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
 };
 
+/** Minimum watchdog window, kept for small frames and as the stall floor. */
 const RENDER_TIMEOUT_MS = 30_000;
+/** Extra no-progress allowance per frame megapixel (one heavy layer pass). */
+const RENDER_STALL_MS_PER_MEGAPIXEL = 6_000;
+/** Ceiling for the no-progress window, even for the largest frames. */
+const RENDER_MAX_STALL_MS = 120_000;
+/** Extra total allowance per megapixel × layer of work. */
+const RENDER_TOTAL_MS_PER_MEGAPIXEL_LAYER = 15_000;
+/** Absolute ceiling: a render is never allowed to run longer than this. */
+const RENDER_MAX_TOTAL_MS = 600_000;
+
+export type RenderWatchdogBudget = {
+  /** Longest gap allowed between worker progress messages. */
+  stallMs: number;
+  /** Hard ceiling for the whole request, whatever progress arrives. */
+  totalMs: number;
+};
+
+/**
+ * Size the worker watchdog to the work. A fixed 30-second limit killed
+ * legitimate renders of large documents (e.g. a 10.8 MP layer with a
+ * radius-24 Gaussian), so the budget now scales with frame pixels and
+ * layer count, and the no-progress window resets on every layer or tile
+ * progress message. A worker that stops reporting is still stopped after
+ * the stall window, and nothing runs beyond the absolute ceiling.
+ *
+ * `globalThis.__PIXELFORGE_RENDER_TIMEOUT_MS__` (a positive number, or a
+ * `{ stallMs, totalMs }` pair) replaces the computed limits; tests use it to
+ * prove a heavy render now finishes well inside a deliberately short budget.
+ */
+export function renderWatchdogBudget(frame: Pick<Frame, 'w' | 'h' | 'layers'>): RenderWatchdogBudget {
+  const override = (globalThis as typeof globalThis & {
+    __PIXELFORGE_RENDER_TIMEOUT_MS__?: unknown;
+  }).__PIXELFORGE_RENDER_TIMEOUT_MS__;
+  const positive = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0;
+  if (positive(override)) return { stallMs: override, totalMs: override };
+  if (override && typeof override === 'object') {
+    const { stallMs, totalMs } = override as Partial<RenderWatchdogBudget>;
+    if (positive(stallMs) && positive(totalMs)) return { stallMs, totalMs };
+  }
+  const megapixels = Math.max(0, (frame.w * frame.h) / 1_000_000) || 0;
+  const layers = Math.max(1, frame.layers.length);
+  const stallMs = Math.round(Math.min(
+    RENDER_MAX_STALL_MS,
+    RENDER_TIMEOUT_MS + RENDER_STALL_MS_PER_MEGAPIXEL * megapixels,
+  ));
+  const totalMs = Math.round(Math.min(
+    RENDER_MAX_TOTAL_MS,
+    Math.max(stallMs, RENDER_TIMEOUT_MS + RENDER_TOTAL_MS_PER_MEGAPIXEL_LAYER * megapixels * layers),
+  ));
+  return { stallMs, totalMs };
+}
+
+/** A render stopped by its watchdog; the previous canvas stays published. */
+export class RenderTimeoutError extends Error {
+  readonly code = 'PIXELFORGE_RENDER_TIMEOUT';
+  readonly elapsedMs: number;
+  readonly stalled: boolean;
+
+  constructor(elapsedMs: number, stalled: boolean) {
+    const seconds = Math.max(1, Math.round(elapsedMs / 1000));
+    super(
+      stalled
+        ? `Rendering stopped: no progress for ${seconds} s. The canvas shows the last finished render and editing still works; undo, lower the filter radius or hide heavy layers, then try again.`
+        : `Rendering stopped after ${seconds} s. The canvas shows the last finished render and editing still works; undo, lower the filter radius or hide heavy layers, then try again.`,
+    );
+    this.name = 'RenderTimeoutError';
+    this.elapsedMs = elapsedMs;
+    this.stalled = stalled;
+  }
+}
+
+type RenderWatchdog = { touch: () => void; clear: () => void };
+
+/** Start stall and total timers; `touch` restarts only the stall timer. */
+function startRenderWatchdog(
+  budget: RenderWatchdogBudget,
+  onExpire: (error: RenderTimeoutError) => void,
+): RenderWatchdog {
+  const started = Date.now();
+  let stall: ReturnType<typeof setTimeout> | undefined;
+  let done = false;
+  const expire = (stalled: boolean) => {
+    if (done) return;
+    done = true;
+    clear();
+    onExpire(new RenderTimeoutError(Date.now() - started, stalled));
+  };
+  const total = setTimeout(() => expire(false), budget.totalMs);
+  const arm = () => {
+    if (stall) clearTimeout(stall);
+    stall = budget.stallMs < budget.totalMs ? setTimeout(() => expire(true), budget.stallMs) : undefined;
+  };
+  const clear = () => {
+    done = true;
+    clearTimeout(total);
+    if (stall) clearTimeout(stall);
+    stall = undefined;
+  };
+  arm();
+  return {
+    touch: () => {
+      if (!done) arm();
+    },
+    clear,
+  };
+}
 /**
  * Keep an idle persistent worker (and its bounded layer-filter cache) long
  * enough that a pause between edits does not force every filtered layer to be
@@ -143,21 +250,13 @@ export async function renderFrameWithWorker(
   return new Promise<CanvasImageSource>((resolve, reject) => {
     let settled = false;
     let lastCompleted = 0;
-    const timeout = setTimeout(
-      () =>
-        finish(() =>
-          reject(
-            new Error(
-              'Worker rendering timed out. Try a smaller image or fewer layers.',
-            ),
-          ),
-        ),
-      RENDER_TIMEOUT_MS,
+    const watchdog = startRenderWatchdog(renderWatchdogBudget(frame), (error) =>
+      finish(() => reject(error)),
     );
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      watchdog.clear();
       options.signal?.removeEventListener('abort', cancel);
       worker.onmessage = null;
       worker.onerror = null;
@@ -216,6 +315,7 @@ export async function renderFrameWithWorker(
           return;
         }
         lastCompleted = completed;
+        watchdog.touch();
         try {
           options.onProgress?.(completed, total);
         } catch (error) {
@@ -236,6 +336,7 @@ export async function renderFrameWithWorker(
           finish(() => reject(new Error('Worker returned invalid tiled progress.')));
           return;
         }
+        watchdog.touch();
         try {
           options.onTiledProgress?.(value.progress);
         } catch (error) {
@@ -332,7 +433,7 @@ type PersistentTask = {
   settled: boolean;
   cancelRequested: boolean;
   lastCompleted: number;
-  timeout?: ReturnType<typeof setTimeout>;
+  watchdog?: RenderWatchdog;
   abortHandler?: () => void;
 };
 
@@ -412,11 +513,10 @@ class PersistentWorkerSession {
     this.active = task;
     try {
       const worker = this.ensureWorker();
-      task.timeout = setTimeout(() => {
-        this.onWorkerFailure(
-          new Error('Worker rendering timed out. Try a smaller image or fewer layers.'),
-        );
-      }, RENDER_TIMEOUT_MS);
+      task.watchdog = startRenderWatchdog(renderWatchdogBudget(task.frame), (error) => {
+        // Retire the stuck worker; the next request gets a fresh one.
+        if (this.active === task) this.onWorkerFailure(error);
+      });
       const used = referencedAssets([task.frame], task.assets);
       worker.postMessage({
         kind: 'render',
@@ -507,6 +607,7 @@ class PersistentWorkerSession {
         return;
       }
       task.lastCompleted = completed;
+      task.watchdog?.touch();
       try {
         task.options.onProgress?.(completed, total);
       } catch (error) {
@@ -536,6 +637,7 @@ class PersistentWorkerSession {
         this.onWorkerFailure(new Error('Worker returned invalid tiled progress.'));
         return;
       }
+      task.watchdog?.touch();
       try {
         task.options.onTiledProgress?.(value.progress);
       } catch (error) {
@@ -621,8 +723,8 @@ class PersistentWorkerSession {
   }
 
   private clearTask(task: PersistentTask): void {
-    if (task.timeout) clearTimeout(task.timeout);
-    task.timeout = undefined;
+    task.watchdog?.clear();
+    task.watchdog = undefined;
     if (task.abortHandler) task.options.signal?.removeEventListener('abort', task.abortHandler);
     task.abortHandler = undefined;
     if (this.queued === task) this.queued = undefined;

@@ -107,9 +107,19 @@ decode failure rejects the render. Unknown messages, stale ids, malformed
 responses and wrong dimensions are ignored or rejected without replacing the
 last published canvas.
 
-Each request has a 30-second watchdog. A timeout, worker error, message error,
-abort signal or invalid response terminates that worker and rejects the
-request. A newer render invalidates an older render in `useDocument`; only the
+Each request has a work-scaled watchdog (`renderWatchdogBudget` in
+`src/workerRender.ts`). The no-progress window is 30 s plus 6 s per frame
+megapixel (at most 120 s) and restarts on every valid layer or tile progress
+message; the total ceiling is 30 s plus 15 s per megapixel × layer, never below
+the no-progress window and never above 600 s. A 10.8 MP single-layer poster
+therefore gets ~95 s without progress and ~190 s in total instead of the
+former fixed 30 s, which had stopped a legitimate radius-24 Gaussian render. A timeout rejects with
+`RenderTimeoutError` (`code: 'PIXELFORGE_RENDER_TIMEOUT'`), whose message says
+the canvas keeps the last finished render and editing still works. A timeout,
+worker error, message error, abort signal or invalid response terminates that
+worker and rejects the request. Tests may set
+`globalThis.__PIXELFORGE_RENDER_TIMEOUT_MS__` (a number or
+`{ stallMs, totalMs }`) to shorten the budget. A newer render invalidates an older render in `useDocument`; only the
 newest completed result can be published. Published image sources are closed
 after they are drawn or discarded.
 

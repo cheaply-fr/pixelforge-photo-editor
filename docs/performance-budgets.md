@@ -237,3 +237,35 @@ measurements; these are local/live observations, not CI budgets.
   flattening on large posters; ~10× limits (320+ layers, 640 MP, ~640 MB) are
   in development on `feat/huge-projects`, together with automatic trim, lazy
   empty layers, render scaling and trimmed-bounds-preserving Rasterize/Merge.
+- Gaussian Blur radius ≥ 24 on the 10.8 MP layer hit the fixed 30 s worker
+  watchdog ("Worker rendering timed out"): the separable kernel cost O(radius)
+  per pixel. `perf/fast-large-radius-filters` keeps the exact kernel
+  (bit-identical) for radius ≤ 8 and uses three cascaded box filters with
+  matched variance and support ≤ radius above that, so cost no longer grows
+  with radius, and scales the watchdog with pixels × layers (see
+  [worker-render-contract.md](worker-render-contract.md)). Tolerance against
+  the exact kernel, enforced by `tests/gaussian-blur.test.mjs`: opaque pixels
+  within 3 levels (mean ≤ 1.5); isolated partly transparent pixels beside
+  strong contrast within ~10 % (28 levels). Integer running sums keep tiled
+  and full-frame renders bit-identical. Median, Dust & Scratches and
+  Reflection Removal now use sliding histograms, and Motion Blur precomputes
+  its taps; all four are byte-identical to before.
+
+### Radius-heavy filter timings (local, Node 24, 1 MP unless noted)
+
+These are single-run local measurements on a shared development machine
+(timings varied by up to ~2× between runs), not CI budgets.
+
+| Filter (radius 64 or its cap) | Before | After |
+| --- | --- | --- |
+| Gaussian Blur, 2646×4096, r 12 / 24 / 64 | 17.0 / 31.0 / 75.1 s | 2.3–3.5 s (any radius) |
+| Gaussian Blur, browser 2646×4096 r 12 / 24 / 64 (render span) | 19.5 s / timeout / timeout | 4.9 / 7.1 / 7.1 s |
+| Gaussian Blur, Unsharp Mask, High Pass, Sharpen More/Edges | 5.9–13.8 s | 0.3–0.7 s |
+| Median, Dust & Scratches (cap 8) | 171–175 s | 0.8–1.0 s |
+| Motion Blur | 3.4 s | 1.7 s |
+
+Not yet changed (still O(radius²) or exp-heavy per sample): Smart Blur and
+Smart Sharpen (~13–16 s/MP at their radius-8 cap), Reduce Noise (~13 s/MP),
+Surface Blur (~5 s/MP), Shape Blur (~4 s/MP), Radial/Spin/Path Blur
+(~1.7–2.3 s/MP) and Lens Blur (~1 s/MP). On a 10.8 MP layer the slowest of
+these can still approach the scaled watchdog.
