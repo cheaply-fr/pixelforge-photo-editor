@@ -185,6 +185,10 @@ async function request<T>(
 export function useMember() {
   const [member, setMember] = useState<Member | null>(null);
   const [checking, setChecking] = useState(true);
+  // True when the account service could not be reached or answered with an
+  // error, so the editor can explain instead of linking to a broken page.
+  const [unavailable, setUnavailable] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
     let sequence = 0;
@@ -192,11 +196,13 @@ export function useMember() {
       const latest = ++sequence;
       void request('?action=session', undefined, validateCloudSession)
         .then((value) => {
-          if (active && latest === sequence)
-            setMember(value.authenticated ? value.user : null);
+          if (!active || latest !== sequence) return;
+          setMember(value.authenticated ? value.user : null);
+          setUnavailable(false);
         })
         .catch(() => {
           /* Editing remains available when sign-in is unavailable. */
+          if (active && latest === sequence) setUnavailable(true);
         })
         .finally(() => {
           if (active) setChecking(false);
@@ -208,8 +214,12 @@ export function useMember() {
       active = false;
       window.removeEventListener('focus', refresh);
     };
-  }, []);
-  return { member, checking };
+  }, [attempt]);
+  const retry = () => {
+    setChecking(true);
+    setAttempt((value) => value + 1);
+  };
+  return { member, checking, unavailable, retry };
 }
 export const listCloudProjects = () =>
   request('', undefined, validateCloudProjectList);
