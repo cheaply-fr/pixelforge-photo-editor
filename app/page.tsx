@@ -658,6 +658,7 @@ import {
   isCenteredFilter,
   nudgeFilterCenter,
 } from '../src/filterCenter';
+import LightRaysControls, { lightRaysEffectDefaults } from '../src/LightRaysControls';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -966,6 +967,7 @@ type Command =
   | 'filter-lens-correction'
   | 'filter-adaptive-wide-angle'
   | 'filter-lens-flare'
+  | 'filter-light-rays'
   | 'filter-vanishing-point'
   | 'filter-displace'
   | 'filter-pinch'
@@ -1516,6 +1518,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'filter-fibers' },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
+    { label: 'Light Rays…', command: 'filter-light-rays' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'filter-sharpen' },
     { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
@@ -6771,6 +6774,7 @@ export default function Home() {
                     : type === 'shear'
                       ? 90
                       : 0,
+                ...(type === 'light-rays' ? lightRaysEffectDefaults() : {}),
               },
       )
     )
@@ -14618,6 +14622,8 @@ export default function Home() {
       chooseFilterEffect('adaptive-wide-angle', 'Adaptive Wide Angle (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
+    else if (command === 'filter-light-rays')
+      chooseFilterEffect('light-rays', 'Light Rays (local approximation)');
     else if (command === 'filter-vanishing-point') return applyPerspectiveWarp('Vanishing Point');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
@@ -14988,6 +14994,7 @@ export default function Home() {
       case 'filter-tree':
       case 'filter-clouds':
       case 'filter-lens-flare':
+      case 'filter-light-rays':
       case 'filter-picture-frame':
       case 'filter-fibers':
       case 'filter-difference-clouds':
@@ -18390,6 +18397,9 @@ export default function Home() {
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
+            {filterEffects.type === 'light-rays' && (
+              <p>Seeded local light-ray approximation: generated rays or Starburst spikes, or radial streaks of the layer&apos;s own bright pixels, around an editable centre. It is a bounded local render, not a physical light simulation.</p>
+            )}
             {filterEffects.type === 'lens-flare' && (
               <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
             )}
@@ -18592,6 +18602,9 @@ export default function Home() {
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
+                {filterEffects.type === 'light-rays' && (
+                  <LightRaysControls effect={filterEffects} change={setFilterEffects} />
+                )}
             {filterEffects.type === 'picture-frame' && (
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
@@ -18621,7 +18634,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'

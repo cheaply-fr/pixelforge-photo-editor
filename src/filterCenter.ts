@@ -14,6 +14,7 @@ export const CENTERED_FILTER_TYPES = [
   'lens-correction',
   'adaptive-wide-angle',
   'lens-flare',
+  'light-rays',
   'iris-blur',
   'radial-blur',
   'spin-blur',
