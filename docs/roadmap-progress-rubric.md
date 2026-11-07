@@ -57,7 +57,9 @@ release risk because a failing shard skips deployment.
    Implemented on `feat/clouds-colors` (`docs/clouds-effect-contract.md`).
 3. **One live filter per layer**; there is no Smart Filter stack, and Filter →
    Convert for Smart Filters is disabled while Layer → Convert for Smart Filters
-   is enabled.
+   is enabled. Raster-layer filter stacks (Add filter to stack, hide/show,
+   reorder, remove) shipped in #199 and in-place editing in #204
+   (2026-11-07).
 4. **Tool options are buried** ~7,000 px down the inspector; an options bar
    near the canvas is needed.
 5. **No sized File → New dialog**; new documents are fixed at 1200×800.
@@ -101,12 +103,12 @@ re-run for this record.
 | --- | --- | --- | --- | --- |
 | #181 | Gradient "Transparent" end fades the adjacent colour to alpha 0 (it previously faded to transparent white, leaving a grey fringe) | `8def856` | `f5e4135`, `cba6253` | — |
 | #182 | Lasso, Polygonal Lasso and Magnetic Lasso selections that leave the canvas are clipped to it instead of rejected with "Invalid layer document"; an off-canvas Elliptical Marquee keeps its true shape; Rectangular Marquee off-edge overshoot fixed | `fab25db` | `f5e4135`, `cba6253` | — |
-| #183 | Layer pixel budget (64 MP total) explained with a specific message and a Layers-panel readout; Layer → Trim Layer to Content; paint tools grow trimmed layers on demand | `8a82ad6` | `f5e4135`, `cba6253` | No automatic trim; Spot Healing, Patch, Red Eye, History and Art History brushes do not grow trimmed layers; painting a trimmed layer costs two undo steps (expansion + stroke) |
+| #183 | Layer pixel budget (64 MP total) explained with a specific message and a Layers-panel readout; Layer → Trim Layer to Content; paint tools grow trimmed layers on demand | `8a82ad6` | `f5e4135`, `cba6253` | No automatic trim; Spot Healing, Patch, Red Eye, History and Art History brushes do not grow trimmed layers; painting a trimmed layer costs two undo steps (expansion + stroke). **All three addressed by #193** (automatic content-bounds storage for stored-bounds layers, all paint tools grow in place, one undo step) |
 | #185 | Per-layer filter-result cache and decoded-asset cache (≈2.5–3× faster unrelated edits on large documents, local measurement) | `f5e4135` | `f5e4135`, `cba6253` | Tiled blur path not cached; ~2 s compositing remains at 10.8 MP; pointer-down decode wait unchanged |
-| #184 | Brush, Pencil, Eraser, Mask Brush/Eraser and Adjustment Brush confined to the active selection with feathered edges | `cba6253` | `cba6253` | Clone/Heal stamping still ignores the selection; "Mask from selection" leaves the selection active (Photoshop consumes it) |
-| #186 | Incremental local draft saves: content-addressed IndexedDB asset records (`asset:<draftId>:<sha256>`) so autosave writes only new assets instead of re-serialising tens of MB per edit; one read-write transaction per save, fail-closed reads | `f95ec93` | `f95ec93` | Assets remain base64 PNG data URLs; benchmark is local only |
+| #184 | Brush, Pencil, Eraser, Mask Brush/Eraser and Adjustment Brush confined to the active selection with feathered edges | `cba6253` | `cba6253` | Clone/Heal stamping still ignores the selection; "Mask from selection" leaves the selection active (Photoshop consumes it). **Both addressed by #196** (Spot Healing/Patch by #201) |
+| #186 | Incremental local draft saves: content-addressed IndexedDB asset records (`asset:<draftId>:<sha256>`) so autosave writes only new assets instead of re-serialising tens of MB per edit; one read-write transaction per save, fail-closed reads | `f95ec93` | `f95ec93` | Assets remain base64 PNG data URLs (Blob-backed assets: fix wave 3, W3-1); benchmark is local only |
 | #187 | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps, fast large dabs | `6a42943` | `6a42943` | — |
-| #189 | 10× device-aware undo **and** redo: 240 steps, image budget 320 MiB desktop / 128 MiB mobile or ≤4 GB / 96 MiB ≤2 GB (was 24 steps / 32 MB, one undo step on a 2646×4096 document); History panel states capacity and marks memory-only states | `1c40122` | `1c40122` | Only the persisted window (≤24 states, ~48 MiB) survives reload; assets remain base64 PNG data URLs |
+| #189 | 10× device-aware undo **and** redo: 240 steps, image budget 320 MiB desktop / 128 MiB mobile or ≤4 GB / 96 MiB ≤2 GB (was 24 steps / 32 MB, one undo step on a 2646×4096 document); History panel states capacity and marks memory-only states | `1c40122` | `1c40122` | Only the persisted window (≤24 states, ~48 MiB) survives reload; assets remain base64 PNG data URLs (W3-1) |
 
 Later releases: `CI and deploy` run **42331771754** succeeded for `f95ec93`
 (#186) and `/release.json` reported
@@ -133,56 +135,95 @@ as before.
 `/release.json` reported `1c40122cc42a9295ddf586827c15912cf2aeda74` (built
 2026-11-07T03:32:54Z). This docs record merged as #188 (`40b0e30`).
 
-### Fix wave 2 — in development (2026-11-07)
+### Fix wave 2 — merged and deployed (2026-11-07)
 
 Following the user's request to document and roadmap every finding, each
-remaining item now has a workstream. Status at write time
-(`gh pr list`, `git ls-remote --heads origin`): none of these is merged.
+remaining item got a workstream (table below). All of them are now merged
+to `main`. Status was rechecked for this record with
+`gh pr view <n> --repo cheaply-fr/pixelforge-photo-editor`,
+`gh run list --branch main --workflow "CI and deploy"` and
+`/release.json`.
 
-| Workstream | Branch / PR | Scope |
+Release evidence: each PR's first protected `CI and deploy` run that
+succeeded on `main` is listed. Runs for some merge commits were cancelled
+because a newer merge superseded them; those PRs were deployed by the next
+successful run, which contains them. `/release.json` and `/api/readyz.json`
+at `https://photoeditor.cheaply.fr` reported `257e744dea66609414d3859dde2c9404b04806bc` (built 2026-11-07T17:24:50Z, run **42396097704** succeeded)
+(`ready: true`), which contains every PR below. That is release-identity
+evidence only: per-feature live acceptance of each change was not re-run
+for this record, and all measurements quoted are local (headless Chromium
+or Node on one shared Windows/Xeon host), not CI budgets or production
+timings. Nothing here claims Photoshop parity.
+
+| PR | Change (bounded local approximations) | Merge SHA | First deployed in (run) | Remaining limitations (from the PR) |
+| --- | --- | --- | --- | --- |
+| #190 | Live stroke previews coalesced to at most one render per animation frame with one in flight (every pointer event is still stamped); identity canvas filters skipped. Local: 500 moves 201 s → 15.6 s | `0f390b0` | `0f390b0` (42365557583) | Each preview still composites the full frame (~90 ms at 10.8 MP headless); `getCoalescedEvents()` not read, so browser-coalesced points are dropped when the main thread is busy |
+| #191 | Radius-independent Gaussian Blur above radius 8 (exact kernel ≤ 8), sliding-histogram Median / Dust & Scratches / Reflection Removal, faster Motion Blur, work-scaled render watchdog with a recoverable timeout message | `2da6669` | `2da6669` (42370393394) | Gaussian above radius 8 is a three-box approximation (opaque ≤ 3 levels; partly transparent edge pixels up to ~10 %) |
+| #192 | Docs: fix-wave-2 workstreams | `e841a25` | `e841a25` (42366375289) | — |
+| #193 | Huge projects: 512 layers / 128 groups (was 32 / 32), 4,096 assets; device-aware stored-pixel and data budgets (desktop 1,024 MP / 1 GiB; 4 GB 384 MP / 384 MiB; mobile 256 MP / 256 MiB; ≤ 2 GB 128 MP / 128 MiB); new paint layers store one pixel and grow in place; committed paint layers stored at content bounds + 64 px; prefix composite cache for ≥ 8 layers; `.pixelforge` up to 1 GiB | `92af070` | `92af070` (42374575430) | Import/reload of projects with hundreds of MB of PNG data was too slow (partly addressed by #203); destructive filters, Apply Image and Calculations acted on stored bounds (Apply Image/Calculations fixed in #203, Perspective/Puppet Warp in #207). Limits are browser-safety budgets |
+| #194 | Brush Spacing 1–1000 %, Scatter 0–1000 %, Scatter both axes, Count 1–16, Count/Size/Angle/Opacity jitter, pen lift at pressure 0; Gradient Replace, separable blend modes and opacity | `5b7bc63` | `137ef33` (42369674269) | No live gradient preview, one-sided Count jitter and first-dab scatter (all fixed in #201) |
+| #195 | Warm stroke start: committed stroke pixels seed the decoded-asset cache and (≥ 2 MP) are transferred to the render worker. Local 2646×4096: pointer-down → first dab 678–752 ms → 110–204 ms; pointer-up → commit rendered 1.6–2.0 s → 0.6–1.05 s | `bf11abd` | `bf11abd` (42372064924) | First stroke after import unchanged (~600 ms); every commit still re-encodes the whole layer (`toDataURL` ~300 ms at 10.8 MP) — see tiled layer assets below |
+| #196 | Clone Stamp, Healing Brush, Pattern Stamp, Red Eye, Color Replacement, Background Eraser and Magic Eraser confined to the active selection; Alt-click clone source kept while the previous stroke commits, on-canvas source crosshair, Healing accepts Alt-click; Layer → Mask from selection deselects in the same undo step | `137ef33` | `137ef33` (42369674269) | Spot Healing and Patch ignored vector selections (fixed in #201) |
+| #197 | 26 layer/folder blend modes (shared catalogue, software modes rendered once through `renderFrame` for viewport, worker, export, merge, PSD/PDF); Outer Glow and Inner Glow; Drop/Inner Shadow blur up to 250 px, offsets ±1000 px; separable erosion | `f37a4f8` | `bf11abd` (42372064924) | Glow blend applied only against the layer's own pixels and shadows used a linear box falloff (both addressed by #204); Soft Light uses the W3C formula |
+| #198 | OS clipboard image paste handled on `document` (focus on `<body>` no longer loses it), Edit → Paste Image from Clipboard, 300 ms async-Clipboard fallback; hardened downloads (`src/download.ts`: attached anchor, per-download URL revoked after 60 s, MIME from filename) and **Save with file picker…** / **Save project with file picker…** where File System Access exists | `bf93da1` | `bf93da1` (42373085044) | Whether the Claude desktop built-in browser now writes the PNG is unverified (cannot be reproduced in CI); the file picker is the workaround |
+| #199 | Filter stacks on raster layers (Add filter to stack, up to 8; hide/show, reorder, remove; one undo step each); filter centres at 1e-6 precision with px fields and an on-canvas crosshair (keyboard nudges); Twirl and Polar Coordinates gain centres | `455cc3b` | `bf11abd` (42372064924) | In-place editing of stacked entries (added in #204); per-filter blend modes and masks; picking a filter from the menu still replaces the live one (stacking is explicit) |
+| #200 | Reference / guide image: document-level overlay (File → Place reference image…, Reference image panel), never exported, flattened or merged, outside the layer count and pixel budget; opacity, fit, lock, eyedropper sampling option; persisted in drafts and projects | `51a7ba4` | `92af070` (42374575430) | Stored downscaled to a 2048 px longest edge; its PNG still counts toward the per-document asset byte limit |
+| #201 | Spot Healing and Patch confined to any selection shape via a stored layer-space selection mask (survives Deselect, undo, reload); live gradient preview through the #190 scheduler (≤ 1.5 MP per frame on large layers); symmetric Count jitter; first dab scatters perpendicular when both axes are off; selection snapshots cached | `521188b` | `257e744` (42396097704) | Reduced gradient preview can differ from the commit by a few levels and previews Noise/Dither at that scale; the full-document composite per preview frame is unchanged; a never-seen selection costs one rasterization and PNG encode |
+| #202 | Faster Smart Blur, Smart Sharpen, Reduce Noise (~4–4.5×), Surface Blur (2×), Shape Blur (9×), Spin/Radial/Lens (1.3–2.8×), byte-identical or ≤ 1 level against oracle tests | `02124b4` | `02124b4` (42378078818) | Serial bilateral family still ~2.3–3.6 s/MP; legacy Path Blur ~2 s/MP (both then parallelised by #205) |
+| #203 | Large-project open/reload/re-render: worker keeps assets by content key and receives only new ones; native base64 decode/encode; install no longer pre-decodes what the first render decodes. Local 617 MB / 320-layer project: open ≈ 230 s → ≈ 79 s, reload 175 s → 53 s, re-render ~2 s → 0.3 s, draft save 2.6 s → 0.44 s. Apply Image / Calculations grow stored-bounds layers | `aed3fd8` | `cc3c465` (42382062711) | `.pixelforge` export unchanged (106 s → 107 s incl. harness download); data-URL asset model kept; tiled and Blob-backed assets left to a follow-up |
+| #204 | Non-Normal Outer Glow / Drop Shadow composite onto the pixels beneath the layer; Drop Shadow blend mode; **Falloff: Gaussian / Linear (legacy)** (new layers Gaussian, stored shadows unchanged); **Edit stacked filter** in place | `4552ed6` | `cc3c465` (42382062711) | Folder members blend only against the folder's lower members; clipped layers' outer effects see no backdrop; each pass applies the layer's filter separately; no Knockout, Fill opacity, per-filter blend modes or masks; Gaussian shadow ≈ 20 % slower |
+| #205 | Parallel filter worker pool (`hardwareConcurrency − 1`, ≤ 8 desktop, ≤ 2 phones / `deviceMemory ≤ 4`) for Smart Blur, Smart Sharpen, Surface Blur, Reduce Noise, Shape, Lens and legacy Path Blur; byte-identical bands/tiles, band progress restarts the watchdog, serial fallback. Local 10.8 MP, 8 workers: 0.26–0.54 s/MP (serial 2.1–4.3) | `cc3c465` | `cc3c465` (42382062711) | Speed-up scales with spare cores; the 4-core ~1 s/MP figure was an estimate; phones stay ~1.5–1.9 s/MP by design; layers < 0.5 MP stay serial |
+| #206 | Filter pool polish: cancelled tiles terminate busy workers (50 ms polling), halo rows read but not filtered, Filter-menu / heavy-filter pre-warm. Local 1 MP Reduce Noise on 8 workers 1.09 → 0.79 s/MP pre-warmed | `32a2d37` | `32a2d37` (42384521974) | 4-core configuration (3 workers) measured 0.92–1.58 s/MP at 10.8 MP on the loaded host — ~1 s/MP not confirmed |
+| #207 | Perspective Warp, Vanishing Point and Puppet Warp grow a stored-bounds paint layer to the canvas first (canvas-space handles) and re-store the result at content bounds, one undo step; `scripts/measure-stroke-commit.mjs` local harness | `257e744` | `257e744` (42396097704) | Baseline for tiled assets: full-layer stroke commit 2.2–2.9 s at 2646×4096 (new paint layer 0.48–0.58 s); tiled and Blob-backed assets not started in this PR |
+
+Workstream mapping (original scope, now shipped):
+
+| Workstream | Branch → PR | Original scope |
 | --- | --- | --- |
-| A | `feat/huge-projects` — no remote branch yet | User request "don't flatten — handle huge projects": ~10× limits — 320+ layers (was 32), 640 MP stored layer pixels (was 64 MP), ~640 MB asset/draft/project caps (was 64 MB); automatic trim of layers to content; lazy (unallocated) empty layers; render scaling; Rasterize and Merge preserve trimmed bounds |
-| B | `perf/coalesce-stroke-previews` — PR #190 (open) | One live stroke preview per animation frame instead of per `pointermove` (a 12k-point stroke took ~5 min); skip identity canvas filters. Queued follow-up: stroke-start decode latency (~2 s at 10.8 MP) and per-stroke full-layer PNG commit cost (dirty-rect or tiled layer storage) |
-| C | `perf/fast-large-radius-filters` — PR #191 (open) | Gaussian Blur radius 24 timed out the render worker on 10.8 MP; radius-independent O(1)-per-pixel blurs, faster median filters and a work-scaled render watchdog. Queued follow-up: fractional / on-canvas Radial Blur centres and multi-filter stacks on raster layers without Rasterize |
-| C4 | `perf/filter-pool-polish` — PR open, not merged | Tile-path cancellation terminates busy filter workers (pool refills lazily; render cancellation polled every 50 ms); halo rows are read but no longer rendered; Filter-menu / heavy-filter pre-warm at idle time. Reduce Noise 1 MP first run 0.79 s/MP with 8 workers. 4-core (3 workers) measured 0.9–1.6 s/MP at 10.8 MP on the loaded dev host — the ~1 s/MP estimate is not confirmed there |
-| C3 | `perf/parallel-neighborhood-filters` — merged as #205 (`cc3c465`) | Follow-up to #202: filter worker pool (separate from the render worker; `hardwareConcurrency − 1`, ≤ 8 desktop, ≤ 2 phone) renders Smart Blur, Smart Sharpen, Surface Blur, Reduce Noise, Shape, Lens and legacy Path Blur as halo'd row bands or parallel tiles, byte-identical to the serial kernels, with per-band watchdog progress and cancellation. Local 10.8 MP with 8 workers: 0.26–0.54 s/MP (was 2.1–4.3). Phones stay ~1.5–1.9 s/MP by design |
-| C2 | `perf/fast-remaining-filters` — merged as #202 (`02124b4`) | Follow-up to #191 for the filters still slow on 10.8 MP layers: Shape Blur 9× (O(radius) integer prefix sums), Smart Blur / Smart Sharpen / Reduce Noise ~4–4.5×, Surface Blur 2×, Spin/Radial/Lens 1.8–2.8×, byte-identical or ≤ 1 level against oracle tests (see `performance-budgets.md`). Not reached: < 1 s/MP for the O(radius²) bilateral family (~2.3–3.6 s/MP at radius 8) and legacy Path Blur (~2 s/MP); queued follow-up: band-parallel nested workers or Wasm SIMD |
-| D | `fix/retouch-selection-and-clone-source` — PR open, not merged | Clone Stamp, Healing Brush and the other retouch tools respect the active selection; an Alt-click clone source set while the previous stroke is still committing is no longer dropped; "Mask from selection" consumes (deselects) the selection |
-| E | `feat/glow-styles-and-blend-modes` — PR #197 open, not merged | Blend modes colour dodge/burn, linear dodge/burn, soft/hard light, exclusion, hue, saturation, colour and luminosity; Outer Glow and Inner Glow layer styles; larger shadow ranges |
-| F | `feat/brush-gradient-options` — no remote branch yet | Brush spacing and scatter above 100%, count and count jitter, a true pen lift at pressure 0; Gradient Replace mode, blend modes and opacity |
-| G | `feat/reference-layer-paste-export` — no remote branch yet | Non-exported reference/guide layer with eyedropper sampling; OS clipboard image paste via Ctrl+V and Edit → Paste; hardened downloads (anchor attached to the DOM, deferred revoke, explicit MIME type, File System Access save picker where available) after a PNG export wrote no file in the Claude desktop built-in browser |
+| A | `feat/huge-projects` → #193 | "Don't flatten — handle huge projects": ~10× limits, automatic trim to content, lazy empty layers, render scaling. Shipped limits exceed the planned 320 layers / 640 MP / 640 MB (see #193 row) |
+| B | `perf/coalesce-stroke-previews` → #190; `perf/stroke-start-and-commit` → #195 | Per-frame previews; stroke-start decode latency. Per-stroke full-layer commit cost remains (fix wave 3) |
+| C | `perf/fast-large-radius-filters` → #191; `feat/filter-centers-and-stacks` → #199 | Radius-independent blurs and scaled watchdog; precise / on-canvas filter centres and raster filter stacks |
+| C2 | `perf/fast-remaining-filters` → #202 | Remaining slow neighbourhood filters |
+| C3 | `perf/parallel-neighborhood-filters` → #205 | Parallel filter worker pool |
+| C4 | `perf/filter-pool-polish` → #206 | Tile cancellation, halo-free bands, pre-warm; 4-core measurement |
+| D | `fix/retouch-selection-and-clone-source` → #196 | Retouch tools respect the selection; Alt-click source kept; Mask from selection deselects |
+| E | `feat/glow-styles-and-blend-modes` → #197 | Blend modes; Outer/Inner Glow; larger shadow ranges |
+| F | `feat/brush-gradient-options` → #194 | Sparse stamping, count/jitter, pen lift; gradient modes and opacity |
+| G | `fix/os-paste-export-downloads` → #198; `feat/reference-layer-paste-export` → #200 | OS clipboard image paste, hardened downloads; non-exported reference image |
+| Polish | `feat/retouch-brush-polish` → #201; `feat/effects-retouch-polish` → #204 | Follow-ups of #194/#196/#197/#199 limitations (sections below) |
+| Large projects | `perf/blob-tiled-layer-assets` → #203; `perf/tiled-blob-layer-assets` → #207 | Open/reload/re-render speed; stored-bounds Apply Image, Calculations and warps |
 
 ### Backlog → workstream mapping
 
-Priority is a suggestion: **P1** blocks or seriously slows large-document
-painting, **P2** is a visible capability gap, **P3** is polish or
-investigation. "Queued" means recorded as a follow-up of that workstream,
-not yet in its branch.
+Priority as originally assigned: **P1** blocked or seriously slowed
+large-document painting, **P2** a visible capability gap, **P3** polish or
+investigation.
 
-| # | Item | Priority | Workstream | Area / contract |
+| # | Item | Priority | Status | Area / contract |
 | --- | --- | --- | --- | --- |
-| 1 | Stroke-start latency: ~2 s decode of the active 10.8 MP layer at pointer-down; reuse decoded layers as a first-class gesture input | P1 | B (queued) | `performance-budgets.md` |
-| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`); dirty-rect commits or tiled layer storage | P1 | B (queued) | `performance-budgets.md`, `layer-document-format.md` |
-| 3 | Clone Stamp / Healing Brush respect the active selection (follow-up of #184) | P1 | D | `brush-tool-contract.md` |
-| 4 | Ctrl+V of an OS clipboard image did not reach the paste handler | P1 | G | `paste-special-contract.md` |
-| 5 | Additional blend modes for glow and light painting | P2 | E | `group-compositing-contract.md` |
-| 6 | Larger Drop Shadow blur range; Outer Glow and Inner Glow | P2 | E | `layer-styles-contract.md` |
-| 7 | One live filter per raster layer; multi-filter stack without Rasterize | P2 | C (queued) | `smart-filters-contract.md` |
-| 8 | Radial Blur integer-percent centres; fractional/pixel and on-canvas centres | P2 | C (queued) | `blur-effects-contract.md` |
-| 9 | Reference/guide image with eyedropper, outside export and the layer budget | P2 | G | `layer-pixel-budget-contract.md`, `export-contract.md` |
-| 10 | Pen lift at pressure 0; sparse stamping (spacing/scatter > 100%, count/jitter) | P2 | F | `brush-dynamics-contract.md`, `brush-pressure-contract.md` |
-| 11 | "Mask from selection" consumes the selection | P3 | D | `layer-mask-contract.md` |
-| 12 | Second gradient composites over existing pixels; Replace mode | P3 | F | `gradient-mode-contract.md` |
+| 1 | Stroke-start latency: ~2 s decode of the active 10.8 MP layer at pointer-down | P1 | **Shipped in #195** (warm committed pixels; first stroke after import still ~600 ms locally) | `performance-budgets.md` |
+| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`) | P1 | **Open — fix wave 3** (tiled layer assets, in progress); new paint layers are cheap since #193 (stored at content bounds) | `performance-budgets.md`, `layer-document-format.md` |
+| 3 | Clone Stamp / Healing Brush respect the active selection (follow-up of #184) | P1 | **Shipped in #196**; Spot Healing / Patch in #201 | `brush-tool-contract.md` |
+| 4 | Ctrl+V of an OS clipboard image did not reach the paste handler | P1 | **Shipped in #198** | `paste-special-contract.md` |
+| 5 | Additional blend modes for glow and light painting | P2 | **Shipped in #197** (26 modes); backdrop-blended glows in #204 | `group-compositing-contract.md` |
+| 6 | Larger Drop Shadow blur range; Outer Glow and Inner Glow | P2 | **Shipped in #197**; Gaussian falloff in #204 | `layer-styles-contract.md` |
+| 7 | One live filter per raster layer; multi-filter stack without Rasterize | P2 | **Shipped in #199**; in-place editing in #204 | `smart-filters-contract.md` |
+| 8 | Radial Blur integer-percent centres; fractional/pixel and on-canvas centres | P2 | **Shipped in #199** | `blur-effects-contract.md` |
+| 9 | Reference/guide image with eyedropper, outside export and the layer budget | P2 | **Shipped in #200** | `reference-image-contract.md` |
+| 10 | Pen lift at pressure 0; sparse stamping (spacing/scatter > 100%, count/jitter) | P2 | **Shipped in #194**; symmetric jitter in #201 | `brush-dynamics-contract.md`, `brush-pressure-contract.md` |
+| 11 | "Mask from selection" consumes the selection | P3 | **Shipped in #196** | `layer-mask-contract.md` |
+| 12 | Second gradient composites over existing pixels; Replace mode | P3 | **Shipped in #194**; live preview in #201 | `gradient-mode-contract.md` |
 | 13 | History panel shows in-memory and persisted depth | P3 | **Shipped in #189** | `history-timeline-contract.md` |
-| 14 | PNG export wrote no file in the Claude desktop built-in browser | P3 | G | `export-contract.md` |
-| 15 | Gaussian Blur radius 24 timed out the render worker at 10.8 MP | P1 | C | `blur-effects-contract.md`, `worker-render-contract.md` |
-| 16 | Alt-click clone source dropped while the previous stroke commits | P2 | D | `brush-tool-contract.md` |
-| 17 | Project limits force flattening on large posters (layers, stored pixels, asset/draft caps) | P1 | A | `layer-pixel-budget-contract.md`, `draft-storage-contract.md` |
+| 14 | PNG export wrote no file in the Claude desktop built-in browser | P3 | **Hardened in #198**; host behaviour unverified (file picker workaround) | `export-contract.md` |
+| 15 | Gaussian Blur radius 24 timed out the render worker at 10.8 MP | P1 | **Shipped in #191**; other heavy filters in #202, #205, #206 | `blur-effects-contract.md`, `worker-render-contract.md` |
+| 16 | Alt-click clone source dropped while the previous stroke commits | P2 | **Shipped in #196** | `brush-tool-contract.md` |
+| 17 | Project limits force flattening on large posters (layers, stored pixels, asset/draft caps) | P1 | **Shipped in #193**; open/reload speed in #203 (very large imports still slow — fix wave 3) | `layer-pixel-budget-contract.md`, `draft-storage-contract.md` |
 
 ### Fix wave 2 polish — retouch/brush (branch `feat/retouch-brush-polish`)
 
-Follow-ups of limitations left by #194 and #196; implemented locally, not
-merged. Companion of the effects polish on `feat/effects-retouch-polish`.
+Follow-ups of limitations left by #194 and #196. Merged as #201
+(`521188b`), deployed with `257e744` (see the table above). Companion of the
+effects polish (#204).
 
 | Item | Change | Contract / evidence |
 | --- | --- | --- |
@@ -201,9 +242,9 @@ rasterization and PNG encode.
 ### Fix wave 2 polish — effects (branch `feat/effects-retouch-polish`)
 
 Follow-ups of limitations documented by #197 and #199. Merged as #204
-(`4552ed6`); deployment not recorded here. The companion retouch/brush
-items (Spot Healing/Patch selections, live gradient preview, Count jitter) are
-on `feat/retouch-brush-polish` (#201).
+(`4552ed6`), first deployed with `cc3c465` (run 42382062711). The companion
+retouch/brush items (Spot Healing/Patch selections, live gradient preview,
+Count jitter) merged as #201.
 
 | Item | Change | Contract | Remaining limitations |
 | --- | --- | --- | --- |
@@ -213,8 +254,39 @@ on `feat/retouch-brush-polish` (#201).
 
 Evidence: `tests/effects-polish.test.mjs` and
 `tests/browser/effects-polish.spec.ts` (desktop and mobile). Local results
-and CI are reported on the PR; nothing here is CI-verified, deployed or live
-accepted until recorded separately.
+and CI are reported on the PR. Release identity is recorded in "Fix wave 2 —
+merged and deployed" above; per-feature live acceptance is open (W3-16).
+
+### Fix wave 3 — open items and limitations (2026-11-07)
+
+Everything still open after recreating the "cosmic eye" poster, collected
+from the user's findings and from the "Not in this PR" / "Limitations" /
+"Remaining work" sections of #190–#207. Status: **In progress** has a
+branch; **Open** has none yet. Measurements are local, not CI or production.
+
+| # | Item | Priority | Status | Source / area |
+| --- | --- | --- | --- | --- |
+| W3-1 | **Tiled, content-addressed layer tiles + Blob-backed assets.** Commits re-encode only the 256² tiles a stroke touched; assets kept as Blobs instead of base64 data URLs (also removes base64 work in drafts and exports). Reaches `validateFrame`/`referencedAssets`, the #189 history budget, #186 drafts (tiles dedupe by hash), project/PSD/ORA export, worker transfer, ~40 `decodeAsset` call sites, and needs migration of existing documents. Baseline (#207 harness, 2646×4096): pointer-up → committed and rendered **2.2–2.9 s** on a full-canvas photo layer (0.48–0.58 s on a new paint layer) | P1 | **In progress** — separate PR, design first | #195, #203, #207; `performance-budgets.md`, `layer-document-format.md` |
+| W3-2 | **Very large (600 MB+) projects still slow.** 617 MB / 822 MB-data, 320-layer poster: ≈ 79 s open (editor time), 53 s reload from the draft, 107 s `.pixelforge` export (incl. harness download); working set ~4.2 GB after open, peak ~5.2 GB. Remaining time is first-render PNG decode of the full layers and IndexedDB save | P1 | **Open** — expected to benefit from W3-1; lazy asset decode/streaming on install | #193, #203, #207 |
+| W3-3 | **Export speed unchanged** by the large-project work (#203: 106 s → 107 s for the 617 MB project) | P2 | **Open** | #203; `export-contract.md` |
+| W3-4 | **4-core filter speed-up unconfirmed on low-core devices.** 3 workers measured 0.92–1.58 s/MP at 10.8 MP on a loaded 2.4 GHz host (~2.6× over serial); ~1 s/MP not confirmed; no physical low-core desktop or phone measured. Phones capped at 2 workers (~1.5–1.9 s/MP by design); layers < 0.5 MP and other filters stay serial; at 1 MP JIT warm-up keeps a cold Reduce Noise above 1 s/MP | P2 | **Open** — measurement on real 4-core / phone hardware | #205, #206; `performance-budgets.md`, `worker-render-contract.md` |
+| W3-5 | **Glow and shadow effects inside folders and on clipped layers.** Non-Normal Outer Glow / Drop Shadow on a folder member blend only against the folder's lower members (folders composite in isolation); a clipped layer's outer effects see no backdrop; each pass applies the layer's filter separately | P2 | **Open** | #204; `layer-styles-contract.md`, `group-compositing-contract.md` |
+| W3-6 | **No Knockout and no Fill opacity** (layer opacity only) | P2 | **Open** | #204; `layer-styles-contract.md` |
+| W3-7 | **Per-filter blend modes and masks** for filter stacks; picking a filter from the menu replaces the live filter (stacking is explicit) | P2 | **Open** | #199, #204; `smart-filters-contract.md` |
+| W3-8 | **Live stroke preview composites the full frame** (~90 ms per preview at 10.8 MP headless); dirty-rect previews or a cached below/above composite per gesture need region support in `renderFrame`. The gradient preview (#201) also still composites the full document each frame | P2 | **Open** — related to W3-1 | #190, #201; `performance-budgets.md` |
+| W3-9 | **`getCoalescedEvents()` not read**, so browser-coalesced pointer points are dropped while the main thread is busy | P3 | **Open** | #190; `brush-tool-contract.md` |
+| W3-10 | **First stroke after importing an image** still waits ~600 ms locally for the decode (later strokes are warm since #195) | P3 | **Open** | #195 |
+| W3-11 | **Reduced gradient preview** on layers > 1.5 MP can differ from the commit by a few levels and previews Noise/Dither at that scale; a never-seen selection costs one rasterization + PNG encode for Spot Healing/Patch | P3 | **Open** (documented limitation) | #201; `gradient-mode-contract.md`, `spot-healing-contract.md` |
+| W3-12 | **PNG export in the Claude desktop built-in browser** not verified after #198's hardening (host behaviour cannot be reproduced in CI); **Save with file picker…** is the workaround. Host notes (popups close the pane, ZIPs saved as GUID `.tmp`) are not app bugs | P3 | **Open** — needs a manual check in that host | #198; `export-contract.md` |
+| W3-13 | **Gaussian shadow falloff** is ≈ 20 % slower than the legacy box pass at large radii | P3 | **Open** (accepted cost) | #204 |
+| W3-14 | **Reference image** stored downscaled to a 2048 px longest edge; its PNG counts toward the per-document asset byte limit | P3 | **Open** (documented limitation) | #200; `reference-image-contract.md` |
+| W3-15 | **Remaining stored-bounds gaps:** other destructive operations that still act on a layer's stored bounds (Apply Image/Calculations fixed in #203, Perspective/Vanishing Point/Puppet Warp in #207) should be audited; layers carrying Spot Healing/Patch metadata are never trimmed or expanded | P3 | **Open** — audit | #193, #201, #203, #207; `layer-pixel-budget-contract.md` |
+| W3-16 | **Per-feature live acceptance** of #190–#207 on `https://photoeditor.cheaply.fr` (release identity is verified; behaviour was verified only by local and CI tests) | P2 | **Open** | this record |
+
+Earlier limitations still open: #183 has no automatic trim for *opened*
+photos (by design since #193, only stored-bounds layers are trimmed); #185's
+tiled blur path is not cached; #189's persisted history window is ≤ 24
+states (~48 MiB) across reload.
 
 ## Latest protected release evidence
 

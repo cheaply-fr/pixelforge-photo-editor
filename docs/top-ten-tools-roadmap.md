@@ -58,11 +58,9 @@ while keeping implementation claims limited to features covered by tests.
 
 A live 2646×4096 painting session exercised the layer, selection, painting, filter and export
 workflows (2, 4, 6, 8, 9) at 10.8 MP and
-produced #181–#187 (merged; deploy status per PR in the rubric), open #189
-(larger undo/redo), in-development huge-project limits and coalesced stroke
-previews, and a
-prioritized backlog led by large-document responsiveness (stroke-start
-decode, per-stroke PNG commits, per-event stroke previews, undo depth). The
-list is recorded in
+produced #181–#207 (all merged; deploy runs per PR in the rubric), and a
+fix-wave-3 list of open items led by per-stroke full-layer PNG commits
+(tiled layer assets, in progress) and very large project open/reload/export
+times. The list is recorded in
 [`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07);
 it does not change the applied status of the core ten.
