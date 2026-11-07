@@ -482,6 +482,10 @@ import {
 } from '../src/gradientStops';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
+import {
+  persistableHistoryDraft,
+  type PersistedHistoryWindow,
+} from '../src/historyBudget';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -2277,6 +2281,7 @@ export default function Home() {
       tiledTelemetry,
       tiledProgress,
       tiledCacheBudget,
+      historyBudget,
       commit,
       install,
       select,
@@ -2436,6 +2441,7 @@ export default function Home() {
     [commandShortcutBindings, setCommandShortcutBindings] = useState<Record<string, string>>(() => initialCommandShortcutPreferences.bindings),
     [lastFilterType, setLastFilterType] = useState<FilterEffectType | undefined>(() => initialLastFilterType),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
+    [persistedHistory, setPersistedHistory] = useState<PersistedHistoryWindow | null>(null),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
     [spellcheckOpen, setSpellcheckOpen] = useState(false),
@@ -2846,15 +2852,19 @@ export default function Home() {
     defaultTypeStyle,
     ...neutral,
   });
-  const documentValue = (): Draft => ({
-    version: 2,
-    history: history.current,
-    assets: assets.current,
-    index: index.current,
-    name,
-    metadata: { ...metadata },
-    settings: settings(),
-  });
+  // Drafts, duplicates, cloud saves and portable projects keep the most
+  // recent history states that fit the draft limits; the in-memory undo/redo
+  // stack can be larger (see src/historyBudget.ts).
+  const documentValue = (): Draft =>
+    persistableHistoryDraft<Draft>({
+      version: 2,
+      history: history.current,
+      assets: assets.current,
+      index: index.current,
+      name,
+      metadata: { ...metadata },
+      settings: settings(),
+    }).draft;
   /** File Info is intentionally local/project-only; never send personal metadata to cloud APIs. */
   const cloudDocumentValue = (): Draft => {
     return stripPrivateMetadata(documentValue());
@@ -6424,7 +6434,7 @@ export default function Home() {
     const sequence = ++saveSequence.current;
     saving.current = true;
     setSaveStatus('Saving on this device…');
-    const value: Draft = {
+    const fullValue: Draft = {
       version: 2,
       cloud,
       history: history.current.slice(),
@@ -6499,6 +6509,18 @@ export default function Home() {
       },
       metadata: { ...metadata },
     };
+    // Persist only the history window that fits the local draft limits so a
+    // larger in-memory undo/redo stack can never make local saves fail.
+    const { draft: value, window: persistedWindow } =
+      persistableHistoryDraft(fullValue);
+    setPersistedHistory((previous) =>
+      previous &&
+      previous.start === persistedWindow.start &&
+      previous.end === persistedWindow.end &&
+      previous.omittedRedo === persistedWindow.omittedRedo
+        ? previous
+        : persistedWindow,
+    );
     const pendingToken = stagePendingDraft(
       draftId,
       value,
@@ -15765,6 +15787,8 @@ export default function Home() {
             <HistoryPanel
               history={history.current}
               currentIndex={index.current}
+              persisted={persistedHistory}
+              budget={historyBudget}
               restore={(targetIndex) => {
                 const distance = targetIndex - index.current;
                 if (!distance) return;

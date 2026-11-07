@@ -20,6 +20,12 @@ import {
   toggleLayerSelection,
 } from './layerSelection';
 import { TileCache } from './tilePlan';
+import {
+  DOCUMENT_MAX_ASSET_BYTES,
+  detectHistoryBudget,
+  formatMiB,
+  trimHistoryToBudget,
+} from './historyBudget';
 import { detectTileCacheBudget } from './tileCachePolicy';
 
 export type RenderProgress = {
@@ -48,6 +54,8 @@ export function useDocument(onError: (message: string) => void) {
   const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
   const [tiledProgress, setTiledProgress] = useState<TiledNeighborhoodProgress | null>(null);
   const [tiledCacheBudget] = useState(() => detectTileCacheBudget());
+  // Device-aware undo/redo capacity (steps + retained image bytes).
+  const [historyBudget] = useState(() => detectHistoryBudget());
   const renderSequence = useRef(0),
     renderAbort = useRef<AbortController | null>(null),
     documentRevision = useRef(0),
@@ -141,26 +149,23 @@ export function useDocument(onError: (message: string) => void) {
         // remain undoable instead of producing an unusable document.
         const sanitized = sanitizeClippingRelations(value);
         validateFrame(sanitized, assets.current);
-        let next = replace
+        const candidate = replace
           ? [sanitized]
           : [...history.current.slice(0, index.current + 1), sanitized];
-        let used = referencedAssets(next, assets.current);
-        while (
-          next.length > 1 &&
-          (next.length > 24 ||
-            Object.values(used).reduce((n, a) => n + a.url.length, 0) >
-              32 * 1024 * 1024)
-        ) {
-          next = next.slice(1);
-          used = referencedAssets(next, assets.current);
-        }
-        if (
-          Object.values(used).reduce((n, a) => n + a.url.length, 0) >
-          64 * 1024 * 1024
-        )
+        // Oldest undo states go first; the new current frame is always kept.
+        const trimmed = trimHistoryToBudget(
+          candidate,
+          candidate.length - 1,
+          assets.current,
+          historyBudget,
+        );
+        if (trimmed.currentBytes > DOCUMENT_MAX_ASSET_BYTES)
           throw new Error(
-            'This document exceeds 64 MB. Export a copy before adding more images.',
+            `This document's image data (${formatMiB(trimmed.currentBytes)}) exceeds the ${formatMiB(DOCUMENT_MAX_ASSET_BYTES)} per-document limit ` +
+              `(undo history may use up to ${formatMiB(historyBudget.maxBytes)} on this device). Export a copy before adding more images.`,
           );
+        const next = trimmed.history;
+        const used = referencedAssets(next, assets.current);
         history.current = next;
         index.current = next.length - 1;
         assets.current = used;
@@ -179,7 +184,7 @@ export function useDocument(onError: (message: string) => void) {
         return false;
       }
     },
-    [publish, onError, paint],
+    [publish, onError, paint, historyBudget],
   );
   const install = useCallback(async (draft: Draft) => {
     const expected = history.current[index.current];
@@ -318,6 +323,7 @@ export function useDocument(onError: (message: string) => void) {
     tiledTelemetry,
     tiledProgress,
     tiledCacheBudget,
+    historyBudget,
     paint,
     commit,
     install,
