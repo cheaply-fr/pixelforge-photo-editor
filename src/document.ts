@@ -1902,8 +1902,14 @@ export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
     decoded.set(key, cached);
     return cached.promise;
   }
-  const pending = decodeNewAsset(asset);
-  const entry: DecodedEntry = { promise: pending, pixels: asset.w * asset.h };
+  return rememberDecoded(key, decodeNewAsset(asset), asset.w * asset.h);
+}
+function rememberDecoded(
+  key: string,
+  pending: Promise<HTMLImageElement>,
+  pixels: number,
+): Promise<HTMLImageElement> {
+  const entry: DecodedEntry = { promise: pending, pixels };
   decoded.set(key, entry);
   decodedPixels += entry.pixels;
   // A failed decode must not poison later attempts for the same content.
@@ -1920,6 +1926,62 @@ export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
     retireDecoded(oldest);
   }
   return pending;
+}
+/**
+ * Seed the decoded-asset cache with pixels the caller already holds for a
+ * freshly encoded asset (for example the buffer a brush stroke just committed),
+ * so the next decode of that asset — the next stroke's start, or a main-thread
+ * render — does not decode the PNG data URL again. The source is copied into
+ * a private surface, so later changes to the caller's canvas cannot leak into
+ * the cache. Returns false when the source does not match the asset.
+ */
+export function primeDecodedAsset(
+  asset: Asset,
+  source: CanvasImageSource & { width: number; height: number },
+): boolean {
+  if (!asset || typeof asset.url !== 'string') return false;
+  if (source.width !== asset.w || source.height !== asset.h) return false;
+  const key = assetFingerprint(asset);
+  if (decoded.has(key)) return true;
+  const snapshot = surface(asset.w, asset.h);
+  snapshot.getContext('2d')!.drawImage(source, 0, 0);
+  // Present the snapshot like a decoded <img> to callers that size buffers
+  // from naturalWidth/naturalHeight.
+  Object.defineProperties(snapshot, {
+    naturalWidth: { value: asset.w, configurable: true },
+    naturalHeight: { value: asset.h, configurable: true },
+  });
+  void rememberDecoded(
+    key,
+    Promise.resolve(snapshot as unknown as HTMLImageElement),
+    asset.w * asset.h,
+  );
+  return true;
+}
+/**
+ * Worker-side seeding: accept already decoded pixels for an asset whose
+ * content fingerprint the main thread computed. Dimensions must match.
+ */
+export function primeDecodedAssetPixels(
+  asset: Asset,
+  key: string,
+  pixels: Uint8ClampedArray,
+): boolean {
+  if (!asset || typeof asset.url !== 'string' || decoded.has(key)) return false;
+  if (key !== assetFingerprint(asset)) return false;
+  if (pixels.length !== asset.w * asset.h * 4) return false;
+  if (typeof createImageBitmap !== 'function' || typeof ImageData !== 'function') return false;
+  const image = new ImageData(
+    pixels as unknown as Uint8ClampedArray<ArrayBuffer>,
+    asset.w,
+    asset.h,
+  );
+  void rememberDecoded(
+    key,
+    createImageBitmap(image) as unknown as Promise<HTMLImageElement>,
+    asset.w * asset.h,
+  );
+  return true;
 }
 async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
   if (!validAsset(asset)) throw new Error('Invalid or oversized project image');

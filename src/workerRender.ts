@@ -7,6 +7,7 @@ import {
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
 import {
+  assetFingerprint,
   assetFingerprints,
   clearLayerFilterCache,
   layerFilterCacheDelta,
@@ -155,6 +156,59 @@ function startRenderWatchdog(
  */
 const PERSISTENT_WORKER_IDLE_MS = 5 * 60_000;
 const WORKER_MIN_PIXELS = 2_000_000;
+
+/**
+ * Decoded pixels for a freshly committed asset, handed to the next worker
+ * render that references it so the worker does not decode the PNG data URL
+ * it was just encoded from. At most one entry is retained (the latest stroke)
+ * and an entry is transferred, not copied, so memory stays bounded.
+ */
+type WorkerPrime = { key: string; width: number; height: number; pixels: ArrayBuffer };
+let workerPrime: WorkerPrime | null = null;
+
+/** Offer a committed raster's pixels to the render worker (large frames only). */
+export function primeWorkerDecodedAsset(
+  asset: { url: string; w: number; h: number } | undefined,
+  source: HTMLCanvasElement,
+): boolean {
+  if (!asset || typeof asset.url !== 'string') return false;
+  if (source.width !== asset.w || source.height !== asset.h) return false;
+  if (asset.w * asset.h < WORKER_MIN_PIXELS || !canRenderInWorker()) return false;
+  try {
+    const data = source.getContext('2d')!.getImageData(0, 0, asset.w, asset.h).data;
+    workerPrime = {
+      key: assetFingerprint(asset),
+      width: asset.w,
+      height: asset.h,
+      pixels: data.buffer as ArrayBuffer,
+    };
+    return true;
+  } catch {
+    workerPrime = null;
+    return false;
+  }
+}
+
+/** Primes for this request's assets, plus the buffers to transfer. */
+function takeWorkerPrimes(keys: Record<string, string>): {
+  decodedPixels?: Array<{ id: string; key: string; pixels: ArrayBuffer }>;
+  transfer: Transferable[];
+} {
+  const prime = workerPrime;
+  if (!prime) return { transfer: [] };
+  const id = Object.keys(keys).find((assetId) => keys[assetId] === prime.key);
+  if (!id) return { transfer: [] };
+  workerPrime = null;
+  return {
+    decodedPixels: [{ id, key: prime.key, pixels: prime.pixels }],
+    transfer: [prime.pixels],
+  };
+}
+
+/** Diagnostics for tests: whether a committed raster is waiting for the worker. */
+export function workerPrimePending(): boolean {
+  return workerPrime !== null;
+}
 let requestId = 0;
 
 function abortError(): Error {
@@ -407,14 +461,17 @@ export async function renderFrameWithWorker(
       // Do not clone every asset retained by undo history. A render only needs
       // the current frame's raster and mask references.
       const used = referencedAssets([frame], assets);
+      const assetKeys = assetFingerprints(used);
+      const primes = takeWorkerPrimes(assetKeys);
       worker.postMessage({
         kind: 'render',
         id,
         frame,
         assets: used,
-        assetKeys: assetFingerprints(used),
+        assetKeys,
+        decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
-      });
+      }, primes.transfer);
     } catch (error) {
       finish(() => reject(error));
     }
@@ -518,14 +575,17 @@ class PersistentWorkerSession {
         if (this.active === task) this.onWorkerFailure(error);
       });
       const used = referencedAssets([task.frame], task.assets);
+      const assetKeys = assetFingerprints(used);
+      const primes = takeWorkerPrimes(assetKeys);
       worker.postMessage({
         kind: 'render',
         id: task.id,
         frame: task.frame,
         assets: used,
-        assetKeys: assetFingerprints(used),
+        assetKeys,
+        decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
-      });
+      }, primes.transfer);
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
       // still busy. Retire it before falling back and servicing a queued

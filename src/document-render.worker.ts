@@ -2,6 +2,7 @@ import {
   renderFrame,
   validateFrame,
   clearDecodedAssetCache,
+  primeDecodedAssetPixels,
   releaseRetiredDecodedAssets,
   type Assets,
   type Frame,
@@ -28,6 +29,8 @@ type RenderRequest = {
   tiledMaxWorkingBytes?: number;
   /** Main-thread content fingerprints, so the worker need not rehash data URLs. */
   assetKeys?: Record<string, string>;
+  /** Pixels the main thread already holds for a just-committed asset. */
+  decodedPixels?: Array<{ id: string; key: string; pixels: ArrayBuffer }>;
 };
 type CancelRequest = { kind: 'cancel'; id: number };
 /** Drop retained layer-filter surfaces, e.g. after a different document is installed. */
@@ -148,6 +151,12 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     try {
       validateFrame(request.frame, request.assets);
       primeAssetFingerprints(request.assets, request.assetKeys);
+      if (Array.isArray(request.decodedPixels))
+        for (const prime of request.decodedPixels.slice(0, 1)) {
+          const asset = prime && typeof prime.id === 'string' ? request.assets[prime.id] : undefined;
+          if (asset && typeof prime.key === 'string' && prime.pixels instanceof ArrayBuffer)
+            primeDecodedAssetPixels(asset, prime.key, new Uint8ClampedArray(prime.pixels));
+        }
       const tiledMaxWorkingBytes = validateTiledBudget(request.tiledMaxWorkingBytes);
       output = (await renderFrame(
         request.frame,
