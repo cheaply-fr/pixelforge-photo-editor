@@ -83,20 +83,38 @@ the import boundary with a develop/flatten-first message. PixelForge does not
 claim lossless HEIC, TIFF, layered PSD or RAW round trips, and batch import
 uses the same labels in its per-file failure manifest.
 
-## Embedded-browser download gap (2026-11-07)
+## Download delivery and embedded browsers
 
-Observed once, unresolved: in the Claude desktop app's built-in browser a PNG
+Observed on 2026-11-07: in the Claude desktop app's built-in browser a PNG
 export reported "downloaded" but no file was written, while `.pixelforge` ZIP
-downloads worked (landing as GUID-named `.tmp` files). It is not yet known
-whether the host browser or the app (object-URL revoke timing, MIME type, user
-activation) is responsible. Next steps: reproduce in standard Chromium and the
-embedded browser, compare the PNG and ZIP download paths, and document a
-workaround such as a File System Access "Save to file" path where available.
-This is not a regression claim for standard browsers.
+downloads worked (landing as GUID-named `.tmp` files). The two paths differed:
+the image export clicked a detached `<a download>` that reused the dialog's
+preview object URL (revoked when the preview changed or the dialog closed),
+while the project path used its own URL revoked after one second.
 
-In development (2026-11-07): `feat/reference-layer-paste-export` hardens
-downloads (anchor attached to the DOM, deferred object-URL revoke, explicit
-MIME type, File System Access save picker where available) and adds a
-reference/guide layer that is excluded from export. Not merged. ZIP downloads
-landing as GUID `.tmp` files and popups closing the pane are host behaviours
-of the Claude desktop built-in browser, not app defects.
+All local downloads (image export, project, batch ZIPs, slices, selection
+files) now go through `src/download.ts`:
+
+* each download gets its own object URL, revoked only after 60 seconds, so a
+  host that fetches the blob asynchronously still finds it;
+* the anchor is attached to the document for the click and removed after;
+* untyped blobs are labelled with the filename's MIME type (`image/png`,
+  `image/jpeg`, `image/webp`, `image/vnd.adobe.photoshop`, `application/pdf`,
+  `application/zip`); typed blobs are never relabelled, so a PNG fallback is
+  never presented as JPEG;
+* where the browser exposes the File System Access API, the export dialog
+  offers **Save with file picker…** and File offers **Save project with file
+  picker…**. The destination is requested first, while the click's user
+  activation is valid, then the bytes are written. A cancelled picker writes
+  nothing; a blocked or missing picker falls back to the anchor download with
+  a notice.
+
+A page cannot observe whether its host browser actually wrote an anchor
+download to disk, so the notice reports that the download was started. The
+host behaviour of the Claude desktop browser was not reproducible in CI; the
+file picker is the documented workaround there. Desktop/mobile tests in
+`tests/browser/export-downloads.spec.ts` check filename, MIME type, signature,
+anchor attachment, delayed revocation and the mocked picker paths; pure tests
+live in `tests/download.test.mjs`. ZIP downloads landing as GUID `.tmp` files
+and popups closing the pane are host behaviours of the Claude desktop
+built-in browser, not app defects.

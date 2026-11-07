@@ -262,6 +262,13 @@ import {
   type MaskRefinementStroke,
 } from '../src/maskRefinement';
 import { type ExportFormat } from '../src/export';
+import { downloadBlob, pickSaveFile, writeToFileHandle } from '../src/download';
+import {
+  clipboardImageFile,
+  imageFileFromClipboardItems,
+  isTextEditingTarget,
+  readClipboardImage,
+} from '../src/clipboardImage';
 import ActionsPanel from '../src/ActionsPanel';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
@@ -723,6 +730,7 @@ type Command =
   | 'trim'
   | 'reveal-all'
   | 'project-save'
+  | 'project-save-as'
   | 'file-info'
   | 'batch-export'
   | 'batch-images'
@@ -742,6 +750,7 @@ type Command =
   | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
+  | 'paste-clipboard-image'
   | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
@@ -1144,6 +1153,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
+    { label: 'Save project with file picker…', command: 'project-save-as' },
     { label: 'File Info / Privacy…', command: 'file-info' },
     { label: 'Batch export history…', command: 'batch-export' },
     { label: 'Batch export images…', command: 'batch-images' },
@@ -1173,6 +1183,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Paste Image from Clipboard', command: 'paste-clipboard-image' },
     { label: 'Paste Special…', command: 'paste-special' },
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
@@ -3720,12 +3731,7 @@ export default function Home() {
         output.toBlob(resolve, 'image/png'),
       );
       if (!blob) throw new Error('Could not encode the slice');
-      const url = URL.createObjectURL(blob),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${plan.slices[0].name}.png`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(blob, `${plan.slices[0].name}.png`);
       setSliceName(plan.slices[0].name);
       setNotice(
         `Slice downloaded: ${plan.slices[0].name}.png · ${slice.width} × ${slice.height} px`,
@@ -4176,16 +4182,12 @@ export default function Home() {
           bounds: { w: f.w, h: f.h },
         },
       );
-      const url = URL.createObjectURL(
-          new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
-            type: 'application/json',
-          }),
-        ),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${savedSelectionName || 'selection'}.pixelselection`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(
+        new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
+          type: 'application/json',
+        }),
+        `${savedSelectionName || 'selection'}.pixelselection`,
+      );
       setNotice('Selection file downloaded');
     } catch (error) {
       setNotice(
@@ -6961,16 +6963,28 @@ export default function Home() {
       setCloudBusy(false);
     }
   };
-  const exportProject = async () => {
+  const exportProject = async (withPicker = false) => {
+    const filename = (name || 'untitled') + '.pixelforge';
+    // Ask for the destination first, while the click's user activation is
+    // still valid; building a large bundle can outlast that window.
+    const picked = withPicker ? await pickSaveFile(filename, window) : undefined;
+    if (picked?.status === 'cancelled') {
+      setNotice('Project save cancelled');
+      return;
+    }
     try {
       const blob = await writePortableBundle(documentValue());
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = (name || 'untitled') + '.pixelforge';
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setNotice('Editable project file downloaded');
+      if (picked?.status === 'picked') {
+        await writeToFileHandle(picked.handle, blob);
+        setNotice('Editable project file saved with the file picker');
+        return;
+      }
+      downloadBlob(blob, filename);
+      setNotice(
+        picked?.status === 'unavailable'
+          ? `${picked.reason} Editable project file downloaded instead`
+          : 'Editable project file downloaded',
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Project could not be downloaded');
     }
@@ -8832,6 +8846,57 @@ export default function Home() {
       if (layerFile.current) layerFile.current.value = '';
     }
   };
+  /**
+   * Paste an image from the operating-system clipboard as a new raster layer
+   * through the asynchronous Clipboard API (Edit → Paste Image from
+   * Clipboard, or the keyboard fallback below). Bytes stay local.
+   */
+  const pasteSystemClipboardImage = async () => {
+    const result = await readClipboardImage(
+      typeof navigator === 'undefined' ? undefined : navigator.clipboard,
+    );
+    if (!result.ok) {
+      setNotice(result.message);
+      return;
+    }
+    await load(clipboardImageFile(result.blob, result.type), true);
+  };
+  // Ctrl/Cmd+V normally produces a native `paste` event, handled by the
+  // document listener below. Some embedded browsers deliver the keydown but no
+  // paste event; if none arrives shortly, read the clipboard asynchronously.
+  const keyboardPasteFallback = useRef<number | undefined>(undefined);
+  const scheduleKeyboardPasteFallback = () => {
+    window.clearTimeout(keyboardPasteFallback.current);
+    keyboardPasteFallback.current = window.setTimeout(() => {
+      keyboardPasteFallback.current = undefined;
+      void pasteSystemClipboardImage();
+    }, 300);
+  };
+  useEffect(() => () => window.clearTimeout(keyboardPasteFallback.current), []);
+  useEffect(() => {
+    // Listen on the document, not the editor root: when focus is on <body>
+    // (fresh load, after a menu or dialog closes) the paste event targets the
+    // body and never reaches a handler on the application element.
+    const onPaste = (event: ClipboardEvent) => {
+      if (isTextEditingTarget(event.target)) return;
+      window.clearTimeout(keyboardPasteFallback.current);
+      keyboardPasteFallback.current = undefined;
+      if (!ready || cloudBusy || recovering || document.querySelector('dialog[open]')) return;
+      // The internal layer clipboard stays authoritative; Ctrl+V already
+      // pasted the copied layer from the keydown shortcut.
+      if (hasClipboard) return;
+      const image = imageFileFromClipboardItems(event.clipboardData?.items);
+      if (!image) {
+        if (event.clipboardData?.types.length)
+          setNotice('The clipboard does not contain an image.');
+        return;
+      }
+      event.preventDefault();
+      void load(clipboardImageFile(image, image.type), true);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  });
   const importSmartObject = async (
     selected?: File,
     replace = false,
@@ -13310,6 +13375,7 @@ export default function Home() {
         }
         if (k === 'x' && !e.shiftKey) cutLayer();
         if (k === 'v' && !e.shiftKey && hasClipboard) pasteLayer();
+        if (browserImagePaste) scheduleKeyboardPasteFallback();
         if (k === 't') beginLayerTransform();
         return;
       }
@@ -13446,6 +13512,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -13474,6 +13541,7 @@ export default function Home() {
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') return revealAll();
     else if (command === 'project-save') void exportProject();
+    else if (command === 'project-save-as') void exportProject(true);
     else if (command === 'file-info') setFileInfoOpen(true);
     else if (command === 'batch-export')
       setBatchExporting({
@@ -13529,6 +13597,7 @@ export default function Home() {
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'paste-clipboard-image') void pasteSystemClipboardImage();
     else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
@@ -14003,6 +14072,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -14055,6 +14125,8 @@ export default function Home() {
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
         return !hasClipboard || frame.layers.length >= 32;
+      case 'paste-clipboard-image':
+        return frame.layers.length >= 32;
       case 'paste-special':
         return !hasClipboard || frame.layers.length >= 32;
       case 'new-layer':
@@ -14544,20 +14616,6 @@ export default function Home() {
         e.preventDefault();
         setDrag(false);
         void load(e.dataTransfer.files[0]);
-      }}
-      onPaste={(e) => {
-        // Keep the internal layer clipboard authoritative when it exists. If
-        // it does not, accept an image item from the browser/OS clipboard as
-        // a new editable raster layer. Text and unsupported clipboard types
-        // remain untouched so native editing controls keep their behavior.
-        if (hasClipboard) return;
-        const image = Array.from(e.clipboardData.items).find((item) =>
-          item.kind === 'file' && item.type.startsWith('image/'),
-        );
-        const file = image?.getAsFile();
-        if (!file) return;
-        e.preventDefault();
-        void load(file, true);
       }}
     >
       <input
