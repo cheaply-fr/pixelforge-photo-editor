@@ -1,4 +1,5 @@
 import { referencedAssets, type Assets, type Frame } from './document.ts';
+import { MAX_PROJECT_ASSETS, PROJECT_ASSET_BYTES_CEILING } from './projectLimits.ts';
 
 /**
  * Undo/redo history capacity.
@@ -24,10 +25,11 @@ export const HISTORY_STANDARD_BYTES = 128 * MIB;
 export const HISTORY_LOW_MEMORY_BYTES = 96 * MIB;
 /**
  * Hard per-document limit: the current frame alone may not reference more
- * image data than this. It matches the 64 MB local draft / portable project
- * cap, so a document that can be edited can also be saved.
+ * image data than this. It matches the draft / portable project ceiling, so a
+ * document that can be edited can also be saved; edits are additionally
+ * bounded by the device budget in `projectLimits.ts`.
  */
-export const DOCUMENT_MAX_ASSET_BYTES = 64 * MIB;
+export const DOCUMENT_MAX_ASSET_BYTES = PROJECT_ASSET_BYTES_CEILING;
 /**
  * Local drafts keep at most this many history states. This is the draft
  * schema limit `validateDraft` enforces for drafts, portable projects and
@@ -36,14 +38,14 @@ export const DOCUMENT_MAX_ASSET_BYTES = 64 * MIB;
 export const DRAFT_HISTORY_MAX_STEPS = 24;
 /**
  * Referenced image data a persisted history window may use: exactly the
- * 64 MB referenced-asset cap of `validateDraft`. Format 3 drafts store each
+ * referenced-asset ceiling of `validateDraft` (`PROJECT_ASSET_BYTES_CEILING`). Format 3 drafts store each
  * asset once by content hash and write only new ones, so a full window costs
  * one new asset record per edit rather than a whole-history rewrite; frame
  * JSON lives in the manifest, which no longer has a 64 MB payload limit.
  */
-export const DRAFT_HISTORY_MAX_BYTES = 64 * MIB;
+export const DRAFT_HISTORY_MAX_BYTES = PROJECT_ASSET_BYTES_CEILING;
 /** Distinct assets a draft may reference (`validateDraft` / asset-ref limit). */
-export const DRAFT_HISTORY_MAX_ASSETS = 768;
+export const DRAFT_HISTORY_MAX_ASSETS = MAX_PROJECT_ASSETS;
 
 export type HistoryBudgetTier = 'desktop' | 'standard' | 'low-memory';
 export type HistoryBudget = {

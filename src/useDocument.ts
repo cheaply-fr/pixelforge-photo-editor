@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  assertAssetByteBudgetForEdit,
+  assertLayerPixelBudgetForEdit,
   decodeAsset,
   referencedAssets,
   validateFrame,
@@ -25,12 +27,7 @@ import {
   toggleLayerSelection,
 } from './layerSelection';
 import { TileCache } from './tilePlan';
-import {
-  DOCUMENT_MAX_ASSET_BYTES,
-  detectHistoryBudget,
-  formatMiB,
-  trimHistoryToBudget,
-} from './historyBudget';
+import { detectHistoryBudget, trimHistoryToBudget } from './historyBudget';
 import { detectTileCacheBudget } from './tileCachePolicy';
 
 export type RenderProgress = {
@@ -196,6 +193,8 @@ export function useDocument(onError: (message: string) => void) {
         // remain undoable instead of producing an unusable document.
         const sanitized = sanitizeClippingRelations(value);
         validateFrame(sanitized, assets.current);
+        const previousFrame = replace ? undefined : history.current[index.current];
+        assertLayerPixelBudgetForEdit(sanitized, previousFrame, assets.current);
         const candidate = replace
           ? [sanitized]
           : [...history.current.slice(0, index.current + 1), sanitized];
@@ -206,11 +205,14 @@ export function useDocument(onError: (message: string) => void) {
           assets.current,
           historyBudget,
         );
-        if (trimmed.currentBytes > DOCUMENT_MAX_ASSET_BYTES)
-          throw new Error(
-            `This document's image data (${formatMiB(trimmed.currentBytes)}) exceeds the ${formatMiB(DOCUMENT_MAX_ASSET_BYTES)} per-document limit ` +
-              `(undo history may use up to ${formatMiB(historyBudget.maxBytes)} on this device). Export a copy before adding more images.`,
-          );
+        // The current document's image data is bounded by this device's
+        // budget (see projectLimits.ts); edits that do not grow it are allowed.
+        assertAssetByteBudgetForEdit(
+          referencedAssets([sanitized], assets.current),
+          sanitized,
+          previousFrame,
+          assets.current,
+        );
         const next = trimmed.history;
         const used = referencedAssets(next, assets.current);
         history.current = next;
@@ -350,6 +352,72 @@ export function useDocument(onError: (message: string) => void) {
     },
     [publish],
   );
+  /**
+   * Replace the newest history entry (and optionally the `dropPrevious`
+   * entries before it) without adding an undo step. Used by automatic layer
+   * storage to fold a pixel-identical paint-time expansion step into the
+   * stroke (or drop it when the gesture made no change), without
+   * re-rendering. Refuses when `expected` is no longer the current entry;
+   * like any edit, it discards redo entries above it.
+   */
+  const amend = useCallback(
+    (value: Frame, expected: Frame, dropPrevious = 0, keep: Assets = {}) => {
+      if (
+        history.current[index.current] !== expected ||
+        !Number.isInteger(dropPrevious) ||
+        dropPrevious < 0 ||
+        dropPrevious > index.current
+      )
+        return false;
+      try {
+        const sanitized = sanitizeClippingRelations(value);
+        const available = { ...keep, ...assets.current };
+        validateFrame(sanitized, available);
+        const next = [
+          ...history.current.slice(0, index.current - dropPrevious),
+          sanitized,
+        ];
+        history.current = next;
+        index.current = next.length - 1;
+        assets.current = referencedAssets(next, available);
+        documentRevision.current += 1;
+        setFrame(sanitized);
+        setRevision((v) => v + 1);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+  /**
+   * Replace the entry just below the current one with a pixel-identical frame
+   * (e.g. a layer grown in place for a paint tool, restored to its stored
+   * bounds once the stroke is committed above it). `keep` re-adds assets the
+   * replacement references that history pruning may have released.
+   */
+  const restorePrevious = useCallback(
+    (expectedTop: Frame, expectedPrevious: Frame, value: Frame, keep: Assets = {}) => {
+      const below = index.current - 1;
+      if (
+        below < 0 ||
+        history.current[index.current] !== expectedTop ||
+        history.current[below] !== expectedPrevious
+      )
+        return false;
+      const nextAssets = { ...keep, ...assets.current };
+      try {
+        validateFrame(value, nextAssets);
+      } catch {
+        return false;
+      }
+      assets.current = nextAssets;
+      history.current[below] = value;
+      assets.current = referencedAssets(history.current, assets.current);
+      return true;
+    },
+    [],
+  );
   const travel = useCallback(
     (direction: number) => {
       const target = index.current + direction;
@@ -376,6 +444,8 @@ export function useDocument(onError: (message: string) => void) {
     schedulePaint,
     cancelScheduledPaint,
     commit,
+    amend,
+    restorePrevious,
     install,
     select,
     setLayerSelection,

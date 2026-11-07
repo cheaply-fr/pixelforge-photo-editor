@@ -5,13 +5,13 @@ import {
   TEXT_ORIENTATIONS,
   formatMegapixels,
   isMaskableLayer,
-  LAYER_PIXEL_BUDGET,
   isVectorMaskableLayer,
   type Frame,
   type Group,
   type Layer,
   type SelectionOperation,
 } from './document';
+import { MAX_DOCUMENT_LAYERS, detectProjectLimits } from './projectLimits';
 import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import {
@@ -272,30 +272,30 @@ export default function LayersPanel({
   return (
     <section className="panel layers-panel" aria-label="Layers">
       <h3>
-        Layers <small>{frame.layers.length} / 32</small>
+        Layers <small>{frame.layers.length} / {MAX_DOCUMENT_LAYERS}</small>
       </h3>
       {pixelUsage !== undefined && (
         <p
           className="layer-budget"
           data-testid="layer-pixel-budget"
           data-state={
-            pixelUsage > LAYER_PIXEL_BUDGET * 0.9
+            pixelUsage > detectProjectLimits().layerPixelBudget * 0.9
               ? "near"
               : "ok"
           }
           title="Raster layers share one pixel budget. Trim sparse paint layers (Layer > Trim Layer to Content) or merge layers to free space."
         >
-          Pixel budget {formatMegapixels(pixelUsage)} / {formatMegapixels(LAYER_PIXEL_BUDGET)} MP
+          Pixel budget {formatMegapixels(pixelUsage)} / {formatMegapixels(detectProjectLimits().layerPixelBudget)} MP
         </p>
       )}
       <div className="layer-actions">
-        <button onClick={add} disabled={frame.layers.length >= 32}>
+        <button onClick={add} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add paint layer
         </button>
-        <button onClick={addAdjustment} disabled={frame.layers.length >= 32}>
+        <button onClick={addAdjustment} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add adjustment layer
         </button>
-        <button onClick={addSmartObject} disabled={frame.layers.length >= 32}>
+        <button onClick={addSmartObject} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add smart object
         </button>
         <button
@@ -310,7 +310,7 @@ export default function LayersPanel({
         >
           Replace contents
         </button>
-        <button onClick={importImage} disabled={frame.layers.length >= 32}>
+        <button onClick={importImage} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add image layer
         </button>
         <button
@@ -1613,7 +1613,7 @@ export default function LayersPanel({
         >
           Send to back
         </button>
-        <button onClick={duplicate} disabled={frame.layers.length >= 32}>
+        <button onClick={duplicate} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Duplicate layer
         </button>
         <button

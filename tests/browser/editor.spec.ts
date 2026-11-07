@@ -1608,7 +1608,7 @@ test('Photoshop-style document shortcuts drive existing actions and ignore text 
     page.getByRole('button', { name: /Collapse group Group 1/ }),
   ).toBeVisible();
   await page.keyboard.press('Control+j');
-  await expect(page.getByText('Layers 2 / 32', { exact: true })).toBeVisible();
+  await expect(page.getByText('Layers 2 / 512', { exact: true })).toBeVisible();
   await page.keyboard.press('Control+Shift+g');
   await expect(
     page.getByRole('button', { name: /Collapse group Group 1/ }),

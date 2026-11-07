@@ -43,10 +43,10 @@ test('history capacity is 10x the previous 24 steps / 32 MB budget on desktop', 
   assert.equal(HISTORY_DESKTOP_BYTES, 320 * MIB);
   assert.equal(HISTORY_STANDARD_BYTES, 128 * MIB);
   assert.equal(HISTORY_LOW_MEMORY_BYTES, 96 * MIB);
-  assert.equal(DOCUMENT_MAX_ASSET_BYTES, 64 * MIB);
+  assert.equal(DOCUMENT_MAX_ASSET_BYTES, 1024 * MIB);
   assert.equal(DRAFT_HISTORY_MAX_STEPS, 24);
-  assert.equal(DRAFT_HISTORY_MAX_BYTES, 64 * MIB);
-  assert.equal(DRAFT_HISTORY_MAX_ASSETS, 768);
+  assert.equal(DRAFT_HISTORY_MAX_BYTES, 1024 * MIB);
+  assert.equal(DRAFT_HISTORY_MAX_ASSETS, 4096);
 });
 
 test('device tier selection lowers the budget for mobile and low-memory hints', () => {
@@ -143,10 +143,15 @@ test('trimming rejects invalid positions', () => {
 
 test('draft persistence keeps the current frame and the nearest steps that fit', () => {
   const { assets, history } = stack(40, 10 * MIB);
-  const window = selectPersistedHistory(history, 39, assets);
+  // With the 1 GiB project ceiling, 24 poster-sized steps persist (step limit).
+  const full = selectPersistedHistory(history, 39, assets);
+  assert.equal(full.end - full.start + 1, DRAFT_HISTORY_MAX_STEPS);
+  assert.ok(full.bytes <= DRAFT_HISTORY_MAX_BYTES);
+  // A tighter byte limit keeps the nearest steps that fit.
+  const window = selectPersistedHistory(history, 39, assets, { maxBytes: 64 * MIB });
   assert.equal(window.end, 39);
-  assert.ok(window.bytes <= DRAFT_HISTORY_MAX_BYTES);
-  assert.equal(window.end - window.start + 1, 6); // 6 x 10 MB <= 64 MB referenced-asset cap
+  assert.ok(window.bytes <= 64 * MIB);
+  assert.equal(window.end - window.start + 1, 6); // 6 x 10 MB <= 64 MB
   assert.equal(window.omittedUndo, 34);
   assert.equal(window.omittedRedo, 0);
   // The step limit applies even to tiny steps.
@@ -184,7 +189,7 @@ test('draft persistence respects the distinct-asset limit', () => {
 
 test('draft persistence keeps an oversized current frame alone', () => {
   const { assets, history } = stack(3, 60 * MIB);
-  const window = selectPersistedHistory(history, 1, assets);
+  const window = selectPersistedHistory(history, 1, assets, { maxBytes: 64 * MIB });
   assert.deepEqual([window.start, window.end], [1, 1]);
   assert.equal(window.omittedUndo, 1);
   assert.equal(window.omittedRedo, 1);
