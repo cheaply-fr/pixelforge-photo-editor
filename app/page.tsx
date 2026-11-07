@@ -175,6 +175,7 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import StrokePathDialog, { type StrokePathRequest } from '../src/StrokePathDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
@@ -573,6 +574,16 @@ import {
   type PathModel,
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
+import {
+  DEFAULT_STROKE_PATH_SETTINGS,
+  STROKE_PATH_TOOL_LABELS,
+  defaultStrokePathChoice,
+  normalizeStrokePathSettings,
+  planStrokePath,
+  strokePathSources,
+  type StrokePathSample,
+  type StrokePathSettings,
+} from '../src/strokePath';
 import { applyRetouchStroke } from '../src/retouch';
 import {
   DEFAULT_HISTORY_BRUSH,
@@ -789,6 +800,7 @@ type Command =
   | 'clear-layer'
   | 'fill-layer'
   | 'stroke-selection'
+  | 'stroke-path-brush'
   | 'new-layer'
   | 'new-fill-layer'
   | 'new-adjustment-layer'
@@ -1370,6 +1382,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Combine Shapes → Subtract Front Shape', command: 'combine-shapes-subtract' },
     { label: 'Combine Shapes → Intersect', command: 'combine-shapes-intersect' },
     { label: 'Combine Shapes → Exclude Overlapping Shapes', command: 'combine-shapes-exclude' },
+    { label: 'Stroke Path with Brush…', command: 'stroke-path-brush' },
     { label: 'Align Left', command: 'align-left' },
     { label: 'Align Horizontal Centers', command: 'align-center-horizontal' },
     { label: 'Align Right', command: 'align-right' },
@@ -1920,6 +1933,37 @@ const stampCanvasSegment = (
   return changed;
 };
 
+/**
+ * Stroke Path with Brush: stamp pre-planned arc-length samples (see
+ * `src/strokePath.ts`) with the same dab renderer and brush dynamics as a
+ * pointer stroke. Simulated pressure arrives as per-sample size and opacity
+ * multipliers, so the stamp itself ignores pointer pressure.
+ */
+const stampStrokePathSamples = (
+  target: HTMLCanvasElement,
+  samples: readonly StrokePathSample[],
+  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'>,
+) => {
+  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS;
+  let changed = false;
+  for (const sample of samples) {
+    const size = Math.max(1, options.size * sample.sizeScale),
+      opacity = options.opacity * sample.opacityScale;
+    if (opacity <= 0) continue;
+    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction))
+      changed = stampCanvas(target, {
+        ...options,
+        pointerType: 'mouse',
+        size: dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
+        angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+        opacity: opacity * dab.opacityScale,
+        x: dab.x,
+        y: dab.y,
+      }) || changed;
+  }
+  return changed;
+};
+
 /** Apply a deterministic locally-generated tile through radial coverage. */
 const patternCanvas = (
   target: HTMLCanvasElement,
@@ -2171,6 +2215,43 @@ const smudgeCanvasSegment = (
   destinationPixels.data.set(result.pixels);
   if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
   return result.changed;
+};
+
+/**
+ * Smudge counterpart of `stampStrokePathSamples`: smear between consecutive
+ * samples of each contour, reading the stroke-start pixels like a pointer
+ * Smudge stroke. Pixels are read and written once for the whole path.
+ */
+const smudgeStrokePathSamples = (
+  source: HTMLCanvasElement,
+  destination: HTMLCanvasElement,
+  samples: readonly StrokePathSample[],
+  options: { size: number; hardness: number; flow: number; selectionMask?: Uint8ClampedArray },
+) => {
+  const width = destination.width, height = destination.height,
+    sourcePixels = source.getContext('2d')!.getImageData(0, 0, width, height).data,
+    context = destination.getContext('2d')!,
+    image = context.getImageData(0, 0, width, height);
+  let pixels: Uint8ClampedArray = image.data, changed = false;
+  for (let index = 1; index < samples.length; index += 1) {
+    const from = samples[index - 1], to = samples[index],
+      flow = options.flow * from.opacityScale;
+    if (from.contour !== to.contour || flow <= 0) continue;
+    const result = applySmudgeStroke(sourcePixels, pixels, {
+      width, height, x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+      size: Math.min(10000, Math.max(1, options.size * from.sizeScale)),
+      hardness: options.hardness,
+      flow,
+      selectionMask: options.selectionMask,
+    });
+    pixels = result.pixels;
+    changed = result.changed || changed;
+  }
+  if (changed) {
+    image.data.set(pixels);
+    context.putImageData(image, 0, 0);
+  }
+  return changed;
 };
 
 /**
@@ -2888,6 +2969,8 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  const [strokePathDialog, setStrokePathDialog] = useState<{ pathLayerId?: string; targetLayerId?: string } | null>(null);
+  const [strokePathSettings, setStrokePathSettings] = useState<StrokePathSettings>(() => ({ ...DEFAULT_STROKE_PATH_SETTINGS }));
   const [cameraRawEditing, setCameraRawEditing] = useState(false);
   const [colorRanging, setColorRanging] = useState(false);
   const [fillLayerDialog, setFillLayerDialog] = useState(false);
@@ -8565,6 +8648,117 @@ export default function Home() {
       setNotice('Could not stroke the selection');
     }
   };
+  /** Stroke Path with Brush: choose defaults and open the dialog. */
+  const openStrokePathDialog = () => {
+    const f = current();
+    if (!f.layers.some((item) => item.kind === 'path')) {
+      setNotice('Create a Pen path layer before stroking a path');
+      return;
+    }
+    const choice = defaultStrokePathChoice(f.layers, f.active, selectedIdsForFrame(f),
+      (item) => item.kind === 'raster' && item.visible && !layerIsLocked(f, item));
+    if (!choice.targetLayerId) {
+      setNotice('Add a visible, unlocked paint layer to stroke the path onto');
+      return;
+    }
+    setStrokePathDialog(choice);
+  };
+  /**
+   * Paint the current brush (or Pencil, Eraser, Smudge) along path layers
+   * onto one raster layer, confined to the selection, as one undo step.
+   */
+  const strokePathWithBrush = async (request: StrokePathRequest) => {
+    setStrokePathDialog(null);
+    const settings = normalizeStrokePathSettings(request);
+    setStrokePathSettings(settings);
+    let f = current();
+    const chosen = f.layers.find((item) => item.id === request.targetLayerId);
+    if (!chosen || chosen.kind !== 'raster' || layerIsLocked(f, chosen) || !chosen.visible) {
+      setNotice('Select a visible, unlocked raster layer to stroke the path onto');
+      return;
+    }
+    // The target becomes the active layer so the stroke expands and commits
+    // like any paint stroke (a path layer may have been active).
+    if (f.active !== chosen.id) setLayerSelection([chosen.id], chosen.id);
+    await expandRasterLayerForPaint();
+    f = current();
+    const layer = f.layers.find((item) => item.id === chosen.id);
+    const sources = strokePathSources(
+      f.layers.filter((item): item is Extract<Layer, { kind: 'path' }> => item.kind === 'path'),
+      request.pathLayerId, settings.scope,
+    );
+    if (!layer || layer.kind !== 'raster') return;
+    if (!sources.length) {
+      dropUnusedExpansion();
+      setNotice(settings.scope === 'all' ? 'No visible path layers to stroke' : 'Choose a path layer to stroke');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        buffer = surface(image.naturalWidth, image.naturalHeight);
+      buffer.getContext('2d')!.drawImage(image, 0, 0);
+      const selectionMask = f.selection
+        ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
+        : undefined;
+      if (current() !== f) {
+        setNotice('Stroke Path cancelled because the document changed');
+        return;
+      }
+      const tool = settings.tool,
+        brushSize = localSize(layer.matrix, size),
+        plan = planStrokePath(
+          sources.map((item) => ({ path: item.path, matrix: item.matrix })),
+          layer.matrix,
+          { ...settings, size: brushSize, spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing },
+        );
+      let changed: boolean;
+      if (tool === 'smudge') {
+        const source = surface(buffer.width, buffer.height);
+        source.getContext('2d')!.drawImage(image, 0, 0);
+        changed = smudgeStrokePathSamples(source, buffer, plan.samples, {
+          size: brushSize, hardness, flow: brushOpacity / 100, selectionMask,
+        });
+      } else {
+        changed = stampStrokePathSamples(buffer, plan.samples, {
+          size: brushSize,
+          hardness: tool === 'pencil' ? 100 : hardness,
+          opacity: (brushOpacity / 100) * (brushFlow / 100),
+          spacing: brushSpacing,
+          scatter: brushScatter,
+          dynamics: brushDynamics,
+          texture: brushTexture,
+          dual: brushDual,
+          secondaryPreset: secondaryBrushPreset,
+          bristle: brushBristle,
+          wetEdges: brushWetEdges,
+          buildUp: brushBuildUp,
+          angle: brushAngle,
+          roundness: tool === 'pencil' ? 100 : brushRoundness,
+          flipX: brushFlipX,
+          flipY: brushFlipY,
+          mode: tool === 'eraser' ? 'destination-out' : 'source-over',
+          color: tool === 'eraser' ? undefined : brushColor(color),
+        });
+        // Photoshop confines painting to the active selection.
+        if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
+      }
+      if (!changed) {
+        dropUnusedExpansion();
+        setNotice('Stroke Path painted nothing: the path lies outside this layer or selection');
+        return;
+      }
+      const asset = addPaintedAsset(buffer);
+      const label = STROKE_PATH_TOOL_LABELS[tool];
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
+        setNotice(
+          `Path stroked with ${label}${settings.simulatePressure ? ' (simulated pressure)' : ''}` +
+          `${plan.limited ? '; spacing widened to stay within the dab limit' : ''}; undo restores the layer`,
+        );
+    } catch (error) {
+      dropUnusedExpansion();
+      setNotice(error instanceof Error ? `Could not stroke the path: ${error.message}` : 'Could not stroke the path');
+    }
+  };
   const clearActiveLayer = async () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -14226,6 +14420,7 @@ export default function Home() {
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'stroke-selection') return strokeSelection();
+    else if (command === 'stroke-path-brush') openStrokePathDialog();
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
@@ -15053,6 +15248,9 @@ export default function Home() {
         return !frame.selection;
       case 'stroke-selection':
         return !frame.selection || !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'stroke-path-brush':
+        return !frame.layers.some((item) => item.kind === 'path') ||
+          !frame.layers.some((item) => item.kind === 'raster' && item.visible && !layerIsLocked(frame, item));
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'lock-layers':
@@ -15376,6 +15574,20 @@ export default function Home() {
           mode={selectionRefineValue}
           close={() => setSelectionRefining(null)}
           apply={(radius) => void applySelectionRefinement(radius)}
+        />
+      )}
+      {strokePathDialog && frame && (
+        <StrokePathDialog
+          paths={frame.layers.filter((item) => item.kind === 'path').reverse().map((item) => ({ id: item.id, name: item.name }))}
+          targets={frame.layers
+            .filter((item) => item.kind === 'raster' && item.visible && !layerIsLocked(frame, item))
+            .reverse()
+            .map((item) => ({ id: item.id, name: item.name }))}
+          initial={strokePathSettings}
+          initialPathLayerId={strokePathDialog.pathLayerId}
+          initialTargetLayerId={strokePathDialog.targetLayerId}
+          close={() => setStrokePathDialog(null)}
+          apply={(request) => void strokePathWithBrush(request)}
         />
       )}
       {selectionFeathering && (
@@ -17499,6 +17711,16 @@ export default function Home() {
                     Update
                   </button>
                 </label>
+              )}
+              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && (
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!frame?.layers.some((item) => item.kind === 'path')}
+                  onClick={openStrokePathDialog}
+                >
+                  Stroke Path with Brush…
+                </button>
               )}
               {tool === 'polygon' && (
                 <label className="select-row">

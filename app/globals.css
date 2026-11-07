@@ -282,3 +282,16 @@
 .reference-panel .reference-check { justify-content:flex-start; }
 .reference-panel .reference-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 .reference-panel .reference-actions button { min-height:28px; padding:4px 8px; border:1px solid #374151; border-radius:6px; background:#252d39; color:#d4d7dc; font-size:10px; }
+/* Stroke Path with Brush: compact, scrollable on phones. */
+.editor-dialog.stroke-path-dialog{width:min(460px,94vw);max-height:92dvh;overflow:auto;box-sizing:border-box}
+.editor-dialog.stroke-path-dialog label{margin:10px 0}
+.editor-dialog.stroke-path-dialog select{min-width:0;max-width:60%;flex:1 1 auto}
+.editor-dialog.stroke-path-dialog .stroke-path-check{justify-content:flex-start;gap:8px}
+.editor-dialog.stroke-path-dialog .stroke-path-check input{width:20px;height:20px}
+.editor-dialog.stroke-path-dialog .stroke-path-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.editor-dialog.stroke-path-dialog .stroke-path-grid label{display:grid;gap:4px;margin:4px 0;font-size:11px}
+.editor-dialog.stroke-path-dialog .stroke-path-grid input{box-sizing:border-box;width:100%;min-width:0;min-height:38px;padding:8px;border:1px solid #596272;border-radius:6px;background:#15181d;color:white}
+.editor-dialog.stroke-path-dialog .stroke-path-grid input[aria-invalid=true]{border-color:#ff7959}
+.editor-dialog.stroke-path-dialog .stroke-path-affects{display:flex;gap:16px;flex-wrap:wrap;border:1px solid #3a404b;border-radius:8px;padding:4px 12px;margin:10px 0}
+.editor-dialog.stroke-path-dialog .stroke-path-affects legend{font-size:11px;color:#c5c9d2;padding:0 4px}
+.editor-dialog.stroke-path-dialog .stroke-path-affects:disabled{opacity:.55}
