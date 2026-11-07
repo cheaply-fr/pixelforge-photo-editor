@@ -59,12 +59,21 @@ import { normalizeCustomShapePresets, type CustomShapePreset } from './customSha
 import { normalizeCustomPathPresets, type CustomPathPreset } from './customPathPresets.ts';
 import { beginPerformanceSpan } from './performanceMarks.ts';
 import {
-  createDraftBundle,
   decodeDraftBundle,
   isDraftBundleManifest,
   type DraftBundleManifest,
-  type DraftBundleChunk,
 } from './draftBundle.ts';
+import {
+  createDraftManifest,
+  decodeDraftManifest,
+  draftAssetKey,
+  draftAssetKeyBounds,
+  hashDraftAsset,
+  isDraftManifest,
+  manifestAssetHashes,
+  planDraftAssetWrites,
+  type DraftManifest,
+} from './draftAssetStore.ts';
 import { normalizeLayerSelection } from './layerSelection.ts';
 import {
   normalizeDocumentMetadata,
@@ -568,7 +577,20 @@ export const DRAFT_MIGRATIONS: Readonly<Record<number, DraftMigration>> = {
     } as Draft;
   },
 };
-export function validateDraft(input: unknown): Draft {
+export type ValidateDraftOptions = {
+  /**
+   * Returns true for an asset already verified with `validAsset` in this
+   * session (same ID, URL and dimensions). Only the save path supplies it so
+   * unchanged multi-megabyte assets are not re-scanned on every autosave;
+   * recovery and imports always validate every asset.
+   */
+  trustedAsset?: (id: string, asset: unknown) => boolean;
+};
+
+export function validateDraft(
+  input: unknown,
+  options: ValidateDraftOptions = {},
+): Draft {
   if (!record(input)) throw new Error('Invalid project file');
   const value = input as DraftCandidate;
   if (value.version !== 1 && value.version !== CURRENT_DRAFT_VERSION)
@@ -624,7 +646,9 @@ export function validateDraft(input: unknown): Draft {
     Array.isArray(value.assets) ||
     Object.keys(value.assets).length > 768 ||
     Object.entries(value.assets).some(
-      ([id, asset]) => !validId(id) || !validAsset(asset),
+      ([id, asset]) =>
+        !validId(id) ||
+        !(options.trustedAsset?.(id, asset) || validAsset(asset)),
     )
   )
     throw new Error('Invalid project assets');
@@ -664,13 +688,104 @@ export function validateDraft(input: unknown): Draft {
   };
 }
 
+/**
+ * Assets already verified in this tab, keyed by asset ID. An entry is only
+ * trusted while the asset's URL and dimensions are identical, so a reused or
+ * mutated ID is always validated and hashed again. Two generations bound the
+ * retained strings to roughly the last two prepared drafts.
+ */
+type VerifiedAsset = { url: string; w: number; h: number; hash?: string };
+let verifiedAssets = new Map<string, VerifiedAsset>();
+let previousVerifiedAssets = new Map<string, VerifiedAsset>();
+
+function verifiedAsset(id: string, asset: unknown): VerifiedAsset | undefined {
+  if (!record(asset)) return undefined;
+  const entry = verifiedAssets.get(id) ?? previousVerifiedAssets.get(id);
+  return entry &&
+    entry.url === asset.url &&
+    entry.w === asset.w &&
+    entry.h === asset.h
+    ? entry
+    : undefined;
+}
+
+function rememberVerifiedAssets(
+  assets: Assets,
+  hashes?: ReadonlyMap<string, string>,
+) {
+  const next = new Map<string, VerifiedAsset>();
+  for (const [id, asset] of Object.entries(assets)) {
+    const known = verifiedAsset(id, asset);
+    next.set(id, {
+      url: asset.url,
+      w: asset.w,
+      h: asset.h,
+      hash: hashes?.get(id) ?? known?.hash,
+    });
+  }
+  previousVerifiedAssets = verifiedAssets;
+  verifiedAssets = next;
+}
+
 /** Validate and normalize a value immediately before writing it to storage. */
 export function prepareDraftForStorage(value: unknown): Draft {
-  return validateDraft(value);
+  const draft = validateDraft(value, {
+    trustedAsset: (id, asset) => verifiedAsset(id, asset) !== undefined,
+  });
+  rememberVerifiedAssets(draft.assets);
+  return draft;
 }
-function openDatabase() {
+
+/** Asset ID → SHA-256, hashing only content not already hashed in this tab. */
+async function hashDraftAssets(assets: Assets): Promise<Map<string, string>> {
+  const entries = await Promise.all(
+    Object.entries(assets).map(async ([id, asset]) => {
+      const known = verifiedAsset(id, asset);
+      if (known?.hash) return [id, known.hash, false] as const;
+      const hash = await hashDraftAsset(asset.url);
+      if (known) known.hash = hash;
+      return [id, hash, true] as const;
+    }),
+  );
+  lastSaveStats.hashedAssets = entries.filter(([, , hashed]) => hashed).length;
+  return new Map(entries.map(([id, hash]) => [id, hash]));
+}
+
+/** Diagnostics for the most recent successful local save (tests and profiling). */
+export type DraftSaveStats = {
+  revision: number;
+  assets: number;
+  hashedAssets: number;
+  assetWrites: number;
+  assetDeletes: number;
+  bytesWritten: number;
+  durationMs: number;
+};
+let lastSaveStats: DraftSaveStats = {
+  revision: 0,
+  assets: 0,
+  hashedAssets: 0,
+  assetWrites: 0,
+  assetDeletes: 0,
+  bytesWritten: 0,
+  durationMs: 0,
+};
+export function lastDraftSaveStats(): DraftSaveStats {
+  return { ...lastSaveStats };
+}
+
+export const LOCAL_STORAGE_FULL =
+  'Browser storage is full. Your last local save is kept; export a copy or free up space.';
+
+const DATABASE_NAME = 'pixelforge-documents';
+// Format 3 reuses the version 2 object stores (asset records live in
+// `draftBlobs` under an `asset:` prefix), so no schema upgrade is needed and
+// tabs still running an older build are never blocked by a version change.
+const DATABASE_VERSION = 2;
+
+function openDatabase(): Promise<IDBDatabase> {
   database ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('pixelforge-documents', 2);
+    const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains('drafts')) db.createObjectStore('drafts');
@@ -680,11 +795,41 @@ function openDatabase() {
       if (!db.objectStoreNames.contains('draftBlobs'))
         db.createObjectStore('draftBlobs');
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      // Let a future schema upgrade in another tab proceed; the next save in
+      // this tab reopens the database instead of holding the old connection.
+      db.onversionchange = () => {
+        db.close();
+        if (database === opened) database = undefined;
+      };
+      db.onclose = () => {
+        if (database === opened) database = undefined;
+      };
+      resolve(db);
+    };
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error('Local storage is blocked'));
+  }).catch((error: unknown) => {
+    // Do not memoize a failed open: a later save may succeed once another
+    // tab releases the database or storage becomes available again.
+    if (database === opened) database = undefined;
+    throw error;
   });
-  return database;
+  const opened = database;
+  return opened;
+}
+
+/** Test seam: run the storage code against an in-memory IndexedDB double. */
+export function setDraftDatabaseForTesting(db: IDBDatabase | undefined): void {
+  database = db ? Promise.resolve(db) : undefined;
+  verifiedAssets = new Map();
+  previousVerifiedAssets = new Map();
+}
+
+function draftAssetRange(id: string): IDBKeyRange {
+  const [lower, upper] = draftAssetKeyBounds(id);
+  return IDBKeyRange.bound(lower, upper);
 }
 
 export function rememberDraft(id: string) {
@@ -705,18 +850,86 @@ export function createDraftId() {
   return rememberDraft(crypto.randomUUID());
 }
 
-export function initialDraftId() {
+/**
+ * How the opening draft was chosen: an explicit `#draft=` bookmark, the
+ * browser-wide `last-draft` fallback (an `/editor` URL without a hash), or a
+ * fresh draft.
+ */
+export type InitialDraft = { id: string; source: 'bookmark' | 'last-draft' | 'new' };
+
+export function resolveInitialDraft(): InitialDraft {
   if (new URL(location.href).searchParams.get('new') === '1')
-    return createDraftId();
-  let id = new URLSearchParams(location.hash.slice(1)).get('draft');
-  if (!id) {
-    try {
-      id = localStorage.getItem('pixelforge:last-draft');
-    } catch {
-      /* Use a new draft. */
-    }
+    return { id: createDraftId(), source: 'new' };
+  const bookmarked = new URLSearchParams(location.hash.slice(1)).get('draft');
+  if (bookmarked && /^[a-f0-9-]{36}$/.test(bookmarked))
+    return { id: rememberDraft(bookmarked), source: 'bookmark' };
+  let id: string | null = null;
+  try {
+    id = localStorage.getItem('pixelforge:last-draft');
+  } catch {
+    /* Use a new draft. */
   }
-  return id && /^[a-f0-9-]{36}$/.test(id) ? rememberDraft(id) : createDraftId();
+  return id && /^[a-f0-9-]{36}$/.test(id)
+    ? { id: rememberDraft(id), source: 'last-draft' }
+    : { id: createDraftId(), source: 'new' };
+}
+
+export function initialDraftId() {
+  return resolveInitialDraft().id;
+}
+
+const DRAFT_LOCK_PREFIX = 'pixelforge:draft-open:';
+
+type DraftLockManager = {
+  request: (
+    name: string,
+    options: { mode: 'shared' },
+    callback: () => Promise<void>,
+  ) => Promise<unknown>;
+  query: () => Promise<{ held?: Array<{ name?: string }> }>;
+};
+
+function draftLocks(): DraftLockManager | undefined {
+  const locks =
+    typeof navigator !== 'undefined'
+      ? (navigator as Navigator & { locks?: DraftLockManager }).locks
+      : undefined;
+  return locks && typeof locks.request === 'function' && typeof locks.query === 'function'
+    ? locks
+    : undefined;
+}
+
+/**
+ * Advertise that this tab has a draft open. Shared Web Locks let any number
+ * of tabs hold the same draft (explicit bookmarks still work and still use the
+ * revision-conflict flow); the lock is released by the returned function or
+ * automatically when the tab goes away.
+ */
+export function holdDraftOpen(id: string): () => void {
+  const locks = draftLocks();
+  if (!locks || !validId(id)) return () => {};
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  locks
+    .request(DRAFT_LOCK_PREFIX + id, { mode: 'shared' }, () => held)
+    .catch(() => {
+      /* Locks are advisory; editing never depends on them. */
+    });
+  return () => release();
+}
+
+/** True when another tab of this origin currently has the draft open. */
+export async function draftOpenElsewhere(id: string): Promise<boolean> {
+  const locks = draftLocks();
+  if (!locks || !validId(id)) return false;
+  try {
+    const state = await locks.query();
+    return !!state.held?.some((lock) => lock.name === DRAFT_LOCK_PREFIX + id);
+  } catch {
+    return false;
+  }
 }
 
 export const LOCAL_CONFLICT =
@@ -772,6 +985,18 @@ export function nextPendingDraftRevision(
 }
 
 /**
+ * Lower bound of a draft's JSON size: the lengths of the asset URLs its history
+ * references. Cheap (no serialization) and never larger than the real
+ * snapshot, so it only skips snapshots that could not have fit anyway.
+ */
+export function estimatedPendingDraftBytes(value: Draft): number {
+  let total = 0;
+  for (const asset of Object.values(referencedAssets(value.history, value.assets)))
+    total += typeof asset?.url === 'string' ? asset.url.length : 0;
+  return total;
+}
+
+/**
  * Write a tab-scoped write-ahead snapshot before IndexedDB completes. This
  * closes the small reload window without sharing an in-flight draft between
  * tabs; oversized projects simply rely on IndexedDB as before.
@@ -783,6 +1008,10 @@ export function stagePendingDraft(
 ): string | undefined {
   if (!validId(id) || !validRevision(revision)) return undefined;
   try {
+    // Asset data URLs dominate the encoded size. Skip drafts that cannot fit
+    // before validating or stringifying anything; IndexedDB stays authoritative.
+    if (estimatedPendingDraftBytes(value) > MAX_PENDING_DRAFT_BYTES)
+      return undefined;
     const previous = readPendingDraft(id);
     const stagedRevision = nextPendingDraftRevision(
       revision,
@@ -843,7 +1072,7 @@ function clearPendingDraft(id: string, revision: number, token?: string): void {
   }
 }
 
-type StoredDraftPointer = Draft | DraftBundleManifest;
+type StoredDraftPointer = Draft | DraftBundleManifest | DraftManifest;
 
 function storedRevision(value: unknown): number {
   if (isDraftBundleManifest(value)) return value.localRevision;
@@ -853,9 +1082,11 @@ function storedRevision(value: unknown): number {
 }
 
 /**
- * Read a v2 manifest and its chunks in one readonly transaction. Legacy v1
- * records are complete Draft objects and are validated directly; the next
- * successful save upgrades them to a manifest/blob bundle.
+ * Read a pointer and everything it references in one readonly transaction.
+ * Format 3 manifests reference content-addressed asset records; format 2
+ * manifests reference ordered payload chunks; legacy v1 records are complete
+ * Draft objects. All three are verified and validated before use, and the next
+ * successful save rewrites the draft as a format 3 manifest.
  */
 async function readStoredDraft(
   db: IDBDatabase,
@@ -868,11 +1099,21 @@ async function readStoredDraft(
     const pointerRequest = pointers.get(id);
     let pointer: StoredDraftPointer | undefined;
     let chunkValues: unknown[] = [];
-    let decodePending = false;
+    const assetRecords = new Map<string, unknown>();
     pointerRequest.onsuccess = () => {
       pointer = pointerRequest.result as StoredDraftPointer | undefined;
-      if (pointer === undefined || !isDraftBundleManifest(pointer)) return;
-      decodePending = true;
+      if (pointer === undefined) return;
+      if (isDraftManifest(pointer)) {
+        for (const hash of manifestAssetHashes(pointer)) {
+          const assetRequest = blobs.get(draftAssetKey(id, hash));
+          assetRequest.onsuccess = () => {
+            if (assetRequest.result !== undefined)
+              assetRecords.set(hash, assetRequest.result);
+          };
+        }
+        return;
+      }
+      if (!isDraftBundleManifest(pointer)) return;
       chunkValues = Array.from({ length: pointer.chunks.length });
       pointer.chunks.forEach((key, index) => {
         const chunkRequest = blobs.get(key);
@@ -891,7 +1132,28 @@ async function readStoredDraft(
             resolve(undefined);
             return;
           }
-          if (!decodePending) {
+          if (isDraftManifest(pointer)) {
+            const manifest = pointer;
+            const draft = validateDraft(
+              await decodeDraftManifest(manifest, assetRecords),
+            );
+            if ((draft.localRevision || 0) !== manifest.localRevision)
+              throw new Error('Draft manifest revision mismatch');
+            // Every asset was just hash-verified and validated; remember that
+            // so the first save after recovery stays incremental.
+            rememberVerifiedAssets(
+              draft.assets,
+              new Map(
+                Object.entries(manifest.assetRefs).map(([assetId, ref]) => [
+                  assetId,
+                  ref.hash,
+                ]),
+              ),
+            );
+            resolve(draft);
+            return;
+          }
+          if (!isDraftBundleManifest(pointer)) {
             resolve(validateDraft(pointer));
             return;
           }
@@ -928,6 +1190,7 @@ export async function discardDraft(id: string, expectedRevision: number) {
       }
       if (isDraftBundleManifest(pointer))
         pointer.chunks.forEach((key) => blobs.delete(key));
+      blobs.delete(draftAssetRange(id));
       store.delete(id);
     };
     transaction.oncomplete = () => resolve();
@@ -964,6 +1227,86 @@ export async function readDraft(id: string): Promise<Draft | undefined> {
   return { ...pending.draft, localRevision: saved.localRevision || 0 };
 }
 
+function isQuotaError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'QuotaExceededError'
+  );
+}
+
+/**
+ * Commit a format 3 manifest. The pointer read, revision check, new asset
+ * writes, garbage collection of this draft's unreferenced asset records,
+ * removal of a migrated format 2 bundle and the pointer write all happen in
+ * one read-write transaction: an interrupted or failed save leaves the
+ * previous complete revision readable, and a committed manifest never lacks a
+ * record it references.
+ */
+function commitDraftManifest(
+  db: IDBDatabase,
+  id: string,
+  expectedRevision: number,
+  manifest: DraftManifest,
+  needed: ReadonlyMap<string, string>,
+): Promise<{ assetWrites: number; assetDeletes: number; bytesWritten: number }> {
+  return new Promise((resolve, reject) => {
+    const stats = { assetWrites: 0, assetDeletes: 0, bytesWritten: 0 };
+    let conflict = false;
+    let failure: unknown;
+    let transaction: IDBTransaction;
+    try {
+      transaction = db.transaction(['drafts', 'draftBlobs'], 'readwrite');
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    const store = transaction.objectStore('drafts');
+    const blobs = transaction.objectStore('draftBlobs');
+    const read = store.get(id);
+    read.onsuccess = () => {
+      const previous = read.result as StoredDraftPointer | undefined;
+      if (storedRevision(previous) !== expectedRevision) {
+        conflict = true;
+        transaction.abort();
+        return;
+      }
+      const keys = blobs.getAllKeys(draftAssetRange(id));
+      keys.onsuccess = () => {
+        const plan = planDraftAssetWrites(id, needed, keys.result);
+        for (const [key, value] of plan.puts) {
+          blobs.put(value, key);
+          stats.assetWrites += 1;
+          stats.bytesWritten += value.bytes.byteLength;
+        }
+        for (const key of plan.deletes) blobs.delete(key);
+        stats.assetDeletes = plan.deletes.length;
+        if (isDraftBundleManifest(previous))
+          previous.chunks.forEach((key) => blobs.delete(key));
+        // The manifest is the atomic pointer, written last in the same
+        // transaction as every record it references.
+        store.put(manifest, id);
+      };
+    };
+    transaction.onerror = (event) => {
+      failure ??= (event.target as IDBRequest | null)?.error ?? transaction.error;
+    };
+    transaction.oncomplete = () => resolve(stats);
+    transaction.onabort = () => {
+      const error = transaction.error ?? failure;
+      if (conflict) reject(new Error(LOCAL_CONFLICT));
+      else if (isQuotaError(error) || isQuotaError(failure))
+        reject(new Error(LOCAL_STORAGE_FULL));
+      else
+        reject(
+          error instanceof Error
+            ? error
+            : new Error('Local save was interrupted'),
+        );
+    };
+  });
+}
+
 export async function saveDraft(
   id: string,
   value: Draft,
@@ -973,66 +1316,41 @@ export async function saveDraft(
   if (!validId(id)) throw new Error('Invalid draft ID');
   if (!validRevision(expectedRevision))
     throw new Error('Invalid draft revision');
-  const safeValue = prepareDraftForStorage(value);
-  const saveSpan = beginPerformanceSpan('save');
-  let db: IDBDatabase;
-  try {
-    db = await openDatabase();
-  } catch (error) {
-    saveSpan.finish();
-    throw error;
-  }
   const revision = expectedRevision + 1;
-  if (!validRevision(revision)) {
-    saveSpan.finish();
-    throw new Error('Invalid draft revision');
-  }
-  const persisted = { ...safeValue, localRevision: revision };
-  let bundle: Awaited<ReturnType<typeof createDraftBundle>>;
+  if (!validRevision(revision)) throw new Error('Invalid draft revision');
+  const started =
+    typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const saveSpan = beginPerformanceSpan('save');
   try {
-    bundle = await createDraftBundle(id, revision, persisted);
-  } catch (error) {
+    // Frames and settings are always validated; assets already verified in
+    // this tab are matched by identity instead of being re-scanned.
+    const safeValue = prepareDraftForStorage(value);
+    const db = await openDatabase();
+    const hashes = await hashDraftAssets(safeValue.assets);
+    const hashedAssets = lastSaveStats.hashedAssets;
+    const manifest = createDraftManifest(safeValue, revision, hashes);
+    const needed = new Map<string, string>();
+    for (const [assetId, asset] of Object.entries(safeValue.assets))
+      needed.set(hashes.get(assetId)!, asset.url);
+    const stats = await commitDraftManifest(
+      db,
+      id,
+      expectedRevision,
+      manifest,
+      needed,
+    );
+    clearPendingDraft(id, revision, pendingToken);
+    lastSaveStats = {
+      revision,
+      assets: needed.size,
+      hashedAssets,
+      ...stats,
+      durationMs:
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) -
+        started,
+    };
+    return revision;
+  } finally {
     saveSpan.finish();
-    throw error;
   }
-  return new Promise((resolve, reject) => {
-    try {
-      const transaction = db.transaction(['drafts', 'draftBlobs'], 'readwrite');
-      const store = transaction.objectStore('drafts');
-      const blobs = transaction.objectStore('draftBlobs');
-      let conflict = false;
-      const read = store.get(id);
-      read.onsuccess = () => {
-        const previous = read.result as StoredDraftPointer | undefined;
-        if (storedRevision(previous) !== expectedRevision) {
-          conflict = true;
-          transaction.abort();
-          return;
-        }
-        if (isDraftBundleManifest(previous))
-          previous.chunks.forEach((key) => blobs.delete(key));
-        bundle.chunks.forEach((chunk: DraftBundleChunk) => blobs.put(chunk, chunk.id));
-        // The manifest is the atomic pointer. It is written only in the same
-        // transaction as every chunk, so an interrupted save leaves the prior
-        // complete bundle addressable.
-        store.put(bundle.manifest, id);
-      };
-      transaction.oncomplete = () => {
-        clearPendingDraft(id, revision, pendingToken);
-        saveSpan.finish();
-        resolve(revision);
-      };
-      transaction.onabort = () => {
-        saveSpan.finish();
-        reject(conflict ? new Error(LOCAL_CONFLICT) : transaction.error);
-      };
-      transaction.onerror = () => {
-        saveSpan.finish();
-        reject(transaction.error);
-      };
-    } catch (error) {
-      saveSpan.finish();
-      reject(error);
-    }
-  });
 }

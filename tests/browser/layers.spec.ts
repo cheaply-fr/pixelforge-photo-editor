@@ -242,7 +242,7 @@ test('legacy projects migrate with history while the original pointer stays reco
     async ({ oldId, newId }) =>
       await new Promise<{
         oldPointer?: { kind?: string; version?: number; name?: string };
-        newPointer?: { kind?: string; version?: number; name?: string };
+        newPointer?: { kind?: string; version?: number; format?: number; name?: string };
       }>((resolve) => {
         const request = indexedDB.open('pixelforge-documents', 2);
         request.onsuccess = () => {
@@ -252,7 +252,7 @@ test('legacy projects migrate with history while the original pointer stays reco
           const oldRead = store.get(oldId);
           const newRead = store.get(newId);
           let oldPointer: { kind?: string; version?: number; name?: string } | undefined;
-          let newPointer: { kind?: string; version?: number; name?: string } | undefined;
+          let newPointer: { kind?: string; version?: number; format?: number; name?: string } | undefined;
           oldRead.onsuccess = () => { oldPointer = oldRead.result; };
           newRead.onsuccess = () => { newPointer = newRead.result; };
           transaction.oncomplete = () => {
@@ -269,8 +269,11 @@ test('legacy projects migrate with history while the original pointer stays reco
   expect(pointers.oldPointer?.kind).toBeUndefined();
   expect(pointers.oldPointer?.version).toBe(1);
   expect(pointers.oldPointer?.name).toBe('Legacy safe');
-  expect(pointers.newPointer?.kind).toBe('pixelforge-draft-bundle');
-  expect(pointers.newPointer?.version).toBe(1);
+  // The converted document is stored as a format 3 manifest whose assets
+  // live in content-addressed records (see docs/draft-storage-contract.md).
+  expect(pointers.newPointer?.kind).toBe('pixelforge-draft-manifest');
+  expect(pointers.newPointer?.format).toBe(3);
+  expect(pointers.newPointer?.version).toBe(2);
   expect(pointers.newPointer?.name).toBe('Legacy safe');
   const out = await project(page);
   expect(out.value.version).toBe(2);

@@ -90,7 +90,7 @@ an exception cannot become an unbounded response.
 The preferred response transfers an `ImageBitmap`:
 
 ```ts
-{ kind: 'result', id, image: ImageBitmap, width: number, height: number }
+{ kind: 'result', id, image: ImageBitmap, width: number, height: number, layerCache?: LayerFilterCacheStats }
 ```
 
 If `transferToImageBitmap()` is unavailable, the worker encodes a PNG and
@@ -235,9 +235,10 @@ rendering:
   therefore remains bounded by the existing document limits, not by tiles.
 * The committed editor path reuses one module worker between sequential renders,
   queues only the newest request, posts cooperative cancellation for the active
-  request and tears the worker down after an idle timeout. The worker clears its
-  decoded-asset cache and output surface between requests. A multi-worker pool
-  and prioritisation remain future work.
+  request and tears the worker down after a five-minute idle timeout. The
+  worker releases its output surface between requests but keeps the bounded,
+  content-keyed decoded-source and layer-filter caches described below. A
+  multi-worker pool and prioritisation remain future work.
 * Progress currently counts full-frame layer passes. It is not a pixel or tile
   percentage and does not imply that the worker is streaming a partial canvas.
 * Interactive override canvases stay on the main-thread fallback. A full
@@ -257,6 +258,54 @@ Other effects, full-frame adjustments, device-specific cache policy and
 low-memory physical traces remain separate Phase 6 gates. Until those gates
 pass, large-image work remains opt-in and the 16 MP,
 16,000-pixel-edge and layer/history limits stay in force.
+
+## Layer-filter and decoded-source caches
+
+Each rendering context (the main thread and the persistent worker) keeps two
+bounded in-memory caches in [`layerFilterCache.ts`](../src/layerFilterCache.ts)
+and [`document.ts`](../src/document.ts). Neither is persisted, uploaded or
+shared between tabs.
+
+* **Layer-local filtered surfaces.** A raster or asset-backed Smart Object layer
+  is built in local coordinates in a fixed order: source (asset or solid fill),
+  Spot Healing, Patch, Content-Aware Fill/Move/Scale, Matting, Smart Filters,
+  Layer Styles, Filter Effect. When that stage contains a non-neutral Filter
+  Effect or Smart Filters, its completed surface is cached under a canonical
+  key: key version, kind, local dimensions, the source's content fingerprint
+  (or the fill colour), every local-stage metadata field, the fingerprints of
+  referenced patch/content-aware masks, normalized Matting, normalized Smart
+  Filters (`effectiveSmartFilters`), Layer Styles and the normalized Filter
+  Effect (`effectiveFilterEffects`, so equivalent parameters share a key).
+  Matrix, CSS/tonal adjustments, layer masks, vector masks, clipping, opacity,
+  blend mode, visibility and grouping are applied afterwards in frame space and
+  are deliberately not part of the key. Layers with a live override canvas,
+  nested Smart Object contents, or a filter routed through the tiled
+  neighbourhood adapter (which owns its telemetry contract) bypass the cache.
+  The LRU is bounded by RGBA bytes: 256 MiB by default, 96 MiB on mobile user
+  agents or `navigator.deviceMemory <= 4`, 32 MiB when `deviceMemory <= 2`. A
+  surface larger than the budget is rendered but not retained. Only a completed
+  local stage is stored; cancellation and failures throw before the store.
+  Cached surfaces are read only with `drawImage`.
+* **Decoded sources.** `decodeAsset` keys decoded images by content
+  fingerprint (dimensions, encoded length and a 64-bit hash of the data URL)
+  instead of object identity, because the worker receives structured clones of
+  the same immutable assets on every request and an imported project may reuse
+  an asset id for different pixels. It is bounded by decoded pixels (64 MP,
+  32 MP on the mobile tier, 16 MP on the low-memory tier). Evicted or cleared
+  `ImageBitmap`s are closed only after the render that could still be reading
+  them finishes. Failed decodes are not retained.
+
+The main thread sends its memoized fingerprints with each request as
+`assetKeys`; the worker accepts a value only when its dimensions and encoded
+length match the cloned asset and otherwise hashes locally. Installing a draft
+or a replacing commit (a new document) posts `{ kind: 'clear-layer-cache' }` to
+the persistent worker and clears the main-thread filter cache. Because keys
+describe content, clearing bounds memory; it is not needed for correctness.
+Each worker result carries per-render counters (`layerCache: { hits, misses,
+stores, evictions, rejected, entries, bytes, maxBytes }`) which the client
+validates and publishes as a `pixelforge.layer-filter-cache` performance mark.
+The main-thread decode cache uses the same content keys, so repeated tool
+gestures on an unchanged layer reuse its decoded source.
 
 ## Cancellation and decoded bitmap ownership
 

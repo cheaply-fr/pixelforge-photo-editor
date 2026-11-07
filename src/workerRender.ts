@@ -7,6 +7,14 @@ import {
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
 import {
+  assetFingerprints,
+  clearLayerFilterCache,
+  layerFilterCacheDelta,
+  markLayerFilterCacheStats,
+  sharedLayerFilterCache,
+  validLayerFilterCacheStats,
+} from './layerFilterCache.ts';
+import {
   validTiledNeighborhoodProgress,
   validTiledRenderTelemetry,
   type TiledNeighborhoodProgress,
@@ -33,6 +41,12 @@ export type WorkerRenderOptions = {
 };
 
 const RENDER_TIMEOUT_MS = 30_000;
+/**
+ * Keep an idle persistent worker (and its bounded layer-filter cache) long
+ * enough that a pause between edits does not force every filtered layer to be
+ * recomputed. The cache is byte-bounded, so this only extends retention.
+ */
+const PERSISTENT_WORKER_IDLE_MS = 5 * 60_000;
 const WORKER_MIN_PIXELS = 2_000_000;
 let requestId = 0;
 
@@ -79,6 +93,7 @@ export async function renderFrameWithWorker(
   const isCancelled = () => Boolean(options.signal?.aborted || options.isCancelled?.());
   if (isCancelled()) throw abortError();
   const fallback = async () => {
+    const cacheBefore = sharedLayerFilterCache().stats();
     const image = await renderFrame(frame, assets, overrides, {
       signal: options.signal,
       isCancelled,
@@ -99,6 +114,7 @@ export async function renderFrameWithWorker(
       },
     });
     if (isCancelled()) throw abortError();
+    markLayerFilterCacheStats(layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()));
     return image;
   };
   const globalScope = globalThis as typeof globalThis & {
@@ -234,6 +250,7 @@ export async function renderFrameWithWorker(
         (value.image as ImageBitmap).width === frame.w &&
         (value.image as ImageBitmap).height === frame.h
       ) {
+        if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
         finish(() => resolve(value.image as ImageBitmap));
       } else if (
         value.kind === 'result-bytes' &&
@@ -243,6 +260,7 @@ export async function renderFrameWithWorker(
         value.bytes.byteLength > 0 &&
         value.bytes.byteLength <= 64 * 1024 * 1024
       ) {
+        if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
         void createImageBitmap(
           new Blob([value.bytes], { type: 'image/png' }),
         ).then(
@@ -287,11 +305,13 @@ export async function renderFrameWithWorker(
     try {
       // Do not clone every asset retained by undo history. A render only needs
       // the current frame's raster and mask references.
+      const used = referencedAssets([frame], assets);
       worker.postMessage({
         kind: 'render',
         id,
         frame,
-        assets: referencedAssets([frame], assets),
+        assets: used,
+        assetKeys: assetFingerprints(used),
         tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
       });
     } catch (error) {
@@ -397,11 +417,13 @@ class PersistentWorkerSession {
           new Error('Worker rendering timed out. Try a smaller image or fewer layers.'),
         );
       }, RENDER_TIMEOUT_MS);
+      const used = referencedAssets([task.frame], task.assets);
       worker.postMessage({
         kind: 'render',
         id: task.id,
         frame: task.frame,
-        assets: referencedAssets([task.frame], task.assets),
+        assets: used,
+        assetKeys: assetFingerprints(used),
         tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
       });
     } catch {
@@ -530,6 +552,7 @@ class PersistentWorkerSession {
       (value.image as ImageBitmap).width === task.frame.w &&
       (value.image as ImageBitmap).height === task.frame.h
     ) {
+      if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
       this.finish(task, () => task.resolve(value.image as ImageBitmap));
       void this.startNext();
       return;
@@ -542,6 +565,7 @@ class PersistentWorkerSession {
       value.bytes.byteLength > 0 &&
       value.bytes.byteLength <= 64 * 1024 * 1024
     ) {
+      if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
       void createImageBitmap(new Blob([value.bytes], { type: 'image/png' })).then(
         (image) => {
           if (this.active !== task || task.cancelRequested || task.options.signal?.aborted || task.options.isCancelled?.()) {
@@ -627,7 +651,16 @@ class PersistentWorkerSession {
       const worker = this.worker;
       this.worker = undefined;
       try { worker?.terminate(); } catch { /* already unavailable */ }
-    }, RENDER_TIMEOUT_MS);
+    }, PERSISTENT_WORKER_IDLE_MS);
+  }
+
+  /** Ask a live worker to drop its layer-filter surfaces; no-op otherwise. */
+  clearLayerCache(): void {
+    try {
+      this.worker?.postMessage({ kind: 'clear-layer-cache' });
+    } catch {
+      /* An unavailable worker has no cache left to clear. */
+    }
   }
 
   private clearIdleTimer(): void {
@@ -654,6 +687,16 @@ class PersistentWorkerSession {
 }
 
 const persistentSession = new PersistentWorkerSession();
+
+/**
+ * Release retained layer-filter surfaces on the main thread and in the
+ * persistent render worker, e.g. when a different document is installed.
+ * Entries are content-keyed, so this frees memory rather than fixing staleness.
+ */
+export function clearLayerFilterCaches(): void {
+  clearLayerFilterCache();
+  persistentSession.clearLayerCache();
+}
 
 /** Test/host teardown hook; production lifecycle is managed by the idle timer. */
 export function resetPersistentWorkerForTests(): void {

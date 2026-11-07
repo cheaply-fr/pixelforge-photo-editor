@@ -149,3 +149,29 @@ brush simulation, scattering, texture, dual-brush behavior, color dynamics,
 transfer/pose/noise, wet edges, build-up, protect-texture, mixer behavior, wet-
 media behavior, or pressure curves; those controls remain staged behind a
 separate worker/tile rendering contract.
+
+## Selection confinement
+
+With an active selection, Brush, Pencil and Eraser change pixels only inside
+it, as in Photoshop. At pointer-down the selection is sampled once in the
+layer's own pixel space (so transformed layers, feathered and inverted
+selections work), and the stroke is painted into an unconfined copy. After
+each segment only the rectangle its dabs can reach (stamp radius, maximum
+scatter and a pixel of margin) is blended over the stroke-start pixels by the
+selection coverage, premultiplied, into the visible buffer. The live preview
+and the committed asset are therefore the same pixels, and a feathered edge
+receives proportional paint however often it is overpainted. Mask Brush, Mask
+Eraser and Adjustment Brush confine layer-mask painting the same way in canvas
+space. Quick Mask edits the selection itself and is not confined. Without a
+selection every tool takes the previous, unconfined path with no extra work.
+
+Sampling the selection is a whole-layer pass at stroke start, the same cost
+Gradient, Paint Bucket and the retouch tools already pay. "Mask from
+selection" keeps the selection active, so painting the new mask outside it
+needs Select > Deselect first.
+
+Evidence: `mixRectByMask`, `brushStampReach` and `brushSegmentRect` in
+`src/selectionClip.ts` with `tests/selection-clip.test.mjs`, and
+`tests/browser/brush-selection.spec.ts` on desktop and mobile (brush with live
+preview and undo, eraser, pencil with an inverted selection, feathered edge,
+no-selection stroke, Mask Eraser).

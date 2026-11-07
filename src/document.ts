@@ -84,6 +84,14 @@ import {
 } from './tiledDocument.ts';
 import type { TileCache } from './tilePlan.ts';
 import {
+  assetFingerprint,
+  detectLayerFilterCacheBudget,
+  layerFilterCacheKey,
+  sharedLayerFilterCache,
+  surfaceBytes,
+  type ByteLruCache,
+} from './layerFilterCache.ts';
+import {
   transformArtboard,
   validArtboards,
   type Artboard,
@@ -1279,6 +1287,53 @@ export function effectiveTextLayer<T extends Layer>(
       : {}),
   } as T;
 }
+/** Total raster pixels the top-level layers of one document may store. */
+export const LAYER_PIXEL_BUDGET = 64000000;
+/** Format a pixel count as megapixels with at most one decimal place. */
+export function formatMegapixels(
+  pixels: number,
+  rounding: 'nearest' | 'up' = 'nearest',
+): string {
+  const tenths = Math.max(0, pixels) / 100000;
+  // Requirements round up so an edit one pixel over budget never reads as
+  // "needs 64 MP" next to a 64 MP limit.
+  const rounded = rounding === 'up' ? Math.ceil(tenths - 1e-9) : Math.round(tenths);
+  return (rounded / 10).toFixed(1).replace(/\.0$/, '');
+}
+/** Clear, actionable message used when an edit would exceed the layer pixel budget. */
+export function layerPixelBudgetMessage(requiredPixels: number): string {
+  return (
+    `Layer pixel budget reached: layers may store ${formatMegapixels(LAYER_PIXEL_BUDGET)} MP in total ` +
+    `and this edit needs ${formatMegapixels(requiredPixels, 'up')} MP. ` +
+    'Merge or trim layers (Layer > Trim Layer to Content), or use a smaller canvas.'
+  );
+}
+/** Distinct from the generic malformed-document error so the UI can explain it. */
+export class LayerPixelBudgetError extends Error {
+  readonly requiredPixels: number;
+  constructor(requiredPixels: number) {
+    super(layerPixelBudgetMessage(requiredPixels));
+    this.name = 'LayerPixelBudgetError';
+    this.requiredPixels = requiredPixels;
+  }
+}
+/**
+ * Raster pixels stored by the top-level raster and smart-object layers, the
+ * same quantity validateFrame bounds. Each layer counts its own asset even
+ * when several layers share identical pixels. Unknown assets count as zero.
+ */
+export function layerPixelUsage(
+  frame: Pick<Frame, 'layers'>,
+  assets: Assets,
+): number {
+  let pixels = 0;
+  for (const layer of frame.layers) {
+    if (!isRasterContentLayer(layer) || !Object.hasOwn(assets, layer.asset))
+      continue;
+    pixels += assets[layer.asset].w * assets[layer.asset].h;
+  }
+  return pixels;
+}
 export function validateFrame(
   value: unknown,
   assets: Assets,
@@ -1699,8 +1754,10 @@ export function validateFrame(
     !validMeasurements(value.measurements, frameWidth, frameHeight)
   )
     return fail();
-  if (pixels > 64000000 || !validId(value.active) || !ids.has(value.active))
-    return fail();
+  if (!validId(value.active) || !ids.has(value.active)) return fail();
+  // Checked last so malformed data keeps the generic error and a valid but
+  // oversized stack gets an actionable explanation.
+  if (pixels > LAYER_PIXEL_BUDGET) throw new LayerPixelBudgetError(pixels);
 }
 export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};
@@ -1758,28 +1815,89 @@ export function rasterFrame(
     selectedLayerIds: [layer.id],
   };
 }
-const decoded = new Map<Asset, Promise<HTMLImageElement>>();
-/** Release decoded assets before a persistent worker accepts a new document. */
+type DecodedEntry = { promise: Promise<HTMLImageElement>; pixels: number };
+/**
+ * Decoded layer sources keyed by asset *content* (dimensions, encoded length
+ * and a 64-bit hash, memoized per asset object), not by object identity: the
+ * render worker receives structured clones of the same immutable assets on
+ * every request, and an imported project may reuse an id for other pixels.
+ * The cache is bounded by decoded pixels and survives between renders so an
+ * edit does not decode every layer's data URL again.
+ */
+const decoded = new Map<string, DecodedEntry>();
+let decodedPixels = 0;
+/** Evicted/cleared bitmaps are closed only once no render can still read them. */
+const pendingDecodedRelease: Promise<HTMLImageElement>[] = [];
+let decodedBudgetPixels: number | undefined;
+function decodedAssetBudgetPixels(): number {
+  decodedBudgetPixels ??= decodedAssetBudgetForDevice(detectLayerFilterCacheBudget());
+  return decodedBudgetPixels;
+}
+/** Decoded-pixel bound that follows the device-aware filter-cache tier. */
+export function decodedAssetBudgetForDevice(filterCacheBytes: number): number {
+  if (filterCacheBytes <= 32 * 1024 * 1024) return 16_000_000;
+  if (filterCacheBytes <= 96 * 1024 * 1024) return 32_000_000;
+  return 64_000_000;
+}
+function retireDecoded(entry: DecodedEntry): void {
+  decodedPixels -= entry.pixels;
+  pendingDecodedRelease.push(entry.promise);
+}
+/**
+ * Release decoded assets (e.g. before a persistent worker accepts a different
+ * document). Bitmaps are closed by `releaseRetiredDecodedAssets` once the
+ * caller knows no render is using them.
+ */
 export function clearDecodedAssetCache(): void {
+  for (const entry of decoded.values()) retireDecoded(entry);
   decoded.clear();
+  decodedPixels = 0;
+}
+/** Close evicted ImageBitmaps after the render that might have used them ends. */
+export function releaseRetiredDecodedAssets(): void {
+  const live = new Set([...decoded.values()].map((entry) => entry.promise));
+  for (const pending of pendingDecodedRelease.splice(0)) {
+    if (live.has(pending)) continue;
+    void pending.then(
+      (image) => {
+        const closable = image as unknown as { close?: () => void };
+        if (typeof closable.close === 'function') closable.close();
+      },
+      () => undefined,
+    );
+  }
+}
+/** Diagnostics for tests: number of retained decoded sources and their pixels. */
+export function decodedAssetCacheStats(): { entries: number; pixels: number; maxPixels: number } {
+  return { entries: decoded.size, pixels: decodedPixels, maxPixels: decodedAssetBudgetPixels() };
 }
 export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
-  const cached = decoded.get(asset);
+  // Full validation (regex + PNG header) runs once per content in decodeNewAsset.
+  if (!asset || typeof asset !== 'object' || typeof asset.url !== 'string')
+    return Promise.reject(new Error('Invalid or oversized project image'));
+  const key = assetFingerprint(asset);
+  const cached = decoded.get(key);
   if (cached) {
-    decoded.delete(asset);
-    decoded.set(asset, cached);
-    return cached;
+    decoded.delete(key);
+    decoded.set(key, cached);
+    return cached.promise;
   }
   const pending = decodeNewAsset(asset);
-  decoded.set(asset, pending);
-  let pixels = Array.from(decoded.keys()).reduce(
-    (sum, item) => sum + item.w * item.h,
-    0,
-  );
-  while (pixels > 64000000 && decoded.size > 1) {
-    const oldest = decoded.keys().next().value!;
-    pixels -= oldest.w * oldest.h;
-    decoded.delete(oldest);
+  const entry: DecodedEntry = { promise: pending, pixels: asset.w * asset.h };
+  decoded.set(key, entry);
+  decodedPixels += entry.pixels;
+  // A failed decode must not poison later attempts for the same content.
+  pending.catch(() => {
+    if (decoded.get(key) === entry) {
+      decoded.delete(key);
+      decodedPixels -= entry.pixels;
+    }
+  });
+  const budget = decodedAssetBudgetPixels();
+  while (decodedPixels > budget && decoded.size > 1) {
+    const [oldestKey, oldest] = decoded.entries().next().value!;
+    decoded.delete(oldestKey);
+    retireDecoded(oldest);
   }
   return pending;
 }
@@ -2002,6 +2120,11 @@ export type RenderOptions = {
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
   /** Internal recursion guard for editable nested Smart Object contents. */
   nestedDepth?: number;
+  /**
+   * Layer-local filtered surface cache. Omit for this context's shared bounded
+   * cache; pass null to render every filter from scratch.
+   */
+  layerFilterCache?: ByteLruCache<CanvasImageSource> | null;
 };
 
 /** Render a raster layer's bounded style stack in local coordinates. */
@@ -2249,8 +2372,28 @@ export async function renderFrame(
     // layer therefore keeps its own opacity without a folder multiplier.
     const groupOpacity = 1;
     const override = overrides?.[layer.id];
+    // The local stage below (source -> healing/patch/content-aware -> matting
+    // -> Smart Filters -> styles -> Filter Effect) depends only on the layer's
+    // local metadata and immutable assets. Reuse a completed result when every
+    // input matches; frame-space matrix/adjustments/masks/opacity/blend are
+    // applied afterwards and are intentionally not part of the key.
+    const localFilterCache =
+      !override && isRasterContentLayer(layer) && options?.layerFilterCache !== null
+        ? (options?.layerFilterCache ?? sharedLayerFilterCache())
+        : undefined;
+    const localFilterCacheKey = localFilterCache
+      ? layerFilterCacheKey(layer, assets, {
+          tiledFilter:
+            options?.tiledRevision !== undefined &&
+            isTiledNeighborhoodBlur(effectiveFilterEffects(layer.adjustments.filterEffects)),
+        })
+      : undefined;
+    const cachedLocal = localFilterCacheKey
+      ? localFilterCache!.get(localFilterCacheKey)
+      : undefined;
+    const computeLocal = !cachedLocal;
     const image =
-      isRasterContentLayer(layer) && !override
+      computeLocal && isRasterContentLayer(layer) && !override
         ? layer.kind === 'raster' && layer.fillColor
           ? (() => {
               const fill = surface(assets[layer.asset].w, assets[layer.asset].h),
@@ -2274,8 +2417,8 @@ export async function renderFrame(
     // exact same matrix, opacity, blend, adjustment and mask pipeline as the
     // immutable source asset; resetting the transform here would bake a
     // translated/scaled layer into the wrong frame coordinates.
-    let rasterSource: CanvasImageSource | undefined = override || image;
-    if (layer.kind === 'raster' && rasterSource && layer.spotHealing?.length) {
+    let rasterSource: CanvasImageSource | undefined = cachedLocal || override || image;
+    if (computeLocal && layer.kind === 'raster' && rasterSource && layer.spotHealing?.length) {
       // Spot Healing is metadata over the immutable source asset. Replay it in
       // local layer space before transforms, masks and adjustments so undo,
       // reload, export and worker rendering share the exact cleanup behavior.
@@ -2290,7 +2433,7 @@ export async function renderFrame(
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
     }
-    if (layer.kind === 'raster' && rasterSource && layer.patchStrokes?.length) {
+    if (computeLocal && layer.kind === 'raster' && rasterSource && layer.patchStrokes?.length) {
       // Patch strokes remain metadata over the immutable source asset. They
       // run after Spot Healing so a recipe can refine an earlier local cleanup
       // without baking either operation into the source PNG.
@@ -2329,7 +2472,7 @@ export async function renderFrame(
       patchedContext.putImageData(imageData, 0, 0);
       rasterSource = patched;
     }
-    if (layer.kind === 'raster' && rasterSource && layer.contentAwareFills?.length) {
+    if (computeLocal && layer.kind === 'raster' && rasterSource && layer.contentAwareFills?.length) {
       // Content-aware cleanup is intentionally constrained to persisted local
       // masks. Every mask is decoded beside the immutable layer asset and the
       // deterministic median sampler never performs semantic or network work.
@@ -2365,7 +2508,7 @@ export async function renderFrame(
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
     }
-    if (layer.kind === 'raster' && rasterSource && layer.contentAwareMoves?.length) {
+    if (computeLocal && layer.kind === 'raster' && rasterSource && layer.contentAwareMoves?.length) {
       const asset = assets[layer.asset],
         moved = surface(override?.width ?? asset.w, override?.height ?? asset.h),
         movedContext = moved.getContext('2d')!;
@@ -2401,7 +2544,7 @@ export async function renderFrame(
       movedContext.putImageData(imageData, 0, 0);
       rasterSource = moved;
     }
-    if (layer.kind === 'raster' && rasterSource && layer.contentAwareScales?.length) {
+    if (computeLocal && layer.kind === 'raster' && rasterSource && layer.contentAwareScales?.length) {
       const asset = assets[layer.asset],
         scaled = surface(override?.width ?? asset.w, override?.height ?? asset.h),
         scaledContext = scaled.getContext('2d')!;
@@ -2437,7 +2580,7 @@ export async function renderFrame(
       scaledContext.putImageData(imageData, 0, 0);
       rasterSource = scaled;
     }
-    if (isRasterContentLayer(layer) && rasterSource && layer.matting) {
+    if (computeLocal && isRasterContentLayer(layer) && rasterSource && layer.matting) {
       const asset = assets[layer.asset],
         matted = surface(override?.width ?? asset.w, override?.height ?? asset.h),
         mattedContext = matted.getContext('2d')!;
@@ -2452,7 +2595,7 @@ export async function renderFrame(
       mattedContext.putImageData(imageData, 0, 0);
       rasterSource = matted;
     }
-    if (isRasterContentLayer(layer) && rasterSource && layer.smartFilters?.length) {
+    if (computeLocal && isRasterContentLayer(layer) && rasterSource && layer.smartFilters?.length) {
       const asset = assets[layer.asset],
         stacked = surface(override?.width ?? asset.w, override?.height ?? asset.h),
         stackedContext = stacked.getContext('2d')!;
@@ -2461,7 +2604,7 @@ export async function renderFrame(
         applyFilterEffects(stacked, effect);
       rasterSource = stacked;
     }
-    if (isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
+    if (computeLocal && isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
       const asset = assets[layer.asset];
       rasterSource = applyRasterLayerStyles(
         rasterSource,
@@ -2474,6 +2617,7 @@ export async function renderFrame(
       layer.adjustments.filterEffects,
     );
     if (
+      computeLocal &&
       isRasterContentLayer(layer) &&
       rasterSource &&
       !isNeutralFilterEffects(filterEffect)
@@ -2532,6 +2676,20 @@ export async function renderFrame(
         applyFilterEffects(filtered, filterEffect);
         rasterSource = filtered;
       }
+    }
+    if (
+      computeLocal &&
+      localFilterCache &&
+      localFilterCacheKey &&
+      rasterSource &&
+      rasterSource !== image &&
+      isRasterContentLayer(layer)
+    ) {
+      // Only a fully completed local stage reaches this point: cancellation
+      // and failures throw above, so a partial surface is never retained. The
+      // surface is private to this render and later steps only read it.
+      const asset = assets[layer.asset];
+      localFilterCache.set(localFilterCacheKey, rasterSource, surfaceBytes(asset.w, asset.h));
     }
     if (
       !isRasterContentLayer(layer) &&

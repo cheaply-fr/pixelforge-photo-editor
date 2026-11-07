@@ -25,9 +25,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import {
   LOCAL_CONFLICT,
+  LOCAL_STORAGE_FULL,
   createDraftId,
   discardDraft,
-  initialDraftId,
+  draftOpenElsewhere,
+  holdDraftOpen,
+  resolveInitialDraft,
   isNewerDraftRevision,
   readDraft,
   saveDraft,
@@ -50,6 +53,9 @@ import {
 } from '../src/cloud';
 import {
   addAsset,
+  formatMegapixels,
+  LAYER_PIXEL_BUDGET,
+  layerPixelUsage,
   identity,
   colorSelectMask,
   commonLayer,
@@ -199,6 +205,13 @@ import {
   type TrimSides,
 } from '../src/canvasSize';
 import {
+  canExpandRasterLayer,
+  canTrimRasterLayer,
+  EXPANDING_PAINT_TOOLS,
+  planLayerExpansion,
+  planLayerTrim,
+} from '../src/layerTrim';
+import {
   alignmentDelta,
   distributionDeltas,
   translateMatrix,
@@ -279,7 +292,14 @@ import { decodePdfComposite } from '../src/pdf';
 import { decodeTiffComposite } from '../src/tiff';
 import { prepareSvgBytes } from '../src/svg';
 import { renderSelection } from '../src/selections';
-import { maskCoverageAt, mixByMask } from '../src/selectionClip';
+import {
+  brushSegmentRect,
+  brushStampReach,
+  maskCoverageAt,
+  mixByMask,
+  mixRectByMask,
+  type PixelRect,
+} from '../src/selectionClip';
 import {
   refineSelectionAlpha,
   type SelectionRefineMode,
@@ -289,6 +309,7 @@ import {
   paintSelectionBrushSegment,
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
+import { boundSelectionPolygon, ellipsePolygon } from '../src/selectionPolygon';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
 import { colorRangeMask } from '../src/colorRange';
@@ -442,6 +463,7 @@ import {
 } from '../src/gradientNoise';
 import {
   MAX_GRADIENT_STOPS,
+  buildGradientColorStops,
   normalizeGradientStops,
   type GradientStop,
 } from '../src/gradientStops';
@@ -678,6 +700,7 @@ type Command =
   | 'load-default-type-styles'
   | 'save-default-type-styles'
   | 'rasterize-layer'
+  | 'trim-layer'
   | 'matting'
   | 'duplicate-layer'
   | 'copy-svg'
@@ -1220,6 +1243,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Link Layers', command: 'link-layers' },
     { label: 'Unlink Layers', command: 'unlink-layers' },
     { label: 'Rasterize', command: 'rasterize-layer' },
+    { label: 'Trim Layer to Content', command: 'trim-layer' },
     { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
     { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
@@ -1451,6 +1475,8 @@ type Gesture = {
   maskRefinementStroke?: MaskRefinementStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
+  /** Unconfined Brush/Pencil/Eraser/mask stroke, present only while a selection confines it. */
+  selectionStroke?: SelectionStroke;
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
   selectionBase?: Uint8ClampedArray;
   /** Existing resolved alpha is retained for replace no-op detection. */
@@ -1995,6 +2021,92 @@ const confineToSelection = (
   image.data.set(mixed);
   editedContext.putImageData(image, 0, 0);
 };
+/**
+ * A brush-family stroke confined by the active selection. Dabs land on `raw`
+ * exactly as they would without a selection; each touched rectangle is then
+ * blended over the stroke-start pixels by the selection coverage into the
+ * visible buffer, so the preview and the committed asset are identical and a
+ * feathered edge receives proportional paint however often it is overpainted.
+ */
+type SelectionStroke = {
+  raw: HTMLCanvasElement;
+  original: Uint8ClampedArray;
+  mask: Uint8ClampedArray;
+};
+const beginSelectionStroke = (
+  buffer: HTMLCanvasElement,
+  mask: Uint8ClampedArray | undefined,
+): SelectionStroke | undefined => {
+  if (!mask) return undefined;
+  if (mask.length !== buffer.width * buffer.height)
+    throw new Error('Selection mask does not match the paint buffer');
+  const raw = surface(buffer.width, buffer.height);
+  raw.getContext('2d')!.drawImage(buffer, 0, 0);
+  return {
+    raw,
+    original: buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+    mask,
+  };
+};
+/**
+ * Copy one confined rectangle of the raw stroke into the visible buffer and
+ * report whether the visible pixels changed.
+ */
+const confineStrokeRect = (
+  stroke: SelectionStroke,
+  target: HTMLCanvasElement,
+  rect: PixelRect | null,
+) => {
+  if (!rect) return false;
+  const image = stroke.raw
+      .getContext('2d')!
+      .getImageData(rect.x, rect.y, rect.width, rect.height),
+    targetContext = target.getContext('2d')!,
+    before = targetContext.getImageData(rect.x, rect.y, rect.width, rect.height).data,
+    mixed = mixRectByMask(stroke.original, image.data, stroke.mask, target.width, rect);
+  let changed = false;
+  for (let index = 0; index < mixed.length && !changed; index += 1)
+    changed = mixed[index] !== before[index];
+  if (!changed) return false;
+  image.data.set(mixed);
+  targetContext.putImageData(image, rect.x, rect.y);
+  return true;
+};
+/** Frame-space selection coverage (alpha) for edits stored at canvas size. */
+const frameSelectionMask = async (
+  selection: Frame['selection'],
+  frame: Frame,
+  assets: Assets,
+): Promise<Uint8ClampedArray | undefined> => {
+  if (!selection) return undefined;
+  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
+    data = rendered.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
+    mask = new Uint8ClampedArray(frame.w * frame.h);
+  for (let pixel = 0; pixel < mask.length; pixel += 1) mask[pixel] = data[pixel * 4 + 3];
+  return mask;
+};
+/**
+ * Stamp a Brush/Pencil/Eraser segment into the gesture buffer, confined to the
+ * selection when one was active at pointer-down. Without a selection this is
+ * exactly `stampCanvasSegment` on the buffer.
+ */
+const stampGestureSegment = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof stampCanvasSegment>[3],
+) => {
+  const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (!stroke) return stampCanvasSegment(buffer, from, to, options);
+  const changed = stampCanvasSegment(stroke.raw, from, to, options);
+  if (changed)
+    confineStrokeRect(
+      stroke,
+      buffer,
+      brushSegmentRect(from, to, brushStampReach(options.size, options.scatter), buffer.width, buffer.height),
+    );
+  return changed;
+};
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
   frame: Frame,
@@ -2528,7 +2640,8 @@ export default function Home() {
       setActiveMenu(null);
     }
   };
-  const [draftId, setDraftId] = useState(initialDraftId),
+  const [initialDraft] = useState(resolveInitialDraft),
+    [draftId, setDraftId] = useState(initialDraft.id),
     openingDraftId = useRef(draftId),
     [saveStatus, setSaveStatus] = useState('Opening saved document…');
   const localVersions = useRef(new Map<string, number>());
@@ -2566,6 +2679,11 @@ export default function Home() {
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
+  // Pointer whose paint gesture waits for a trimmed layer to expand.
+  const expansionPointer = useRef<{
+    pointerId: number;
+    release?: React.PointerEvent<HTMLCanvasElement>;
+  } | null>(null);
   const paintSpan = useRef<PerformanceSpan | null>(null);
   const viewZoomRef = useRef(viewZoom);
   /** Image box and client anchor captured before a zoom, applied after commit. */
@@ -5062,37 +5180,42 @@ export default function Home() {
       }
     })();
   };
-  const finishPolygonalLasso = (g: Gesture) => {
-    const points = g.points || [];
-    if (points.length < 3) {
+  /**
+   * Clip a lasso path to the canvas and merge it as a polygon selection.
+   * Returns false, with a notice and the selection unchanged, when nothing of
+   * the path remains on the canvas.
+   */
+  const commitLassoPolygon = (
+    g: Gesture,
+    label: 'Lasso' | 'Polygonal lasso' | 'Magnetic Lasso' | 'Elliptical marquee',
+  ) => {
+    const bounded = boundSelectionPolygon(g.points || [], g.frame.w, g.frame.h);
+    if (!bounded.ok) {
       void paint(g.frame);
-      setNotice('Polygonal lasso needs at least three points');
-      return;
-    }
-    const bounded = points.map((point) => ({
-      x: Math.max(0, Math.min(g.frame.w, point.x)),
-      y: Math.max(0, Math.min(g.frame.h, point.y)),
-    }));
-    const x = Math.min(...bounded.map((point) => point.x)),
-      y = Math.min(...bounded.map((point) => point.y)),
-      right = Math.max(...bounded.map((point) => point.x)),
-      bottom = Math.max(...bounded.map((point) => point.y));
-    if (right - x <= 0 || bottom - y <= 0) {
-      void paint(g.frame);
-      setNotice('Polygonal lasso needs a non-zero area');
-      return;
+      setNotice(
+        bounded.reason === 'too-few-points'
+          ? `${label} needs at least three points`
+          : bounded.reason === 'outside'
+            ? `${label} selection is outside the image`
+            : `${label} needs a non-zero area`,
+      );
+      return false;
     }
     mergeSelection({
       shape: 'polygon',
-      x,
-      y,
-      w: right - x,
-      h: bottom - y,
-      points: bounded,
+      x: bounded.x,
+      y: bounded.y,
+      w: bounded.w,
+      h: bounded.h,
+      points: bounded.points,
       feather: 0,
       inverted: false,
     });
-    setNotice('Polygonal selection created');
+    return true;
+  };
+  const finishPolygonalLasso = (g: Gesture) => {
+    if (commitLassoPolygon(g, 'Polygonal lasso'))
+      setNotice('Polygonal selection created');
   };
   const invertSelection = () => {
     const f = current();
@@ -6156,8 +6279,25 @@ export default function Home() {
     let cancelled = false;
     void (async () => {
       try {
-        const saved = await readDraft(openingDraftId.current);
+        // `/editor` without a bookmark falls back to the browser-wide last
+        // draft. If another tab already has that draft open, attaching here
+        // would make both tabs save the same revision chain and the other tab
+        // would report a conflict; start a new draft instead. The other tab
+        // and its bookmark keep the original draft.
+        const elsewhere =
+          initialDraft.source === 'last-draft' &&
+          (await draftOpenElsewhere(openingDraftId.current));
         if (cancelled) return;
+        const saved = elsewhere
+          ? undefined
+          : await readDraft(openingDraftId.current);
+        if (cancelled) return;
+        if (elsewhere) {
+          setDraftId(createDraftId());
+          setNotice(
+            'Your last draft is open in another tab, so this tab started a new draft.',
+          );
+        }
         if (saved) {
           await install(saved);
           if (cancelled) return;
@@ -6245,7 +6385,13 @@ export default function Home() {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, install, paint, restoreSettings]);
+  }, [assets, commit, initialDraft, install, paint, restoreSettings]);
+  // Advertise which draft this tab has open so a bookmark-less `/editor` tab
+  // does not silently attach to it (see the opening effect above).
+  useEffect(() => {
+    if (!ready) return;
+    return holdDraftOpen(draftId);
+  }, [ready, draftId]);
   useLayoutEffect(() => {
     if (!ready || index.current < 0 || discarding.current) return;
     const sequence = ++saveSequence.current;
@@ -6354,7 +6500,9 @@ export default function Home() {
           setSaveStatus(
             error instanceof Error && error.message === LOCAL_CONFLICT
               ? LOCAL_CONFLICT
-              : 'Local save failed — export a copy',
+              : error instanceof Error && error.message === LOCAL_STORAGE_FULL
+                ? LOCAL_STORAGE_FULL
+                : 'Local save failed — export a copy',
           );
         }
       });
@@ -8086,6 +8234,121 @@ export default function Home() {
       setNotice('Could not rasterize layer');
     }
   };
+  // Store a plain raster layer at its non-transparent bounding box so sparse
+  // layers only spend their content on the layer pixel budget. The layer
+  // matrix keeps every pixel in place; paint tools expand it again on demand.
+  const trimLayerToContent = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !canTrimRasterLayer(layer)) {
+      setNotice(
+        'Trim Layer to Content needs an unlocked, unrotated paint layer without styles, vector masks, live filters or cleanup edits',
+      );
+      return;
+    }
+    const source = assets.current[layer.asset];
+    try {
+      const image = await decodeAsset(source),
+        buffer = surface(source.w, source.h),
+        context = buffer.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Trim canvas is unavailable');
+      context.drawImage(image, 0, 0);
+      const plan = planLayerTrim(
+        context.getImageData(0, 0, source.w, source.h).data,
+        source.w,
+        source.h,
+        layer.matrix,
+      );
+      if (current() !== f) return;
+      if (!plan) {
+        setNotice('Layer already fits its content');
+        return;
+      }
+      const cropped = surface(plan.crop.width, plan.crop.height);
+      cropped
+        .getContext('2d')!
+        .drawImage(image, -plan.crop.x, -plan.crop.y);
+      const asset = addAsset(assets.current, cropped);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+          ),
+        })
+      )
+        setNotice(
+          plan.empty
+            ? `Empty layer trimmed; ${formatMegapixels(plan.savedPixels)} MP of the layer pixel budget freed`
+            : `Layer trimmed to ${plan.crop.width} × ${plan.crop.height} px; ${formatMegapixels(plan.savedPixels)} MP of the layer pixel budget freed`,
+        );
+    } catch {
+      setNotice('Could not trim layer');
+    }
+  };
+  // A trimmed (or moved) paint layer only stores part of the canvas. Before a
+  // pixel tool writes to it, grow the asset to cover the whole canvas (plus
+  // any pixels already outside it) as its own undoable step, so strokes and
+  // fills never silently stop at the stored bounds.
+  const rasterExpansionTarget = (f: Frame) => {
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (
+      !layer ||
+      layer.kind !== 'raster' ||
+      !layer.visible ||
+      layerIsLocked(f, layer) ||
+      !canExpandRasterLayer(layer)
+    )
+      return null;
+    const source = assets.current[layer.asset];
+    if (!source) return null;
+    const plan = planLayerExpansion(source.w, source.h, layer.matrix, f.w, f.h);
+    return plan ? { layer, source, plan } : null;
+  };
+  /**
+   * Returns false only when the budget refuses the expansion and the press
+   * starts outside the stored pixels, where the tool could not store anything.
+   */
+  const expandRasterLayerForPaint = async (press: {
+    x: number;
+    y: number;
+  }): Promise<boolean> => {
+    const f = current(),
+      target = rasterExpansionTarget(f);
+    if (!target) return true;
+    const { layer, source, plan } = target;
+    const required =
+      layerPixelUsage(f, assets.current) - source.w * source.h + plan.w * plan.h;
+    if (required > LAYER_PIXEL_BUDGET) {
+      setNotice(
+        `Layer pixel budget reached: this layer stays ${source.w} × ${source.h} px, so paint outside it is not stored. Merge or trim other layers to paint the whole canvas.`,
+      );
+      const local = inversePoint(layer.matrix, press);
+      return Boolean(
+        local &&
+          local.x >= 0 &&
+          local.y >= 0 &&
+          local.x < source.w &&
+          local.y < source.h,
+      );
+    }
+    try {
+      const image = await decodeAsset(source);
+      if (current() !== f) return true;
+      const buffer = surface(plan.w, plan.h);
+      buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
+      const asset = addAsset(assets.current, buffer);
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+        ),
+      });
+    } catch {
+      // Painting continues inside the layer's existing bounds.
+    }
+    return true;
+  };
   const applyMatting = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object')) {
@@ -8625,6 +8888,29 @@ export default function Home() {
     context.putImageData(image, 0, 0);
     return result.changed;
   };
+  /**
+   * Apply a mask refinement segment to the gesture's mask buffer, confined to
+   * the selection that was active at pointer-down (Photoshop also confines
+   * layer-mask painting to the selection).
+   */
+  const refineGestureMask = (g: Gesture, stroke: MaskRefinementStroke) => {
+    const target = g.maskBuffer!, confined = g.selectionStroke;
+    if (!confined) return refineMaskCanvas(target, stroke);
+    if (!refineMaskCanvas(confined.raw, stroke)) return false;
+    const xs = stroke.points.map((item) => item.x),
+      ys = stroke.points.map((item) => item.y);
+    return confineStrokeRect(
+      confined,
+      target,
+      brushSegmentRect(
+        { x: Math.min(...xs), y: Math.min(...ys) },
+        { x: Math.max(...xs), y: Math.max(...ys) },
+        brushStampReach(stroke.size),
+        target.width,
+        target.height,
+      ),
+    );
+  };
   const drawPathOverlay = (
     path: PathModel,
     matrix: Matrix = [1, 0, 0, 1, 0, 0],
@@ -8794,7 +9080,10 @@ export default function Home() {
       setNotice('Could not create a curvature path');
     }
   };
-  const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const pointerDown = async (
+    e: React.PointerEvent<HTMLCanvasElement>,
+    skipExpansion = false,
+  ): Promise<void> => {
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
       paintSpan.current?.cancel();
@@ -8838,7 +9127,9 @@ export default function Home() {
         if (g.tool === 'curvature-pen') {
           g.points = appendCurvaturePoint(points, bounded);
         } else {
-          points.push(bounded);
+          // Keep the raw vertex; the finished path is clipped exactly to the
+          // canvas, so an off-canvas vertex keeps its edges' true direction.
+          points.push(p);
         }
         g.last = p;
         g.moved = (g.points || points).length > 1;
@@ -9143,6 +9434,35 @@ export default function Home() {
     }
     if (gesture.current || !frame) return;
     if (
+      !skipExpansion &&
+      !quickMasking &&
+      EXPANDING_PAINT_TOOLS.includes(tool) &&
+      rasterExpansionTarget(current())
+    ) {
+      // Grow a trimmed paint layer before the tool reads its pixels. A quick
+      // tap can be released while the asset decodes, so remember the release
+      // and replay it once the tool has started its gesture.
+      const pending: { pointerId: number; release?: React.PointerEvent<HTMLCanvasElement> } = {
+        pointerId: e.pointerId,
+      };
+      expansionPointer.current = pending;
+      try {
+        canvas.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // The pointer may already be gone; the release replay handles it.
+      }
+      let proceed = true;
+      try {
+        proceed = await expandRasterLayerForPaint(point(e));
+      } finally {
+        expansionPointer.current = null;
+      }
+      if (!proceed) return;
+      await pointerDown(e, true);
+      if (pending.release) await pointerUp(pending.release);
+      return;
+    }
+    if (
       quickMasking ||
       [
         'brush',
@@ -9182,7 +9502,12 @@ export default function Home() {
       (layer.kind === 'raster' || layer.kind === 'path' || (isVectorMaskableLayer(layer) && Boolean(layer.vectorMask)))
         ? inversePoint(layer.matrix, p) || p
         : p;
-    canvas.current!.setPointerCapture(e.pointerId);
+    try {
+      canvas.current!.setPointerCapture(e.pointerId);
+    } catch {
+      // A replayed tap (see the trimmed-layer expansion above) has already
+      // released its pointer; the tool still runs at the recorded point.
+    }
     if (tool === 'slice-select') {
       const selected = sliceAtPoint(f.slices, p.x, p.y);
       if (!selected) {
@@ -9267,8 +9592,10 @@ export default function Home() {
           if (!context) throw new Error('Mask refinement canvas is unavailable');
           context.imageSmoothingEnabled = false;
           context.drawImage(image, 0, 0);
+          const selectionMask = await frameSelectionMask(f.selection, f, assets.current);
           if (gesture.current !== g) return;
           g.maskBuffer = buffer;
+          g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
           const queued = (g.queued || [initialPoint]).slice(
             0,
             MASK_REFINEMENT_MAX_POINTS,
@@ -9281,7 +9608,7 @@ export default function Home() {
               pressure: item.pressure,
             })),
           };
-          g.changed = refineMaskCanvas(buffer, g.maskRefinementStroke);
+          g.changed = refineGestureMask(g, g.maskRefinementStroke);
           g.last = queued[queued.length - 1] || p;
           g.queued = undefined;
           g.maskPreviewAsset = crypto.randomUUID();
@@ -10490,15 +10817,21 @@ export default function Home() {
           const image = await decodeAsset(assets.current[rasterAsset!]),
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
+          // Photoshop confines painting and erasing to the active selection.
+          const selectionMask = f.selection && layer.kind === 'raster'
+            ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
+            : undefined;
           if (gesture.current !== g) return;
           g.buffer = buffer;
+          g.selectionMask = selectionMask;
+          g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
           let from = local;
           let stabilized = local;
           for (const point of g.queued || [
             { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
           ]) {
             const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
-            stampCanvasSegment(buffer, from, destination, {
+            stampGestureSegment(g, from, destination, {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -10572,7 +10905,7 @@ export default function Home() {
           g.maskRefinementStroke.points.length - 1
         ];
         g.maskRefinementStroke.points.push(point);
-        g.changed = refineMaskCanvas(g.maskBuffer, {
+        g.changed = refineGestureMask(g, {
           ...g.maskRefinementStroke,
           points: [from, point],
         }) || Boolean(g.changed);
@@ -11068,7 +11401,7 @@ export default function Home() {
     ) {
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
-      stampCanvasSegment(g.buffer, from, destination, {
+      stampGestureSegment(g, from, destination, {
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -11346,6 +11679,10 @@ export default function Home() {
     g.last = g.layer?.kind === 'raster' || g.layer?.kind === 'path' ? local : p;
   };
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (expansionPointer.current?.pointerId === e.pointerId) {
+      expansionPointer.current.release = e;
+      return;
+    }
     const completedPaint = paintSpan.current;
     paintSpan.current = null;
     completedPaint?.finish();
@@ -11398,8 +11735,8 @@ export default function Home() {
         setNotice('Magnetic Lasso: drag along an edge, release to close');
       } else {
         gesture.current = null;
-        finishPolygonalLasso(g);
-        setNotice('Magnetic selection created');
+        if (commitLassoPolygon(g, 'Magnetic Lasso'))
+          setNotice('Magnetic selection created');
       }
       return;
     }
@@ -11538,7 +11875,7 @@ export default function Home() {
             g.maskRefinementStroke.points.length - 1
           ];
           g.maskRefinementStroke.points.push(finalPoint);
-          g.changed = refineMaskCanvas(g.maskBuffer, {
+          g.changed = refineGestureMask(g, {
             ...g.maskRefinementStroke,
             points: [from, finalPoint],
           }) || Boolean(g.changed);
@@ -11668,7 +12005,7 @@ export default function Home() {
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
       if (g.moved && (from.x !== destination.x || from.y !== destination.y))
-        stampCanvasSegment(g.buffer, from, destination, {
+        stampGestureSegment(g, from, destination, {
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -11789,11 +12126,26 @@ export default function Home() {
       (g.tool === 'select' || g.tool === 'ellipse-select') &&
       g.moved
     ) {
-      const x = Math.max(0, Math.min(g.start.x, p.x)),
-        y = Math.max(0, Math.min(g.start.y, p.y)),
-        w = Math.min(f.w - x, Math.abs(p.x - g.start.x)),
-        h = Math.min(f.h - y, Math.abs(p.y - g.start.y));
-      if (w > 0 && h > 0)
+      const left = Math.min(g.start.x, p.x),
+        top = Math.min(g.start.y, p.y),
+        width = Math.abs(p.x - g.start.x),
+        height = Math.abs(p.y - g.start.y),
+        x = Math.max(0, left),
+        y = Math.max(0, top),
+        w = Math.min(f.w, left + width) - x,
+        h = Math.min(f.h, top + height) - y;
+      const offCanvas = left < 0 || top < 0 || left + width > f.w || top + height > f.h;
+      if (g.tool === 'ellipse-select' && offCanvas && width >= 1 && height >= 1) {
+        // Keep the true ellipse and clip it to the canvas instead of
+        // squashing it into the clamped box.
+        if (
+          commitLassoPolygon(
+            { ...g, points: ellipsePolygon(left, top, width, height) },
+            'Elliptical marquee',
+          )
+        )
+          setNotice('Elliptical selection created (clipped to the canvas)');
+      } else if (w >= 1 && h >= 1)
         mergeSelection({
           shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle',
           x,
@@ -11805,23 +12157,9 @@ export default function Home() {
         });
       else void paint(f);
     } else if (g.tool === 'lasso' && g.moved) {
-      const points = g.points || [];
-      if (points.length >= 3) {
-        const x = Math.max(0, Math.min(...points.map((point) => point.x))),
-          y = Math.max(0, Math.min(...points.map((point) => point.y))),
-          right = Math.min(f.w, Math.max(...points.map((point) => point.x))),
-          bottom = Math.min(f.h, Math.max(...points.map((point) => point.y)));
-        mergeSelection({
-          shape: 'polygon',
-          x,
-          y,
-          w: right - x,
-          h: bottom - y,
-          points,
-          feather: 0,
-          inverted: false,
-        });
-      } else void paint(f);
+      // Too short a drag is treated like a click; otherwise clip to the canvas.
+      if ((g.points?.length ?? 0) >= 3) commitLassoPolygon(g, 'Lasso');
+      else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       try {
         const plan = planRectangularCrop(f.w, f.h, g.start, p);
@@ -11928,26 +12266,18 @@ export default function Home() {
               local.x,
               local.y,
             );
-        const endColor = gradientEnd === 'background' ? backgroundColor : '#ffffff00';
-        const midpointStop = gradientMidpoint === 'none'
-          ? 0.5
-          : Math.max(0.01, Math.min(0.99, gradientMidpointPosition / 100));
-        const startColor = gradientReverse ? endColor : color,
-          finalColor = gradientReverse ? color : endColor;
-        if (gradientMode === 'reflected') {
-          gradient.addColorStop(0, color);
-          gradient.addColorStop(midpointStop, gradientMidpoint === 'none' ? endColor : gradientMidpoint);
-          gradient.addColorStop(1, color);
-        } else {
-          gradient.addColorStop(0, startColor);
-          const authoredStops = normalizeGradientStops(gradientStops);
-          if (authoredStops.length > 0) {
-            for (const stop of authoredStops) gradient.addColorStop(stop.position / 100, stop.color);
-          } else if (gradientMidpoint !== 'none') {
-            gradient.addColorStop(midpointStop, gradientMidpoint);
-          }
-          gradient.addColorStop(1, finalColor);
-        }
+        // A transparent end fades the adjacent colour's alpha (not toward
+        // transparent white, which leaves a pale fringe in canvas gradients).
+        for (const stop of buildGradientColorStops({
+          mode: gradientMode,
+          color,
+          backgroundColor,
+          end: gradientEnd,
+          reverse: gradientReverse,
+          midpoint: gradientMidpoint,
+          midpointPosition: gradientMidpointPosition,
+          stops: gradientStops,
+        })) gradient.addColorStop(stop.offset, stop.color);
         context.fillStyle = gradient;
         context.fillRect(0, 0, buffer.width, buffer.height);
         if (gradientNoise > 0 || gradientDither > 0) {
@@ -12913,6 +13243,7 @@ export default function Home() {
     else if (command === 'save-default-type-styles') return saveDefaultTypeStyles();
     else if (command === 'load-default-type-styles') return loadDefaultTypeStyles();
     else if (command === 'rasterize-layer') return rasterize();
+    else if (command === 'trim-layer') return trimLayerToContent();
     else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
@@ -13424,6 +13755,8 @@ export default function Home() {
         return !hasClipboard || frame.layers.length >= 32;
       case 'new-layer':
         return frame.layers.length >= 32;
+      case 'trim-layer':
+        return !layer || locked || !canTrimRasterLayer(layer);
       case 'clear-layer':
       case 'fill-layer':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
@@ -15348,6 +15681,7 @@ export default function Home() {
           {frame && (
             <LayersPanel
               frame={frame}
+              pixelUsage={layerPixelUsage(frame, assets.current)}
               select={select}
               selectAll={selectAllLayers}
               deselectLayers={deselectLayers}

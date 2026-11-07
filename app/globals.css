@@ -78,6 +78,8 @@
 
 .layers-panel h3 { display:flex; justify-content:space-between; margin:0 0 12px; font-size:14px; }
 .layers-panel h3 small { color:#9ba5b5; font-weight:400; }
+.layers-panel .layer-budget { margin:-8px 0 10px; color:#9ba5b5; font-size:12px; }
+.layers-panel .layer-budget[data-state="near"] { color:#f2c26b; }
 .layer-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:10px 0; }
 .layer-actions button { padding:8px 5px; border:1px solid #374151; border-radius:6px; background:#252d39; font-size:11px; }
 .layer-actions button:disabled { opacity:.4; cursor:not-allowed; }

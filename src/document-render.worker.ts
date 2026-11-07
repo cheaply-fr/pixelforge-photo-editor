@@ -2,6 +2,7 @@ import {
   renderFrame,
   validateFrame,
   clearDecodedAssetCache,
+  releaseRetiredDecodedAssets,
   type Assets,
   type Frame,
 } from './document.ts';
@@ -10,6 +11,13 @@ import type {
   TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
+import {
+  clearLayerFilterCache,
+  layerFilterCacheDelta,
+  primeAssetFingerprints,
+  sharedLayerFilterCache,
+  type LayerFilterCacheStats,
+} from './layerFilterCache.ts';
 
 type RenderRequest = {
   kind: 'render';
@@ -18,9 +26,13 @@ type RenderRequest = {
   assets: Assets;
   /** Optional bounded temporary-byte budget for eligible tile effects. */
   tiledMaxWorkingBytes?: number;
+  /** Main-thread content fingerprints, so the worker need not rehash data URLs. */
+  assetKeys?: Record<string, string>;
 };
 type CancelRequest = { kind: 'cancel'; id: number };
-type Request = RenderRequest | CancelRequest;
+/** Drop retained layer-filter surfaces, e.g. after a different document is installed. */
+type ClearCacheRequest = { kind: 'clear-layer-cache' };
+type Request = RenderRequest | CancelRequest | ClearCacheRequest;
 type Response =
   | { kind: 'progress'; id: number; completed: number; total: number }
   | { kind: 'tiled-progress'; id: number; progress: TiledNeighborhoodProgress }
@@ -32,6 +44,7 @@ type Response =
       image: ImageBitmap;
       width: number;
       height: number;
+      layerCache?: LayerFilterCacheStats;
     }
   | {
       kind: 'result-bytes';
@@ -39,6 +52,7 @@ type Response =
       bytes: ArrayBuffer;
       width: number;
       height: number;
+      layerCache?: LayerFilterCacheStats;
     }
   | { kind: 'error'; id: number; name: string; message: string };
 
@@ -86,15 +100,16 @@ async function encodeResult(
   canvas: OffscreenCanvas,
   width: number,
   height: number,
+  layerCache: LayerFilterCacheStats,
 ): Promise<void> {
   if (typeof canvas.transferToImageBitmap === 'function') {
     const image = canvas.transferToImageBitmap();
-    scope.postMessage({ kind: 'result', id, image, width, height }, [image]);
+    scope.postMessage({ kind: 'result', id, image, width, height, layerCache }, [image]);
     return;
   }
   const blob = await canvas.convertToBlob({ type: 'image/png' });
   const bytes = await blob.arrayBuffer();
-  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height }, [
+  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache }, [
     bytes,
   ]);
 }
@@ -103,6 +118,14 @@ scope.onmessage = (event: MessageEvent<Request>) => {
   const request = event.data;
   if (request?.kind === 'cancel') {
     cancelled.add(request.id);
+    return;
+  }
+  if (request?.kind === 'clear-layer-cache') {
+    // Entries are content-keyed, so clearing only releases memory; a render
+    // already in flight keeps its own references and stays correct.
+    clearLayerFilterCache();
+    clearDecodedAssetCache();
+    if (activeId === undefined) releaseRetiredDecodedAssets();
     return;
   }
   if (
@@ -121,8 +144,10 @@ scope.onmessage = (event: MessageEvent<Request>) => {
   activeId = request.id;
   void (async () => {
     let output: OffscreenCanvas | undefined;
+    const cacheBefore = sharedLayerFilterCache().stats();
     try {
       validateFrame(request.frame, request.assets);
+      primeAssetFingerprints(request.assets, request.assetKeys);
       const tiledMaxWorkingBytes = validateTiledBudget(request.tiledMaxWorkingBytes);
       output = (await renderFrame(
         request.frame,
@@ -157,6 +182,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         output,
         request.frame.w,
         request.frame.h,
+        layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()),
       );
     } catch (error) {
       if (cancelled.has(request.id))
@@ -167,7 +193,9 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         output.width = 0;
         output.height = 0;
       }
-      clearDecodedAssetCache();
+      // Decoded sources persist between requests (content-keyed, bounded);
+      // bitmaps evicted during this render are closed now that it is done.
+      releaseRetiredDecodedAssets();
       cancelled.delete(request.id);
       activeId = undefined;
     }
