@@ -53,7 +53,27 @@ merged `8def856`; `src/gradientStops.ts` with
 `tests/gradient-transparent-end.test.mjs` and
 `tests/browser/gradient-transparent-end.spec.ts`).
 
-Open roadmap item (P3): a second gradient on the same layer composites over
-the existing pixels rather than replacing them. A Replace mode, gradient
-blend modes and opacity are in development on `feat/brush-gradient-options`
-(not merged).
+A second gradient on the same layer composites over the existing pixels: that
+is the **Normal** mode and remains the default.
+
+## Gradient mode and opacity (2026-11-07)
+
+**Gradient mode** chooses how the gradient combines with the layer:
+**Normal** (paint over, the previous behaviour), **Replace** (the layer's pixels
+are discarded and become the gradient, including its transparent end), and the
+separable blend modes Multiply, Screen, Overlay, Soft light, Hard light, Colour
+dodge, Linear dodge (add), Colour burn, Darken, Lighten, Difference and
+Exclusion, using the W3C Compositing formulas followed by source-over (over
+transparent pixels a blend mode shows the gradient colour). **Gradient
+opacity** (1–100%) scales the gradient's alpha. The gradient is rendered on its
+own surface first, so Noise and Dither now vary only the gradient's pixels, not
+the existing layer pixels beneath a transparent end. Selection confinement is
+unchanged: Replace only replaces inside the selection.
+
+Both settings persist (`gradientBlend`, `gradientOpacity`), default to Normal
+and 100% for older drafts, and reject invalid values. Evidence:
+`src/gradientBlend.ts` with `tests/gradient-blend.test.mjs`, and
+`tests/browser/brush-gradient-options.spec.ts` (Normal vs Replace on a painted
+layer, Screen at 50% brightening existing paint, reload persistence) on
+desktop and mobile. The modes are local approximations, not Photoshop's
+algorithms.

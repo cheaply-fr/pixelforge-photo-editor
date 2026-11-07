@@ -24,7 +24,7 @@ test('built-in brush presets are finite, bounded and deterministic', () => {
 test('preset validation rejects unbounded or executable-looking values', () => {
   const preset = { ...BRUSH_PRESETS[0] };
   assert.equal(validBrushPreset({ ...preset, size: 0 }), false);
-  assert.equal(validBrushPreset({ ...preset, spacing: 101 }), false);
+  assert.equal(validBrushPreset({ ...preset, spacing: 1001 }), false);
   assert.equal(validBrushPreset({ ...preset, label: 'x'.repeat(81) }), false);
   assert.equal(validBrushPreset({ ...preset, id: 'data:text/plain,pixels' }), false);
   assert.equal(validBrushPreset({ ...preset, pressureSize: 'yes' }), false);

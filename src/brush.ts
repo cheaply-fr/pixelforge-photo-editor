@@ -43,6 +43,14 @@ export type BrushTipSettings = {
   flipY?: boolean;
 };
 export const BRUSH_DEFAULT_SPACING = 25;
+/** Dab spacing bounds, as a percentage of the brush diameter (1,000% = sparse stamps). */
+export const BRUSH_SPACING_MIN = 1;
+export const BRUSH_SPACING_MAX = 1000;
+/**
+ * Normalized pen pressure at or below this value is a pen lift: when a
+ * pressure mapping is enabled the dab paints nothing.
+ */
+export const BRUSH_PEN_LIFT_PRESSURE = 0.01;
 export const BRUSH_DEFAULT_ANGLE = 0;
 export const BRUSH_DEFAULT_ROUNDNESS = 100;
 export type BrushStampSettings = BrushPressureSettings & {
@@ -74,6 +82,8 @@ export type ResolvedBrushStamp = {
   flipX: boolean;
   flipY: boolean;
   bristle: number;
+  /** True when enabled pressure mapping saw a pen lift (near-zero pressure); opacity is then 0. */
+  lifted: boolean;
 };
 export type StampBounds = { left: number; top: number; right: number; bottom: number };
 export type RadialMask = {
@@ -147,7 +157,7 @@ export function validBrushTipSettings(value: unknown): value is BrushTipSettings
   const candidate = value as BrushTipSettings;
   return (
     (candidate.spacing === undefined ||
-      (finite(candidate.spacing) && candidate.spacing >= 1 && candidate.spacing <= 100)) &&
+      (finite(candidate.spacing) && candidate.spacing >= BRUSH_SPACING_MIN && candidate.spacing <= BRUSH_SPACING_MAX)) &&
     (candidate.angle === undefined ||
       (finite(candidate.angle) && candidate.angle >= -180 && candidate.angle <= 180)) &&
     (candidate.roundness === undefined ||
@@ -167,11 +177,23 @@ export function effectiveBrushTipSettings(value: BrushTipSettings | undefined): 
   };
 }
 
-/** Match PointerEvent behavior: mouse and missing/zero touch pressure use a deterministic full-pressure fallback. */
+/**
+ * Match PointerEvent behavior: mouse and missing/out-of-range pressure use a
+ * deterministic full-pressure fallback. Touch pressure 0 also means full
+ * pressure (many touch screens report 0 when they cannot sense force), but a
+ * pen reading of 0 is real: the nib is lifting off the surface.
+ */
 export function normalizeBrushPressure(pointerType: string | undefined, pressure: number | undefined): number {
-  return (pointerType === 'pen' || pointerType === 'touch') && finite(pressure) && pressure > 0 && pressure <= 1
+  if (pointerType === 'pen' && finite(pressure) && pressure >= 0 && pressure <= 1) return pressure;
+  return pointerType === 'touch' && finite(pressure) && pressure > 0 && pressure <= 1
     ? pressure
     : 1;
+}
+
+/** Whether a normalized pressure is a pen lift for the enabled pressure mappings. */
+export function isBrushPenLift(pressure: number, settings: BrushPressureSettings | undefined): boolean {
+  const flags = effectiveBrushPressureSettings(settings);
+  return (flags.pressureSize || flags.pressureOpacity) && finite(pressure) && pressure <= BRUSH_PEN_LIFT_PRESSURE;
 }
 
 export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushStamp {
@@ -189,7 +211,8 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
     bristle = normalizeBrushBristle(settings.bristle),
     response = mapBrushPressure(pressure, flags.pressureCurve),
     size = settings.size * (flags.pressureSize ? response : 1),
-    opacity = settings.opacity * (flags.pressureOpacity ? response : 1);
+    lifted = isBrushPenLift(pressure, flags),
+    opacity = lifted ? 0 : settings.opacity * (flags.pressureOpacity ? response : 1);
   return {
     pressure,
     size: Math.max(0.0001, size),
@@ -199,6 +222,7 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
     ...flags,
     ...tip,
     bristle,
+    lifted,
   };
 }
 

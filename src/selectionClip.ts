@@ -1,4 +1,4 @@
-import { BRUSH_SCATTER_MAX, normalizeBrushScatter } from './brushDynamics.ts';
+import { brushScatterRadius } from './brushDynamics.ts';
 
 /**
  * Confine raster edits to the active selection, as Photoshop does. Whole-layer
@@ -118,7 +118,7 @@ export function mixRectByMask(
  */
 export function brushStampReach(size: number, scatter = 0): number {
   const safeSize = Number.isFinite(size) ? Math.max(1, size) : 1;
-  return safeSize / 2 + safeSize * 0.75 * (normalizeBrushScatter(scatter) / BRUSH_SCATTER_MAX) + 2;
+  return safeSize / 2 + brushScatterRadius(safeSize, scatter) + 2;
 }
 
 /**

@@ -13,3 +13,31 @@ documents, remain anonymous/offline, and are covered by pure bounds and
 determinism tests plus desktop/mobile project-file acceptance. These are bounded
 local dynamics; full Photoshop secondary tip selection, physical bristle
 geometry and wet-media simulation remain explicitly staged.
+
+## Sparse stamping, Count and jitter (2026-11-07)
+
+Spacing accepts 1–1,000% of the diameter (was 1–100%) and Scatter 0–1,000%
+(was 0–100%), so a stroke can lay separated dabs for star fields and dotted
+lines. Scatter keeps its original scale (100% moves a dab centre up to
+0.75 × diameter) and grows linearly beyond it. **Scatter both axes** (on by
+default, the previous behaviour) can be turned off to scatter only
+perpendicular to the stroke; the first dab of a stroke has no direction and
+uses both axes.
+
+**Count** (1–16) places several dabs at each spacing step, **Count jitter**
+(0–100%) randomly reduces that count (never below one), and **Size**, **Angle**
+and **Opacity jitter** (0–100%) vary each dab: size down to `1 − jitter`,
+angle by up to ±180° × jitter, opacity down to `1 − jitter`. Every choice is a
+hash of the stroke point, dab index and channel, so replaying a stroke gives the
+same pixels; with default values the first dab is exactly the previous single
+dab. Selection-confined strokes widen their dirty rectangle by the full
+scatter reach.
+
+The dynamics persist as `settings.brushDynamics` (and optionally in custom
+brush presets); absent keys load the defaults and out-of-range values are
+rejected. Evidence: `src/brushDynamics.ts`, `tests/brush-spacing-count.test.mjs`
+and `tests/browser/brush-gradient-options.spec.ts` (500% spacing leaves pixel
+gaps between dabs; Count with 300% scatter adds dabs that stay within the
+scatter bound; settings survive reload; older projects load defaults) on
+desktop and mobile. This is a bounded deterministic approximation of common
+brush-engine shape and scattering dynamics, not Photoshop parity.
