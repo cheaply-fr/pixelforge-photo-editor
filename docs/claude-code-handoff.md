@@ -160,22 +160,29 @@ Known remaining families and release work:
    recipes only after contracts cover authentication, privacy, explicit
    consent, limits and recovery. Search online or manufacture safe fixtures
    when needed; do not block unrelated local-first work waiting for a vendor.
-7. **Large-document painting (added 2026-11-07):** a live 2646×4096 painting
-   session produced #181–#187 and #189 (merged and deployed; `/release.json`
-   reported `1c40122` after #189), and every remaining finding now has a
-   fix-wave-2 workstream: huge projects (`feat/huge-projects`), coalesced
-   stroke previews (#190), fast large-radius filters (#191), retouch
-   selection and clone source (`fix/retouch-selection-and-clone-source`),
-   glow styles and blend modes (`feat/glow-styles-and-blend-modes`), brush
-   and gradient options (`feat/brush-gradient-options`), and reference layer,
-   OS paste and hardened downloads (`feat/reference-layer-paste-export`).
-   Stroke-start decode, per-stroke PNG commits, Radial Blur centres and
-   raster filter stacks are queued follow-ups. See "Large-document painting
-   findings (2026-11-07)" in `docs/roadmap-progress-rubric.md`.
+7. **Large-document painting (added 2026-11-07, updated after #207):**
+   recreating a 2646×4096 "cosmic eye" poster produced #181–#207. All are
+   merged; every PR is contained in a successful protected `CI and deploy`
+   run and in the release `/release.json` reported at write time (`257e744`) (release
+   identity only; per-feature live acceptance not re-run). Highlights: huge
+   projects (#193: 512 layers, desktop 1,024 MP / 1 GiB budgets), warm
+   stroke start (#195), retouch selection and clone source (#196, #201),
+   26 blend modes and glows (#197, #204), OS paste and hardened downloads
+   (#198), filter stacks and precise centres (#199, #204), reference image
+   (#200), faster and parallel filters (#191, #202, #205, #206), large-project
+   open/reload (#203) and stored-bounds warps (#207). Open items are the
+   "Fix wave 3" table in `docs/roadmap-progress-rubric.md`: tiled
+   content-addressed layer tiles + Blob-backed assets (in progress, separate
+   PR; full-layer stroke commit 2.2–2.9 s at 2646×4096), slow 600 MB+
+   projects (~79 s open, 53 s reload, 107 s export, locally), unchanged
+   export speed, unconfirmed 4-core filter speed-up, glows inside folders and
+   on clipped layers, no Knockout / Fill opacity, and per-feature live
+   acceptance. See "Large-document painting findings (2026-11-07)" there.
 8. **Host-environment notes (not app bugs):** in the Claude desktop app's
    built-in browser, `window.open` popups close the browser pane, ZIP
    downloads are saved as GUID-named `.tmp` files, and a PNG export once
-   reported success without writing a file (being hardened in workstream G).
+   reported success without writing a file (downloads hardened and a
+   file-picker save added in #198; the host behaviour is still unverified).
    The site's CSP blocks `eval` and `fetch` to `localhost` from the deployed
    origin; that is expected and should not be loosened for testing. Prefer
    local dev servers or Playwright for automation that needs either.
