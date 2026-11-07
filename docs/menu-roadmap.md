@@ -181,6 +181,13 @@ and priorities are in
 - **Filter → Distort → Perspective Warp / Vanishing Point / Puppet Warp:**
   canvas-space handles on layers stored at content bounds (#207,
   `257e744`).
+- **Filter → Render → Light Rays…:** seeded rays, Starburst and
+  bright-pixel streaks around an editable centre (#211, `767e965`); a local
+  approximation, not a light simulation.
+- **Layer → Stroke Path with Brush…:** Brush/Pencil/Eraser/Smudge along a
+  path with simulated-pressure tapers (#212, `513779d`). Paint symmetry
+  (#210) is not applied to it (W4-1).
 
-Deployment runs per PR and the open items (W3-n) are in the rubric's
-"Fix wave 2 — merged and deployed" and "Fix wave 3" tables.
+Deployment runs per PR and the open items (W3-n, W4-n) are in the rubric's
+"Fix wave 2 — merged and deployed", "Fix wave 3", "Fix wave 3 — merged" and
+"Fix wave 4" tables.

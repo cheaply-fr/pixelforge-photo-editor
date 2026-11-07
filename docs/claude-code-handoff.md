@@ -171,13 +171,25 @@ Known remaining families and release work:
    (#198), filter stacks and precise centres (#199, #204), reference image
    (#200), faster and parallel filters (#191, #202, #205, #206), large-project
    open/reload (#203) and stored-bounds warps (#207). Open items are the
-   "Fix wave 3" table in `docs/roadmap-progress-rubric.md`: tiled
-   content-addressed layer tiles + Blob-backed assets (in progress, separate
-   PR; full-layer stroke commit 2.2–2.9 s at 2646×4096), slow 600 MB+
+   "Fix wave 3" table in `docs/roadmap-progress-rubric.md`: slow 600 MB+
    projects (~79 s open, 53 s reload, 107 s export, locally), unchanged
    export speed, unconfirmed 4-core filter speed-up, glows inside folders and
    on clipped layers, no Knockout / Fill opacity, and per-feature live
    acceptance. See "Large-document painting findings (2026-11-07)" there.
+   **Fix wave 3 merged (#209–#213):** brush colour dynamics and a brush
+   preset library with space-art built-ins (#209), paint symmetry for
+   Brush/Pencil/Eraser (#210), Filter → Render → Light Rays (#211), Stroke
+   Path with Brush (#212) and tiled, Blob-backed 256² layer tiles with draft
+   format 4 (#213, W3-1 done; local full-layer stroke commit ≈ 0.5 s vs
+   2–3.4 s at 2646×4096). At write time `/release.json` reported `c11b8cb`
+   (contains #209–#213; release identity only, no per-feature live
+   acceptance); recheck before relying on it. Open follow-ups are the "Fix wave 4" table:
+   symmetry for Stroke Path and for Mixer/History/Clone/Heal, custom brush
+   tips (no Glint tip), brush blend mode, tiled follow-ups (dirty-rect hints,
+   `.pixelforge` v4 tiles, decoded-tile cache, dirty-region previews,
+   off-main-thread encoding), and a local e2e hazard: Playwright reuses any
+   server on port 4173 (possibly another worktree's), and concurrent runs in
+   one worktree wipe `test-results`.
 8. **Host-environment notes (not app bugs):** in the Claude desktop app's
    built-in browser, `window.open` popups close the browser pane, ZIP
    downloads are saved as GUID-named `.tmp` files, and a PNG export once

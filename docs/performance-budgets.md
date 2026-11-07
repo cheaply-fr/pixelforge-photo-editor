@@ -223,8 +223,15 @@ measurements; these are local/live observations, not CI budgets.
   committed pixels; local pointer-down → first dab 678–752 ms → 110–204 ms).
   Per-stroke full-layer commit cost remains: 2.2–2.9 s pointer-up → committed
   and rendered on a full-canvas 2646×4096 photo layer (#207 harness,
-  `scripts/measure-stroke-commit.mjs`, local); tiled content-addressed layer
-  tiles and Blob-backed assets are in progress in a separate PR.
+  `scripts/measure-stroke-commit.mjs`, local). #213 (`c11b8cb`) stores
+  layers of 1 MP or more as content-addressed, Blob-backed 256² tiles and
+  encodes only new tiles per commit: the same harness measured 0.48–0.60 s
+  against 2.0–3.4 s before (local, one Windows desktop; a new paint layer is
+  unchanged within noise). Open: dirty-rect hints, decoded-tile cache,
+  dirty-region previews and off-main-thread encoding; `.pixelforge` export
+  of a tiled history flattens every version and is slower than before (fix
+  wave 4 in the rubric; see
+  [`tiled-layer-assets-contract.md`](./tiled-layer-assets-contract.md)).
 - Gaussian Blur at radius 24 timed out the render worker at 10.8 MP;
   radius-independent (O(1) per pixel) blurs, faster median filters and a
   work-scaled render watchdog shipped in #191 (`2da6669`); the remaining

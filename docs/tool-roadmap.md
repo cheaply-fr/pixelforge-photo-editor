@@ -328,12 +328,16 @@ with release evidence and priorities is in
 | Spot Healing, Patch | **Shipped** — confined to any selection shape through a stored selection mask | #201, merged `521188b` |
 | Painting Size | **Shipped** — 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` | #187, merged `6a42943`, deployed `6a42943` (run 42332588876) |
 | Live stroke preview | **Shipped** — at most one preview per animation frame | #190, merged `0f390b0`. Open: full-frame composite per preview, `getCoalescedEvents()` (fix wave 3 W3-8, W3-9) |
-| Stroke start / commit | **Partly shipped** — committed pixels stay warm for the next stroke and the render worker (#195, merged `bf11abd`) | Open (P1): full-layer PNG re-encode per commit, 2.2–2.9 s at 2646×4096 locally — tiled layer assets in progress (W3-1) |
+| Stroke start / commit | **Shipped** — committed pixels stay warm for the next stroke and the render worker (#195, merged `bf11abd`); large layers stored as content-addressed 256² tiles, so a commit encodes only new tiles (#213, merged `c11b8cb`) | Local 2646×4096 full-layer commit ≈ 0.5 s vs 2–3.4 s before. Open: dirty-rect hints, `.pixelforge` v4 tiles, decoded-tile cache, dirty-region previews (fix wave 4) |
 | Brush dynamics | **Shipped** — spacing/scatter above 100%, count and symmetric count jitter, size/angle/opacity jitter, pen lift at pressure 0 | #194, merged `5b7bc63`; #201 |
 | Eyedropper with a reference image | **Shipped** — non-exported reference/guide image, optional eyedropper sampling | #200, merged `51a7ba4` |
 | Gradient options | **Shipped** — Replace mode, blend modes, opacity; live preview while dragging | #194; #201 (reduced-resolution preview on layers > 1.5 MP) |
 | Perspective Warp, Vanishing Point, Puppet Warp | **Shipped** — canvas-space handles on layers stored at content bounds | #207, merged `257e744` |
+| Brush colour dynamics, brush preset library | **Shipped** — Hue / Saturation / Brightness / FG-BG jitter; built-in space-art presets plus saved presets on the device | #209, merged `7516d33`. Open: custom tip shapes (no Glint tip), brush blend mode (W4-2, W4-3) |
+| Paint Symmetry (Brush, Pencil, Eraser) | **Shipped** — vertical, horizontal, dual, diagonal, radial and mandala modes with an editable centre | #210, merged `0ad0e69`. Open: Stroke Path with Brush, Mixer/History/Clone/Heal (W4-1, W4-4) |
+| Stroke Path with Brush | **Shipped** — Brush/Pencil/Eraser/Smudge along path curves with simulated-pressure tapers | #212, merged `513779d` |
 
 Deployment runs per PR and every open item are in the rubric's
-"Fix wave 2 — merged and deployed" and "Fix wave 3" tables. Workstream
+"Fix wave 2 — merged and deployed", "Fix wave 3", "Fix wave 3 — merged" and
+"Fix wave 4" tables. Workstream
 letters A–G refer to the fix-wave-2 mapping in the [rubric](./roadmap-progress-rubric.md#fix-wave-2--merged-and-deployed-2026-11-07).

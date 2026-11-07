@@ -212,3 +212,13 @@ above 100%, count and count jitter and a true pen lift at pressure 0 shipped in
 #194 (`5b7bc63`); symmetric count jitter in #201 (`521188b`). Selection
 confinement and the kept Alt-click source above shipped in #196 (`137ef33`).
 See [`brush-dynamics-contract.md`](./brush-dynamics-contract.md).
+
+Fix wave 3 added per-dab Hue / Saturation / Brightness / Foreground-Background
+colour jitter and a brush preset library with four space-art built-ins (#209,
+`7516d33`; [`custom-brush-presets-contract.md`](./custom-brush-presets-contract.md)),
+Paint Symmetry for Brush, Pencil and Eraser (#210, `0ad0e69`;
+[`paint-symmetry-contract.md`](./paint-symmetry-contract.md)) and Layer →
+Stroke Path with Brush with simulated-pressure tapers for Brush, Pencil,
+Eraser and Smudge (#212, `513779d`). Open (fix wave 4 in the rubric): symmetry
+is not applied to Stroke Path with Brush or to Mixer, History, Clone and
+healing tools; there are no custom brush tip shapes and no brush blend mode.

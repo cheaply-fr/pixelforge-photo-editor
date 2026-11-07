@@ -59,8 +59,10 @@ while keeping implementation claims limited to features covered by tests.
 A live 2646×4096 painting session exercised the layer, selection, painting, filter and export
 workflows (2, 4, 6, 8, 9) at 10.8 MP and
 produced #181–#207 (all merged; deploy runs per PR in the rubric), and a
-fix-wave-3 list of open items led by per-stroke full-layer PNG commits
-(tiled layer assets, in progress) and very large project open/reload/export
-times. The list is recorded in
+fix-wave-3 list of open items. Fix wave 3 then merged brush colour
+dynamics and presets, paint symmetry, Light Rays, Stroke Path with Brush and
+tiled layer assets (#209–#213; per-stroke full-layer PNG commits are gone).
+Very large project open/reload/export times and the fix-wave-4 follow-ups
+remain. The list is recorded in
 [`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07);
 it does not change the applied status of the core ten.

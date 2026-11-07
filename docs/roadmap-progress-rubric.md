@@ -202,7 +202,7 @@ investigation.
 | # | Item | Priority | Status | Area / contract |
 | --- | --- | --- | --- | --- |
 | 1 | Stroke-start latency: ~2 s decode of the active 10.8 MP layer at pointer-down | P1 | **Shipped in #195** (warm committed pixels; first stroke after import still ~600 ms locally) | `performance-budgets.md` |
-| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`) | P1 | **Open — fix wave 3** (tiled layer assets, in progress); new paint layers are cheap since #193 (stored at content bounds) | `performance-budgets.md`, `layer-document-format.md` |
+| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`) | P1 | **Shipped in #213** (tiled layer assets; local full-layer commit ≈ 0.5 s vs 2–3.4 s at 2646×4096); new paint layers are cheap since #193 (stored at content bounds). Follow-ups W4-5 – W4-9 | `performance-budgets.md`, `layer-document-format.md` |
 | 3 | Clone Stamp / Healing Brush respect the active selection (follow-up of #184) | P1 | **Shipped in #196**; Spot Healing / Patch in #201 | `brush-tool-contract.md` |
 | 4 | Ctrl+V of an OS clipboard image did not reach the paste handler | P1 | **Shipped in #198** | `paste-special-contract.md` |
 | 5 | Additional blend modes for glow and light painting | P2 | **Shipped in #197** (26 modes); backdrop-blended glows in #204 | `group-compositing-contract.md` |
@@ -266,7 +266,7 @@ branch; **Open** has none yet. Measurements are local, not CI or production.
 
 | # | Item | Priority | Status | Source / area |
 | --- | --- | --- | --- | --- |
-| W3-1 | **Tiled, content-addressed layer tiles + Blob-backed assets.** Commits re-encode only the 256² tiles a stroke touched; assets kept as Blobs instead of base64 data URLs (also removes base64 work in drafts and exports). Reaches `validateFrame`/`referencedAssets`, the #189 history budget, #186 drafts (tiles dedupe by hash), project/PSD/ORA export, worker transfer, ~40 `decodeAsset` call sites, and needs migration of existing documents. Baseline (#207 harness, 2646×4096): pointer-up → committed and rendered **2.2–2.9 s** on a full-canvas photo layer (0.48–0.58 s on a new paint layer) | P1 | **In progress** — separate PR, design first | #195, #203, #207; `performance-budgets.md`, `layer-document-format.md` |
+| W3-1 | **Tiled, content-addressed layer tiles + Blob-backed assets.** Commits re-encode only the 256² tiles a stroke touched; assets kept as Blobs instead of base64 data URLs (also removes base64 work in drafts and exports). Reaches `validateFrame`/`referencedAssets`, the #189 history budget, #186 drafts (tiles dedupe by hash), project/PSD/ORA export, worker transfer, ~40 `decodeAsset` call sites, and needs migration of existing documents. Baseline (#207 harness, 2646×4096): pointer-up → committed and rendered **2.2–2.9 s** on a full-canvas photo layer (0.48–0.58 s on a new paint layer) | P1 | **Done — #213** (`c11b8cb`; see "Fix wave 3 — merged" below). Follow-ups are W4-5 – W4-10 | #195, #203, #207, #213; `tiled-layer-assets-contract.md`, `performance-budgets.md`, `layer-document-format.md` |
 | W3-2 | **Very large (600 MB+) projects still slow.** 617 MB / 822 MB-data, 320-layer poster: ≈ 79 s open (editor time), 53 s reload from the draft, 107 s `.pixelforge` export (incl. harness download); working set ~4.2 GB after open, peak ~5.2 GB. Remaining time is first-render PNG decode of the full layers and IndexedDB save | P1 | **Open** — expected to benefit from W3-1; lazy asset decode/streaming on install | #193, #203, #207 |
 | W3-3 | **Export speed unchanged** by the large-project work (#203: 106 s → 107 s for the 617 MB project) | P2 | **Open** | #203; `export-contract.md` |
 | W3-4 | **4-core filter speed-up unconfirmed on low-core devices.** 3 workers measured 0.92–1.58 s/MP at 10.8 MP on a loaded 2.4 GHz host (~2.6× over serial); ~1 s/MP not confirmed; no physical low-core desktop or phone measured. Phones capped at 2 workers (~1.5–1.9 s/MP by design); layers < 0.5 MP and other filters stay serial; at 1 MP JIT warm-up keeps a cold Reduce Noise above 1 s/MP | P2 | **Open** — measurement on real 4-core / phone hardware | #205, #206; `performance-budgets.md`, `worker-render-contract.md` |
@@ -287,6 +287,59 @@ Earlier limitations still open: #183 has no automatic trim for *opened*
 photos (by design since #193, only stored-bounds layers are trimmed); #185's
 tiled blur path is not cached; #189's persisted history window is ≤ 24
 states (~48 MiB) across reload.
+
+### Fix wave 3 — merged (2026-11-07)
+
+Painting features requested while recreating the "cosmic eye" poster, plus
+W3-1. Scope, merge SHAs and limitations were read for this record with
+`gh pr view <n> --repo cheaply-fr/pixelforge-photo-editor`; runs with
+`gh run list --branch main --workflow "CI and deploy"`. All are bounded local
+approximations; nothing here claims Photoshop parity.
+
+Evidence is kept separate:
+
+- **Local:** each PR reports `npm run lint`, `typecheck`, `build`, `npm test`
+  and Playwright results from one Windows desktop (headless Chromium). The
+  timings below are local only, not CI budgets or production timings.
+- **CI:** each PR passed the protected PR workflow before merge. On `main`,
+  the `CI and deploy` runs for #211 (`767e965`, run 42399925863), #210
+  (`0ad0e69`, run 42400979401) and #212 (`513779d`, run 42403184976)
+  and #213 (`c11b8cb`, run 42406170364) succeeded. The run for #209
+  (`7516d33`, run 42399198576) was cancelled because #211 superseded it;
+  `767e965` contains `7516d33`.
+- **Deploy:** `https://photoeditor.cheaply.fr/release.json` reported
+  `c11b8cbb91140fb20dc9cf32957e4d1f64c0a179` (built 2026-11-07T19:26:34Z)
+  when this was written, which contains #209–#213. Earlier in the same
+  session it reported `513779d` (#209–#212) while the #213 run was still in
+  progress.
+- **Live:** this is release identity only. Per-feature live acceptance of
+  #209–#213 was not run (see W3-16).
+
+| PR | Change (bounded local approximations) | Merge SHA | First deployed in (run) | Remaining limitations (from the PR) |
+| --- | --- | --- | --- | --- |
+| #209 | Brush **colour dynamics**: per-dab Hue, Saturation, Brightness and Foreground/Background jitter (0–100 %) for Brush and Pencil, seeded from the stroke so strokes replay identically; legacy strokes byte-identical. **Brush preset library**: four built-in space-art presets (Star field, Soft glow, Dust / nebula, Smoke wisp) plus saved presets with Save / Rename / Delete, stored on the device in `localStorage` (`pixelforge.brush-presets.v1`) and still carried in drafts and `.pixelforge` projects; presets now include opacity and colour dynamics | `7516d33` | `767e965` (42399925863) | Eraser ignores colour dynamics; no custom (sampled) brush tip shapes, so no 4-point "Glint" tip (W4-2); the brush has no blend mode, so presets store none (W4-3); no cloud sync of the device library. See `brush-dynamics-contract.md`, `custom-brush-presets-contract.md` |
+| #210 | **Paint Symmetry** for Brush, Pencil and Eraser: Vertical, Horizontal, Dual axis, Diagonal, Radial (2–64 segments) and Mandala (2N copies); editable centre (on-canvas handle, keyboard nudges, fields) and rotation; copies share the source dab's seeded jitter; selection confinement per copy; one undo step; saved in drafts and projects | `0ad0e69` | `0ad0e69` (42400979401) | Not applied to Mixer Brush, History / Art History brushes, Clone Stamp or the healing tools (W4-4), nor to Stroke Path with Brush (W4-1). See `paint-symmetry-contract.md` |
+| #211 | **Filter → Render → Light Rays…**: seeded radial rays, Starburst and bright-pixel streaks around an editable centre; count, length, width, taper, randomness, rotation, inner radius, falloff, colour, intensity, seed; Screen / Add / render on transparent; generated rays run in the parallel filter bands; works in filter stacks and the layer filter cache. Local 2646×4096: generate ≈ 0.2–1.2 s serial, source streaks ≈ 1.7–2.4 s | `767e965` | `767e965` (42399925863) | Not a physical light simulation (no occlusion or light transport); source-streak mode runs as one job on a ≤ 2 MP downsample. See `light-rays-filter-contract.md` |
+| #212 | **Layer → Stroke Path with Brush…** (and a button in the Pen-family tool options): paints the current Brush, Pencil, Eraser or Smudge settings along a path layer's curves, sampled by arc length, with optional simulated pressure (start/end taper, minimum size, size and/or opacity); honours transformed path and paint layers and the active selection; one undo step | `513779d` | `513779d` (42403184976) | Simulated pressure only; at most 20,000 dabs per command (spacing widens beyond that, with a notice); paint symmetry is not applied (W4-1) |
+| #213 | **Tiled, content-addressed layer assets** (W3-1): canvases of 1 MP or more are stored as 256² tiles keyed by a 128-bit hash of their pixels, each held as a PNG Blob; a commit encodes only tiles that are not already stored, and equal tiles are shared across layers and history. Drafts use format 4 (one IndexedDB record per distinct tile, SHA-256 verified, garbage-collected) only when tiles are present; `.pixelforge` stays v3 by flattening tiles to PNGs on write. Local 2646×4096 full-canvas photo layer, pointer-up → committed and rendered: **≈ 0.48–0.60 s vs 2.0–3.4 s** on `257e744`; a new paint layer is unchanged within noise | `c11b8cb` | `c11b8cb` (42406170364) | Follow-ups W4-5 – W4-10 below. See `tiled-layer-assets-contract.md` |
+
+### Fix wave 4 — open follow-ups (2026-11-07)
+
+From the limitations of #209–#213 and from local test runs. Status: all
+**Open** (no branch yet).
+
+| # | Item | Priority | Status | Source / area |
+| --- | --- | --- | --- | --- |
+| W4-1 | **Paint symmetry is not applied to Stroke Path with Brush**; a stroked path paints one copy only | P2 | **Open** | #210, #212; `paint-symmetry-contract.md` |
+| W4-2 | **No custom (sampled) brush tip shapes**, so the 4-point "Glint" tip is not available as a preset | P2 | **Open** | #209; `custom-brush-presets-contract.md` |
+| W4-3 | **The brush has no blend mode**, so brush presets cannot store one | P3 | **Open** | #209; `brush-dynamics-contract.md` |
+| W4-4 | **Symmetry is not applied to Mixer Brush, History / Art History brushes, Clone Stamp or the healing tools** | P3 | **Open** | #210; `paint-symmetry-contract.md` |
+| W4-5 | **Dirty-rect hints for tiled commits**: a commit still reads back and hashes the whole layer (about 0.1 s on a new paint layer) instead of only the tiles a gesture touched | P2 | **Open** | #213 follow-up 1; `tiled-layer-assets-contract.md` |
+| W4-6 | **`.pixelforge` v4 storing tiles**: v3 export flattens every tiled version to a PNG, so exporting a long tiled history is slower than before #213; cloud payloads would follow | P2 | **Open** | #213 follow-up 2; `tiled-layer-assets-contract.md`, `export-contract.md` |
+| W4-7 | **Decoded-tile cache**: undo to a version that shares most tiles still decodes every tile Blob | P2 | **Open** | #213 follow-up 3 |
+| W4-8 | **Dirty-region previews and partial worker composites** | P2 | **Open** — overlaps W3-8 | #213 follow-up 4; `performance-budgets.md` |
+| W4-9 | **Off-main-thread tile encoding** (`OffscreenCanvas.convertToBlob`) once commits can be asynchronous | P3 | **Open** | #213 follow-up 5 |
+| W4-10 | **Local e2e hazard**: `playwright.config` reuses any server already on port 4173 outside CI (`reuseExistingServer`), so a run can test a preview server started from another worktree; concurrent `npm run test:e2e` runs in one worktree delete each other's `test-results`. Run one suite per worktree and stop stray previews first | P3 | **Open** (local tooling only; CI unaffected) | local runs for #209–#213 |
 
 ## Latest protected release evidence
 
