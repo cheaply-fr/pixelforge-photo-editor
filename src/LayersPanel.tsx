@@ -4,7 +4,9 @@ import {
   FONTS,
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
+  formatMegapixels,
   isMaskableLayer,
+  LAYER_PIXEL_BUDGET,
   isVectorMaskableLayer,
   type Frame,
   type Group,
@@ -30,6 +32,8 @@ import {
 
 type Props = {
   frame: Frame;
+  /** Raster pixels stored by top-level layers (see layerPixelUsage). */
+  pixelUsage?: number;
   select: (
     id: string,
     intent?: { additive?: boolean; range?: boolean },
@@ -72,6 +76,7 @@ type Props = {
 };
 export default function LayersPanel({
   frame,
+  pixelUsage,
   select,
   selectAll,
   deselectLayers,
@@ -257,6 +262,20 @@ export default function LayersPanel({
       <h3>
         Layers <small>{frame.layers.length} / 32</small>
       </h3>
+      {pixelUsage !== undefined && (
+        <p
+          className="layer-budget"
+          data-testid="layer-pixel-budget"
+          data-state={
+            pixelUsage > LAYER_PIXEL_BUDGET * 0.9
+              ? "near"
+              : "ok"
+          }
+          title="Raster layers share one pixel budget. Trim sparse paint layers (Layer > Trim Layer to Content) or merge layers to free space."
+        >
+          Pixel budget {formatMegapixels(pixelUsage)} / {formatMegapixels(LAYER_PIXEL_BUDGET)} MP
+        </p>
+      )}
       <div className="layer-actions">
         <button onClick={add} disabled={frame.layers.length >= 32}>
           Add paint layer

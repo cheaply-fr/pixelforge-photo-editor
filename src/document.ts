@@ -1279,6 +1279,53 @@ export function effectiveTextLayer<T extends Layer>(
       : {}),
   } as T;
 }
+/** Total raster pixels the top-level layers of one document may store. */
+export const LAYER_PIXEL_BUDGET = 64000000;
+/** Format a pixel count as megapixels with at most one decimal place. */
+export function formatMegapixels(
+  pixels: number,
+  rounding: 'nearest' | 'up' = 'nearest',
+): string {
+  const tenths = Math.max(0, pixels) / 100000;
+  // Requirements round up so an edit one pixel over budget never reads as
+  // "needs 64 MP" next to a 64 MP limit.
+  const rounded = rounding === 'up' ? Math.ceil(tenths - 1e-9) : Math.round(tenths);
+  return (rounded / 10).toFixed(1).replace(/\.0$/, '');
+}
+/** Clear, actionable message used when an edit would exceed the layer pixel budget. */
+export function layerPixelBudgetMessage(requiredPixels: number): string {
+  return (
+    `Layer pixel budget reached: layers may store ${formatMegapixels(LAYER_PIXEL_BUDGET)} MP in total ` +
+    `and this edit needs ${formatMegapixels(requiredPixels, 'up')} MP. ` +
+    'Merge or trim layers (Layer > Trim Layer to Content), or use a smaller canvas.'
+  );
+}
+/** Distinct from the generic malformed-document error so the UI can explain it. */
+export class LayerPixelBudgetError extends Error {
+  readonly requiredPixels: number;
+  constructor(requiredPixels: number) {
+    super(layerPixelBudgetMessage(requiredPixels));
+    this.name = 'LayerPixelBudgetError';
+    this.requiredPixels = requiredPixels;
+  }
+}
+/**
+ * Raster pixels stored by the top-level raster and smart-object layers, the
+ * same quantity validateFrame bounds. Each layer counts its own asset even
+ * when several layers share identical pixels. Unknown assets count as zero.
+ */
+export function layerPixelUsage(
+  frame: Pick<Frame, 'layers'>,
+  assets: Assets,
+): number {
+  let pixels = 0;
+  for (const layer of frame.layers) {
+    if (!isRasterContentLayer(layer) || !Object.hasOwn(assets, layer.asset))
+      continue;
+    pixels += assets[layer.asset].w * assets[layer.asset].h;
+  }
+  return pixels;
+}
 export function validateFrame(
   value: unknown,
   assets: Assets,
@@ -1699,8 +1746,10 @@ export function validateFrame(
     !validMeasurements(value.measurements, frameWidth, frameHeight)
   )
     return fail();
-  if (pixels > 64000000 || !validId(value.active) || !ids.has(value.active))
-    return fail();
+  if (!validId(value.active) || !ids.has(value.active)) return fail();
+  // Checked last so malformed data keeps the generic error and a valid but
+  // oversized stack gets an actionable explanation.
+  if (pixels > LAYER_PIXEL_BUDGET) throw new LayerPixelBudgetError(pixels);
 }
 export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};

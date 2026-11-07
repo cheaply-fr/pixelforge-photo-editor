@@ -20,7 +20,7 @@ project API:
 | Resource | Current limit | Why it exists |
 | --- | ---: | --- |
 | Imported canvas or image asset | 16 megapixels and 16,000 px per edge | Avoid unbounded decoded Canvas2D allocations |
-| Raster layers in one frame | 64 megapixels | Bound the amount of source data retained by an editable frame |
+| Raster layers in one frame | 64 megapixels of stored layer assets (shown in the Layers panel; trimmed layers count only their stored bounds, see `layer-pixel-budget-contract.md`) | Bound the amount of source data retained by an editable frame |
 | Layers in one frame | 32 | Keep layer traversal and the inspector bounded |
 | Undo history | 24 frames | Bound retained references and redraw work |
 | Referenced history PNG data | approximately 32 MiB before old frames are trimmed; 64 MiB current-frame ceiling | Keep local history from growing without limit |

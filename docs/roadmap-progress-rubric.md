@@ -69,6 +69,13 @@ release risk because a failing shard skips deployment.
    protocol four times and deep-compares the arrays, exceeding its 120 s
    budget under load. Fixed on `test/layer-styles-pixel-hash` by comparing an
    in-page fingerprint.
+8. **Layer pixel budget was opaque**: at 2646×4096 the sixth full paint layer
+   failed with `Invalid layer document` while the panel said `5 / 32`.
+   Addressed on `feat/layer-pixel-budget` (`docs/layer-pixel-budget-contract.md`):
+   a specific budget notice, a Layers-panel usage hint, Layer → Trim Layer to
+   Content, and paint-time expansion for the brush/eraser/fill/gradient/retouch
+   tools. Remaining: automatic trimming of new layers, expansion for Spot
+   Healing/Patch/Red Eye/History brushes and filters on trimmed layers.
 
 ## Latest protected release evidence
 
