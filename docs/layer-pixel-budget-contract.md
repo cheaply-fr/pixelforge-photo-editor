@@ -99,3 +99,12 @@ need no format change.
   expansion notice, painting outside a trimmed layer's bounds with composite
   pixel checks, two-step undo/redo, a `.pixelforge` export/import roundtrip,
   and the disabled command for non-pixel layers.
+
+## In development (2026-11-07)
+
+`feat/huge-projects` raises the limits about 10× (320+ layers, 640 MP of
+stored layer pixels, ~640 MB asset/draft/project caps) and adds automatic
+trim, lazy unallocated empty layers, render scaling, and Rasterize/Merge that
+preserve trimmed bounds. Until it merges, the 64 MP budget above is current.
+`feat/reference-layer-paste-export` adds a reference/guide layer that is
+intended to sit outside export (and the budget treatment is defined there).

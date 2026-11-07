@@ -106,6 +106,7 @@ re-run for this record.
 | #184 | Brush, Pencil, Eraser, Mask Brush/Eraser and Adjustment Brush confined to the active selection with feathered edges | `cba6253` | `cba6253` | Clone/Heal stamping still ignores the selection; "Mask from selection" leaves the selection active (Photoshop consumes it) |
 | #186 | Incremental local draft saves: content-addressed IndexedDB asset records (`asset:<draftId>:<sha256>`) so autosave writes only new assets instead of re-serialising tens of MB per edit; one read-write transaction per save, fail-closed reads | `f95ec93` | `f95ec93` | Assets remain base64 PNG data URLs; benchmark is local only |
 | #187 | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps, fast large dabs | `6a42943` | `6a42943` | — |
+| #189 | 10× device-aware undo **and** redo: 240 steps, image budget 320 MiB desktop / 128 MiB mobile or ≤4 GB / 96 MiB ≤2 GB (was 24 steps / 32 MB, one undo step on a 2646×4096 document); History panel states capacity and marks memory-only states | `1c40122` | `1c40122` | Only the persisted window (≤24 states, ~48 MiB) survives reload; assets remain base64 PNG data URLs |
 
 Later releases: `CI and deploy` run **42331771754** succeeded for `f95ec93`
 (#186) and `/release.json` reported
@@ -127,36 +128,53 @@ back to `last-draft` checks `navigator.locks.query()` and starts a new draft
 keep the conflict flow. Locks are advisory; browsers without Web Locks behave
 as before.
 
-### In progress (not merged; status as of this record)
 
-| Branch | PR | Scope | Status |
-| --- | --- | --- | --- |
-| `feat/larger-undo-history` | #189 (open) | User request: 10× undo **and** redo depth — 240 steps, device-aware image budget (320 MiB desktop, 128 MiB mobile/≤4 GB, 96 MiB ≤2 GB) instead of 24 steps / 32 MB, which left one undo step on a 2646×4096 document; History panel states capacity and marks memory-only states; persisted window stays ≤24 states / ~48 MiB | Under review; not on `main` |
-| `feat/huge-projects` | not yet opened | User request "don't flatten — handle huge projects": raise the project limits ~10× — 320+ layers (was 32), 640 MP of stored layer pixels (was 64 MP), ~640 MB asset/draft/project caps (was 64 MB) | In development; no remote branch yet |
-| `perf/coalesce-stroke-previews` | not yet opened | Coalesce live stroke previews to one per animation frame; every `pointermove` currently triggers a full-canvas preview render (a 12k-point stroke took ~5 min) | In development; no remote branch yet |
+`CI and deploy` run **42334414490** succeeded for `1c40122` (#189) and
+`/release.json` reported `1c40122cc42a9295ddf586827c15912cf2aeda74` (built
+2026-11-07T03:32:54Z). This docs record merged as #188 (`40b0e30`).
 
-### Requested or found, not started
+### Fix wave 2 — in development (2026-11-07)
+
+Following the user's request to document and roadmap every finding, each
+remaining item now has a workstream. Status at write time
+(`gh pr list`, `git ls-remote --heads origin`): none of these is merged.
+
+| Workstream | Branch / PR | Scope |
+| --- | --- | --- |
+| A | `feat/huge-projects` — no remote branch yet | User request "don't flatten — handle huge projects": ~10× limits — 320+ layers (was 32), 640 MP stored layer pixels (was 64 MP), ~640 MB asset/draft/project caps (was 64 MB); automatic trim of layers to content; lazy (unallocated) empty layers; render scaling; Rasterize and Merge preserve trimmed bounds |
+| B | `perf/coalesce-stroke-previews` — PR #190 (open) | One live stroke preview per animation frame instead of per `pointermove` (a 12k-point stroke took ~5 min); skip identity canvas filters. Queued follow-up: stroke-start decode latency (~2 s at 10.8 MP) and per-stroke full-layer PNG commit cost (dirty-rect or tiled layer storage) |
+| C | `perf/fast-large-radius-filters` — PR #191 (open) | Gaussian Blur radius 24 timed out the render worker on 10.8 MP; radius-independent O(1)-per-pixel blurs, faster median filters and a work-scaled render watchdog. Queued follow-up: fractional / on-canvas Radial Blur centres and multi-filter stacks on raster layers without Rasterize |
+| D | `fix/retouch-selection-and-clone-source` — no remote branch yet | Clone Stamp, Healing Brush and the other retouch tools respect the active selection; an Alt-click clone source set while the previous stroke is still committing is no longer dropped; "Mask from selection" consumes (deselects) the selection |
+| E | `feat/glow-styles-and-blend-modes` — no remote branch yet | Blend modes colour dodge/burn, linear dodge/burn, soft/hard light, exclusion, hue, saturation, colour and luminosity; Outer Glow and Inner Glow layer styles; larger shadow ranges |
+| F | `feat/brush-gradient-options` — no remote branch yet | Brush spacing and scatter above 100%, count and count jitter, a true pen lift at pressure 0; Gradient Replace mode, blend modes and opacity |
+| G | `feat/reference-layer-paste-export` — no remote branch yet | Non-exported reference/guide layer with eyedropper sampling; OS clipboard image paste via Ctrl+V and Edit → Paste; hardened downloads (anchor attached to the DOM, deferred revoke, explicit MIME type, File System Access save picker where available) after a PNG export wrote no file in the Claude desktop built-in browser |
+
+### Backlog → workstream mapping
 
 Priority is a suggestion: **P1** blocks or seriously slows large-document
 painting, **P2** is a visible capability gap, **P3** is polish or
-investigation.
+investigation. "Queued" means recorded as a follow-up of that workstream,
+not yet in its branch.
 
-| # | Item | Priority | Area / contract |
-| --- | --- | --- | --- |
-| 1 | Stroke-start latency: ~2 s decode of the active 10.8 MP layer at pointer-down; reuse decoded layers as a first-class gesture input (builds on #185's decoded-asset cache) | P1 | `performance-budgets.md` |
-| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`); evaluate dirty-rect commits or tiled layer storage | P1 | `performance-budgets.md`, `layer-document-format.md` |
-| 3 | Clone Stamp / Healing Brush should respect the active selection (follow-up of #184) | P1 | `brush-tool-contract.md` |
-| 4 | Clipboard: Ctrl+V of an OS clipboard image did not reach the paste handler when the editor's own Ctrl+V shortcut was active and no internal clipboard existed — reproduce, then fix | P1 | `paste-special-contract.md` |
-| 5 | Blend modes are limited to normal/multiply/screen/overlay/darken/lighten/difference; add colour dodge, linear dodge (add), soft light, hard light, colour, luminosity and the remaining light/contrast/component modes used for glow and light painting | P2 | Layer blending, `group-compositing-contract.md` |
-| 6 | Layer Styles: Drop Shadow blur max 64 px is too small for large documents; add Outer Glow and Inner Glow (users currently fake glow with a zero-offset drop shadow) | P2 | `layer-styles-contract.md` |
-| 7 | One live filter per raster layer: stacking needs Rasterize between filters; consider a multi-filter stack (Smart Filters UX) | P2 | `smart-filters-contract.md` |
-| 8 | Radial Blur centre X/Y are integer percentages (1% ≈ 41 px at 4096 px); allow fractional or pixel centres and on-canvas centre placement for centred filters | P2 | `blur-effects-contract.md` |
-| 9 | Reference/guide image: place an image as a non-exported, non-printing reference layer or side panel with eyedropper sampling, outside the layer pixel budget | P2 | `layer-pixel-budget-contract.md`, export |
-| 10 | Brush: treat near-zero pressure as a supported pen lift; dab-only / stamp mode for star fields; scatter/spacing above 100% of size for sparse stamping | P2 | `brush-dynamics-contract.md`, `brush-pressure-contract.md` |
-| 11 | "Mask from selection" should consume (deselect) the selection as Photoshop does | P3 | `layer-mask-contract.md` |
-| 12 | Gradient: a second gradient on the same layer composites over existing pixels; document this or offer a replace mode | P3 | `gradient-mode-contract.md` |
-| 13 | History panel should show in-memory and persisted undo depth — covered by open #189 (capacity note, memory-only markers); close when it merges | P3 | `history-timeline-contract.md` |
-| 14 | Export downloads: in the Claude desktop built-in browser a PNG export reported "downloaded" but no file was written, while `.pixelforge` ZIP downloads worked (files landed as GUID `.tmp`). Determine whether the host browser or the app (object-URL revoke timing, MIME type, user activation) is responsible; document a workaround such as a File System Access "Save to file" path where available | P3 | `export-contract.md` |
+| # | Item | Priority | Workstream | Area / contract |
+| --- | --- | --- | --- | --- |
+| 1 | Stroke-start latency: ~2 s decode of the active 10.8 MP layer at pointer-down; reuse decoded layers as a first-class gesture input | P1 | B (queued) | `performance-budgets.md` |
+| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`); dirty-rect commits or tiled layer storage | P1 | B (queued) | `performance-budgets.md`, `layer-document-format.md` |
+| 3 | Clone Stamp / Healing Brush respect the active selection (follow-up of #184) | P1 | D | `brush-tool-contract.md` |
+| 4 | Ctrl+V of an OS clipboard image did not reach the paste handler | P1 | G | `paste-special-contract.md` |
+| 5 | Additional blend modes for glow and light painting | P2 | E | `group-compositing-contract.md` |
+| 6 | Larger Drop Shadow blur range; Outer Glow and Inner Glow | P2 | E | `layer-styles-contract.md` |
+| 7 | One live filter per raster layer; multi-filter stack without Rasterize | P2 | C (queued) | `smart-filters-contract.md` |
+| 8 | Radial Blur integer-percent centres; fractional/pixel and on-canvas centres | P2 | C (queued) | `blur-effects-contract.md` |
+| 9 | Reference/guide image with eyedropper, outside export and the layer budget | P2 | G | `layer-pixel-budget-contract.md`, `export-contract.md` |
+| 10 | Pen lift at pressure 0; sparse stamping (spacing/scatter > 100%, count/jitter) | P2 | F | `brush-dynamics-contract.md`, `brush-pressure-contract.md` |
+| 11 | "Mask from selection" consumes the selection | P3 | D | `layer-mask-contract.md` |
+| 12 | Second gradient composites over existing pixels; Replace mode | P3 | F | `gradient-mode-contract.md` |
+| 13 | History panel shows in-memory and persisted depth | P3 | **Shipped in #189** | `history-timeline-contract.md` |
+| 14 | PNG export wrote no file in the Claude desktop built-in browser | P3 | G | `export-contract.md` |
+| 15 | Gaussian Blur radius 24 timed out the render worker at 10.8 MP | P1 | C | `blur-effects-contract.md`, `worker-render-contract.md` |
+| 16 | Alt-click clone source dropped while the previous stroke commits | P2 | D | `brush-tool-contract.md` |
+| 17 | Project limits force flattening on large posters (layers, stored pixels, asset/draft caps) | P1 | A | `layer-pixel-budget-contract.md`, `draft-storage-contract.md` |
 
 ## Latest protected release evidence
 

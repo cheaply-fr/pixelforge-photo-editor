@@ -316,9 +316,12 @@ with release evidence and priorities is in
 | Lasso, Polygonal Lasso, Magnetic Lasso, Elliptical/Rectangular Marquee | **Shipped** — off-canvas lassos clipped instead of rejected; off-canvas ellipse keeps its shape; rectangle overshoot fixed | #182, merged `fab25db`, deployed in `f5e4135`/`cba6253` |
 | Brush, Pencil, Eraser, Mask Brush/Eraser, Adjustment Brush | **Shipped** — confined to the active selection with feathered edges | #184, merged and deployed `cba6253`; see [`brush-tool-contract.md`](./brush-tool-contract.md#selection-confinement) |
 | Paint tools on trimmed layers | **Shipped** — grow trimmed layers on demand | #183, merged `8a82ad6`. Spot Healing, Patch, Red Eye, History and Art History brushes do not grow; two undo steps per first stroke |
-| Clone Stamp, Healing Brush | **Not started (P1)** — stamping path ignores the active selection | Follow-up of #184 |
+| Clone Stamp, Healing Brush and other retouch tools | **In development (D)** — respect the active selection; Alt-click clone source no longer dropped while the previous stroke commits | `fix/retouch-selection-and-clone-source` (no PR yet); follow-up of #184 |
 | Painting Size | **Shipped** — 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` | #187, merged `6a42943`, deployed `6a42943` (run 42332588876) |
-| Live stroke preview | **In progress** — one preview per animation frame instead of per `pointermove` | `perf/coalesce-stroke-previews`, PR not yet opened |
-| Stroke start / commit | **Not started (P1)** — ~2 s active-layer decode at pointer-down on 10.8 MP; full-layer PNG encode per stroke | Reuse decoded layers in gesture code; evaluate dirty-rect or tiled layer storage |
-| Brush dynamics | **Not started (P2)** — near-zero pressure as pen lift; dab-only/stamp mode for star fields; scatter/spacing above 100% of size | [`brush-dynamics-contract.md`](./brush-dynamics-contract.md), [`brush-pressure-contract.md`](./brush-pressure-contract.md) |
-| Eyedropper with a reference image | **Not started (P2)** — sample from a non-exported reference layer or side panel that does not count against the layer budget | [`layer-pixel-budget-contract.md`](./layer-pixel-budget-contract.md) |
+| Live stroke preview | **In development (B)** — one preview per animation frame instead of per `pointermove` | PR #190 open (`perf/coalesce-stroke-previews`) |
+| Stroke start / commit | **Queued (B follow-up, P1)** — ~2 s active-layer decode at pointer-down on 10.8 MP; full-layer PNG encode per stroke | Reuse decoded layers in gesture code; dirty-rect or tiled layer storage |
+| Brush dynamics | **In development (F)** — spacing/scatter above 100%, count and count jitter, true pen lift at pressure 0 | `feat/brush-gradient-options` (no PR yet) |
+| Eyedropper with a reference image | **In development (G)** — non-exported reference/guide layer sampled by the eyedropper | `feat/reference-layer-paste-export` (no PR yet) |
+| Gradient options | **In development (F)** — Replace mode, blend modes and opacity (a second gradient currently composites over existing pixels) | `feat/brush-gradient-options` (no PR yet) |
+
+Workstream letters A–G refer to the fix-wave-2 table in the [rubric](./roadmap-progress-rubric.md#fix-wave-2--in-development-2026-11-07).

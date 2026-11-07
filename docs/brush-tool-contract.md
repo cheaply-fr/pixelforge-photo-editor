@@ -182,3 +182,10 @@ yet honour the selection (P1), and "Mask from selection" should consume the
 selection as Photoshop does (P3). Painting Size up to 5000 px shipped in
 #187 (`6a42943`); near-zero pressure as a pen lift, a dab-only stamp mode and scatter or
 spacing above 100% of size are not started.
+
+In development (fix wave 2, 2026-11-07): `fix/retouch-selection-and-clone-source`
+confines Clone Stamp, Healing Brush and the other retouch tools to the
+selection, keeps an Alt-click clone source set while the previous stroke is
+still committing, and makes "Mask from selection" consume the selection.
+`feat/brush-gradient-options` adds spacing and scatter above 100%, count and
+count jitter, and a true pen lift at pressure 0. Neither is merged.
