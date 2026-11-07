@@ -304,14 +304,14 @@ Evidence is kept separate:
 - **CI:** each PR passed the protected PR workflow before merge. On `main`,
   the `CI and deploy` runs for #211 (`767e965`, run 42399925863), #210
   (`0ad0e69`, run 42400979401) and #212 (`513779d`, run 42403184976)
-  succeeded. The run for #209 (`7516d33`, run 42399198576) was cancelled
-  because #211 superseded it; `767e965` contains `7516d33`. The run for #213
-  (`c11b8cb`, run 42406170364) was still in progress when this was written.
+  and #213 (`c11b8cb`, run 42406170364) succeeded. The run for #209
+  (`7516d33`, run 42399198576) was cancelled because #211 superseded it;
+  `767e965` contains `7516d33`.
 - **Deploy:** `https://photoeditor.cheaply.fr/release.json` reported
-  `513779deaf850db38744c73689fb8086067ff99a` (built 2026-11-07T18:50:33Z)
-  when this was written. That release contains #209–#212, but **not #213**.
-  Recheck `/release.json` for `c11b8cb` or later before treating #213 as
-  deployed.
+  `c11b8cbb91140fb20dc9cf32957e4d1f64c0a179` (built 2026-11-07T19:26:34Z)
+  when this was written, which contains #209–#213. Earlier in the same
+  session it reported `513779d` (#209–#212) while the #213 run was still in
+  progress.
 - **Live:** this is release identity only. Per-feature live acceptance of
   #209–#213 was not run (see W3-16).
 
@@ -321,7 +321,7 @@ Evidence is kept separate:
 | #210 | **Paint Symmetry** for Brush, Pencil and Eraser: Vertical, Horizontal, Dual axis, Diagonal, Radial (2–64 segments) and Mandala (2N copies); editable centre (on-canvas handle, keyboard nudges, fields) and rotation; copies share the source dab's seeded jitter; selection confinement per copy; one undo step; saved in drafts and projects | `0ad0e69` | `0ad0e69` (42400979401) | Not applied to Mixer Brush, History / Art History brushes, Clone Stamp or the healing tools (W4-4), nor to Stroke Path with Brush (W4-1). See `paint-symmetry-contract.md` |
 | #211 | **Filter → Render → Light Rays…**: seeded radial rays, Starburst and bright-pixel streaks around an editable centre; count, length, width, taper, randomness, rotation, inner radius, falloff, colour, intensity, seed; Screen / Add / render on transparent; generated rays run in the parallel filter bands; works in filter stacks and the layer filter cache. Local 2646×4096: generate ≈ 0.2–1.2 s serial, source streaks ≈ 1.7–2.4 s | `767e965` | `767e965` (42399925863) | Not a physical light simulation (no occlusion or light transport); source-streak mode runs as one job on a ≤ 2 MP downsample. See `light-rays-filter-contract.md` |
 | #212 | **Layer → Stroke Path with Brush…** (and a button in the Pen-family tool options): paints the current Brush, Pencil, Eraser or Smudge settings along a path layer's curves, sampled by arc length, with optional simulated pressure (start/end taper, minimum size, size and/or opacity); honours transformed path and paint layers and the active selection; one undo step | `513779d` | `513779d` (42403184976) | Simulated pressure only; at most 20,000 dabs per command (spacing widens beyond that, with a notice); paint symmetry is not applied (W4-1) |
-| #213 | **Tiled, content-addressed layer assets** (W3-1): canvases of 1 MP or more are stored as 256² tiles keyed by a 128-bit hash of their pixels, each held as a PNG Blob; a commit encodes only tiles that are not already stored, and equal tiles are shared across layers and history. Drafts use format 4 (one IndexedDB record per distinct tile, SHA-256 verified, garbage-collected) only when tiles are present; `.pixelforge` stays v3 by flattening tiles to PNGs on write. Local 2646×4096 full-canvas photo layer, pointer-up → committed and rendered: **≈ 0.48–0.60 s vs 2.0–3.4 s** on `257e744`; a new paint layer is unchanged within noise | `c11b8cb` | Pending — run 42406170364 in progress at write time | Follow-ups W4-5 – W4-10 below. See `tiled-layer-assets-contract.md` |
+| #213 | **Tiled, content-addressed layer assets** (W3-1): canvases of 1 MP or more are stored as 256² tiles keyed by a 128-bit hash of their pixels, each held as a PNG Blob; a commit encodes only tiles that are not already stored, and equal tiles are shared across layers and history. Drafts use format 4 (one IndexedDB record per distinct tile, SHA-256 verified, garbage-collected) only when tiles are present; `.pixelforge` stays v3 by flattening tiles to PNGs on write. Local 2646×4096 full-canvas photo layer, pointer-up → committed and rendered: **≈ 0.48–0.60 s vs 2.0–3.4 s** on `257e744`; a new paint layer is unchanged within noise | `c11b8cb` | `c11b8cb` (42406170364) | Follow-ups W4-5 – W4-10 below. See `tiled-layer-assets-contract.md` |
 
 ### Fix wave 4 — open follow-ups (2026-11-07)
 

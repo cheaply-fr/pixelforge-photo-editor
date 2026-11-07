@@ -181,9 +181,9 @@ Known remaining families and release work:
    Brush/Pencil/Eraser (#210), Filter → Render → Light Rays (#211), Stroke
    Path with Brush (#212) and tiled, Blob-backed 256² layer tiles with draft
    format 4 (#213, W3-1 done; local full-layer stroke commit ≈ 0.5 s vs
-   2–3.4 s at 2646×4096). At write time `/release.json` reported `513779d`
-   (contains #209–#212, not #213; the #213 deploy run was in progress);
-   recheck before relying on it. Open follow-ups are the "Fix wave 4" table:
+   2–3.4 s at 2646×4096). At write time `/release.json` reported `c11b8cb`
+   (contains #209–#213; release identity only, no per-feature live
+   acceptance); recheck before relying on it. Open follow-ups are the "Fix wave 4" table:
    symmetry for Stroke Path and for Mixer/History/Clone/Heal, custom brush
    tips (no Glint tip), brush blend mode, tiled follow-ups (dirty-rect hints,
    `.pixelforge` v4 tiles, decoded-tile cache, dirty-region previews,
