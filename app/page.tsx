@@ -269,6 +269,14 @@ import {
   isTextEditingTarget,
   readClipboardImage,
 } from '../src/clipboardImage';
+import ReferencePanel from '../src/ReferencePanel';
+import {
+  createReferenceImage,
+  referenceObjectFit,
+  referenceSourcePixel,
+  referenceStoredSize,
+  type ReferenceImage,
+} from '../src/referenceImage';
 import ActionsPanel from '../src/ActionsPanel';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
@@ -731,6 +739,7 @@ type Command =
   | 'reveal-all'
   | 'project-save'
   | 'project-save-as'
+  | 'reference-place'
   | 'file-info'
   | 'batch-export'
   | 'batch-images'
@@ -1154,6 +1163,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
     { label: 'Save project with file picker…', command: 'project-save-as' },
+    { label: 'Place reference image…', command: 'reference-place' },
     { label: 'File Info / Privacy…', command: 'file-info' },
     { label: 'Batch export history…', command: 'batch-export' },
     { label: 'Batch export images…', command: 'batch-images' },
@@ -8384,6 +8394,8 @@ export default function Home() {
                 ),
               }
             : {}),
+          // The reference guide is never flattened into pixels; keep it.
+          ...(f.reference ? { reference: f.reference } : {}),
           selectedLayerIds: [flattened.active],
         })
       )
@@ -8897,6 +8909,111 @@ export default function Home() {
     document.addEventListener('paste', onPaste);
     return () => document.removeEventListener('paste', onPaste);
   });
+  const referenceFile = useRef<HTMLInputElement>(null);
+  const referencePixels = useRef<{ asset: string; data: ImageData } | null>(null);
+  const chooseReferenceFile = () => {
+    if (current().reference?.locked) {
+      setNotice('Unlock the reference image before replacing it');
+      return;
+    }
+    referenceFile.current?.click();
+  };
+  /**
+   * Place (or replace) the document's reference image. It is decoded locally,
+   * stored downscaled and kept out of layers, export and the pixel budget.
+   */
+  const placeReference = async (selected?: File) => {
+    const reset = () => {
+      if (referenceFile.current) referenceFile.current.value = '';
+    };
+    const importInfo = selected ? describeImportFormat(selected.name, selected.type) : null;
+    if (!selected || !importInfo?.tryDecode) {
+      setNotice(importInfo?.disclosure || 'Choose a browser-readable image file');
+      reset();
+      return;
+    }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before placing a reference image');
+      reset();
+      return;
+    }
+    const original = current();
+    try {
+      if (selected.size > 64 * 1024 * 1024) throw new Error('Image file exceeds 64 MB');
+      const decoded = await decodeImportedRaster(selected, importInfo);
+      if (current() !== original) throw new Error('Document changed during import. Please try again.');
+      const size = referenceStoredSize(decoded.width, decoded.height);
+      let stored = decoded;
+      if (size.w !== decoded.width || size.h !== decoded.height) {
+        stored = surface(size.w, size.h);
+        const context = stored.getContext('2d')!;
+        context.imageSmoothingQuality = 'high';
+        context.drawImage(decoded, 0, 0, size.w, size.h);
+      }
+      const nextAssets = { ...assets.current };
+      const asset = addAsset(nextAssets, stored);
+      const previous = original.reference;
+      const reference: ReferenceImage = previous
+        ? { ...previous, asset, name: selected.name.slice(0, 160) }
+        : createReferenceImage(asset, selected.name);
+      if (commit({ ...original, reference }, false, nextAssets))
+        setNotice(
+          `Reference image placed (${size.w} × ${size.h} px); it is a guide only and is not exported`,
+        );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The reference image could not be opened');
+    } finally {
+      reset();
+    }
+  };
+  const updateReference = (patch: Partial<ReferenceImage>) => {
+    const f = current();
+    if (!f.reference) return;
+    const structural = ['opacity', 'fit', 'asset'].some((key) => key in patch);
+    if (f.reference.locked && structural) {
+      setNotice('Unlock the reference image to change it');
+      return;
+    }
+    commit({ ...f, reference: { ...f.reference, ...patch } });
+  };
+  const removeReference = () => {
+    const f = current();
+    if (!f.reference) return;
+    if (f.reference.locked) {
+      setNotice('Unlock the reference image before removing it');
+      return;
+    }
+    const { reference: _removed, ...rest } = f;
+    if (commit(rest)) setNotice('Reference image removed');
+  };
+  /** Sample the reference bitmap under a document point as #rrggbb. */
+  const sampleReference = async (x: number, y: number): Promise<string | null> => {
+    const f = current();
+    const reference = f.reference;
+    const asset = reference ? assets.current[reference.asset] : undefined;
+    if (!reference || !asset) return null;
+    const point = referenceSourcePixel(reference.fit, f.w, f.h, asset.w, asset.h, x, y);
+    if (!point) return null;
+    if (referencePixels.current?.asset !== reference.asset) {
+      const image = await decodeAsset(asset);
+      const scratch = surface(asset.w, asset.h);
+      const context = scratch.getContext('2d', { willReadFrequently: true })!;
+      context.drawImage(image, 0, 0);
+      referencePixels.current = {
+        asset: reference.asset,
+        data: context.getImageData(0, 0, asset.w, asset.h),
+      };
+    }
+    const { data } = referencePixels.current;
+    const offset = (point.y * data.width + point.x) * 4;
+    if (data.data[offset + 3] === 0) return null;
+    return (
+      '#' +
+      [data.data[offset], data.data[offset + 1], data.data[offset + 2]]
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('')
+    );
+  };
   const importSmartObject = async (
     selected?: File,
     replace = false,
@@ -10040,6 +10157,14 @@ export default function Home() {
       };
       canvas.current!.setPointerCapture(e.pointerId);
       setNotice('Rotate View: drag around the canvas; use Reset view to restore');
+      return;
+    }
+    if (tool === 'eyedropper' && current().reference?.sample && current().reference?.visible) {
+      const sampled = await sampleReference(p.x, p.y);
+      if (sampled) {
+        setColor(sampled);
+        setNotice('Color sampled from reference image');
+      } else setNotice('No reference pixel here; reference not sampled');
       return;
     }
     if (tool === 'eyedropper') {
@@ -13542,6 +13667,7 @@ export default function Home() {
     else if (command === 'reveal-all') return revealAll();
     else if (command === 'project-save') void exportProject();
     else if (command === 'project-save-as') void exportProject(true);
+    else if (command === 'reference-place') chooseReferenceFile();
     else if (command === 'file-info') setFileInfoOpen(true);
     else if (command === 'batch-export')
       setBatchExporting({
@@ -14618,6 +14744,14 @@ export default function Home() {
         void load(e.dataTransfer.files[0]);
       }}
     >
+      <input
+        ref={referenceFile}
+        data-testid="reference-input"
+        className="hidden"
+        type="file"
+        accept="image/*,.svg,.svgz,.heic,.heif,.tif,.tiff,.psd,.psb,.pdf"
+        onChange={(event) => void placeReference(event.target.files?.[0])}
+      />
       <input
         ref={layerFile}
         data-testid="layer-input"
@@ -15724,6 +15858,20 @@ export default function Home() {
                   );
                 })()
               : null}
+            {frame?.reference?.visible && assets.current[frame.reference.asset] && (
+              <img
+                className="reference-overlay"
+                data-testid="reference-overlay"
+                src={assets.current[frame.reference.asset].url}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                style={{
+                  opacity: frame.reference.opacity,
+                  objectFit: referenceObjectFit(frame.reference.fit),
+                }}
+              />
+            )}
             {quickMasking && (
               <canvas
                 ref={quickMaskOverlayCanvas}
@@ -16130,6 +16278,23 @@ export default function Home() {
           </div>
         </section>
         <aside className="inspector">
+          {frame && (
+            <ReferencePanel
+              reference={frame.reference}
+              size={
+                frame.reference && assets.current[frame.reference.asset]
+                  ? {
+                      w: assets.current[frame.reference.asset].w,
+                      h: assets.current[frame.reference.asset].h,
+                    }
+                  : undefined
+              }
+              disabled={quickMasking}
+              choose={chooseReferenceFile}
+              update={updateReference}
+              remove={removeReference}
+            />
+          )}
           {frame && (
             <LayersPanel
               frame={frame}

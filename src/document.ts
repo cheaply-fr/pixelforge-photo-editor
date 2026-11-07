@@ -1,3 +1,4 @@
+import { validReferenceImage, type ReferenceImage } from './referenceImage.ts';
 import { rotateHuePixels } from './hue.ts';
 import {
   applyColorBalancePixels,
@@ -453,6 +454,11 @@ export type Frame = {
   slices?: SliceRect[];
   /** Optional active slice pointer, validated against `slices`. */
   activeSliceId?: string;
+  /**
+   * Optional reference / guide image overlay. It is not a layer: export,
+   * flatten, merge and the layer pixel budget ignore it.
+   */
+  reference?: ReferenceImage;
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
@@ -1775,6 +1781,11 @@ export function validateFrame(
   )
     return fail();
   if (!validId(value.active) || !ids.has(value.active)) return fail();
+  if (
+    value.reference !== undefined &&
+    (nestedDepth > 0 || !validReferenceImage(value.reference, assets))
+  )
+    return fail();
   // Checked last so malformed data keeps the generic error and a valid but
   // oversized stack gets an actionable explanation.
   if (pixels > LAYER_PIXEL_BUDGET) throw new LayerPixelBudgetError(pixels);
@@ -1788,6 +1799,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
       used[frame.previousSelection.mask] = assets[frame.previousSelection.mask];
     if (frame.quickMask?.asset && assets[frame.quickMask.asset])
       used[frame.quickMask.asset] = assets[frame.quickMask.asset];
+    if (frame.reference?.asset && assets[frame.reference.asset])
+      used[frame.reference.asset] = assets[frame.reference.asset];
     for (const entry of frame.savedSelections?.selections || []) {
       if (entry.selection.mask && assets[entry.selection.mask])
         used[entry.selection.mask] = assets[entry.selection.mask];
