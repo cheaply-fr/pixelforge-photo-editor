@@ -338,3 +338,50 @@ inside the scaled watchdog's ~95 s no-progress window for one layer (30 s +
 6 s/MP); before, the ~140–150 s Smart Blur, Smart Sharpen and Reduce Noise
 renders exceeded it. Tiled Smart/Surface renders report per-tile progress,
 but full-frame Reduce Noise and Smart Sharpen report progress only per layer.
+(Superseded by the filter worker pool below.)
+
+### Parallel filter workers (`perf/parallel-neighborhood-filters`)
+
+Heavy neighbourhood filters on layers of at least 0.5 MP now run in a pool of
+filter workers separate from the render worker (see
+[worker-render-contract.md](worker-render-contract.md#filter-worker-pool-parallel-bands-and-tiles)).
+Full-frame filters run as row bands with halo rows, and tiled filters keep
+several tiles in flight. Output is byte-identical to the serial kernels, and
+each completed band restarts the no-progress watchdog. Pool size is
+`hardwareConcurrency − 1`, capped at 8 on desktop and 2 on phones or
+devices reporting `deviceMemory ≤ 4`. WebAssembly SIMD was not needed for
+the desktop target and was not added.
+
+Local measurements: Node 24 `worker_threads` running the same pool code, on
+the shared 2.4 GHz Xeon at ~40 % background load. "Serial" is the single-thread
+kernel from #202. The 1 MP pool times include each worker's JIT warm-up.
+
+| Filter (radius 8; legacy Path 32) | 1 MP serial → 8 workers (s/MP) | 2646×4096 serial → 8 workers (s) | 2646×4096, 2 workers (phone cap) (s) |
+| --- | --- | --- | --- |
+| Smart Blur | 3.0 → 0.85 | 36.0 → 5.3 (0.49 s/MP) | 17.6 |
+| Smart Sharpen | 4.2 → 0.79 | 36.4 → 4.9 (0.45 s/MP) | 18.2 |
+| Reduce Noise | 3.8 → 1.09 | 46.7 → 5.8 (0.54 s/MP) | 20.7 |
+| Surface Blur | 2.6 → 0.56 | 30.4 → 4.1 (0.38 s/MP) | 15.5 |
+| Path Blur, legacy | 2.0 → 0.38 | 22.9 → 2.9 (0.26 s/MP) | 10.9 |
+
+Browser, local Playwright on a 44-thread host, 2000×2000 at radius 8,
+measured as render settle time including import overhead:
+
+| Filter | Desktop project (8 workers) | Mobile project (Pixel 7 emulation, 2 workers) |
+| --- | ---: | ---: |
+| Smart Blur | 3.4 s | 7.0 s |
+| Reduce Noise | 2.4 s | 8.5–9.1 s |
+| Smart Sharpen | 2.9 s | 7.0 s |
+
+A 6.8 MP Reduce Noise run with 2 workers took ~14 s under an 8 s no-progress
+window and completed, because each band restarts the window.
+
+Limits:
+
+* The speed-up scales with spare cores. A 4-core desktop (3 workers) should
+  reach roughly 1 s/MP at radius 8; that is inferred from the 2- and
+  8-worker runs, not measured. Phones stay at about 1.5–1.9 s/MP by design,
+  to bound memory and heat.
+* At 1 MP the per-worker JIT warm-up keeps Reduce Noise just above
+  1 s/MP; warm and larger layers are well below it.
+* Layers under 0.5 MP and the remaining filters stay serial.
