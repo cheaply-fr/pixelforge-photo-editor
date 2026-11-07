@@ -127,7 +127,7 @@ test('each download receives its own object URL', () => {
 
 test('a throwing click still removes the anchor and schedules revocation', () => {
   const { environment, events, timers } = fakeEnvironment();
-  const create = environment.document.createElement;
+  const create = environment.document.createElement.bind(environment.document);
   environment.document.createElement = (tag) => {
     const anchor = create(tag);
     anchor.click = () => {

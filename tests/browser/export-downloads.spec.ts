@@ -30,7 +30,7 @@ const instrumentDownloads = (page: Page) =>
       probe.revoked.push(url);
       revoke(url);
     };
-    const click = HTMLAnchorElement.prototype.click;
+    const click = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'click')!.value as (this: HTMLElement) => void;
     HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
       if (this.download)
         probe.clicks.push({ href: this.href, download: this.download, connected: this.isConnected });
