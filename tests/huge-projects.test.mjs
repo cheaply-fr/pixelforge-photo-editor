@@ -296,6 +296,9 @@ test('baking a filtered or styled layer (Rasterize) stores the result at its con
   const before = { ...POSTER, layers: [raster(0, 'full'), filtered] };
   const rasterized = { ...POSTER, layers: [raster(0, 'full'), raster(1, 'baked')] };
   assert.deepEqual(autoTrimCandidates(rasterized, before, sizes, new Set()), [layerId(1)]);
+  // Rasterize can reproduce the same pixels (same asset): baking still re-decides storage.
+  const sameAsset = { ...POSTER, layers: [raster(0, 'full'), raster(1, 'full')] };
+  assert.deepEqual(autoTrimCandidates(sameAsset, { ...POSTER, layers: [raster(0, 'full'), { ...filtered, asset: 'full' }] }, sizes, new Set()), [layerId(1)]);
   // A plain full-canvas layer edited in place keeps its storage.
   const plain = { ...POSTER, layers: [raster(0, 'full'), raster(1, 'full')] };
   assert.deepEqual(autoTrimCandidates(rasterized, plain, sizes, new Set()), []);

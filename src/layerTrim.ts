@@ -271,7 +271,10 @@ export function autoTrimCandidates(
     const asset = assets[layer.asset];
     if (!asset || (asset.w === 1 && asset.h === 1) || known.has(layer.asset)) continue;
     const prior = before.get(layer.id);
-    if (!prior || prior.kind !== 'raster' || prior.asset === layer.asset) continue;
+    if (!prior || prior.kind !== 'raster') continue;
+    // Unchanged pixels need no new decision, unless the step baked a layer
+    // whose styles or filters made it untrimmable (Rasterize).
+    if (prior.asset === layer.asset && canTrimRasterLayer(prior)) continue;
     const priorAsset = assets[prior.asset];
     if (
       layer.id !== expandedLayerId &&

@@ -37,13 +37,15 @@ export const DOCUMENT_MAX_ASSET_BYTES = PROJECT_ASSET_BYTES_CEILING;
  */
 export const DRAFT_HISTORY_MAX_STEPS = 24;
 /**
- * Referenced image data a persisted history window may use: exactly the
- * referenced-asset ceiling of `validateDraft` (`PROJECT_ASSET_BYTES_CEILING`). Format 3 drafts store each
+ * Referenced image data a persisted history window may use. The current frame
+ * is always persisted, even when it alone is larger (up to the 1 GiB
+ * `validateDraft` ceiling in `projectLimits.ts`); older steps beyond this
+ * budget stay in memory only. Format 3 drafts store each
  * asset once by content hash and write only new ones, so a full window costs
  * one new asset record per edit rather than a whole-history rewrite; frame
  * JSON lives in the manifest, which no longer has a 64 MB payload limit.
  */
-export const DRAFT_HISTORY_MAX_BYTES = PROJECT_ASSET_BYTES_CEILING;
+export const DRAFT_HISTORY_MAX_BYTES = 64 * MIB;
 /** Distinct assets a draft may reference (`validateDraft` / asset-ref limit). */
 export const DRAFT_HISTORY_MAX_ASSETS = MAX_PROJECT_ASSETS;
 
