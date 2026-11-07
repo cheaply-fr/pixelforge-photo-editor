@@ -1975,6 +1975,7 @@ const stampStrokePathSamples = (
         size: dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
         angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
         opacity: opacity * dab.opacityScale,
+        color: options.color && brushDabColor(options.color, options.colorBackground, dab),
         x: dab.x,
         y: dab.y,
       }) || changed;
@@ -8791,6 +8792,7 @@ export default function Home() {
           flipY: brushFlipY,
           mode: tool === 'eraser' ? 'destination-out' : 'source-over',
           color: tool === 'eraser' ? undefined : brushColor(color),
+          colorBackground: brushColor(backgroundColor),
         });
         // Photoshop confines painting to the active selection.
         if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
