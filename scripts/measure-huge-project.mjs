@@ -66,7 +66,13 @@ results.baselineBrowserMiB = treeMemoryMiB(rootPid);
 
 await time('importAndFirstRenderMs', async () => {
   await page.getByTestId('project-input').setInputFiles(projectPath);
-  await footer.filter({ hasText: /Project opened|could not|exceed|Invalid/i }).waitFor({ timeout: 600_000 });
+  const done = footer.filter({ hasText: /Project opened|could not|exceed|Invalid/i });
+  const started = performance.now();
+  while (!(await done.isVisible())) {
+    if (performance.now() - started > 1_200_000) throw new Error('Import did not finish within 20 minutes');
+    await page.waitForTimeout(30_000);
+    console.error(`[${Math.round((performance.now() - started) / 1000)} s] ${(await footer.innerText()).replace(/\s+/g, ' ').slice(0, 160)} heap ${await heapMiB()} MiB browser ${treeMemoryMiB(rootPid)} MiB`);
+  }
   await settled();
 });
 results.importNotice = (await footer.innerText()).split('\n').find((line) => /Project|exceed|Invalid/.test(line));
@@ -89,7 +95,7 @@ await time('rerenderShowMs', async () => {
 
 // Paint one stroke on the active (top, sparse) layer: expansion, stroke,
 // render and the automatic content-bounds storage pass.
-await page.keyboard.press('b');
+await page.getByTestId('tool-palette').getByRole('button', { name: 'Brush tool', exact: true }).click();
 const box = await canvas.boundingBox();
 await canvas.evaluate((element) => {
   element.setPointerCapture = () => undefined;
@@ -123,7 +129,10 @@ await time('portableExportMs', async () => {
   const pending = page.waitForEvent('download', { timeout: 600_000 });
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const download = await pending;
-  results.exportedMiB = +(fs.statSync(await download.path()).size / 1048576).toFixed(1);
+  const saved = `${projectPath}.export.pixelforge`;
+  await download.saveAs(saved);
+  results.exportedMiB = +(fs.statSync(saved).size / 1048576).toFixed(1);
+  fs.rmSync(saved, { force: true });
 });
 results.peakBrowserMiB = treeMemoryMiB(rootPid);
 console.log(JSON.stringify(results, null, 2));
