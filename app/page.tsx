@@ -2560,18 +2560,30 @@ export default function Home() {
   }, []);
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
+  // The source is a layer pixel plus the layer placement it was picked in, so
+  // it stays on the same document point when the layer is later stored at
+  // different bounds (content-bounds storage, paint-time expansion).
   const [cloneSource, setCloneSource] = useState<{
     x: number;
     y: number;
+    matrix: Matrix;
   } | null>(null);
   // The latest source point, readable synchronously by the next pointer-down
   // even before React re-renders (an Alt-click right after a stroke on a
   // large document must not be lost or read stale).
-  const cloneSourceRef = useRef<{ x: number; y: number } | null>(null);
-  const chooseCloneSource = (point: { x: number; y: number }) => {
-    const next = { x: point.x, y: point.y };
+  const cloneSourceRef = useRef<{ x: number; y: number; matrix: Matrix } | null>(null);
+  const chooseCloneSource = (point: { x: number; y: number }, matrix: Matrix) => {
+    const next = { x: point.x, y: point.y, matrix };
     cloneSourceRef.current = next;
     setCloneSource(next);
+  };
+  /** The clone source in the given layer placement's pixel space. */
+  const cloneSourceIn = (matrix: Matrix): { x: number; y: number } | null => {
+    const source = cloneSourceRef.current;
+    if (!source) return null;
+    const [a, b, c, d, e, f] = source.matrix;
+    const documentPoint = { x: a * source.x + c * source.y + e, y: b * source.x + d * source.y + f };
+    return inversePoint(matrix, documentPoint) || { x: source.x, y: source.y };
   };
   const clearCloneSource = () => {
     cloneSourceRef.current = null;
@@ -9903,7 +9915,7 @@ export default function Home() {
         layer = f.layers.find((item) => item.id === f.active);
       if (layer?.kind === 'raster') {
         const p = point(e);
-        chooseCloneSource(inversePoint(layer.matrix, p) || p);
+        chooseCloneSource(inversePoint(layer.matrix, p) || p, layer.matrix);
         setNotice(
           `${tool === 'heal' ? 'Healing' : 'Clone'} source set; drag on the image to paint it`,
         );
@@ -9931,6 +9943,9 @@ export default function Home() {
       }
       let proceed = true;
       const before = canvas.current?.getBoundingClientRect();
+      // A clone/heal press samples the source chosen when it happened, even if
+      // an Alt-click picks a new source while the layer is being grown.
+      const pressSource = cloneSourceRef.current;
       try {
         proceed = await expandRasterLayerForPaint(point(e));
       } finally {
@@ -9948,7 +9963,13 @@ export default function Home() {
               clientY: { value: event.clientY + after.top - before.top },
             }) as T)
           : event;
-      await pointerDown(replay(e), true);
+      const latestSource = cloneSourceRef.current;
+      cloneSourceRef.current = pressSource;
+      try {
+        await pointerDown(replay(e), true);
+      } finally {
+        if (latestSource !== pressSource) cloneSourceRef.current = latestSource;
+      }
       if (pending.release) {
         await pointerUp(replay(pending.release));
         dropUnusedExpansion();
@@ -10770,9 +10791,9 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before Patch');
         return;
       }
-      const cloneSource = cloneSourceRef.current;
+      const cloneSource = cloneSourceIn(layer.matrix);
       if (!cloneSource) {
-        chooseCloneSource(local);
+        chooseCloneSource(local, layer.matrix);
         setNotice('Patch source set; drag on the image to paint the patch');
         return;
       }
@@ -10831,9 +10852,9 @@ export default function Home() {
       }
       // Option/Alt-click is handled before the gesture guard above so a
       // source click is never dropped; a first plain click also sets it.
-      const sourceAnchor = cloneSourceRef.current;
+      const sourceAnchor = cloneSourceIn(layer.matrix);
       if (!sourceAnchor) {
-        chooseCloneSource(local);
+        chooseCloneSource(local, layer.matrix);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
@@ -15858,10 +15879,9 @@ export default function Home() {
             />
             {frame && cloneSource && (tool === 'clone' || tool === 'heal')
               ? (() => {
-                  // The source is stored in the active layer's pixel space;
-                  // show it where the next stroke will sample on the canvas.
-                  const active = frame.layers.find((item) => item.id === frame.active),
-                    [a, b, c, d, e, f] = active?.kind === 'raster' ? active.matrix : [1, 0, 0, 1, 0, 0],
+                  // The source is stored in the layer placement it was picked
+                  // in; show it where the next stroke will sample on the canvas.
+                  const [a, b, c, d, e, f] = cloneSource.matrix,
                     x = a * cloneSource.x + c * cloneSource.y + e,
                     y = b * cloneSource.x + d * cloneSource.y + f,
                     arm = Math.max(10, Math.max(frame.w, frame.h) / 60);
