@@ -18,6 +18,7 @@ import {
   RotateCcw,
   RotateCw,
   Save,
+  SlidersHorizontal,
   Sparkles,
   Type,
   Undo2,
@@ -594,8 +595,10 @@ import {
   appendSmartFilter,
   moveSmartFilter,
   removeSmartFilter,
+  replaceSmartFilter,
   setSmartFilterEnabled,
   smartFilterEntries,
+  trackedSmartFilterIndex,
   SMART_FILTER_MAX,
   type SmartFilterEntry,
 } from '../src/smartFilters';
@@ -2698,7 +2701,7 @@ export default function Home() {
             command,
             menuItem?.label || command,
             command.startsWith('filter-')
-              ? filterActionParameters(filterEffects)
+              ? filterActionParameters(liveFilterEffects)
               : undefined,
           );
         } catch {
@@ -2827,6 +2830,8 @@ export default function Home() {
     [recovering, setRecovering] = useState(false),
     [cloudMessage, setCloudMessage] = useState(''),
     [cloudConflict, setCloudConflict] = useState<CloudConflictError | null>(null);
+  /** The filter-stack entry the Filter effects controls currently edit, if any. */
+  const [filterStackEdit, setFilterStackEdit] = useState<{ layerId: string; index: number } | null>(null);
   const active = frame?.layers.find((l) => l.id === frame.active),
     adjustments = active ? effectiveAdjustments(active.adjustments) : neutral;
   const {
@@ -2844,9 +2849,20 @@ export default function Home() {
     curves,
     colorBalance,
     sharpenNoise,
-    filterEffects,
+    filterEffects: liveFilterEffects,
     photoAdjustments,
   } = adjustments;
+  // While a stacked filter is selected for editing, the Filter effects
+  // controls (type, sliders, centre fields and crosshair) show and change that
+  // entry instead of the live filter. A stale selection (another layer, or an
+  // entry removed by undo) falls back to the live filter.
+  const filterStackEntries = active && isRasterContentLayer(active) ? smartFilterEntries(active.smartFilters) : [];
+  const filterStackEditIndex =
+    filterStackEdit && active && filterStackEdit.layerId === active.id && filterStackEdit.index < filterStackEntries.length
+      ? filterStackEdit.index
+      : null;
+  const filterEffects =
+    filterStackEditIndex !== null ? filterStackEntries[filterStackEditIndex].effect : liveFilterEffects;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
@@ -6194,10 +6210,26 @@ export default function Home() {
       return { ...action, steps, updatedAt: new Date().toISOString() };
     }));
   };
+  /**
+   * Commit Filter effects parameters to their current target: the live filter,
+   * or the stacked entry selected for editing (one undoable metadata edit;
+   * the #185 cache key follows because it hashes the normalised stack).
+   */
+  const commitFilterEffects = (next: Adjustments['filterEffects']) => {
+    if (filterStackEditIndex === null) return adjust({ filterEffects: next });
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer?.smartFilters?.length) return false;
+    try {
+      return editLayer({ smartFilters: replaceSmartFilter(layer.smartFilters, filterStackEditIndex, next) });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not change the stacked filter');
+      return false;
+    }
+  };
   const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) => {
     const next = { ...filterEffects, ...patch };
-    const changed = adjust({ filterEffects: next });
-    if (changed) updateRecordedFilterParameters(next);
+    const changed = commitFilterEffects(next);
+    if (changed && filterStackEditIndex === null) updateRecordedFilterParameters(next);
     return changed;
   };
   const setPhotoAdjustments = (
@@ -6264,13 +6296,16 @@ export default function Home() {
     }
   };
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
+    if (filterStackEditIndex !== null && type === 'none') {
+      setNotice('Remove the stacked filter, or choose Done to edit the live filter');
+      return;
+    }
     if (type !== 'none') {
       setLastFilterType(type);
       try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
     }
     if (
-      adjust({
-        filterEffects:
+      commitFilterEffects(
           type === 'none'
             ? { ...neutralFilterEffects }
             : {
@@ -6391,12 +6426,14 @@ export default function Home() {
                       ? 90
                       : 0,
               },
-      })
+      )
     )
       setNotice(
         type === 'none'
           ? 'Local filter effect cleared'
-          : `${label} applied; remains editable in Filter effects`,
+          : filterStackEditIndex !== null
+            ? `Stacked filter ${filterStackEditIndex + 1} is now ${label}`
+            : `${label} applied; remains editable in Filter effects`,
       );
   };
   const convertForSmartFilters = () => {
@@ -6438,12 +6475,16 @@ export default function Home() {
     message: string,
   ) => {
     const layer = current().layers.find((item) => item.id === current().active);
-    if (!layer?.smartFilters?.length) return;
+    if (!layer?.smartFilters?.length) return false;
     try {
-      if (editLayer({ smartFilters: change(layer.smartFilters) })) setNotice(message);
+      if (editLayer({ smartFilters: change(layer.smartFilters) })) {
+        setNotice(message);
+        return true;
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not change the filter stack');
     }
+    return false;
   };
   const filterTypeLabel = (type: string) =>
     type.split('-').map((word, index) => (index ? word : word[0].toUpperCase() + word.slice(1))).join(' ');
@@ -17487,6 +17528,15 @@ export default function Home() {
               action="Clear"
               onClick={() => chooseFilterEffect('none', 'Filter effect')}
             />
+            {filterStackEditIndex !== null && (
+              <p className="adjust-note filter-stack-editing" data-testid="filter-stack-editing">
+                Editing stacked filter {filterStackEditIndex + 1}.{' '}
+                {filterTypeLabel(filterEffects.type)}. Each change is one undo step.{' '}
+                <button type="button" onClick={() => setFilterStackEdit(null)}>
+                  Done
+                </button>
+              </p>
+            )}
             <select
               className="text-input"
               aria-label="Filter effect"
@@ -18595,8 +18645,16 @@ export default function Home() {
               </>
             )}
             {active && isRasterContentLayer(active) && (() => {
-              const entries = smartFilterEntries(active.smartFilters);
-              const liveNeutral = isNeutralFilterEffects(effectiveFilterEffects(filterEffects));
+              const entries = filterStackEntries;
+              const liveNeutral = isNeutralFilterEffects(effectiveFilterEffects(liveFilterEffects));
+              /** Keep the edited entry selected when the stack is reordered or trimmed. */
+              const trackEdit = (
+                change: Parameters<typeof trackedSmartFilterIndex>[1],
+              ) => {
+                if (filterStackEditIndex === null) return;
+                const next = trackedSmartFilterIndex(filterStackEditIndex, change);
+                setFilterStackEdit(next === null ? null : { layerId: active.id, index: next });
+              };
               return (
                 <fieldset className="filter-stack" aria-label="Filter stack">
                   <button
@@ -18615,9 +18673,30 @@ export default function Home() {
                       <ol aria-label="Stacked filters">
                         {entries.map(({ effect, enabled }, index) => {
                           const name = `${index + 1}. ${filterTypeLabel(effect.type)}`;
+                          const editing = filterStackEditIndex === index;
                           return (
-                            <li key={`${index}-${effect.type}`} data-enabled={enabled ? 'true' : 'false'}>
+                            <li
+                              key={`${index}-${effect.type}`}
+                              data-enabled={enabled ? 'true' : 'false'}
+                              data-editing={editing ? 'true' : undefined}
+                            >
                               <span title={name}>{name}</span>
+                              <button
+                                type="button"
+                                aria-pressed={editing}
+                                aria-label={`${editing ? 'Stop editing' : 'Edit'} stacked filter ${name}`}
+                                title={editing ? 'Done editing' : 'Edit parameters'}
+                                onClick={() => {
+                                  setFilterStackEdit(editing ? null : { layerId: active.id, index });
+                                  setNotice(
+                                    editing
+                                      ? 'Filter effects controls edit the live filter again'
+                                      : `Filter effects controls now edit stacked filter ${name}`,
+                                  );
+                                }}
+                              >
+                                <SlidersHorizontal size={15} />
+                              </button>
                               <button
                                 type="button"
                                 aria-pressed={enabled}
@@ -18637,12 +18716,13 @@ export default function Home() {
                                 aria-label={`Apply stacked filter ${name} earlier`}
                                 title="Apply earlier"
                                 disabled={index === 0}
-                                onClick={() =>
-                                  editSmartFilterStack(
+                                onClick={() => {
+                                  if (editSmartFilterStack(
                                     (stack) => moveSmartFilter(stack, index, -1),
                                     `${filterTypeLabel(effect.type)} now applies earlier`,
-                                  )
-                                }
+                                  ))
+                                    trackEdit({ kind: 'move', index, offset: -1, length: entries.length });
+                                }}
                               >
                                 <ArrowUp size={15} />
                               </button>
@@ -18651,12 +18731,13 @@ export default function Home() {
                                 aria-label={`Apply stacked filter ${name} later`}
                                 title="Apply later"
                                 disabled={index === entries.length - 1}
-                                onClick={() =>
-                                  editSmartFilterStack(
+                                onClick={() => {
+                                  if (editSmartFilterStack(
                                     (stack) => moveSmartFilter(stack, index, 1),
                                     `${filterTypeLabel(effect.type)} now applies later`,
-                                  )
-                                }
+                                  ))
+                                    trackEdit({ kind: 'move', index, offset: 1, length: entries.length });
+                                }}
                               >
                                 <ArrowDown size={15} />
                               </button>
@@ -18664,12 +18745,13 @@ export default function Home() {
                                 type="button"
                                 aria-label={`Remove stacked filter ${name}`}
                                 title="Remove"
-                                onClick={() =>
-                                  editSmartFilterStack(
+                                onClick={() => {
+                                  if (editSmartFilterStack(
                                     (stack) => removeSmartFilter(stack, index),
                                     `${filterTypeLabel(effect.type)} removed from the filter stack; undo restores it`,
-                                  )
-                                }
+                                  ))
+                                    trackEdit({ kind: 'remove', index });
+                                }}
                               >
                                 <Trash2 size={15} />
                               </button>

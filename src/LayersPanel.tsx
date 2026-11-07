@@ -26,6 +26,7 @@ import {
   STYLE_MAX_OFFSET,
   type GlowSource,
   type LayerStyles,
+  type ShadowFalloff,
 } from './layerStyles';
 import { BLEND_MODE_GROUPS, type LayerBlendMode } from './blendModes';
 import { PATTERN_IDS, type PatternId } from './patternStamp';
@@ -703,6 +704,23 @@ export default function LayersPanel({
             }
           />
         </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Shadow mode
+            <select
+              aria-label="Drop shadow blend mode"
+              value={styles.dropShadow.blend}
+              onChange={(event) => updateDropShadow({ blend: event.target.value as LayerBlendMode })}
+            >
+              <BlendModeOptions />
+            </select>
+          </label>
+          <ShadowFalloffSelect
+            label="Drop shadow falloff"
+            value={styles.dropShadow.falloff}
+            update={(falloff) => updateDropShadow({ falloff })}
+          />
+        </div>
         <label>
           <input
             type="checkbox"
@@ -796,6 +814,11 @@ export default function LayersPanel({
             }
           />
         </label>
+        <ShadowFalloffSelect
+          label="Inner shadow falloff"
+          value={styles.innerShadow.falloff}
+          update={(falloff) => updateInnerShadow({ falloff })}
+        />
         <label className="layer-field">
           Inner shadow distance {Math.round(styles.innerShadow.distance)} px
           <input
@@ -1885,5 +1908,34 @@ function GlowControls({
         </label>
       )}
     </>
+  );
+}
+
+/**
+ * Shadow blur falloff. Gaussian is the default for new layers; shadows saved
+ * before the option load as Linear (the historical single box pass) so their
+ * look is unchanged until the user picks Gaussian.
+ */
+function ShadowFalloffSelect({
+  label,
+  value,
+  update,
+}: {
+  label: string;
+  value: ShadowFalloff;
+  update: (falloff: ShadowFalloff) => void;
+}) {
+  return (
+    <label className="layer-field">
+      Falloff
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => update(event.target.value as ShadowFalloff)}
+      >
+        <option value="gaussian">Gaussian</option>
+        <option value="box">Linear (legacy)</option>
+      </select>
+    </label>
   );
 }

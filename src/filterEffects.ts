@@ -1203,9 +1203,11 @@ const GAUSSIAN_COLUMN_BLOCK = 16;
  * variance best matches the truncated Gaussian kernel used for `radius`, while
  * the cascade support (sum of half-widths) never exceeds the radius. The tiled
  * renderer depends on that support bound: its tile overlap is the radius.
+ * `maxRadius` defaults to the Gaussian Blur filter's 64 px bound; layer-style
+ * shadows reuse the same cascade up to their own 250 px bound.
  */
-export function gaussianBoxHalfWidths(radius: number, passes = GAUSSIAN_BOX_PASSES): number[] {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius))),
+export function gaussianBoxHalfWidths(radius: number, passes = GAUSSIAN_BOX_PASSES, maxRadius = 64): number[] {
+  const bounded = Math.max(1, Math.min(maxRadius, Math.round(radius))),
     sigma = Math.max(0.5, bounded / 3);
   let total = 0,
     variance = 0;

@@ -1,5 +1,6 @@
 import { validPatternId, type PatternId } from './patternStamp.ts';
 import { blendColorAt, validBlendMode, type LayerBlendMode } from './blendModes.ts';
+import { gaussianBoxHalfWidths } from './filterEffects.ts';
 
 /**
  * Bounds that scale to large documents. Shadow and glow blurs are sliding
@@ -13,6 +14,15 @@ export const INNER_SHADOW_MAX_DISTANCE = 250;
 export const GLOW_MAX_SIZE = 250;
 export const GLOW_SOURCES = ['edge', 'center'] as const;
 export type GlowSource = (typeof GLOW_SOURCES)[number];
+/**
+ * Shadow blur falloff. `box` is the historical single box pass (a linear
+ * ramp at large radii); `gaussian` cascades three matched box passes from the
+ * Gaussian Blur filter for a bell-shaped falloff at the same visible extent.
+ * Stored shadows without the field are legacy documents and keep `box`;
+ * shadows created from the neutral defaults use `gaussian`.
+ */
+export const SHADOW_FALLOFFS = ['gaussian', 'box'] as const;
+export type ShadowFalloff = (typeof SHADOW_FALLOFFS)[number];
 
 /**
  * Bounded, nondestructive layer decorations.  These values intentionally live
@@ -26,6 +36,9 @@ export type DropShadowStyle = {
   offsetX: number;
   offsetY: number;
   blur: number;
+  /** How the shadow composites onto the pixels beneath the layer (default Normal). */
+  blend: LayerBlendMode;
+  falloff: ShadowFalloff;
 };
 
 export type InnerShadowStyle = {
@@ -36,6 +49,7 @@ export type InnerShadowStyle = {
   offsetY: number;
   blur: number;
   distance: number;
+  falloff: ShadowFalloff;
 };
 
 export type BevelEmbossStyle = {
@@ -121,6 +135,8 @@ export const neutralLayerStyles: LayerStyles = {
     offsetX: 8,
     offsetY: 8,
     blur: 12,
+    blend: 'source-over',
+    falloff: 'gaussian',
   },
   innerShadow: {
     enabled: false,
@@ -130,6 +146,7 @@ export const neutralLayerStyles: LayerStyles = {
     offsetY: 4,
     blur: 8,
     distance: 4,
+    falloff: 'gaussian',
   },
   bevelEmboss: {
     enabled: false,
@@ -195,6 +212,13 @@ const hex = (value: unknown): value is string =>
 const glowSource = (value: unknown): value is GlowSource =>
   GLOW_SOURCES.includes(value as GlowSource);
 
+const shadowFalloff = (value: unknown): value is ShadowFalloff =>
+  SHADOW_FALLOFFS.includes(value as ShadowFalloff);
+
+/** A stored shadow without a falloff predates the option and keeps the box pass. */
+const resolvedFalloff = (shadow: { falloff?: unknown } | undefined, fallback: ShadowFalloff): ShadowFalloff =>
+  shadowFalloff(shadow?.falloff) ? shadow!.falloff as ShadowFalloff : shadow && typeof shadow === 'object' ? 'box' : fallback;
+
 function validOuterGlow(value: unknown): value is OuterGlowStyle {
   const glow = value as Partial<OuterGlowStyle> | undefined;
   return Boolean(
@@ -255,6 +279,8 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
       enabled: typeof shadow?.enabled === 'boolean'
         ? shadow.enabled
         : neutralLayerStyles.dropShadow.enabled,
+      blend: validBlendMode(shadow?.blend) ? shadow!.blend : neutralLayerStyles.dropShadow.blend,
+      falloff: resolvedFalloff(shadow, neutralLayerStyles.dropShadow.falloff),
     },
     innerShadow: {
       ...neutralLayerStyles.innerShadow,
@@ -278,6 +304,7 @@ export function effectiveLayerStyles(value: Partial<LayerStyles> | undefined): L
       enabled: typeof innerShadow?.enabled === 'boolean'
         ? innerShadow.enabled
         : neutralLayerStyles.innerShadow.enabled,
+      falloff: resolvedFalloff(innerShadow, neutralLayerStyles.innerShadow.falloff),
     },
     bevelEmboss: {
       ...neutralLayerStyles.bevelEmboss,
@@ -411,6 +438,8 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
       finite(shadow.offsetX, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
       finite(shadow.offsetY, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
       finite(shadow.blur, 0, STYLE_MAX_BLUR) &&
+      (shadow.blend === undefined || validBlendMode(shadow.blend)) &&
+      (shadow.falloff === undefined || shadowFalloff(shadow.falloff)) &&
       (innerShadow === undefined || (
         innerShadow &&
         typeof innerShadow === 'object' &&
@@ -420,7 +449,8 @@ export function validLayerStyles(value: unknown): value is LayerStyles {
         finite(innerShadow.offsetX, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
         finite(innerShadow.offsetY, -STYLE_MAX_OFFSET, STYLE_MAX_OFFSET) &&
         finite(innerShadow.blur, 0, STYLE_MAX_BLUR) &&
-        finite(innerShadow.distance, 1, INNER_SHADOW_MAX_DISTANCE)
+        finite(innerShadow.distance, 1, INNER_SHADOW_MAX_DISTANCE) &&
+        (innerShadow.falloff === undefined || shadowFalloff(innerShadow.falloff))
       )) &&
       (bevelEmboss === undefined || (
         bevelEmboss &&
@@ -573,6 +603,52 @@ function erodeAlpha(source: Uint8ClampedArray, width: number, height: number, ra
 }
 
 /**
+ * Gaussian-quality shadow blur: the Gaussian Blur filter's cascade of three
+ * running-sum box passes with matched variance (sigma = blur / 3) and total
+ * support <= blur, so the visible extent matches the legacy single box pass
+ * while the falloff is bell-shaped instead of a linear ramp. Intermediate
+ * passes stay in floating point and samples outside the area are zero.
+ */
+export function shadowGaussianHalfWidths(blur: number): number[] {
+  const radius = Math.round(blur);
+  return radius > 0 ? gaussianBoxHalfWidths(radius, 3, STYLE_MAX_BLUR) : [];
+}
+
+function boxPassFloat(input: Float32Array, output: Float32Array, start: number, stride: number, length: number, half: number) {
+  const span = half * 2 + 1;
+  let sum = 0;
+  for (let i = 0; i <= Math.min(length - 1, half); i += 1) sum += input[start + i * stride];
+  for (let i = 0; i < length; i += 1) {
+    output[start + i * stride] = sum / span;
+    const entering = i + half + 1, leaving = i - half;
+    if (entering < length) sum += input[start + entering * stride];
+    if (leaving >= 0) sum -= input[start + leaving * stride];
+  }
+}
+
+function blurAlphaGaussian(source: Uint8ClampedArray, width: number, height: number, blur: number) {
+  const halves = shadowGaussianHalfWidths(blur);
+  if (!halves.length) return source.slice();
+  let from = Float32Array.from(source), to = new Float32Array(source.length);
+  for (const half of halves) {
+    if (half <= 0) continue;
+    for (let y = 0; y < height; y += 1) boxPassFloat(from, to, y * width, 1, width, half);
+    [from, to] = [to, from];
+    for (let x = 0; x < width; x += 1) boxPassFloat(from, to, x, width, height, half);
+    [from, to] = [to, from];
+  }
+  const output = new Uint8ClampedArray(source.length);
+  for (let i = 0; i < output.length; i += 1) output[i] = Math.round(from[i]);
+  return output;
+}
+
+function blurShadowAlpha(source: Uint8ClampedArray, width: number, height: number, blur: number, falloff: ShadowFalloff) {
+  return falloff === 'gaussian'
+    ? blurAlphaGaussian(source, width, height, blur)
+    : blurAlpha(source, width, height, blur);
+}
+
+/**
  * Three box passes approximate a Gaussian falloff whose visible extent is
  * about `size` pixels. Each pass is a radius-independent sliding window.
  */
@@ -610,24 +686,84 @@ function alphaBounds(source: Uint8ClampedArray, width: number, height: number): 
 }
 
 /**
+ * Which slice of the style stack a render pass produces. `all` is the whole
+ * decorated layer (the historical single pass). When an outer effect (Drop
+ * Shadow, Outer Glow) uses a blend mode other than Normal, the renderer
+ * composites each outer effect onto the pixels beneath the layer with its own
+ * mode, then the `body` (everything else) with the layer's mode, so a Screen
+ * glow brightens the backdrop instead of reducing to Normal over transparency.
+ */
+export type LayerStyleRenderPart = 'all' | 'body' | 'drop-shadow' | 'outer-glow';
+
+/**
+ * Render-only styles with a part tag. The tag is never persisted: the
+ * renderer adds it to one-layer copies it builds internally, and it is part
+ * of those copies' local filter-cache key because it lives on `styles`.
+ */
+export type LayerStylesWithPart = Partial<LayerStyles> & { renderPart?: LayerStyleRenderPart };
+
+export function withLayerStylePart(
+  value: Partial<LayerStyles> | undefined,
+  part: Exclude<LayerStyleRenderPart, 'all'>,
+): LayerStyles & { renderPart: LayerStyleRenderPart } {
+  return { ...effectiveLayerStyles(value), renderPart: part };
+}
+
+const renderPartOf = (value: LayerStylesWithPart | undefined): LayerStyleRenderPart => {
+  const part = value?.renderPart;
+  return part === 'body' || part === 'drop-shadow' || part === 'outer-glow' ? part : 'all';
+};
+
+export type LayerStyleBackdropPass = { part: 'drop-shadow' | 'outer-glow'; blend: LayerBlendMode };
+
+/**
+ * Outer effects that must be composited separately against the backdrop,
+ * bottom to top. Empty (one combined pass, unchanged pixels) unless an
+ * enabled, visible Drop Shadow or Outer Glow uses a non-Normal blend mode;
+ * then both enabled outer effects are split out so their order is kept.
+ */
+export function layerStyleBackdropPasses(value: LayerStylesWithPart | undefined): LayerStyleBackdropPass[] {
+  if (renderPartOf(value) !== 'all') return [];
+  const styles = effectiveLayerStyles(value);
+  const shadow = styles.dropShadow.enabled && styles.dropShadow.opacity > 0;
+  const glow = styles.outerGlow.enabled && styles.outerGlow.opacity > 0;
+  if (!(shadow && styles.dropShadow.blend !== 'source-over') && !(glow && styles.outerGlow.blend !== 'source-over'))
+    return [];
+  const passes: LayerStyleBackdropPass[] = [];
+  if (shadow) passes.push({ part: 'drop-shadow', blend: styles.dropShadow.blend });
+  if (glow) passes.push({ part: 'outer-glow', blend: styles.outerGlow.blend });
+  return passes;
+}
+
+/**
  * Apply the editable style stack to RGBA pixels without mutating the source.
  * This pure function is shared by the main thread and the render worker.
+ * A `renderPart` tag (see `withLayerStylePart`) selects one slice: an outer
+ * effect alone over transparency, or the body without outer effects.
  */
 export function applyLayerStylesPixels(
   source: Uint8ClampedArray,
   width: number,
   height: number,
-  value: Partial<LayerStyles> | undefined,
+  value: LayerStylesWithPart | undefined,
 ): Uint8ClampedArray {
-  const styles = effectiveLayerStyles(value);
+  const styles = effectiveLayerStyles(value), part = renderPartOf(value);
+  const effectOnly = part === 'drop-shadow' || part === 'outer-glow';
+  if (part === 'body') {
+    styles.dropShadow = { ...styles.dropShadow, enabled: false };
+    styles.outerGlow = { ...styles.outerGlow, enabled: false };
+  }
+  if (effectOnly && (width <= 0 || height <= 0)) return new Uint8ClampedArray(source.length);
   if (isNeutralLayerStyles(styles) || width <= 0 || height <= 0) return source.slice();
   // Start from a detached source copy so transparent pixels retain their
-  // hidden RGB bytes even when a style only touches painted bounds.
-  const output = source.slice(), alpha = new Uint8ClampedArray(width * height);
+  // hidden RGB bytes even when a style only touches painted bounds. An outer
+  // effect pass starts from transparency and draws only that effect.
+  const output = effectOnly ? new Uint8ClampedArray(source.length) : source.slice(),
+    alpha = new Uint8ClampedArray(width * height);
   for (let i = 0; i < alpha.length; i += 1) alpha[i] = source[i * 4 + 3];
   const bounds = alphaBounds(source, width, height);
-  if (!bounds) return source.slice();
-  if (styles.dropShadow.enabled) {
+  if (!bounds) return effectOnly ? output : source.slice();
+  if (styles.dropShadow.enabled && (part === 'all' || part === 'drop-shadow')) {
     const radius = Math.round(styles.dropShadow.blur);
     // Blur only the source extent plus the kernel radius. The previous full
     // frame pass made a single painted dab cost tens of millions of samples.
@@ -638,7 +774,7 @@ export function applyLayerStylesPixels(
     for (let y = 0; y < sourceHeight; y += 1)
       for (let x = 0; x < sourceWidth; x += 1)
         crop[y * sourceWidth + x] = alpha[(sourceY + y) * width + sourceX + x];
-    const shadowAlpha = blurAlpha(crop, sourceWidth, sourceHeight, radius);
+    const shadowAlpha = blurShadowAlpha(crop, sourceWidth, sourceHeight, radius, styles.dropShadow.falloff);
     const [r, g, b] = color(styles.dropShadow.color);
     const offsetX = Math.round(styles.dropShadow.offsetX), offsetY = Math.round(styles.dropShadow.offsetY);
     for (let y = 0; y < sourceHeight; y += 1)
@@ -648,7 +784,8 @@ export function applyLayerStylesPixels(
           over(output, (dy * width + dx) * 4, r, g, b, shadowAlpha[y * sourceWidth + x] * styles.dropShadow.opacity);
       }
   }
-  if (styles.outerGlow.enabled && styles.outerGlow.opacity > 0) {
+  if (part === 'drop-shadow') return output;
+  if (styles.outerGlow.enabled && styles.outerGlow.opacity > 0 && (part === 'all' || part === 'outer-glow')) {
     const glow = styles.outerGlow, size = Math.round(glow.size);
     const padding = glowBlurRadius(size) * 3 + 1;
     const sourceX = Math.max(0, bounds.minX - padding), sourceY = Math.max(0, bounds.minY - padding);
@@ -674,6 +811,7 @@ export function applyLayerStylesPixels(
         );
       }
   }
+  if (part === 'outer-glow') return output;
   if (styles.outline.enabled) {
     const [r, g, b] = color(styles.outline.color), radius = Math.round(styles.outline.width);
     const minX = Math.max(0, bounds.minX - radius), maxX = Math.min(width - 1, bounds.maxX + radius);
@@ -729,7 +867,7 @@ export function applyLayerStylesPixels(
         if (own === 0) continue;
         edge[y * sourceWidth + x] = Math.max(0, own - eroded[(gy - erodeY) * erodeWidth + gx - erodeX]);
       }
-    const softened = blurAlpha(edge, sourceWidth, sourceHeight, blur);
+    const softened = blurShadowAlpha(edge, sourceWidth, sourceHeight, blur, styles.innerShadow.falloff);
     const [r, g, b] = color(styles.innerShadow.color);
     const offsetX = Math.round(styles.innerShadow.offsetX);
     const offsetY = Math.round(styles.innerShadow.offsetY);
