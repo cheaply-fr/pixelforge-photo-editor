@@ -105,14 +105,15 @@ re-run for this record.
 | #185 | Per-layer filter-result cache and decoded-asset cache (≈2.5–3× faster unrelated edits on large documents, local measurement) | `f5e4135` | `f5e4135`, `cba6253` | Tiled blur path not cached; ~2 s compositing remains at 10.8 MP; pointer-down decode wait unchanged |
 | #184 | Brush, Pencil, Eraser, Mask Brush/Eraser and Adjustment Brush confined to the active selection with feathered edges | `cba6253` | `cba6253` | Clone/Heal stamping still ignores the selection; "Mask from selection" leaves the selection active (Photoshop consumes it) |
 | #186 | Incremental local draft saves: content-addressed IndexedDB asset records (`asset:<draftId>:<sha256>`) so autosave writes only new assets instead of re-serialising tens of MB per edit; one read-write transaction per save, fail-closed reads | `f95ec93` | `f95ec93` | Assets remain base64 PNG data URLs; benchmark is local only |
-| #187 | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps, fast large dabs | `6a42943` | Pending — run 42332588876 in progress at record time | — |
+| #187 | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps, fast large dabs | `6a42943` | `6a42943` | — |
 
 Later releases: `CI and deploy` run **42331771754** succeeded for `f95ec93`
 (#186) and `/release.json` reported
 `f95ec93e3fdc5039df972e1e37b06231509a426d` (built 2026-11-07T02:59:08Z).
-At record time `CI and deploy` run **42332588876** for `6a42943` (#187) was
-still in progress and `/release.json` still reported `f95ec93`; #187 is
-merged but not yet verified as deployed.
+Run **42332588876** succeeded for `6a42943` (#187) and `/release.json` then
+reported `6a429436acc6595468f808961eb1c053cbdae97f` (built
+2026-11-07T03:09:13Z). Release identity only; per-feature live acceptance
+was not re-run.
 
 **"This draft changed in another tab" root cause (fixed in #186).** The
 spurious conflict seen with a single visible tab was cross-tab, not an

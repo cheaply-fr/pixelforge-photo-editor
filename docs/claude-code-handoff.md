@@ -161,8 +161,8 @@ Known remaining families and release work:
    consent, limits and recovery. Search online or manufacture safe fixtures
    when needed; do not block unrelated local-first work waiting for a vendor.
 7. **Large-document painting (added 2026-11-07):** a live 2646×4096 painting
-   session produced #181–#187 (all merged; #181–#186 deployed, #187's deploy
-   pending at record time; includes incremental draft saves and 1–5000 px brush sizes) plus open or
+   session produced #181–#187 (merged and deployed; `/release.json` reported `6a42943`;
+   includes incremental draft saves and 1–5000 px brush sizes) plus open or
    in-development work on larger undo/redo history (#189), ~10× huge-project
    limits (`feat/huge-projects`) and per-frame stroke previews, and a prioritized
    backlog (stroke-start decode, per-stroke PNG commits, Clone/Heal selection

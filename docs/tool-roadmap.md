@@ -317,7 +317,7 @@ with release evidence and priorities is in
 | Brush, Pencil, Eraser, Mask Brush/Eraser, Adjustment Brush | **Shipped** — confined to the active selection with feathered edges | #184, merged and deployed `cba6253`; see [`brush-tool-contract.md`](./brush-tool-contract.md#selection-confinement) |
 | Paint tools on trimmed layers | **Shipped** — grow trimmed layers on demand | #183, merged `8a82ad6`. Spot Healing, Patch, Red Eye, History and Art History brushes do not grow; two undo steps per first stroke |
 | Clone Stamp, Healing Brush | **Not started (P1)** — stamping path ignores the active selection | Follow-up of #184 |
-| Painting Size | **Shipped** — 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` | #187, merged `6a42943`, deploy pending at record time (run 42332588876) |
+| Painting Size | **Shipped** — 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` | #187, merged `6a42943`, deployed `6a42943` (run 42332588876) |
 | Live stroke preview | **In progress** — one preview per animation frame instead of per `pointermove` | `perf/coalesce-stroke-previews`, PR not yet opened |
 | Stroke start / commit | **Not started (P1)** — ~2 s active-layer decode at pointer-down on 10.8 MP; full-layer PNG encode per stroke | Reuse decoded layers in gesture code; evaluate dirty-rect or tiled layer storage |
 | Brush dynamics | **Not started (P2)** — near-zero pressure as pen lift; dab-only/stamp mode for star fields; scatter/spacing above 100% of size | [`brush-dynamics-contract.md`](./brush-dynamics-contract.md), [`brush-pressure-contract.md`](./brush-pressure-contract.md) |
