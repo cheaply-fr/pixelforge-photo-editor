@@ -99,7 +99,11 @@ export function renderFilterBand(request: FilterBandRequest): Uint8ClampedArray 
     );
     return output.slice(first, last);
   }
-  return applyFilterEffectsPixels(pixels, width, readRows, normalized).slice(first, last);
+  // Halo rows are only read, never rendered.
+  return applyFilterEffectsPixels(pixels, width, readRows, normalized, undefined, {
+    start: start - readStart,
+    end: end - readStart,
+  }).slice(first, last);
 }
 
 /**

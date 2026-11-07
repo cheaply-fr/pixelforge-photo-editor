@@ -378,10 +378,38 @@ window and completed, because each band restarts the window.
 
 Limits:
 
-* The speed-up scales with spare cores. A 4-core desktop (3 workers) should
-  reach roughly 1 s/MP at radius 8; that is inferred from the 2- and
-  8-worker runs, not measured. Phones stay at about 1.5–1.9 s/MP by design,
-  to bound memory and heat.
-* At 1 MP the per-worker JIT warm-up keeps Reduce Noise just above
-  1 s/MP; warm and larger layers are well below it.
+* The speed-up scales with spare cores. Phones stay at about 1.5–1.9 s/MP by
+  design, to bound memory and heat.
 * Layers under 0.5 MP and the remaining filters stay serial.
+
+### Pool polish (`perf/filter-pool-polish`)
+
+* **Halo rows are no longer rendered.** Band-safe kernels accept an output row
+  range: halo rows are read as neighbours but not filtered. On small layers
+  the halo was 16–37 % extra work. Output is unchanged
+  (`tests/filter-pool-polish.test.mjs`).
+* **Pre-warm.** Opening the Filter menu, or choosing a heavy filter, warms
+  the pool at idle time. It starts every filter worker and runs each heavy
+  kernel once on a 96×40 band so it is JIT-compiled. Warm-up targets the
+  pool that will render: the render worker's nested pool for frames of at
+  least 2 MP, otherwise the main thread's pool. It is skipped below 0.5 MP.
+* **Cancellation interrupts work already in flight.** A cancelled tiled
+  render terminates the filter workers running its tiles, as the band path
+  already did; the pool refills lazily with fresh workers. Render-worker
+  cancellation is a predicate, so busy jobs poll it every 50 ms.
+
+Measurements: local Node 24 `worker_threads`, same shared Xeon at ~40 %
+background load, Reduce Noise radius 8 at 1 MP, first filter on a fresh
+pool:
+
+| Workers | Cold pool (s/MP) | Pre-warmed (s/MP) |
+| ---: | ---: | ---: |
+| 8 | 0.93 | 0.79 |
+| 3 (4-core configuration) | 1.73 | 1.63 |
+
+4-core configuration (3 workers) at 2646×4096: Smart Blur 1.39, Smart
+Sharpen 1.34, Reduce Noise 1.58, Surface Blur 1.22 and legacy Path Blur
+0.92 s/MP. Serial on the same machine is 2.1–4.3 s/MP. So the ~1 s/MP
+estimate for four cores was **not confirmed** on this loaded 2.4 GHz host:
+three workers give ~2.6× over serial, not 3×+. A faster, unloaded 4-core
+desktop may reach it, but that has not been measured.

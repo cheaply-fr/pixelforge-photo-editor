@@ -3084,7 +3084,13 @@ export async function renderFrame(
                 // Heavy tiles run in the filter worker pool, several at once.
                 const pool = renderFilterPool(options);
                 return pool && !pool.broken
-                  ? { renderTile: pooledTileRenderer(pool), concurrency: pool.size }
+                  ? {
+                      renderTile: pooledTileRenderer(pool, {
+                        signal: options.signal,
+                        isCancelled: options.isCancelled,
+                      }),
+                      concurrency: pool.size,
+                    }
                   : {};
               })(),
               onTelemetry: (telemetry) =>

@@ -27,6 +27,11 @@ import {
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import { validFilterBandProgress, type FilterBandProgress } from './filterBands.ts';
+import {
+  FILTER_PARALLEL_MIN_PIXELS,
+  PREWARM_FILTER_TYPES,
+  prewarmFilterPool,
+} from './filterWorkerPool.ts';
 
 /**
  * Test/diagnostic override for the filter worker pool size, forwarded to the
@@ -891,6 +896,23 @@ class PersistentWorkerSession {
     }, PERSISTENT_WORKER_IDLE_MS);
   }
 
+  /**
+   * Ask the render worker (started now if needed, since a render follows) to
+   * warm its filter workers for these kernels.
+   */
+  prewarmFilters(types: readonly string[]): void {
+    try {
+      this.ensureWorker().postMessage({
+        kind: 'prewarm-filters',
+        types: [...types],
+        filterWorkers: filterWorkerOverride(),
+      });
+      if (!this.active) this.scheduleIdleTimer();
+    } catch {
+      /* Warm-up is best effort. */
+    }
+  }
+
   /** Ask a live worker to drop its layer-filter surfaces; no-op otherwise. */
   clearLayerCache(): void {
     this.workerAssetKeys = new Set();
@@ -935,6 +957,26 @@ export function clearLayerFilterCaches(): void {
   clearLayerFilterCache();
   mainThreadCompositeCache.clear();
   persistentSession.clearLayerCache();
+}
+
+/**
+ * Warm the filter worker pool that will render a heavy filter on a document
+ * of this size: the persistent render worker's nested pool for frames that
+ * render in the worker, otherwise the main thread's pool. Runs at idle time
+ * and is a no-op for light filters, small documents or missing workers.
+ */
+export function prewarmFilterWorkers(types: readonly string[], frame: { w: number; h: number }): void {
+  const heavy = types.filter((type) => (PREWARM_FILTER_TYPES as readonly string[]).includes(type));
+  if (!heavy.length || frame.w * frame.h < FILTER_PARALLEL_MIN_PIXELS) return;
+  const run = () => {
+    if (frame.w * frame.h >= WORKER_MIN_PIXELS && canRenderInWorker()) persistentSession.prewarmFilters(heavy);
+    else prewarmFilterPool(heavy);
+  };
+  const scope = globalThis as typeof globalThis & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  };
+  if (typeof scope.requestIdleCallback === 'function') scope.requestIdleCallback(run, { timeout: 200 });
+  else setTimeout(run, 0);
 }
 
 /** Test/host teardown hook; production lifecycle is managed by the idle timer. */
