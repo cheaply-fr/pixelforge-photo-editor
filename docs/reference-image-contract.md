@@ -35,7 +35,7 @@ like any other saved image data.
 ## UI
 
 - **File → Place reference image…** or the **Reference image** inspector panel
-  (above Layers, with its own icon and a "Not exported" badge and disclosure)
+  (at the end of the inspector, with its own icon and a "Not exported" badge and disclosure)
   places or replaces the image.
 - Visibility, opacity, placement (fit inside / fill-crop / stretch) and
   removal are in the panel. **Lock** prevents replacing, refitting, opacity

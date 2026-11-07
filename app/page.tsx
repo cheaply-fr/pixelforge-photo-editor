@@ -16279,23 +16279,6 @@ export default function Home() {
         </section>
         <aside className="inspector">
           {frame && (
-            <ReferencePanel
-              reference={frame.reference}
-              size={
-                frame.reference && assets.current[frame.reference.asset]
-                  ? {
-                      w: assets.current[frame.reference.asset].w,
-                      h: assets.current[frame.reference.asset].h,
-                    }
-                  : undefined
-              }
-              disabled={quickMasking}
-              choose={chooseReferenceFile}
-              update={updateReference}
-              remove={removeReference}
-            />
-          )}
-          {frame && (
             <LayersPanel
               frame={frame}
               pixelUsage={layerPixelUsage(frame, assets.current)}
@@ -18955,6 +18938,23 @@ export default function Home() {
             )}
             <p aria-live="polite">{cloudMessage}</p>
           </section>
+          {frame && (
+            <ReferencePanel
+              reference={frame.reference}
+              size={
+                frame.reference && assets.current[frame.reference.asset]
+                  ? {
+                      w: assets.current[frame.reference.asset].w,
+                      h: assets.current[frame.reference.asset].h,
+                    }
+                  : undefined
+              }
+              disabled={quickMasking}
+              choose={chooseReferenceFile}
+              update={updateReference}
+              remove={removeReference}
+            />
+          )}
         </aside>
       </div>
       <footer>
