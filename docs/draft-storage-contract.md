@@ -16,6 +16,10 @@ A format 3 asset record is stored at `asset:<draftId>:<sha256>` with value `{ ki
 
 No IndexedDB schema upgrade was needed for format 3: asset records share the version 2 `draftBlobs` store under the `asset:` prefix (format 2 chunk keys never start with it). Tabs still running an older build are therefore never blocked by a version change. Connections close on `versionchange`, and a failed or blocked open is not memoized, so a later save retries.
 
+## Size limits
+
+A draft may reference up to 4,096 assets and 1 GiB of PNG data URLs (`MAX_PROJECT_ASSETS`, `PROJECT_ASSET_BYTES_CEILING` in `src/projectLimits.ts`), the same device-independent ceilings as portable projects; how far an edit may grow a document on a given device is bounded separately (see `layer-pixel-budget-contract.md`). Format 3 writes one record per new asset, so a large poster costs one asset record per stroke rather than a rewrite of the whole draft. When IndexedDB refuses the write, the storage-full message below applies and the previous revision stays intact; exporting a `.pixelforge` copy remains available.
+
 ## Atomic, incremental saves
 
 `saveDraft` validates the draft (frames and settings always; an asset is re-scanned with `validAsset` unless this tab already verified the identical ID, URL and dimensions), hashes only asset content not already hashed in this tab, and then runs one read-write transaction that:

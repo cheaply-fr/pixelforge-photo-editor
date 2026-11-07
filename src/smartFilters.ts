@@ -90,6 +90,43 @@ export function moveSmartFilter(
   return next;
 }
 
+/**
+ * Replace one entry's parameters in place (the Filter effects controls edit a
+ * stacked entry with this). The entry keeps its position and hidden state;
+ * the effect is validated and normalised like an appended entry. Returns the
+ * same normalised stack when nothing changed, so callers can skip a no-op
+ * history step.
+ */
+export function replaceSmartFilter(
+  stack: readonly SmartFilterEntry[] | undefined,
+  index: number,
+  effect: FilterEffects,
+): SmartFilterEntry[] {
+  const current = normalizeSmartFilterStack(stack);
+  checkedIndex(current, index);
+  const { enabled: _ignored, ...plain } = effect as SmartFilterEntry;
+  if (!validFilterEffects(plain)) throw new Error('Smart Filter effect is invalid');
+  if (plain.type === 'none') throw new Error('Remove the stacked filter instead of clearing it');
+  const next: SmartFilterEntry = effectiveFilterEffects(plain);
+  if (current[index].enabled === false) next.enabled = false;
+  return current.map((entry, position) => (position === index ? next : entry));
+}
+
+/** Where a stacked entry being edited ends up after a move (or null after removal). */
+export function trackedSmartFilterIndex(
+  edited: number,
+  change: { kind: 'move'; index: number; offset: number; length: number } | { kind: 'remove'; index: number },
+): number | null {
+  if (change.kind === 'remove')
+    return change.index === edited ? null : change.index < edited ? edited - 1 : edited;
+  const target = change.index + Math.trunc(change.offset);
+  if (target < 0 || target >= change.length || target === change.index) return edited;
+  if (edited === change.index) return target;
+  if (change.index < edited && target >= edited) return edited - 1;
+  if (change.index > edited && target <= edited) return edited + 1;
+  return edited;
+}
+
 export function removeSmartFilter(
   stack: readonly SmartFilterEntry[] | undefined,
   index: number,

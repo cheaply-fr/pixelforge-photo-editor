@@ -1,5 +1,5 @@
 import { selectTool } from './tool-selection';
-import { downloadedProject } from './project-file';
+import { downloadedProject, placedAsset } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
 const openEditor = async (page: Page) => {
@@ -16,7 +16,7 @@ const project = async (page: Page) => {
   const file = await download.path();
   return await downloadedProject(file!) as {
     settings: Record<string, unknown>;
-    history: Array<{ layers: Array<{ kind: string; asset?: string }> }>;
+    history: Array<{ w: number; h: number; layers: Array<{ kind: string; asset?: string; matrix?: number[] }> }>;
     index: number;
     assets: Record<string, { url: string; w: number; h: number }>;
   };
@@ -271,7 +271,7 @@ test('pressure-off fallback keeps pen strokes at configured size and opacity', a
   const lowLayer = low.history[low.index].layers.at(-1)!;
   const highLayer = high.history[high.index].layers.at(-1)!;
   expect(lowLayer.kind).toBe('raster'); expect(highLayer.kind).toBe('raster');
-  const lowAsset = low.assets[lowLayer.asset!], highAsset = high.assets[highLayer.asset!];
+  const lowAsset = await placedAsset(page, low, lowLayer), highAsset = await placedAsset(page, high, highLayer);
   const lowMetrics = await radialMetrics(page, lowAsset, 0.24, 0.5, 36);
   const highMetrics = await radialMetrics(page, highAsset, 0.68, 0.5, 36);
   // Pointer pressure is intentionally ignored unless the user opts in. The
@@ -294,8 +294,8 @@ test('pressure size and opacity flags operate independently on committed pixels'
   const sizeLow = await project(page);
   await pointerStroke(page, 0.8, 0.42);
   const sizeHigh = await project(page);
-  const sizeLowAsset = sizeLow.assets[sizeLow.history[sizeLow.index].layers.at(-1)!.asset!];
-  const sizeHighAsset = sizeHigh.assets[sizeHigh.history[sizeHigh.index].layers.at(-1)!.asset!];
+  const sizeLowAsset = await placedAsset(page, sizeLow, sizeLow.history[sizeLow.index].layers.at(-1)!);
+  const sizeHighAsset = await placedAsset(page, sizeHigh, sizeHigh.history[sizeHigh.index].layers.at(-1)!);
   const sizeLowMetrics = await radialMetrics(page, sizeLowAsset, 0.22, 0.5, 36);
   const sizeHighMetrics = await radialMetrics(page, sizeHighAsset, 0.42, 0.5, 36);
   expect(sizeHighMetrics.span).toBeGreaterThan(sizeLowMetrics.span + 12);
@@ -315,8 +315,8 @@ test('pressure size and opacity flags operate independently on committed pixels'
   const opacityLow = await project(page);
   await pointerStroke(page, 0.8, 0.78);
   const opacityHigh = await project(page);
-  const opacityLowAsset = opacityLow.assets[opacityLow.history[opacityLow.index].layers.at(-1)!.asset!];
-  const opacityHighAsset = opacityHigh.assets[opacityHigh.history[opacityHigh.index].layers.at(-1)!.asset!];
+  const opacityLowAsset = await placedAsset(page, opacityLow, opacityLow.history[opacityLow.index].layers.at(-1)!);
+  const opacityHighAsset = await placedAsset(page, opacityHigh, opacityHigh.history[opacityHigh.index].layers.at(-1)!);
   const opacityLowMetrics = await radialMetrics(page, opacityLowAsset, 0.58, 0.5, 36);
   const opacityHighMetrics = await radialMetrics(page, opacityHighAsset, 0.78, 0.5, 36);
   expect(Math.abs(opacityHighMetrics.span - opacityLowMetrics.span)).toBeLessThanOrEqual(2);
@@ -334,7 +334,7 @@ test('pressure curves change pen response and survive project reload', async ({ 
   await page.getByLabel('Pressure curve', { exact: true }).selectOption('soft');
   await pointerStroke(page, 0.25, 0.26);
   const soft = await project(page);
-  const softAsset = soft.assets[soft.history[soft.index].layers.at(-1)!.asset!];
+  const softAsset = await placedAsset(page, soft, soft.history[soft.index].layers.at(-1)!);
   const softMetrics = await radialMetrics(page, softAsset, 0.26, 0.5, 48);
 
   await newTransparentPaintLayer(page);
@@ -346,7 +346,7 @@ test('pressure curves change pen response and survive project reload', async ({ 
   await page.getByLabel('Pressure curve', { exact: true }).selectOption('firm');
   await pointerStroke(page, 0.25, 0.74);
   const firm = await project(page);
-  const firmAsset = firm.assets[firm.history[firm.index].layers.at(-1)!.asset!];
+  const firmAsset = await placedAsset(page, firm, firm.history[firm.index].layers.at(-1)!);
   const firmMetrics = await radialMetrics(page, firmAsset, 0.74, 0.5, 48);
   expect(softMetrics.span).toBeGreaterThan(firmMetrics.span + 12);
   await expect(page.getByLabel('Pressure curve', { exact: true })).toHaveValue('firm');
@@ -363,7 +363,7 @@ test('hardness zero produces a soft edge and pencil remains a hard-edge tool', a
   await expect(page.getByLabel('Hardness', { exact: true })).toHaveValue('0');
   await pointerStroke(page, 1, 0.5, 'mouse');
   const soft = await project(page);
-  const softAsset = soft.assets[soft.history[soft.index].layers.at(-1)!.asset!];
+  const softAsset = await placedAsset(page, soft, soft.history[soft.index].layers.at(-1)!);
   const softMetrics = await radialMetrics(page, softAsset, 0.5, 0.5, 44);
   expect(softMetrics.center).toBeGreaterThan(220);
   expect(softMetrics.edge).toBeGreaterThan(4);
@@ -378,7 +378,7 @@ test('hardness zero produces a soft edge and pencil remains a hard-edge tool', a
   await page.getByLabel('Opacity', { exact: true }).fill('100');
   await pointerStroke(page, 1, 0.5, 'mouse');
   const pencil = await project(page);
-  const pencilAsset = pencil.assets[pencil.history[pencil.index].layers.at(-1)!.asset!];
+  const pencilAsset = await placedAsset(page, pencil, pencil.history[pencil.index].layers.at(-1)!);
   const pencilMetrics = await radialMetrics(page, pencilAsset, 0.5, 0.5, 44);
   expect(pencilMetrics.center).toBeGreaterThan(220);
   expect(pencilMetrics.edge).toBeGreaterThan(220);
@@ -401,14 +401,14 @@ test('eraser honors opacity and restores through undo', async ({ page }) => {
   await pointerStroke(page, 1, 0.5, 'mouse');
   const painted = await project(page);
   const paintedLayer = painted.history[painted.index].layers.at(-1)!;
-  const paintedAsset = painted.assets[paintedLayer.asset!];
+  const paintedAsset = await placedAsset(page, painted, paintedLayer);
   const paintedMetrics = await radialMetrics(page, paintedAsset, 0.5, 0.5, 44);
   await selectTool(page, 'Eraser');
   await page.getByLabel('Opacity', { exact: true }).fill('25');
   await pointerStroke(page, 1, 0.5, 'mouse');
   const erased = await project(page);
   const erasedLayer = erased.history[erased.index].layers.at(-1)!;
-  const erasedAsset = erased.assets[erasedLayer.asset!];
+  const erasedAsset = await placedAsset(page, erased, erasedLayer);
   const erasedMetrics = await radialMetrics(page, erasedAsset, 0.5, 0.5, 44);
   expect(erasedLayer.asset).not.toBe(paintedLayer.asset);
   // destination-out must reduce alpha monotonically while preserving some
@@ -444,7 +444,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   // the same global pixels rather than restarting at the source center.
   await pointerStroke(page, 1, 0.3, 'mouse');
   const painted = await project(page);
-  const paintedAsset = painted.assets[painted.history[painted.index].layers.at(-1)!.asset!];
+  const paintedAsset = await placedAsset(page, painted, painted.history[painted.index].layers.at(-1)!);
   const sourcePixel = (await samplePixels(page, paintedAsset, [{ xRatio: 0.3 }]))[0];
   expect(sourcePixel[3]).toBeGreaterThan(180);
 
@@ -457,7 +457,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   await toolStroke(page, 'Clone', 'Clone stroke applied', 0.01, false);
   const cloned = await project(page);
   expect(cloned.history.length).toBeGreaterThan(painted.history.length);
-  const clonedAsset = cloned.assets[cloned.history[cloned.index].layers.at(-1)!.asset!];
+  const clonedAsset = await placedAsset(page, cloned, cloned.history[cloned.index].layers.at(-1)!);
   const [retainedSource, clonedDestination, clippedDestination] = await samplePixels(page, clonedAsset, [
     { xRatio: 0.3 },
     { xRatio: 0.01 },
@@ -478,9 +478,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   await page.getByLabel('Drawing color', { exact: true }).fill('#1c5bd9');
   await pointerStroke(page, 1, 0.6, 'mouse');
   const secondSourceFrame = await project(page);
-  const secondSourceAsset = secondSourceFrame.assets[
-    secondSourceFrame.history[secondSourceFrame.index].layers.at(-1)!.asset!
-  ];
+  const secondSourceAsset = await placedAsset(page, secondSourceFrame, secondSourceFrame.history[secondSourceFrame.index].layers.at(-1)!);
   const secondSourcePixel = (await samplePixels(page, secondSourceAsset, [{ xRatio: 0.6 }]))[0];
   expect(secondSourcePixel[3]).toBeGreaterThan(180);
 
@@ -509,9 +507,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   await expect(page.locator('footer')).toContainText('Clone source set; drag on the image to paint it');
   await toolStroke(page, 'Clone', 'Clone stroke applied', 0.88, false);
   const reanchored = await project(page);
-  const reanchoredAsset = reanchored.assets[
-    reanchored.history[reanchored.index].layers.at(-1)!.asset!
-  ];
+  const reanchoredAsset = await placedAsset(page, reanchored, reanchored.history[reanchored.index].layers.at(-1)!);
   const reanchoredDestination = (await samplePixels(page, reanchoredAsset, [{ xRatio: 0.88 }]))[0];
   expect(reanchoredDestination.slice(0, 3)).toEqual(secondSourcePixel.slice(0, 3));
 
@@ -523,7 +519,7 @@ test('clone source stays fixed and healing commits through the shared stamp path
   await toolStroke(page, 'Healing', 'Healing stroke applied', 0.84, false);
   const healed = await project(page);
   expect(healed.history.length).toBeGreaterThan(cloned.history.length);
-  const healedAsset = healed.assets[healed.history[healed.index].layers.at(-1)!.asset!];
+  const healedAsset = await placedAsset(page, healed, healed.history[healed.index].layers.at(-1)!);
   const healedDestination = (await samplePixels(page, healedAsset, [{ xRatio: 0.84 }]))[0];
   // Healing uses the fixed source with its bounded 0.65 blend. It should add
   // visible source pixels while remaining below a full clone stamp.
@@ -584,7 +580,7 @@ test('pen pointer-up pressure zero does not create a full-pressure endpoint', as
   await page.getByLabel('Pressure affects opacity', { exact: true }).check();
   await pointerStrokeWithReleasePressure(page, 0.2, 0.25, 0.45, 0, 'pen');
   const committed = await project(page);
-  const asset = committed.assets[committed.history[committed.index].layers.at(-1)!.asset!];
+  const asset = await placedAsset(page, committed, committed.history[committed.index].layers.at(-1)!);
   const startMetrics = await radialMetrics(page, asset, 0.25, 0.5, 48);
   const endMetrics = await radialMetrics(page, asset, 0.45, 0.5, 48);
   // A release event reports zero pressure. The stroke must retain the last

@@ -31,7 +31,7 @@ test('Edit > Paste Special exposes placement options and preserves a disabled se
   await dialog.getByLabel('Paste at Center').check();
   await dialog.getByRole('button', { name: 'Paste Layer', exact: true }).click();
   await expect(page.getByText('Layer pasted at canvas centre', { exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: /Layers 2 \/ 32/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Layers 2 \/ 512/ })).toBeVisible();
 });
 
 test('Paste Special > Paste into Selection creates a nondestructive mask and round-trips', async ({ page }) => {

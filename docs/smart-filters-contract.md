@@ -39,5 +39,28 @@ sliders still step in whole percent; exact entry uses the **Filter center X/Y
 (px)** fields (0.1 px steps) or the on-canvas crosshair. The crosshair can be
 dragged, which commits one undoable edit on release, or focused and moved with
 the arrow keys (one layer pixel, Shift for ten, Home recentres). Twirl and
-Polar Coordinates gained centre sliders. Editing a stacked entry's parameters
-in place, per-filter blend modes and per-filter masks are not yet supported.
+Polar Coordinates gained centre sliders. Per-filter blend modes and
+per-filter masks are not yet supported.
+
+## Editing a stacked entry in place
+
+Each stacked entry has an **Edit stacked filter n. Name** toggle
+(`aria-pressed`). While it is on, the Filter effects panel shows "Editing
+stacked filter n" with a **Done** button, and the same controls — filter type,
+sliders, centre fields and the on-canvas crosshair — read and write that entry
+instead of the live filter. Every change is one undoable metadata edit
+(`replaceSmartFilter`): the entry keeps its position and hidden state, the
+effect is validated and normalised like an appended entry, and Clear does not
+empty a stacked entry (Remove does). The selection follows the entry when it is
+moved, ends when it is removed, and falls back to the live filter on another
+layer or when undo removes the entry. The live filter is never touched while
+an entry is being edited, and action recording keeps recording only the live
+filter. The #185 cache key hashes the normalised stack, so an edit misses the
+cache and restoring the old parameters (undo) hits the earlier key again.
+
+Evidence: `replaceSmartFilter`/`trackedSmartFilterIndex` in
+`src/smartFilters.ts` with `tests/effects-polish.test.mjs` (hidden flag
+retained, bounds and invalid input, render and cache key change and restore,
+index tracking) and `tests/browser/effects-polish.spec.ts` on desktop and
+mobile (edit Mosaic's cell size beneath a live Emboss, pixels change, undo and
+redo, Clear refused, Done returns to the live filter, project and reload).

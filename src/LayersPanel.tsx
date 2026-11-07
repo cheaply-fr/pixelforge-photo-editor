@@ -5,13 +5,13 @@ import {
   TEXT_ORIENTATIONS,
   formatMegapixels,
   isMaskableLayer,
-  LAYER_PIXEL_BUDGET,
   isVectorMaskableLayer,
   type Frame,
   type Group,
   type Layer,
   type SelectionOperation,
 } from './document';
+import { MAX_DOCUMENT_LAYERS, detectProjectLimits } from './projectLimits';
 import type { ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import {
@@ -26,6 +26,7 @@ import {
   STYLE_MAX_OFFSET,
   type GlowSource,
   type LayerStyles,
+  type ShadowFalloff,
 } from './layerStyles';
 import { BLEND_MODE_GROUPS, type LayerBlendMode } from './blendModes';
 import { PATTERN_IDS, type PatternId } from './patternStamp';
@@ -272,30 +273,30 @@ export default function LayersPanel({
   return (
     <section className="panel layers-panel" aria-label="Layers">
       <h3>
-        Layers <small>{frame.layers.length} / 32</small>
+        Layers <small>{frame.layers.length} / {MAX_DOCUMENT_LAYERS}</small>
       </h3>
       {pixelUsage !== undefined && (
         <p
           className="layer-budget"
           data-testid="layer-pixel-budget"
           data-state={
-            pixelUsage > LAYER_PIXEL_BUDGET * 0.9
+            pixelUsage > detectProjectLimits().layerPixelBudget * 0.9
               ? "near"
               : "ok"
           }
           title="Raster layers share one pixel budget. Trim sparse paint layers (Layer > Trim Layer to Content) or merge layers to free space."
         >
-          Pixel budget {formatMegapixels(pixelUsage)} / {formatMegapixels(LAYER_PIXEL_BUDGET)} MP
+          Pixel budget {formatMegapixels(pixelUsage)} / {formatMegapixels(detectProjectLimits().layerPixelBudget)} MP
         </p>
       )}
       <div className="layer-actions">
-        <button onClick={add} disabled={frame.layers.length >= 32}>
+        <button onClick={add} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add paint layer
         </button>
-        <button onClick={addAdjustment} disabled={frame.layers.length >= 32}>
+        <button onClick={addAdjustment} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add adjustment layer
         </button>
-        <button onClick={addSmartObject} disabled={frame.layers.length >= 32}>
+        <button onClick={addSmartObject} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add smart object
         </button>
         <button
@@ -310,7 +311,7 @@ export default function LayersPanel({
         >
           Replace contents
         </button>
-        <button onClick={importImage} disabled={frame.layers.length >= 32}>
+        <button onClick={importImage} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add image layer
         </button>
         <button
@@ -703,6 +704,23 @@ export default function LayersPanel({
             }
           />
         </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Shadow mode
+            <select
+              aria-label="Drop shadow blend mode"
+              value={styles.dropShadow.blend}
+              onChange={(event) => updateDropShadow({ blend: event.target.value as LayerBlendMode })}
+            >
+              <BlendModeOptions />
+            </select>
+          </label>
+          <ShadowFalloffSelect
+            label="Drop shadow falloff"
+            value={styles.dropShadow.falloff}
+            update={(falloff) => updateDropShadow({ falloff })}
+          />
+        </div>
         <label>
           <input
             type="checkbox"
@@ -796,6 +814,11 @@ export default function LayersPanel({
             }
           />
         </label>
+        <ShadowFalloffSelect
+          label="Inner shadow falloff"
+          value={styles.innerShadow.falloff}
+          update={(falloff) => updateInnerShadow({ falloff })}
+        />
         <label className="layer-field">
           Inner shadow distance {Math.round(styles.innerShadow.distance)} px
           <input
@@ -1613,7 +1636,7 @@ export default function LayersPanel({
         >
           Send to back
         </button>
-        <button onClick={duplicate} disabled={frame.layers.length >= 32}>
+        <button onClick={duplicate} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Duplicate layer
         </button>
         <button
@@ -1885,5 +1908,34 @@ function GlowControls({
         </label>
       )}
     </>
+  );
+}
+
+/**
+ * Shadow blur falloff. Gaussian is the default for new layers; shadows saved
+ * before the option load as Linear (the historical single box pass) so their
+ * look is unchanged until the user picks Gaussian.
+ */
+function ShadowFalloffSelect({
+  label,
+  value,
+  update,
+}: {
+  label: string;
+  value: ShadowFalloff;
+  update: (falloff: ShadowFalloff) => void;
+}) {
+  return (
+    <label className="layer-field">
+      Falloff
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => update(event.target.value as ShadowFalloff)}
+      >
+        <option value="gaussian">Gaussian</option>
+        <option value="box">Linear (legacy)</option>
+      </select>
+    </label>
   );
 }

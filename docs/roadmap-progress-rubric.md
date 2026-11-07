@@ -144,6 +144,7 @@ remaining item now has a workstream. Status at write time
 | A | `feat/huge-projects` — no remote branch yet | User request "don't flatten — handle huge projects": ~10× limits — 320+ layers (was 32), 640 MP stored layer pixels (was 64 MP), ~640 MB asset/draft/project caps (was 64 MB); automatic trim of layers to content; lazy (unallocated) empty layers; render scaling; Rasterize and Merge preserve trimmed bounds |
 | B | `perf/coalesce-stroke-previews` — PR #190 (open) | One live stroke preview per animation frame instead of per `pointermove` (a 12k-point stroke took ~5 min); skip identity canvas filters. Queued follow-up: stroke-start decode latency (~2 s at 10.8 MP) and per-stroke full-layer PNG commit cost (dirty-rect or tiled layer storage) |
 | C | `perf/fast-large-radius-filters` — PR #191 (open) | Gaussian Blur radius 24 timed out the render worker on 10.8 MP; radius-independent O(1)-per-pixel blurs, faster median filters and a work-scaled render watchdog. Queued follow-up: fractional / on-canvas Radial Blur centres and multi-filter stacks on raster layers without Rasterize |
+| C2 | `perf/fast-remaining-filters` — PR open, not merged | Follow-up to #191 for the filters still slow on 10.8 MP layers: Shape Blur 9× (O(radius) integer prefix sums), Smart Blur / Smart Sharpen / Reduce Noise ~4–4.5×, Surface Blur 2×, Spin/Radial/Lens 1.8–2.8×, byte-identical or ≤ 1 level against oracle tests (see `performance-budgets.md`). Not reached: < 1 s/MP for the O(radius²) bilateral family (~2.3–3.6 s/MP at radius 8) and legacy Path Blur (~2 s/MP); queued follow-up: band-parallel nested workers or Wasm SIMD |
 | D | `fix/retouch-selection-and-clone-source` — PR open, not merged | Clone Stamp, Healing Brush and the other retouch tools respect the active selection; an Alt-click clone source set while the previous stroke is still committing is no longer dropped; "Mask from selection" consumes (deselects) the selection |
 | E | `feat/glow-styles-and-blend-modes` — PR #197 open, not merged | Blend modes colour dodge/burn, linear dodge/burn, soft/hard light, exclusion, hue, saturation, colour and luminosity; Outer Glow and Inner Glow layer styles; larger shadow ranges |
 | F | `feat/brush-gradient-options` — no remote branch yet | Brush spacing and scatter above 100%, count and count jitter, a true pen lift at pressure 0; Gradient Replace mode, blend modes and opacity |
@@ -187,6 +188,31 @@ merged. Companion of the effects polish on `feat/effects-retouch-polish`.
 | No live gradient preview (#194) | Dragging renders the gradient live through the #190 preview scheduler; release commits one undo step | `gradient-mode-contract.md`; `tests/browser/retouch-brush-polish.spec.ts` |
 | Count jitter only lowers the count (#194) | Symmetric ±Count × jitter, clamped 1–16, deterministic | `brush-dynamics-contract.md`; `tests/brush-spacing-count.test.mjs`, browser spec |
 | First dab with Scatter both axes off used both axes (#194) | The first dab waits for the next point and scatters perpendicular to it | `brush-dynamics-contract.md`; same tests |
+| Gradient preview re-rendered the whole large layer per frame (#201 limitation) | Preview renders only the selection box or layer at ≤ 1.5 MP per frame and upscales it; commit stays full resolution | `gradient-mode-contract.md`; `tests/retouch-preview-cache.test.mjs`, browser spec (2400×1000) |
+| Selection snapshot re-encoded on every selection change (#201 limitation) | Cache by selection value + placement, then by 64-bit mask digest; ids only, bounded to 16 | `spot-healing-contract.md`, `patch-tool-contract.md`; same tests |
+
+Remaining: a reduced gradient preview can differ from the commit by a few
+levels and previews Noise/Dither at that scale; the full-document composite
+per preview frame is unchanged; a never-seen selection still costs one
+rasterization and PNG encode.
+
+### Fix wave 2 polish — effects (branch `feat/effects-retouch-polish`)
+
+Follow-ups of limitations documented by #197 and #199. Merged as #204
+(`4552ed6`); deployment not recorded here. The companion retouch/brush
+items (Spot Healing/Patch selections, live gradient preview, Count jitter) are
+on `feat/retouch-brush-polish` (#201).
+
+| Item | Change | Contract | Remaining limitations |
+| --- | --- | --- | --- |
+| Glow/shadow blend modes blended only against the layer's own pixels (#197) | A non-Normal Outer Glow or Drop Shadow composites onto the pixels beneath the layer in its own pass; Drop Shadow gains a blend mode (default Normal); same `renderFrame` path for viewport, worker, export and merge/flatten | `layer-styles-contract.md` | Folder members see only the folder's lower members; clipped layers' outer effects see no backdrop; no Knockout/Fill opacity |
+| Drop/Inner shadow falloff linear at large radii (#197) | **Falloff: Gaussian / Linear (legacy)**; Gaussian (three matched box passes from #191, up to 250 px) is the default for new layers; stored shadows without the field keep the box pass and identical pixels | `layer-styles-contract.md` | ≈20% slower than the box pass at large radii (local measurement) |
+| Stacked filters could not be edited in place (#199) | **Edit stacked filter** points the Filter effects controls at a stack entry; one undo step per change; position and hidden state kept; #185 key follows the normalised stack | `smart-filters-contract.md` | Per-filter blend modes and masks still staged |
+
+Evidence: `tests/effects-polish.test.mjs` and
+`tests/browser/effects-polish.spec.ts` (desktop and mobile). Local results
+and CI are reported on the PR; nothing here is CI-verified, deployed or live
+accepted until recorded separately.
 
 ## Latest protected release evidence
 

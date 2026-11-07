@@ -9,6 +9,18 @@
 
 import { deinterlacePixels, effectiveDeinterlaceSettings, validDeinterlaceSettings, type DeinterlaceSettings } from './deinterlace.ts';
 import { isGradientStops, normalizeGradientStops, type GradientStop } from './gradientStops.ts';
+import {
+  fastEllipseSpinBlur,
+  fastLegacyPathBlur,
+  fastLensBlur,
+  fastPathBlur,
+  fastReduceNoise,
+  fastShapeBlur,
+  fastSmartBlur,
+  fastSpinRadialBlur,
+  fastSurfaceBlur,
+  fastZoomRadialBlur,
+} from './fastNeighborhoodFilters.ts';
 
 export const FILTER_EFFECT_TYPES = [
   'none',
@@ -764,27 +776,7 @@ function applyLensBlur(
       Math.round(Math.sin(sample * goldenAngle) * distance),
     ]);
   }
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (const [dx, dy] of offsets) {
-        const sx = clamp(x + dx, 0, width - 1);
-        const sy = clamp(y + dy, 0, height - 1);
-        const offset = (sy * width + sx) * 4;
-        const alpha = source[offset + 3];
-        red += source[offset] * alpha;
-        green += source[offset + 1] * alpha;
-        blue += source[offset + 2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + red / weight * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + green / weight * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + blue / weight * strength);
-    }
-  }
+  fastLensBlur(source, width, height, offsets, output, strength);
 }
 
 /**
@@ -828,50 +820,7 @@ function applySmartBlur(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const bounded = Math.max(1, Math.min(8, Math.round(radius)));
-  const similarityScale = 18 + bounded * 2;
-  // The spatial Gaussian depends only on the offset; tabulate it once.
-  const side = bounded * 2 + 1,
-    spatialTable = new Float64Array(side * side);
-  for (let dy = -bounded; dy <= bounded; dy += 1)
-    for (let dx = -bounded; dx <= bounded; dx += 1)
-      spatialTable[(dy + bounded) * side + dx + bounded] = Math.exp(-(dx * dx + dy * dy) / (2 * bounded * bounded));
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      const destinationAlpha = source[destination + 3];
-      if (destinationAlpha === 0) continue;
-      const targetLuma =
-        source[destination] * 0.2126 +
-        source[destination + 1] * 0.7152 +
-        source[destination + 2] * 0.0722;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (let dy = -bounded; dy <= bounded; dy += 1) {
-        for (let dx = -bounded; dx <= bounded; dx += 1) {
-          const sx = x + dx, sy = y + dy;
-          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-          const sampleOffset = (sy * width + sx) * 4;
-          const alpha = source[sampleOffset + 3] / 255;
-          if (!alpha) continue;
-          const spatial = spatialTable[(dy + bounded) * side + dx + bounded];
-          const sampleLuma =
-            source[sampleOffset] * 0.2126 +
-            source[sampleOffset + 1] * 0.7152 +
-            source[sampleOffset + 2] * 0.0722;
-          const similarity = Math.exp(-Math.abs(sampleLuma - targetLuma) / similarityScale);
-          const sampleWeight = spatial * similarity * alpha;
-          red += source[sampleOffset] * sampleWeight;
-          green += source[sampleOffset + 1] * sampleWeight;
-          blue += source[sampleOffset + 2] * sampleWeight;
-          weight += sampleWeight;
-        }
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
-    }
-  }
+  fastSmartBlur(source, width, height, radius, output, strength);
 }
 
 /**
@@ -888,43 +837,7 @@ function applySurfaceBlur(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const bounded = Math.max(1, Math.min(8, Math.round(radius)));
-  const threshold = 12 + bounded * 3;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (!source[destination + 3]) continue;
-      const targetLuma =
-        source[destination] * 0.2126 +
-        source[destination + 1] * 0.7152 +
-        source[destination + 2] * 0.0722;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (let dy = -bounded; dy <= bounded; dy += 1) {
-        for (let dx = -bounded; dx <= bounded; dx += 1) {
-          const sx = x + dx, sy = y + dy;
-          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-          const sampleOffset = (sy * width + sx) * 4;
-          const alpha = source[sampleOffset + 3] / 255;
-          if (!alpha) continue;
-          const sampleLuma =
-            source[sampleOffset] * 0.2126 +
-            source[sampleOffset + 1] * 0.7152 +
-            source[sampleOffset + 2] * 0.0722;
-          if (Math.abs(sampleLuma - targetLuma) > threshold) continue;
-          const spatialWeight = 1 / (1 + dx * dx + dy * dy);
-          const sampleWeight = spatialWeight * alpha;
-          red += source[sampleOffset] * sampleWeight;
-          green += source[sampleOffset + 1] * sampleWeight;
-          blue += source[sampleOffset + 2] * sampleWeight;
-          weight += sampleWeight;
-        }
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
-    }
-  }
+  fastSurfaceBlur(source, width, height, radius, output, strength);
 }
 
 /**
@@ -978,34 +891,7 @@ function applyShapeBlur(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const bounded = Math.max(1, Math.min(12, Math.round(radius)));
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (!source[destination + 3]) continue;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (let dy = -bounded; dy <= bounded; dy += 1) {
-        for (let dx = -bounded; dx <= bounded; dx += 1) {
-          const distance = Math.abs(dx) + Math.abs(dy);
-          if (distance > bounded) continue;
-          const sx = x + dx, sy = y + dy;
-          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-          const sampleOffset = (sy * width + sx) * 4;
-          const alpha = source[sampleOffset + 3] / 255;
-          if (!alpha) continue;
-          const sampleWeight = (bounded + 1 - distance) * alpha;
-          red += source[sampleOffset] * sampleWeight;
-          green += source[sampleOffset + 1] * sampleWeight;
-          blue += source[sampleOffset + 2] * sampleWeight;
-          weight += sampleWeight;
-        }
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
-    }
-  }
+  fastShapeBlur(source, width, height, radius, output, strength);
 }
 
 function applyAverageBlur(
@@ -1203,9 +1089,11 @@ const GAUSSIAN_COLUMN_BLOCK = 16;
  * variance best matches the truncated Gaussian kernel used for `radius`, while
  * the cascade support (sum of half-widths) never exceeds the radius. The tiled
  * renderer depends on that support bound: its tile overlap is the radius.
+ * `maxRadius` defaults to the Gaussian Blur filter's 64 px bound; layer-style
+ * shadows reuse the same cascade up to their own 250 px bound.
  */
-export function gaussianBoxHalfWidths(radius: number, passes = GAUSSIAN_BOX_PASSES): number[] {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius))),
+export function gaussianBoxHalfWidths(radius: number, passes = GAUSSIAN_BOX_PASSES, maxRadius = 64): number[] {
+  const bounded = Math.max(1, Math.min(maxRadius, Math.round(radius))),
     sigma = Math.max(0.5, bounded / 3);
   let total = 0,
     variance = 0;
@@ -1592,52 +1480,7 @@ function applyRadialBlur(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
-  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
-  const sampleCount = 8;
-  const sweep = (bounded * Math.PI) / 180;
-  const mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const dx = x - centerPixelX;
-      const dy = y - centerPixelY;
-      const distance = Math.hypot(dx, dy);
-      if (distance < 0.5) continue;
-      const baseAngle = Math.atan2(dy, dx);
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
-        const angle = baseAngle + (sweep * sampleIndex) / sampleCount;
-        const sample = sourcePixel(
-          source,
-          width,
-          height,
-          centerPixelX + Math.cos(angle) * distance,
-          centerPixelY + Math.sin(angle) * distance,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(
-        source[destination] * (1 - mix) + (sums[0] / weight) * mix,
-      );
-      output[destination + 1] = clampByte(
-        source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix,
-      );
-      output[destination + 2] = clampByte(
-        source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix,
-      );
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastSpinRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
 }
 
 /**
@@ -1655,45 +1498,7 @@ function applyZoomRadialBlur(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
-  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
-  const sampleCount = 8;
-  const spread = bounded / 64 * 0.65;
-  const mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const dx = x - centerPixelX;
-      const dy = y - centerPixelY;
-      const distance = Math.hypot(dx, dy);
-      if (distance < 0.5) continue;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
-        const scale = 1 + (spread * sampleIndex) / sampleCount;
-        const sample = sourcePixel(
-          source,
-          width,
-          height,
-          centerPixelX + dx * scale,
-          centerPixelY + dy * scale,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastZoomRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
 }
 
 /**
@@ -1715,62 +1520,10 @@ function applySpinBlur(
   ellipse?: SpinBlurEllipse,
 ): void {
   if (!ellipse) {
-    applyRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
+    fastSpinRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
     return;
   }
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
-  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
-  const rotation = (ellipse.rotation * Math.PI) / 180;
-  const cosine = Math.cos(rotation), sine = Math.sin(rotation);
-  const sampleCount = 8;
-  const sweep = (bounded * Math.PI) / 180;
-  const mix = clamp(strength, 0, 1);
-  const feather = clamp(ellipse.feather, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const dx = x - centerPixelX, dy = y - centerPixelY;
-      const rotatedX = dx * cosine + dy * sine;
-      const rotatedY = -dx * sine + dy * cosine;
-      const ellipseDistance = Math.hypot(
-        rotatedX / Math.max(1, ellipse.radiusX * width),
-        rotatedY / Math.max(1, ellipse.radiusY * height),
-      );
-      if (ellipseDistance >= 1) continue;
-      const mask = feather <= 0 || ellipseDistance <= 1 - feather
-        ? 1
-        : clamp((1 - ellipseDistance) / feather, 0, 1);
-      const distance = Math.hypot(dx, dy);
-      if (distance < 0.5) continue;
-      const baseAngle = Math.atan2(dy, dx);
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
-        const angle = baseAngle + (sweep * sampleIndex) / sampleCount;
-        const sample = sourcePixel(
-          source,
-          width,
-          height,
-          centerPixelX + Math.cos(angle) * distance,
-          centerPixelY + Math.sin(angle) * distance,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      const blend = mix * mask;
-      output[destination] = clampByte(source[destination] * (1 - blend) + (sums[0] / weight) * blend);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - blend) + (sums[1] / weight) * blend);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - blend) + (sums[2] / weight) * blend);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastEllipseSpinBlur(source, width, height, radius, centerX, centerY, output, strength, ellipse);
 }
 
 /**
@@ -1795,129 +1548,12 @@ function applyPathBlur(
   pathTaper = 0,
 ): void {
   if (!path || path.length < 2) {
-    applyLegacyPathBlur(source, width, height, radius, angle, centerX, centerY, output, strength);
+    fastLegacyPathBlur(source, width, height, radius, angle, centerX, centerY, output, strength);
     return;
   }
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const points = path.map((point) => ({ x: point.x * (width - 1), y: point.y * (height - 1), speed: point.speed }));
-  const segments = points.slice(0, -1).map((start, index) => {
-    const end = points[index + 1];
-    const dx = end.x - start.x, dy = end.y - start.y;
-    return { start, end, dx, dy, lengthSquared: Math.max(1e-6, dx * dx + dy * dy), length: Math.hypot(dx, dy) };
-  });
-  const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0);
-  const mix = clamp(strength, 0, 1);
-  const sampleCount = 8;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      let bestDistance = Infinity, bestT = 0, bestSegment = segments[0], distanceAlong = 0, bestDistanceAlong = 0;
-      for (const segment of segments) {
-        const projection = clamp(((x - segment.start.x) * segment.dx + (y - segment.start.y) * segment.dy) / segment.lengthSquared, 0, 1);
-        const nearestX = segment.start.x + segment.dx * projection;
-        const nearestY = segment.start.y + segment.dy * projection;
-        const distance = Math.hypot(x - nearestX, y - nearestY);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestT = projection;
-          bestSegment = segment;
-          bestDistanceAlong = distanceAlong + segment.length * projection;
-        }
-        distanceAlong += segment.length;
-      }
-      const influence = clamp(1 - bestDistance / Math.max(1, bounded * 2), 0, 1);
-      if (influence <= 0) continue;
-      const speedStart = bestSegment.start.speed, speedEnd = bestSegment.end.speed;
-      const speed = (speedStart + (speedEnd - speedStart) * bestT) / 100;
-      const taperDistance = totalLength > 0 ? bestDistanceAlong / totalLength : 0;
-      const taper = 1 - clamp(pathTaper, 0, 1) * Math.max(taperDistance, 1 - taperDistance);
-      const length = bounded * Math.max(0, speed) * taper;
-      if (length < 0.5) continue;
-      const direction = Math.atan2(bestSegment.dy, bestSegment.dx) + (angle * Math.PI) / 180;
-      const tangentX = Math.cos(direction), tangentY = Math.sin(direction);
-      const start = pathCentered ? -sampleCount : 0;
-      const end = pathCentered ? sampleCount : sampleCount;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let index = start; index <= end; index += 1) {
-        const t = index / sampleCount;
-        const sample = sourcePixelBilinear(source, width, height, x + tangentX * length * t, y + tangentY * length * t);
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      const blend = mix * influence;
-      output[destination] = clampByte(source[destination] * (1 - blend) + (sums[0] / weight) * blend);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - blend) + (sums[1] / weight) * blend);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - blend) + (sums[2] / weight) * blend);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastPathBlur(source, width, height, radius, angle, output, strength, path, pathCentered, pathTaper);
 }
 
-function applyLegacyPathBlur(
-  source: Uint8ClampedArray,
-  width: number,
-  height: number,
-  radius: number,
-  angle: number,
-  centerX: number,
-  centerY: number,
-  output: Uint8ClampedArray,
-  strength: number,
-): void {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const radians = (angle * Math.PI) / 180;
-  const tangentX = Math.cos(radians),
-    tangentY = Math.sin(radians),
-    normalX = -tangentY,
-    normalY = tangentX,
-    centrePixelX = clamp(centerX, 0, 1) * (width - 1),
-    centrePixelY = clamp(centerY, 0, 1) * (height - 1),
-    maxDimension = Math.max(1, Math.max(width, height)),
-    sampleCount = 8,
-    mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      // Points farther from the centre bend more strongly, while the centre
-      // remains a straight directional path and therefore predictable.
-      const centreOffset =
-        ((x - centrePixelX) * normalX + (y - centrePixelY) * normalY) /
-        maxDimension;
-      const curve = clamp(centreOffset, -1, 1) * bounded * 0.85;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let index = -sampleCount; index <= sampleCount; index += 1) {
-        const t = index / sampleCount;
-        const sample = sourcePixelBilinear(
-          source,
-          width,
-          height,
-          x + tangentX * bounded * t + normalX * curve * t * t,
-          y + tangentY * bounded * t + normalY * curve * t * t,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
-}
 
 function applyMosaic(
   source: Uint8ClampedArray,
@@ -3797,32 +3433,7 @@ function applyReduceNoise(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const radius = clamp(Math.round(effect.radius), 1, 8);
-  const preserve = clamp(Math.round(effect.threshold ?? 25), 1, 255);
-  const mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    const destination = (y * width + x) * 4;
-    if (!source[destination + 3]) continue;
-    const baseR = source[destination], baseG = source[destination + 1], baseB = source[destination + 2];
-    let sumR = 0, sumG = 0, sumB = 0, weight = 0;
-    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
-      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
-        const sample = (sy * width + sx) * 4;
-        if (!source[sample + 3]) continue;
-        const distance = Math.abs(source[sample] - baseR) + Math.abs(source[sample + 1] - baseG) + Math.abs(source[sample + 2] - baseB);
-        const similarity = Math.max(0, 1 - distance / (preserve * 3));
-        const spatial = 1 / (1 + Math.hypot(sx - x, sy - y));
-        const sampleWeight = similarity * spatial;
-        sumR += source[sample] * sampleWeight;
-        sumG += source[sample + 1] * sampleWeight;
-        sumB += source[sample + 2] * sampleWeight;
-        weight += sampleWeight;
-      }
-    if (!weight) continue;
-    output[destination] = clampByte(baseR + (sumR / weight - baseR) * mix);
-    output[destination + 1] = clampByte(baseG + (sumG / weight - baseG) * mix);
-    output[destination + 2] = clampByte(baseB + (sumB / weight - baseB) * mix);
-  }
+  fastReduceNoise(source, width, height, effect.radius, effect.threshold ?? 25, output, strength);
 }
 
 /**

@@ -36,8 +36,9 @@ frames may now use bounded Worker/OffscreenCanvas rendering through a full-frame
 path with
 cooperative cancellation and a monotonic completed-layer status; the same
 status and cancellation guard the Canvas2D fallback. The documented 16
-megapixel canvas, 64 megapixel raster-frame, 64 MiB portable project, and 64
-megapixel decoded-cache limits are safety budgets. Worker image encoding now
+megapixel canvas, device-aware raster-frame (up to 1,024 MP stored on
+desktops), 1 GiB portable project, and 16–64 megapixel decoded-cache limits
+are safety budgets. Worker image encoding now
 uses the shared bounded row-major tile schedule (16 MiB expanded-RGBA batch
 budget, 64 MiB hard ceiling), while document rendering still publishes a
 full-frame result for unsupported effects. The visible adapter routes bounded

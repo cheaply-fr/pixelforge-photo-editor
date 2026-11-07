@@ -43,10 +43,10 @@ test('history capacity is 10x the previous 24 steps / 32 MB budget on desktop', 
   assert.equal(HISTORY_DESKTOP_BYTES, 320 * MIB);
   assert.equal(HISTORY_STANDARD_BYTES, 128 * MIB);
   assert.equal(HISTORY_LOW_MEMORY_BYTES, 96 * MIB);
-  assert.equal(DOCUMENT_MAX_ASSET_BYTES, 64 * MIB);
+  assert.equal(DOCUMENT_MAX_ASSET_BYTES, 1024 * MIB);
   assert.equal(DRAFT_HISTORY_MAX_STEPS, 24);
   assert.equal(DRAFT_HISTORY_MAX_BYTES, 64 * MIB);
-  assert.equal(DRAFT_HISTORY_MAX_ASSETS, 768);
+  assert.equal(DRAFT_HISTORY_MAX_ASSETS, 4096);
 });
 
 test('device tier selection lowers the budget for mobile and low-memory hints', () => {
