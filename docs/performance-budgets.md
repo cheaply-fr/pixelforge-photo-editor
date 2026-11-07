@@ -264,8 +264,77 @@ These are single-run local measurements on a shared development machine
 | Median, Dust & Scratches (cap 8) | 171–175 s | 0.8–1.0 s |
 | Motion Blur | 3.4 s | 1.7 s |
 
-Not yet changed (still O(radius²) or exp-heavy per sample): Smart Blur and
-Smart Sharpen (~13–16 s/MP at their radius-8 cap), Reduce Noise (~13 s/MP),
-Surface Blur (~5 s/MP), Shape Blur (~4 s/MP), Radial/Spin/Path Blur
-(~1.7–2.3 s/MP) and Lens Blur (~1 s/MP). On a 10.8 MP layer the slowest of
-these can still approach the scaled watchdog.
+### Remaining neighbourhood filters (`perf/fast-remaining-filters`)
+
+Smart Blur, Smart Sharpen, Surface Blur, Shape Blur, Reduce Noise, Lens,
+Radial (spin and zoom), Spin and Path Blur now run through
+`src/fastNeighborhoodFilters.ts`. `tests/fast-remaining-filters.test.mjs`
+keeps the previous per-pixel kernels as oracles:
+
+* **Byte-identical:** Surface Blur, Reduce Noise, Lens Blur, zoom Radial Blur,
+  authored and legacy Path Blur.
+* **≤ 1 level:** Smart Blur (range weight `exp(-|ΔL|/s)` factored into
+  per-pixel `exp(±L/s)`, no `exp` per sample) and Shape Blur (exact integer
+  double prefix sums: each diamond-kernel row is a 1-D tent, O(radius) per
+  pixel instead of O(radius²)); only .5 rounding ties can move, asserted on
+  < 0.2 % of channels. Smart Sharpen inherits Smart Blur's reference, so a
+  rare channel can move a few levels (asserted ≤ 12, mean < 0.05).
+* **Rounding ties only:** spin Radial Blur and Spin Blur rotate the centre
+  offset with a cosine/sine table instead of `cos`/`sin` of the summed angle;
+  a sample within ~1e-12 px of a pixel-rounding boundary may pick its
+  neighbour (asserted mean < 0.05 levels, < 0.2 % of channels).
+
+Other changes: per-row kernel functions (V8 optimises them normally instead of
+repeatedly entering on-stack-replaced loops), padded per-band planar float
+copies so the bilateral-style windows have fixed bounds and no bounds checks,
+branch-free weights where the data makes branches unpredictable, tabulated
+spatial/similarity weights, merged duplicate Lens taps with interior offsets,
+and allocation-free bilinear sampling for Path Blur. Tiled and full-frame
+renders stay identical (pure seam tests), and cancellation/progress semantics
+are unchanged.
+
+Local, Node 24, single-threaded on a shared 2.4 GHz Xeon E5-2699A v4 at
+~40 % background load; best of 2 interleaved old/new runs at 1 MP, one run
+at 10.8 MP. Timings varied by up to ~1.5× between runs; these are not CI
+budgets.
+
+| Filter (radius) | 1 MP before → after (s/MP) | Speed-up | 2646×4096 before → after (s) |
+| --- | --- | ---: | --- |
+| Smart Blur (8) | 11.7 → 2.6 | 4.5× | 139.4 → 36.0 |
+| Smart Sharpen (8) | 11.8 → 2.9 | 4.1× | 139.7 → 36.4 |
+| Reduce Noise (8) | 13.7 → 3.0–3.6 | 4.5× | 148.0 → 46.7 |
+| Surface Blur (8) | 4.6 → 2.3 | 2.0× | 53.1 → 30.4 |
+| Shape Blur (12) | 5.0 → 0.55 | 9.2× | 59.3 → 7.6 |
+| Radial Blur, spin (32) | 1.5 → 0.68 | 2.2× | 21.4 → 10.5 |
+| Radial Blur, zoom (32) | 0.80 → 0.61 | 1.3× | 8.4 → 8.5 |
+| Spin Blur, ellipse (32) | 1.75 → 0.64 | 2.8× | 24.8 → 11.3 |
+| Path Blur, authored (32) | 0.47 → 0.37 | 1.3× | 3.0 → 2.2 |
+| Path Blur, legacy (32) | 2.0 → 2.0 | 1.0× | 26.2 → 22.9 |
+| Lens Blur (32) | 0.91 → 0.52 | 1.8× | 10.0 → 6.6 |
+
+In the browser (Playwright, 2000×2000 opaque noisy image, render worker,
+local run) Smart Blur, Smart Sharpen and Reduce Noise at radius 8 settled in
+12–21 s and Shape Blur at radius 12 in ~4 s, all with no watchdog notice;
+`tests/browser/fast-remaining-filters.spec.ts` asserts this under 40 s / 12 s
+watchdogs that the previous kernels (~45–60 s / ~20 s at 4 MP) would exceed.
+
+Still not under 1 s/MP, and why:
+
+* Smart Blur, Smart Sharpen, Surface Blur and Reduce Noise evaluate a
+  data-dependent, non-separable weight for every one of the (2r + 1)² = 289
+  samples at radius 8. A single-threaded JavaScript loop costs ~8–10 ns per
+  sample on this machine, so ~2.3–3.6 s/MP is close to the floor for an
+  exact (or ≤ 1 level) result. A bilateral grid or quantised-range histogram
+  would change the spatial kernel or the threshold decisions and move pixels
+  by several levels, so it was not adopted. Further gains need parallelism
+  (splitting a layer into row bands across nested workers) or Wasm SIMD.
+* Legacy Path Blur (records without authored points, the state of a freshly
+  applied Path Blur) keeps its per-sample rounded premultiplied bilinear
+  sample for byte-exact output; dropping that rounding measured only ~1.6×
+  faster and would change output, so it was left exact.
+
+On a 10.8 MP layer the bilateral family still needs ~30–47 s. That is now
+inside the scaled watchdog's ~95 s no-progress window for one layer (30 s +
+6 s/MP); before, the ~140–150 s Smart Blur, Smart Sharpen and Reduce Noise
+renders exceeded it. Tiled Smart/Surface renders report per-tile progress,
+but full-frame Reduce Noise and Smart Sharpen report progress only per layer.
