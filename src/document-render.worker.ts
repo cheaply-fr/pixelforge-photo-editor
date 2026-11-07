@@ -12,6 +12,7 @@ import type {
   TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
+import { CompositeCache } from './compositeCache.ts';
 import {
   clearLayerFilterCache,
   layerFilterCacheDelta,
@@ -63,6 +64,8 @@ const scope = globalThis as typeof globalThis & {
   postMessage: (message: Response, transfer?: Transferable[]) => void;
 };
 const cancelled = new Set<number>();
+/** Composite below the active layer, reused while the layers below are unchanged. */
+const compositeCache = new CompositeCache<HTMLCanvasElement>();
 let activeId: number | undefined;
 
 function cancellationError(): Error {
@@ -128,6 +131,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     // already in flight keeps its own references and stays correct.
     clearLayerFilterCache();
     clearDecodedAssetCache();
+    compositeCache.clear();
     if (activeId === undefined) releaseRetiredDecodedAssets();
     return;
   }
@@ -163,6 +167,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         request.assets,
         undefined,
         {
+          compositeCache,
           tiledRevision: request.id,
           tiledMaxWorkingBytes,
           isCancelled: () => cancelled.has(request.id),

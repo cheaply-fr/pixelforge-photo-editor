@@ -47,7 +47,7 @@ import {
   type Draft,
   type Settings,
 } from '../src/drafts';
-import { readPortableBundle, writePortableBundle } from '../src/portableBundle';
+import { PORTABLE_MAX_BYTES, readPortableBundle, writePortableBundle } from '../src/portableBundle';
 import { DEFAULT_DEINTERLACE_SETTINGS } from '../src/deinterlace';
 import {
   useMember,
@@ -59,10 +59,9 @@ import {
 } from '../src/cloud';
 import { primeWorkerDecodedAsset } from '../src/workerRender';
 import {
-  addAsset,
+  addAsset as addDocumentAsset,
   primeDecodedAsset,
   formatMegapixels,
-  LAYER_PIXEL_BUDGET,
   layerPixelUsage,
   identity,
   colorSelectMask,
@@ -213,12 +212,21 @@ import {
   type TrimSides,
 } from '../src/canvasSize';
 import {
+  AUTO_TRIM_MARGIN,
+  autoTrimCandidates,
   canExpandRasterLayer,
   canTrimRasterLayer,
   EXPANDING_PAINT_TOOLS,
+  historySourceOffset,
   planLayerExpansion,
   planLayerTrim,
 } from '../src/layerTrim';
+import {
+  MAX_DOCUMENT_GROUPS,
+  MAX_DOCUMENT_LAYERS,
+  detectProjectLimits,
+  formatMebibytes,
+} from '../src/projectLimits';
 import {
   alignmentDelta,
   distributionDeltas,
@@ -263,6 +271,21 @@ import {
   type MaskRefinementStroke,
 } from '../src/maskRefinement';
 import { type ExportFormat } from '../src/export';
+import { downloadBlob, pickSaveFile, writeToFileHandle } from '../src/download';
+import {
+  clipboardImageFile,
+  imageFileFromClipboardItems,
+  isTextEditingTarget,
+  readClipboardImage,
+} from '../src/clipboardImage';
+import ReferencePanel from '../src/ReferencePanel';
+import {
+  createReferenceImage,
+  referenceObjectFit,
+  referenceSourcePixel,
+  referenceStoredSize,
+  type ReferenceImage,
+} from '../src/referenceImage';
 import ActionsPanel from '../src/ActionsPanel';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
@@ -726,6 +749,8 @@ type Command =
   | 'trim'
   | 'reveal-all'
   | 'project-save'
+  | 'project-save-as'
+  | 'reference-place'
   | 'file-info'
   | 'batch-export'
   | 'batch-images'
@@ -745,6 +770,7 @@ type Command =
   | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
+  | 'paste-clipboard-image'
   | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
@@ -1147,6 +1173,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
+    { label: 'Save project with file picker…', command: 'project-save-as' },
+    { label: 'Place reference image…', command: 'reference-place' },
     { label: 'File Info / Privacy…', command: 'file-info' },
     { label: 'Batch export history…', command: 'batch-export' },
     { label: 'Batch export images…', command: 'batch-images' },
@@ -1176,6 +1204,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Paste Image from Clipboard', command: 'paste-clipboard-image' },
     { label: 'Paste Special…', command: 'paste-special' },
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
@@ -2407,7 +2436,7 @@ export default function Home() {
       tiledProgress,
       tiledCacheBudget,
       historyBudget,
-      commit,
+      commit: commitDocument,
       install,
       select,
       setLayerSelection,
@@ -2544,18 +2573,30 @@ export default function Home() {
   }, []);
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
+  // The source is a layer pixel plus the layer placement it was picked in, so
+  // it stays on the same document point when the layer is later stored at
+  // different bounds (content-bounds storage, paint-time expansion).
   const [cloneSource, setCloneSource] = useState<{
     x: number;
     y: number;
+    matrix: Matrix;
   } | null>(null);
   // The latest source point, readable synchronously by the next pointer-down
   // even before React re-renders (an Alt-click right after a stroke on a
   // large document must not be lost or read stale).
-  const cloneSourceRef = useRef<{ x: number; y: number } | null>(null);
-  const chooseCloneSource = (point: { x: number; y: number }) => {
-    const next = { x: point.x, y: point.y };
+  const cloneSourceRef = useRef<{ x: number; y: number; matrix: Matrix } | null>(null);
+  const chooseCloneSource = (point: { x: number; y: number }, matrix: Matrix) => {
+    const next = { x: point.x, y: point.y, matrix };
     cloneSourceRef.current = next;
     setCloneSource(next);
+  };
+  /** The clone source in the given layer placement's pixel space. */
+  const cloneSourceIn = (matrix: Matrix): { x: number; y: number } | null => {
+    const source = cloneSourceRef.current;
+    if (!source) return null;
+    const [a, b, c, d, e, f] = source.matrix;
+    const documentPoint = { x: a * source.x + c * source.y + e, y: b * source.x + d * source.y + f };
+    return inversePoint(matrix, documentPoint) || { x: source.x, y: source.y };
   };
   const clearCloneSource = () => {
     cloneSourceRef.current = null;
@@ -3736,12 +3777,7 @@ export default function Home() {
         output.toBlob(resolve, 'image/png'),
       );
       if (!blob) throw new Error('Could not encode the slice');
-      const url = URL.createObjectURL(blob),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${plan.slices[0].name}.png`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(blob, `${plan.slices[0].name}.png`);
       setSliceName(plan.slices[0].name);
       setNotice(
         `Slice downloaded: ${plan.slices[0].name}.png · ${slice.width} × ${slice.height} px`,
@@ -4192,16 +4228,12 @@ export default function Home() {
           bounds: { w: f.w, h: f.h },
         },
       );
-      const url = URL.createObjectURL(
-          new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
-            type: 'application/json',
-          }),
-        ),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${savedSelectionName || 'selection'}.pixelselection`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(
+        new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
+          type: 'application/json',
+        }),
+        `${savedSelectionName || 'selection'}.pixelselection`,
+      );
       setNotice('Selection file downloaded');
     } catch (error) {
       setNotice(
@@ -4473,7 +4505,7 @@ export default function Home() {
   };
   const pasteLoremIpsum = () => {
     const f = current();
-    if (f.layers.length >= 32) {
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
       setNotice('Layer limit reached; remove a layer before inserting text');
       return;
     }
@@ -5949,8 +5981,8 @@ export default function Home() {
       return;
     }
     const f = current();
-    if (f.layers.length >= 32) {
-      setNotice('32-layer limit reached; remove a layer before generating an image');
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached; remove a layer before generating an image`);
       return;
     }
     try {
@@ -6295,11 +6327,28 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Color profile conversion failed; the draft is unchanged');
     }
   };
+  // Live filters render over the stored asset. A paint layer stored at its
+  // content bounds (or a new empty layer) is grown to the canvas first, so a
+  // generator such as Clouds or a blur covers the canvas, not the stored box.
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
     if (filterStackEditIndex !== null && type === 'none') {
       setNotice('Remove the stacked filter, or choose Done to edit the live filter');
       return;
     }
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (
+      type !== 'none' &&
+      layer?.kind === 'raster' &&
+      canTrimRasterLayer(layer) &&
+      rasterExpansionTarget(f)
+    ) {
+      void expandRasterLayerForPaint().then(() => applyFilterEffectChoice(type, label));
+      return;
+    }
+    applyFilterEffectChoice(type, label);
+  };
+  const applyFilterEffectChoice = (type: FilterEffectType, label: string) => {
     if (type !== 'none') {
       setLastFilterType(type);
       try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
@@ -6663,7 +6712,7 @@ export default function Home() {
         x.bezierCurveTo(350, y - 38, 610, y + 34, 980, y - 6);
         x.stroke();
       }
-      commit(rasterFrame(c, assets.current), true);
+      commitDocument(rasterFrame(c, assets.current), true);
       setViewZoomState(fittedZoom(stage.current, c.width, c.height));
       setReady(true);
     })();
@@ -6671,7 +6720,7 @@ export default function Home() {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, initialDraft, install, paint, restoreSettings]);
+  }, [assets, commitDocument, initialDraft, install, paint, restoreSettings]);
   // Advertise which draft this tab has open so a bookmark-less `/editor` tab
   // does not silently attach to it (see the opening effect above).
   useEffect(() => {
@@ -7002,16 +7051,28 @@ export default function Home() {
       setCloudBusy(false);
     }
   };
-  const exportProject = async () => {
+  const exportProject = async (withPicker = false) => {
+    const filename = (name || 'untitled') + '.pixelforge';
+    // Ask for the destination first, while the click's user activation is
+    // still valid; building a large bundle can outlast that window.
+    const picked = withPicker ? await pickSaveFile(filename, window) : undefined;
+    if (picked?.status === 'cancelled') {
+      setNotice('Project save cancelled');
+      return;
+    }
     try {
       const blob = await writePortableBundle(documentValue());
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = (name || 'untitled') + '.pixelforge';
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setNotice('Editable project file downloaded');
+      if (picked?.status === 'picked') {
+        await writeToFileHandle(picked.handle, blob);
+        setNotice('Editable project file saved with the file picker');
+        return;
+      }
+      downloadBlob(blob, filename);
+      setNotice(
+        picked?.status === 'unavailable'
+          ? `${picked.reason} Editable project file downloaded instead`
+          : 'Editable project file downloaded',
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Project could not be downloaded');
     }
@@ -7020,8 +7081,8 @@ export default function Home() {
     if (!selected) return;
     const expected = current();
     try {
-      if (selected.size > 64 * 1024 * 1024)
-        throw new Error('Project file exceeds 64 MB');
+      if (selected.size > PORTABLE_MAX_BYTES)
+        throw new Error(`Project file exceeds ${formatMebibytes(PORTABLE_MAX_BYTES)} MB`);
       const saved = selected.type === 'application/json' || selected.name.toLowerCase().endsWith('.json')
         ? validateDraft(JSON.parse(await selected.text()))
         : await readPortableBundle(selected);
@@ -7311,8 +7372,8 @@ export default function Home() {
   };
   const addLayer = (layer: Layer) => {
     const f = current();
-    if (f.layers.length >= 32) {
-      setNotice('32-layer limit reached');
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       void paint(f);
       return false;
     }
@@ -7391,8 +7452,8 @@ export default function Home() {
       setNotice('Unlock all selected layers before grouping');
       return;
     }
-    if ((f.groups || []).length >= 32) {
-      setNotice('32-group limit reached');
+    if ((f.groups || []).length >= MAX_DOCUMENT_GROUPS) {
+      setNotice(`${MAX_DOCUMENT_GROUPS}-group limit reached`);
       return;
     }
     const group: Group = {
@@ -7635,10 +7696,13 @@ export default function Home() {
   };
   const addPaint = () => {
     const f = current();
+    // A new paint layer stores one transparent pixel; the first paint tool
+    // grows it to the canvas and the stroke is then stored at its content
+    // bounds, so empty layers cost nothing against the layer pixel budget.
     addLayer({
       ...commonLayer('Paint ' + f.layers.length),
       kind: 'raster',
-      asset: addAsset(assets.current, surface(f.w, f.h)),
+      asset: addAsset(assets.current, surface(1, 1)),
     });
     setTool('brush');
   };
@@ -7653,8 +7717,8 @@ export default function Home() {
       setNotice('Unlock all selected layers before duplicating');
       return;
     }
-    if (f.layers.length + layers.length > 32) {
-      setNotice('32-layer limit reached');
+    if (f.layers.length + layers.length > MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       return;
     }
     const copies = layers.map((layer) => ({
@@ -8106,6 +8170,9 @@ export default function Home() {
     if (layer) editLayer({ visible: !layer.visible });
   };
   const fillActiveLayer = async () => {
+    // A paint layer stored at its content bounds (or a new empty layer) is
+    // grown to the canvas first, so Fill covers the whole selection.
+    await expandRasterLayerForPaint();
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (
@@ -8159,7 +8226,7 @@ export default function Home() {
   };
   /** Paint an editable inner border from the current selection onto the active raster layer. */
   const strokeSelection = async () => {
-    const f = current(),
+    let f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (!f.selection) {
       setNotice('Create a selection before stroking it');
@@ -8176,6 +8243,13 @@ export default function Home() {
       setNotice('Stroke width must be a number');
       return;
     }
+    // Grow a layer stored at its content bounds so the border is not clipped.
+    const layerId = layer.id;
+    await expandRasterLayerForPaint();
+    f = current();
+    const expanded = f.layers.find((item) => item.id === layerId);
+    if (!f.selection || !expanded || expanded.kind !== 'raster') return;
+    layer = expanded;
     try {
       const image = await decodeAsset(assets.current[layer.asset]),
         output = surface(image.naturalWidth, image.naturalHeight),
@@ -8411,6 +8485,8 @@ export default function Home() {
                 ),
               }
             : {}),
+          // The reference guide is never flattened into pixels; keep it.
+          ...(f.reference ? { reference: f.reference } : {}),
           selectedLayerIds: [flattened.active],
         })
       )
@@ -8613,7 +8689,7 @@ export default function Home() {
    * Returns false only when the budget refuses the expansion and the press
    * starts outside the stored pixels, where the tool could not store anything.
    */
-  const expandRasterLayerForPaint = async (press: {
+  const expandRasterLayerForPaint = async (press?: {
     x: number;
     y: number;
   }): Promise<boolean> => {
@@ -8623,10 +8699,11 @@ export default function Home() {
     const { layer, source, plan } = target;
     const required =
       layerPixelUsage(f, assets.current) - source.w * source.h + plan.w * plan.h;
-    if (required > LAYER_PIXEL_BUDGET) {
+    if (required > detectProjectLimits().layerPixelBudget) {
       setNotice(
         `Layer pixel budget reached: this layer stays ${source.w} × ${source.h} px, so paint outside it is not stored. Merge or trim other layers to paint the whole canvas.`,
       );
+      if (!press) return true;
       const local = inversePoint(layer.matrix, press);
       return Boolean(
         local &&
@@ -8642,16 +8719,114 @@ export default function Home() {
       const buffer = surface(plan.w, plan.h);
       buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
       const asset = addAsset(assets.current, buffer);
-      commit({
-        ...f,
-        layers: f.layers.map((item) =>
-          item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
-        ),
-      });
+      // The expansion is pixel-identical, so it replaces the current history
+      // entry instead of adding one: undo is unaffected and the page does not
+      // reflow (e.g. a growing History list on phones) under the pointer.
+      const expanded = doc.amend(
+        {
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+          ),
+        },
+        f,
+      );
+      autoTrim.current.recent.clear();
+      if (expanded)
+        autoTrim.current.expansions.set(current(), { layerId: layer.id, before: f, source: [layer.asset, source] });
     } catch {
       // Painting continues inside the layer's existing bounds.
     }
     return true;
+  };
+  // Automatic layer storage. When a step replaces the pixels of a paint layer
+  // that is stored at its content bounds (a new empty layer, a trimmed or
+  // moved layer, or one just grown for a paint tool), the new pixels are
+  // stored at their bounding box (plus a small margin) in the same commit,
+  // so each stroke stays one undo step and sparse layers cost what they hold. The pixels come from the canvas the
+  // step just encoded, so this is synchronous and cannot race other edits.
+  const autoTrim = useRef({
+    /** History entries grown in place for a paint tool, by frame identity. */
+    expansions: new WeakMap<Frame, { layerId: string; before: Frame; source: [string, Assets[string]] }>(),
+    /** Assets already known to fit their content. */
+    known: new Set<string>(),
+    /** Source canvases of the most recently created assets. */
+    recent: new Map<string, HTMLCanvasElement>(),
+  });
+  const addAsset = (target: Assets, source: HTMLCanvasElement): string => {
+    const id = addDocumentAsset(target, source);
+    const recent = autoTrim.current.recent;
+    recent.delete(id);
+    recent.set(id, source);
+    while (recent.size > 4) recent.delete(recent.keys().next().value!);
+    return id;
+  };
+  const storeAtContentBounds = (value: Frame, base: Frame, expandedLayerId?: string): Frame => {
+    const state = autoTrim.current;
+    const ids = autoTrimCandidates(value, base, assets.current, state.known, expandedLayerId);
+    if (!ids.length) return value;
+    const replaced = new Map<string, { asset: string; matrix: Matrix }>();
+    for (const id of ids) {
+      const layer = value.layers.find((item) => item.id === id);
+      if (!layer || layer.kind !== 'raster') continue;
+      const source = state.recent.get(layer.asset),
+        stored = assets.current[layer.asset];
+      if (!source || !stored || source.width !== stored.w || source.height !== stored.h) continue;
+      try {
+        const context = source.getContext('2d');
+        if (!context) continue;
+        const plan = planLayerTrim(
+          context.getImageData(0, 0, stored.w, stored.h).data,
+          stored.w,
+          stored.h,
+          layer.matrix,
+          AUTO_TRIM_MARGIN,
+        );
+        if (!plan) {
+          state.known.add(layer.asset);
+          continue;
+        }
+        const cropped = surface(plan.crop.width, plan.crop.height);
+        cropped.getContext('2d')!.drawImage(source, -plan.crop.x, -plan.crop.y);
+        const asset = addAsset(assets.current, cropped);
+        state.known.add(asset);
+        replaced.set(id, { asset, matrix: plan.matrix });
+      } catch {
+        // Keep the full asset; storage optimisation is best effort.
+      }
+    }
+    if (!replaced.size) return value;
+    return {
+      ...value,
+      layers: value.layers.map((item) =>
+        replaced.has(item.id) && item.kind === 'raster' ? { ...item, ...replaced.get(item.id)! } : item,
+      ),
+    };
+  };
+  const commit = (value: Frame, replace = false, nextAssets?: Assets): boolean => {
+    if (replace) return commitDocument(value, replace, nextAssets);
+    const previous = current();
+    const expansion = previous ? autoTrim.current.expansions.get(previous) : undefined;
+    const stored = previous ? storeAtContentBounds(value, previous, expansion?.layerId) : value;
+    const committed = commitDocument(stored, false, nextAssets);
+    // Only canvases encoded for this step may be read back for trimming.
+    autoTrim.current.recent.clear();
+    // The entry below was grown in place for this step; restore its
+    // pixel-identical stored-bounds frame so undo returns to the compact layer.
+    if (committed && expansion && previous)
+      doc.restorePrevious(current(), previous, expansion.before, {
+        [expansion.source[0]]: expansion.source[1],
+      });
+    return committed;
+  };
+  // A paint-time expansion whose gesture ended without a commit (cancelled,
+  // or the tool made no change) is restored to its stored bounds.
+  const dropUnusedExpansion = () => {
+    const top = current();
+    const expansion = autoTrim.current.expansions.get(top);
+    if (gesture.current || expansionPointer.current || !expansion) return;
+    // The stored-bounds asset may have been released with the replaced entry.
+    doc.amend(expansion.before, top, 0, { [expansion.source[0]]: expansion.source[1] });
   };
   const applyMatting = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
@@ -8872,6 +9047,162 @@ export default function Home() {
       if (file.current) file.current.value = '';
       if (layerFile.current) layerFile.current.value = '';
     }
+  };
+  /**
+   * Paste an image from the operating-system clipboard as a new raster layer
+   * through the asynchronous Clipboard API (Edit → Paste Image from
+   * Clipboard, or the keyboard fallback below). Bytes stay local.
+   */
+  const pasteSystemClipboardImage = async () => {
+    const result = await readClipboardImage(
+      typeof navigator === 'undefined' ? undefined : navigator.clipboard,
+    );
+    if (!result.ok) {
+      setNotice(result.message);
+      return;
+    }
+    await load(clipboardImageFile(result.blob, result.type), true);
+  };
+  // Ctrl/Cmd+V normally produces a native `paste` event, handled by the
+  // document listener below. Some embedded browsers deliver the keydown but no
+  // paste event; if none arrives shortly, read the clipboard asynchronously.
+  const keyboardPasteFallback = useRef<number | undefined>(undefined);
+  const scheduleKeyboardPasteFallback = () => {
+    window.clearTimeout(keyboardPasteFallback.current);
+    keyboardPasteFallback.current = window.setTimeout(() => {
+      keyboardPasteFallback.current = undefined;
+      void pasteSystemClipboardImage();
+    }, 300);
+  };
+  useEffect(() => () => window.clearTimeout(keyboardPasteFallback.current), []);
+  useEffect(() => {
+    // Listen on the document, not the editor root: when focus is on <body>
+    // (fresh load, after a menu or dialog closes) the paste event targets the
+    // body and never reaches a handler on the application element.
+    const onPaste = (event: ClipboardEvent) => {
+      if (isTextEditingTarget(event.target)) return;
+      window.clearTimeout(keyboardPasteFallback.current);
+      keyboardPasteFallback.current = undefined;
+      if (!ready || cloudBusy || recovering || document.querySelector('dialog[open]')) return;
+      // The internal layer clipboard stays authoritative; Ctrl+V already
+      // pasted the copied layer from the keydown shortcut.
+      if (hasClipboard) return;
+      const image = imageFileFromClipboardItems(event.clipboardData?.items);
+      if (!image) {
+        if (event.clipboardData?.types.length)
+          setNotice('The clipboard does not contain an image.');
+        return;
+      }
+      event.preventDefault();
+      void load(clipboardImageFile(image, image.type), true);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  });
+  const referenceFile = useRef<HTMLInputElement>(null);
+  const referencePixels = useRef<{ asset: string; data: ImageData } | null>(null);
+  const chooseReferenceFile = () => {
+    if (current().reference?.locked) {
+      setNotice('Unlock the reference image before replacing it');
+      return;
+    }
+    referenceFile.current?.click();
+  };
+  /**
+   * Place (or replace) the document's reference image. It is decoded locally,
+   * stored downscaled and kept out of layers, export and the pixel budget.
+   */
+  const placeReference = async (selected?: File) => {
+    const reset = () => {
+      if (referenceFile.current) referenceFile.current.value = '';
+    };
+    const importInfo = selected ? describeImportFormat(selected.name, selected.type) : null;
+    if (!selected || !importInfo?.tryDecode) {
+      setNotice(importInfo?.disclosure || 'Choose a browser-readable image file');
+      reset();
+      return;
+    }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before placing a reference image');
+      reset();
+      return;
+    }
+    const original = current();
+    try {
+      if (selected.size > 64 * 1024 * 1024) throw new Error('Image file exceeds 64 MB');
+      const decoded = await decodeImportedRaster(selected, importInfo);
+      if (current() !== original) throw new Error('Document changed during import. Please try again.');
+      const size = referenceStoredSize(decoded.width, decoded.height);
+      let stored = decoded;
+      if (size.w !== decoded.width || size.h !== decoded.height) {
+        stored = surface(size.w, size.h);
+        const context = stored.getContext('2d')!;
+        context.imageSmoothingQuality = 'high';
+        context.drawImage(decoded, 0, 0, size.w, size.h);
+      }
+      const nextAssets = { ...assets.current };
+      const asset = addAsset(nextAssets, stored);
+      const previous = original.reference;
+      const reference: ReferenceImage = previous
+        ? { ...previous, asset, name: selected.name.slice(0, 160) }
+        : createReferenceImage(asset, selected.name);
+      if (commit({ ...original, reference }, false, nextAssets))
+        setNotice(
+          `Reference image placed (${size.w} × ${size.h} px); it is a guide only and is not exported`,
+        );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The reference image could not be opened');
+    } finally {
+      reset();
+    }
+  };
+  const updateReference = (patch: Partial<ReferenceImage>) => {
+    const f = current();
+    if (!f.reference) return;
+    const structural = ['opacity', 'fit', 'asset'].some((key) => key in patch);
+    if (f.reference.locked && structural) {
+      setNotice('Unlock the reference image to change it');
+      return;
+    }
+    commit({ ...f, reference: { ...f.reference, ...patch } });
+  };
+  const removeReference = () => {
+    const f = current();
+    if (!f.reference) return;
+    if (f.reference.locked) {
+      setNotice('Unlock the reference image before removing it');
+      return;
+    }
+    const { reference: _removed, ...rest } = f;
+    if (commit(rest)) setNotice('Reference image removed');
+  };
+  /** Sample the reference bitmap under a document point as #rrggbb. */
+  const sampleReference = async (x: number, y: number): Promise<string | null> => {
+    const f = current();
+    const reference = f.reference;
+    const asset = reference ? assets.current[reference.asset] : undefined;
+    if (!reference || !asset) return null;
+    const point = referenceSourcePixel(reference.fit, f.w, f.h, asset.w, asset.h, x, y);
+    if (!point) return null;
+    if (referencePixels.current?.asset !== reference.asset) {
+      const image = await decodeAsset(asset);
+      const scratch = surface(asset.w, asset.h);
+      const context = scratch.getContext('2d', { willReadFrequently: true })!;
+      context.drawImage(image, 0, 0);
+      referencePixels.current = {
+        asset: reference.asset,
+        data: context.getImageData(0, 0, asset.w, asset.h),
+      };
+    }
+    const { data } = referencePixels.current;
+    const offset = (point.y * data.width + point.x) * 4;
+    if (data.data[offset + 3] === 0) return null;
+    return (
+      '#' +
+      [data.data[offset], data.data[offset + 1], data.data[offset + 2]]
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('')
+    );
   };
   const importSmartObject = async (
     selected?: File,
@@ -9742,7 +10073,7 @@ export default function Home() {
         layer = f.layers.find((item) => item.id === f.active);
       if (layer?.kind === 'raster') {
         const p = point(e);
-        chooseCloneSource(inversePoint(layer.matrix, p) || p);
+        chooseCloneSource(inversePoint(layer.matrix, p) || p, layer.matrix);
         setNotice(
           `${tool === 'heal' ? 'Healing' : 'Clone'} source set; drag on the image to paint it`,
         );
@@ -9769,14 +10100,38 @@ export default function Home() {
         // The pointer may already be gone; the release replay handles it.
       }
       let proceed = true;
+      const before = canvas.current?.getBoundingClientRect();
+      // A clone/heal press samples the source chosen when it happened, even if
+      // an Alt-click picks a new source while the layer is being grown.
+      const pressSource = cloneSourceRef.current;
       try {
         proceed = await expandRasterLayerForPaint(point(e));
       } finally {
         expansionPointer.current = null;
       }
       if (!proceed) return;
-      await pointerDown(e, true);
-      if (pending.release) await pointerUp(pending.release);
+      // The expansion commit can reflow the page (e.g. on phones), moving the
+      // canvas under the pointer. Replay the press at the same document
+      // point it had when it happened.
+      const after = canvas.current?.getBoundingClientRect();
+      const replay = <T extends { clientX: number; clientY: number }>(event: T): T =>
+        before && after && (before.left !== after.left || before.top !== after.top)
+          ? (Object.create(event, {
+              clientX: { value: event.clientX + after.left - before.left },
+              clientY: { value: event.clientY + after.top - before.top },
+            }) as T)
+          : event;
+      const latestSource = cloneSourceRef.current;
+      cloneSourceRef.current = pressSource;
+      try {
+        await pointerDown(replay(e), true);
+      } finally {
+        if (latestSource !== pressSource) cloneSourceRef.current = latestSource;
+      }
+      if (pending.release) {
+        await pointerUp(replay(pending.release));
+        dropUnusedExpansion();
+      }
       return;
     }
     if (
@@ -10016,6 +10371,14 @@ export default function Home() {
       };
       canvas.current!.setPointerCapture(e.pointerId);
       setNotice('Rotate View: drag around the canvas; use Reset view to restore');
+      return;
+    }
+    if (tool === 'eyedropper' && current().reference?.sample && current().reference?.visible) {
+      const sampled = await sampleReference(p.x, p.y);
+      if (sampled) {
+        setColor(sampled);
+        setNotice('Color sampled from reference image');
+      } else setNotice('No reference pixel here; reference not sampled');
       return;
     }
     if (tool === 'eyedropper') {
@@ -10419,8 +10782,14 @@ export default function Home() {
             if (tool === 'art-history-brush' && (sourceLayer?.kind !== 'raster' || !sourceLayer.asset))
               throw new Error('Art History source does not contain this raster layer; choose another snapshot');
             if (sourceLayer?.kind === 'raster' && sourceLayer.asset) {
-              const candidate = await decodeAsset(assets.current[sourceLayer.asset]);
-              if (candidate.naturalWidth === currentImage.naturalWidth && candidate.naturalHeight === currentImage.naturalHeight) {
+              const candidate = await decodeAsset(assets.current[sourceLayer.asset]),
+                // Layers stored at their content bounds may sit at different
+                // bounds in the snapshot; align both in document space.
+                offset = historySourceOffset(layer.matrix, sourceLayer.matrix);
+              if (offset) {
+                source.getContext('2d')!.clearRect(0, 0, source.width, source.height);
+                source.getContext('2d')!.drawImage(candidate, offset.x, offset.y);
+              } else if (candidate.naturalWidth === currentImage.naturalWidth && candidate.naturalHeight === currentImage.naturalHeight) {
                 source.getContext('2d')!.clearRect(0, 0, source.width, source.height);
                 source.getContext('2d')!.drawImage(candidate, 0, 0);
               } else if (tool === 'art-history-brush') {
@@ -10588,9 +10957,9 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before Patch');
         return;
       }
-      const cloneSource = cloneSourceRef.current;
+      const cloneSource = cloneSourceIn(layer.matrix);
       if (!cloneSource) {
-        chooseCloneSource(local);
+        chooseCloneSource(local, layer.matrix);
         setNotice('Patch source set; drag on the image to paint the patch');
         return;
       }
@@ -10649,9 +11018,9 @@ export default function Home() {
       }
       // Option/Alt-click is handled before the gesture guard above so a
       // source click is never dropped; a first plain click also sets it.
-      const sourceAnchor = cloneSourceRef.current;
+      const sourceAnchor = cloneSourceIn(layer.matrix);
       if (!sourceAnchor) {
-        chooseCloneSource(local);
+        chooseCloneSource(local, layer.matrix);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
@@ -13351,6 +13720,7 @@ export default function Home() {
         }
         if (k === 'x' && !e.shiftKey) cutLayer();
         if (k === 'v' && !e.shiftKey && hasClipboard) pasteLayer();
+        if (browserImagePaste) scheduleKeyboardPasteFallback();
         if (k === 't') beginLayerTransform();
         return;
       }
@@ -13487,6 +13857,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -13515,6 +13886,8 @@ export default function Home() {
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') return revealAll();
     else if (command === 'project-save') void exportProject();
+    else if (command === 'project-save-as') void exportProject(true);
+    else if (command === 'reference-place') chooseReferenceFile();
     else if (command === 'file-info') setFileInfoOpen(true);
     else if (command === 'batch-export')
       setBatchExporting({
@@ -13570,6 +13943,7 @@ export default function Home() {
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'paste-clipboard-image') void pasteSystemClipboardImage();
     else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
@@ -14044,6 +14418,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -14095,11 +14470,13 @@ export default function Home() {
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
-        return !hasClipboard || frame.layers.length >= 32;
+        return !hasClipboard || frame.layers.length >= MAX_DOCUMENT_LAYERS;
+      case 'paste-clipboard-image':
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'paste-special':
-        return !hasClipboard || frame.layers.length >= 32;
+        return !hasClipboard || frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'new-layer':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'trim-layer':
         return !layer || locked || !canTrimRasterLayer(layer);
       case 'clear-layer':
@@ -14112,7 +14489,7 @@ export default function Home() {
             const candidate = frame.layers.find((item) => item.id === id);
             return !candidate || layerIsLocked(frame, candidate);
           }) ||
-          frame.layers.length + selectedIdsForFrame(frame).length > 32
+          frame.layers.length + selectedIdsForFrame(frame).length > MAX_DOCUMENT_LAYERS
         );
       case 'link-smart-objects':
         return (
@@ -14152,7 +14529,7 @@ export default function Home() {
             const candidate = frame.layers.find((item) => item.id === id);
             return !candidate || Boolean(candidate.groupId) || layerIsLocked(frame, candidate);
           }) ||
-          (frame.groups || []).length >= 32
+          (frame.groups || []).length >= MAX_DOCUMENT_GROUPS
         );
       case 'ungroup-layer':
         return (
@@ -14196,7 +14573,7 @@ export default function Home() {
       case 'prompt-to-edit':
         return !layer || !layer.visible || locked;
       case 'generate-image':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -14338,7 +14715,7 @@ export default function Home() {
       case 'transform-selection':
         return !frame.selection;
       case 'create-work-path':
-        return !frame.selection || frame.layers.length >= 32;
+        return !frame.selection || frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'define-custom-path':
         return !layer || layer.kind !== 'path' || locked;
       case 'update-custom-path':
@@ -14432,7 +14809,7 @@ export default function Home() {
       case 'text-on-path':
         return !layer || layer.kind !== 'text' || locked || !frame.layers.some((candidate) => candidate.kind === 'path');
       case 'paste-lorem':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'convert-to-shape':
         return !layer || layer.kind !== 'text' || locked || !layer.visible;
       case 'rasterize-type':
@@ -14586,21 +14963,15 @@ export default function Home() {
         setDrag(false);
         void load(e.dataTransfer.files[0]);
       }}
-      onPaste={(e) => {
-        // Keep the internal layer clipboard authoritative when it exists. If
-        // it does not, accept an image item from the browser/OS clipboard as
-        // a new editable raster layer. Text and unsupported clipboard types
-        // remain untouched so native editing controls keep their behavior.
-        if (hasClipboard) return;
-        const image = Array.from(e.clipboardData.items).find((item) =>
-          item.kind === 'file' && item.type.startsWith('image/'),
-        );
-        const file = image?.getAsFile();
-        if (!file) return;
-        e.preventDefault();
-        void load(file, true);
-      }}
     >
+      <input
+        ref={referenceFile}
+        data-testid="reference-input"
+        className="hidden"
+        type="file"
+        accept="image/*,.svg,.svgz,.heic,.heif,.tif,.tiff,.psd,.psb,.pdf"
+        onChange={(event) => void placeReference(event.target.files?.[0])}
+      />
       <input
         ref={layerFile}
         data-testid="layer-input"
@@ -15676,17 +16047,16 @@ export default function Home() {
               data-rendering={doc.rendering ? 'true' : 'false'}
               onPointerDown={(e) => void pointerDown(e)}
               onPointerMove={pointerMove}
-              onPointerUp={(e) => void pointerUp(e)}
-              onPointerCancel={(e) => void pointerUp(e)}
+              onPointerUp={(e) => void pointerUp(e).then(dropUnusedExpansion)}
+              onPointerCancel={(e) => void pointerUp(e).then(dropUnusedExpansion)}
               onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
             {frame && cloneSource && (tool === 'clone' || tool === 'heal')
               ? (() => {
-                  // The source is stored in the active layer's pixel space;
-                  // show it where the next stroke will sample on the canvas.
-                  const active = frame.layers.find((item) => item.id === frame.active),
-                    [a, b, c, d, e, f] = active?.kind === 'raster' ? active.matrix : [1, 0, 0, 1, 0, 0],
+                  // The source is stored in the layer placement it was picked
+                  // in; show it where the next stroke will sample on the canvas.
+                  const [a, b, c, d, e, f] = cloneSource.matrix,
                     x = a * cloneSource.x + c * cloneSource.y + e,
                     y = b * cloneSource.x + d * cloneSource.y + f,
                     arm = Math.max(10, Math.max(frame.w, frame.h) / 60);
@@ -15707,6 +16077,20 @@ export default function Home() {
                   );
                 })()
               : null}
+            {frame?.reference?.visible && assets.current[frame.reference.asset] && (
+              <img
+                className="reference-overlay"
+                data-testid="reference-overlay"
+                src={assets.current[frame.reference.asset].url}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                style={{
+                  opacity: frame.reference.opacity,
+                  objectFit: referenceObjectFit(frame.reference.fit),
+                }}
+              />
+            )}
             {quickMasking && (
               <canvas
                 ref={quickMaskOverlayCanvas}
@@ -18814,6 +19198,23 @@ export default function Home() {
             )}
             <p aria-live="polite">{cloudMessage}</p>
           </section>
+          {frame && (
+            <ReferencePanel
+              reference={frame.reference}
+              size={
+                frame.reference && assets.current[frame.reference.asset]
+                  ? {
+                      w: assets.current[frame.reference.asset].w,
+                      h: assets.current[frame.reference.asset].h,
+                    }
+                  : undefined
+              }
+              disabled={quickMasking}
+              choose={chooseReferenceFile}
+              update={updateReference}
+              remove={removeReference}
+            />
+          )}
         </aside>
       </div>
       <footer>

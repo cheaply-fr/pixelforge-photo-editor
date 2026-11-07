@@ -1,3 +1,4 @@
+import { validReferenceImage, type ReferenceImage } from './referenceImage.ts';
 import { rotateHuePixels } from './hue.ts';
 import {
   applyColorBalancePixels,
@@ -149,6 +150,20 @@ import {
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
+import {
+  COMPOSITE_CACHE_MIN_LAYERS,
+  compositeCheckpoint,
+  compositeLayerKeys,
+  type CompositeCache,
+} from './compositeCache.ts';
+import {
+  LAYER_PIXEL_CEILING,
+  MAX_DOCUMENT_GROUPS,
+  MAX_DOCUMENT_LAYERS,
+  assetByteBudgetMessage,
+  assetBytes,
+  detectProjectLimits,
+} from './projectLimits.ts';
 import {
   applyClippingAlpha,
   clippingBase,
@@ -456,6 +471,11 @@ export type Frame = {
   slices?: SliceRect[];
   /** Optional active slice pointer, validated against `slices`. */
   activeSliceId?: string;
+  /**
+   * Optional reference / guide image overlay. It is not a layer: export,
+   * flatten, merge and the layer pixel budget ignore it.
+   */
+  reference?: ReferenceImage;
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
@@ -1310,8 +1330,6 @@ export function effectiveTextLayer<T extends Layer>(
       : {}),
   } as T;
 }
-/** Total raster pixels the top-level layers of one document may store. */
-export const LAYER_PIXEL_BUDGET = 64000000;
 /** Format a pixel count as megapixels with at most one decimal place. */
 export function formatMegapixels(
   pixels: number,
@@ -1324,9 +1342,12 @@ export function formatMegapixels(
   return (rounded / 10).toFixed(1).replace(/\.0$/, '');
 }
 /** Clear, actionable message used when an edit would exceed the layer pixel budget. */
-export function layerPixelBudgetMessage(requiredPixels: number): string {
+export function layerPixelBudgetMessage(
+  requiredPixels: number,
+  budgetPixels: number = detectProjectLimits().layerPixelBudget,
+): string {
   return (
-    `Layer pixel budget reached: layers may store ${formatMegapixels(LAYER_PIXEL_BUDGET)} MP in total ` +
+    `Layer pixel budget reached: layers may store ${formatMegapixels(budgetPixels)} MP in total on this device ` +
     `and this edit needs ${formatMegapixels(requiredPixels, 'up')} MP. ` +
     'Merge or trim layers (Layer > Trim Layer to Content), or use a smaller canvas.'
   );
@@ -1334,10 +1355,15 @@ export function layerPixelBudgetMessage(requiredPixels: number): string {
 /** Distinct from the generic malformed-document error so the UI can explain it. */
 export class LayerPixelBudgetError extends Error {
   readonly requiredPixels: number;
-  constructor(requiredPixels: number) {
-    super(layerPixelBudgetMessage(requiredPixels));
+  readonly budgetPixels: number;
+  constructor(
+    requiredPixels: number,
+    budgetPixels: number = detectProjectLimits().layerPixelBudget,
+  ) {
+    super(layerPixelBudgetMessage(requiredPixels, budgetPixels));
     this.name = 'LayerPixelBudgetError';
     this.requiredPixels = requiredPixels;
+    this.budgetPixels = budgetPixels;
   }
 }
 /**
@@ -1374,7 +1400,7 @@ export function validateFrame(
     Number(value.w) * Number(value.h) > 16000000 ||
     !Array.isArray(value.layers) ||
     !value.layers.length ||
-    value.layers.length > 32
+    value.layers.length > MAX_DOCUMENT_LAYERS
   )
     return fail();
   if (value.imageSize !== undefined && !validImageSizeMetadata(value.imageSize))
@@ -1386,7 +1412,7 @@ export function validateFrame(
   const ids = new Set<string>();
   if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();
   const groups = Array.isArray(value.groups) ? value.groups : [];
-  if (groups.length > 32) return fail();
+  if (groups.length > MAX_DOCUMENT_GROUPS) return fail();
   for (const group of groups) {
     if (
       !record(group) ||
@@ -1778,9 +1804,54 @@ export function validateFrame(
   )
     return fail();
   if (!validId(value.active) || !ids.has(value.active)) return fail();
+  if (
+    value.reference !== undefined &&
+    (nestedDepth > 0 || !validReferenceImage(value.reference, assets))
+  )
+    return fail();
   // Checked last so malformed data keeps the generic error and a valid but
   // oversized stack gets an actionable explanation.
-  if (pixels > LAYER_PIXEL_BUDGET) throw new LayerPixelBudgetError(pixels);
+  if (pixels > LAYER_PIXEL_CEILING)
+    throw new LayerPixelBudgetError(pixels, LAYER_PIXEL_CEILING);
+}
+/**
+ * Device budget for an edit. validateFrame only enforces the device
+ * independent format ceiling, so a project made on a larger device still
+ * opens; an edit may not grow stored pixels past this device's budget, while
+ * edits that keep or reduce usage are always allowed.
+ */
+export function assertLayerPixelBudgetForEdit(
+  next: Pick<Frame, 'layers'>,
+  previous: Pick<Frame, 'layers'> | undefined,
+  assets: Assets,
+  budgetPixels: number = detectProjectLimits().layerPixelBudget,
+): void {
+  const pixels = layerPixelUsage(next, assets);
+  if (pixels <= budgetPixels) return;
+  if (previous && pixels <= layerPixelUsage(previous, assets)) return;
+  throw new LayerPixelBudgetError(pixels, budgetPixels);
+}
+/**
+ * Device byte budget for the PNG data an edit leaves referenced (`retained`
+ * is the history-trimmed asset set). As with pixels, an edit that does not
+ * grow the current frame's data is always allowed, so a project opened from a
+ * larger device remains editable.
+ */
+export function assertAssetByteBudgetForEdit(
+  retained: Assets,
+  next: Frame,
+  previous: Frame | undefined,
+  assets: Assets,
+  budgetBytes: number = detectProjectLimits().assetByteBudget,
+): void {
+  if (assetBytes(retained) <= budgetBytes) return;
+  if (
+    previous &&
+    assetBytes(referencedAssets([next], assets)) <=
+      assetBytes(referencedAssets([previous], assets))
+  )
+    return;
+  throw new Error(assetByteBudgetMessage(budgetBytes));
 }
 export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};
@@ -1791,6 +1862,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
       used[frame.previousSelection.mask] = assets[frame.previousSelection.mask];
     if (frame.quickMask?.asset && assets[frame.quickMask.asset])
       used[frame.quickMask.asset] = assets[frame.quickMask.asset];
+    if (frame.reference?.asset && assets[frame.reference.asset])
+      used[frame.reference.asset] = assets[frame.reference.asset];
     for (const entry of frame.savedSelections?.selections || []) {
       if (entry.selection.mask && assets[entry.selection.mask])
         used[entry.selection.mask] = assets[entry.selection.mask];
@@ -2210,6 +2283,11 @@ export type RenderOptions = {
    * cache; pass null to render every filter from scratch.
    */
   layerFilterCache?: ByteLruCache<CanvasImageSource> | null;
+  /**
+   * Reuse the composite below the active layer between renders of large
+   * stacks (see compositeCache.ts). Applies to the outermost render only.
+   */
+  compositeCache?: CompositeCache<HTMLCanvasElement>;
 };
 
 /** Render a raster layer's bounded style stack in local coordinates. */
@@ -2266,6 +2344,40 @@ function compositeFrameSurface(
 const softwareBlend = (layer: Pick<Layer, 'blend'>) =>
   !isNativeCanvasBlendMode(layer.blend);
 
+/**
+ * True when an ungrouped layer cannot change the composite, so the renderer
+ * skips it without decoding its asset or allocating surfaces: a fully
+ * transparent layer, or a plain raster layer whose stored bounds lie entirely
+ * outside the canvas. Adjustment layers and layers with styles, live filters
+ * or masks are never skipped by position because they can paint elsewhere.
+ */
+export function layerRenderSkippable(
+  layer: Layer,
+  frame: Pick<Frame, 'w' | 'h' | 'layers'>,
+  assets: Assets,
+): boolean {
+  if (layer.opacity === 0) return true;
+  if (layer.kind !== 'raster' || layer.fillColor !== undefined) return false;
+  const asset = assets[layer.asset];
+  if (!asset) return false;
+  const [a, b, c, d, e, f] = layer.matrix;
+  if (a !== 1 || b !== 0 || c !== 0 || d !== 1) return false;
+  if (
+    !isNeutralLayerStyles(layer.styles) ||
+    !isNeutralFilterEffects(effectiveFilterEffects(layer.adjustments.filterEffects)) ||
+    layer.smartFilters?.length ||
+    layer.vectorMask ||
+    layer.spotHealing?.length ||
+    layer.patchStrokes?.length ||
+    layer.contentAwareFills?.length ||
+    layer.contentAwareMoves?.length ||
+    layer.contentAwareScales?.length ||
+    // A clipping base defines where its clipped layers show.
+    frame.layers.some((item) => item.clippingTo === layer.id)
+  )
+    return false;
+  return e >= frame.w || f >= frame.h || e + asset.w <= 0 || f + asset.h <= 0;
+}
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
@@ -2275,15 +2387,53 @@ export async function renderFrame(
   const nestedDepth = options?.nestedDepth ?? 0;
   if (nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
     throw new Error('Nested Smart Object depth exceeds the local safety limit');
+  // The prefix composite cache applies to the outermost render only; nested
+  // folder, clipping and decorated-layer renders never see it.
+  const compositeCache =
+    nestedDepth === 0 && frame.layers.length >= COMPOSITE_CACHE_MIN_LAYERS
+      ? options?.compositeCache
+      : undefined;
+  if (options?.compositeCache) options = { ...options, compositeCache: undefined };
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group])),
     renderedGroups = new Set<string>();
   const reportProgress = (layerIndex: number) =>
     options?.onProgress?.(layerIndex + 1, frame.layers.length);
+  let startIndex = 0,
+    checkpoint = -1,
+    keys: string[] | undefined;
+  if (compositeCache) {
+    keys = compositeLayerKeys(frame, assets, overrides);
+    checkpoint = compositeCheckpoint(frame, overrides);
+    const hit = compositeCache.match(frame.w, frame.h, keys);
+    if (hit) {
+      // Every layer the snapshot holds is unchanged: start above it.
+      context.drawImage(hit.surface, 0, 0);
+      for (const id of hit.groups) renderedGroups.add(id);
+      startIndex = hit.index + 1;
+      reportProgress(hit.index);
+    }
+  }
   for (const [layerIndex, layer] of frame.layers.entries()) {
+    if (layerIndex < startIndex) continue;
     if (options?.isCancelled?.())
       throw new DOMException('Document rendering cancelled', 'AbortError');
+    if (compositeCache && keys && layerIndex === checkpoint + 1 && checkpoint >= startIndex) {
+      // Layers 0..checkpoint are complete: keep a copy for the next render.
+      const snapshot = compositeCache.reusable(frame.w, frame.h) ?? surface(frame.w, frame.h),
+        snapshotContext = snapshot.getContext('2d')!;
+      snapshotContext.clearRect(0, 0, frame.w, frame.h);
+      snapshotContext.drawImage(out, 0, 0);
+      compositeCache.store({
+        w: frame.w,
+        h: frame.h,
+        keys: keys.slice(0, checkpoint + 1),
+        index: checkpoint,
+        surface: snapshot,
+        groups: [...renderedGroups],
+      });
+    }
     if (
       options?.yieldEveryLayers &&
       layerIndex > 0 &&
@@ -2325,7 +2475,7 @@ export async function renderFrame(
       reportProgress(layerIndex);
       continue;
     }
-    if (!layer.visible) {
+    if (!layer.visible || layerRenderSkippable(layer, frame, assets)) {
       reportProgress(layerIndex);
       continue;
     }

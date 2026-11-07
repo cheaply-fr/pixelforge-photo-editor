@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { buildBatchExport, type BatchExportResult } from './batch';
 import { safeBatchStem } from './export';
+import { downloadBlob } from './download';
 import { COLOR_PROFILES, type ColorProfile } from './colorProfile';
 import type { Assets, Frame } from './document';
 import type { DocumentMetadata } from './metadata';
@@ -78,12 +79,7 @@ export default function BatchExportDialog({
 
   const download = () => {
     if (!result) return;
-    const url = URL.createObjectURL(result.blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${safeBatchStem(name)}-history.zip`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(result.blob, `${safeBatchStem(name)}-history.zip`);
     downloaded(
       `Batch export downloaded (${result.manifest.snapshotCount} snapshots, ${result.blob.size.toLocaleString()} bytes)`,
     );

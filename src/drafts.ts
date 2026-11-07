@@ -1,3 +1,9 @@
+import {
+  MAX_PROJECT_ASSETS,
+  PROJECT_ASSET_BYTES_CEILING,
+  assetBytes,
+  formatMebibytes,
+} from './projectLimits.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -658,7 +664,7 @@ export function validateDraft(
     !value.assets ||
     typeof value.assets !== 'object' ||
     Array.isArray(value.assets) ||
-    Object.keys(value.assets).length > 768 ||
+    Object.keys(value.assets).length > MAX_PROJECT_ASSETS ||
     Object.entries(value.assets).some(
       ([id, asset]) =>
         !validId(id) ||
@@ -682,14 +688,10 @@ export function validateDraft(
     }),
   }));
   history.forEach((frame) => validateFrame(frame, value.assets));
-  if (
-    Object.values(value.assets).reduce(
-      (total, asset) => total + asset.url.length,
-      0,
-    ) >
-    64 * 1024 * 1024
-  )
-    throw new Error('Project assets exceed 64 MB');
+  if (assetBytes(value.assets) > PROJECT_ASSET_BYTES_CEILING)
+    throw new Error(
+      `Project assets exceed ${formatMebibytes(PROJECT_ASSET_BYTES_CEILING)} MB`,
+    );
   return {
     ...value,
     version: CURRENT_DRAFT_VERSION,
