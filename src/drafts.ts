@@ -78,8 +78,18 @@ import {
   isDraftManifest,
   manifestAssetHashes,
   planDraftAssetWrites,
+  tileSha256,
   type DraftManifest,
 } from './draftAssetStore.ts';
+import {
+  TILE_SIZE,
+  hasTiledAssets,
+  isPngAsset,
+  isTiledAsset,
+  knownTile,
+  type AssetTile,
+  type PngAsset,
+} from './tiledAssets.ts';
 import { normalizeLayerSelection } from './layerSelection.ts';
 import {
   normalizeDocumentMetadata,
@@ -560,7 +570,7 @@ export const DRAFT_MIGRATIONS: Readonly<Record<number, DraftMigration>> = {
       if (!validAsset(shot))
         throw new Error('Saved image is invalid or too large');
       const asset =
-        Object.keys(assets).find((key) => assets[key].url === shot.url) ||
+        Object.keys(assets).find((key) => (assets[key] as PngAsset).url === shot.url) ||
         crypto.randomUUID();
       assets[asset] = shot;
       return {
@@ -714,19 +724,17 @@ export function validateDraft(
  * mutated ID is always validated and hashed again. Two generations bound the
  * retained strings to roughly the last two prepared drafts.
  */
-type VerifiedAsset = { url: string; w: number; h: number; hash?: string };
+type VerifiedAsset = { url?: string; tiled?: object; w: number; h: number; hash?: string };
 let verifiedAssets = new Map<string, VerifiedAsset>();
 let previousVerifiedAssets = new Map<string, VerifiedAsset>();
 
 function verifiedAsset(id: string, asset: unknown): VerifiedAsset | undefined {
   if (!record(asset)) return undefined;
   const entry = verifiedAssets.get(id) ?? previousVerifiedAssets.get(id);
-  return entry &&
-    entry.url === asset.url &&
-    entry.w === asset.w &&
-    entry.h === asset.h
-    ? entry
-    : undefined;
+  if (!entry || entry.w !== asset.w || entry.h !== asset.h) return undefined;
+  // A tiled asset and its tiles are immutable objects: identity is enough.
+  if (entry.tiled !== undefined) return entry.tiled === asset ? entry : undefined;
+  return entry.url === asset.url ? entry : undefined;
 }
 
 function rememberVerifiedAssets(
@@ -737,7 +745,7 @@ function rememberVerifiedAssets(
   for (const [id, asset] of Object.entries(assets)) {
     const known = verifiedAsset(id, asset);
     next.set(id, {
-      url: asset.url,
+      ...(isTiledAsset(asset) ? { tiled: asset } : { url: asset.url }),
       w: asset.w,
       h: asset.h,
       hash: hashes?.get(id) ?? known?.hash,
@@ -756,19 +764,34 @@ export function prepareDraftForStorage(value: unknown): Draft {
   return draft;
 }
 
-/** Asset ID → SHA-256, hashing only content not already hashed in this tab. */
-async function hashDraftAssets(assets: Assets): Promise<Map<string, string>> {
+/**
+ * Data-URL asset ID → SHA-256, hashing only content not already hashed in
+ * this tab, and tile key → SHA-256 of the tile PNG (memoized per tile).
+ */
+async function hashDraftAssets(
+  assets: Assets,
+): Promise<{ hashes: Map<string, string>; tiles: Map<string, { hash: string; blob: Blob }> }> {
   const entries = await Promise.all(
-    Object.entries(assets).map(async ([id, asset]) => {
-      const known = verifiedAsset(id, asset);
-      if (known?.hash) return [id, known.hash, false] as const;
-      const hash = await hashDraftAsset(asset.url);
-      if (known) known.hash = hash;
-      return [id, hash, true] as const;
-    }),
+    Object.entries(assets)
+      .filter((entry): entry is [string, PngAsset] => isPngAsset(entry[1]))
+      .map(async ([id, asset]) => {
+        const known = verifiedAsset(id, asset);
+        if (known?.hash) return [id, known.hash, false] as const;
+        const hash = await hashDraftAsset(asset.url);
+        if (known) known.hash = hash;
+        return [id, hash, true] as const;
+      }),
+  );
+  const unique = new Map<string, import('./tiledAssets.ts').AssetTile>();
+  for (const asset of Object.values(assets))
+    if (isTiledAsset(asset)) for (const tile of asset.tiles) if (tile) unique.set(tile.key, tile);
+  const tiles = new Map(
+    await Promise.all(
+      [...unique].map(async ([key, tile]) => [key, { hash: await tileSha256(tile), blob: tile.blob }] as const),
+    ),
   );
   lastSaveStats.hashedAssets = entries.filter(([, , hashed]) => hashed).length;
-  return new Map(entries.map(([id, hash]) => [id, hash]));
+  return { hashes: new Map(entries.map(([id, hash]) => [id, hash])), tiles };
 }
 
 /** Diagnostics for the most recent successful local save (tests and profiling). */
@@ -959,6 +982,51 @@ const MAX_PENDING_DRAFT_BYTES = 4 * 1024 * 1024;
 
 type PendingDraftRecord = { token?: string; draft: Draft };
 
+/**
+ * Tile key → SHA-256 of the tiles each draft's last committed manifest holds
+ * in IndexedDB (this tab only). A write-ahead snapshot of a tiled document is
+ * staged only when every tile it references is already stored, so recovery can
+ * take the tiles from the stored draft and the snapshot stays small JSON.
+ */
+const persistedTiles = new Map<string, ReadonlySet<string>>();
+const PENDING_TILES_MARK = 'pixelforge-pending-tiles';
+
+/** JSON for a snapshot: tiled assets are written as their tile keys. */
+function pendingSnapshotJson(token: string, draft: Draft, tiled: boolean): string {
+  return JSON.stringify({ token, ...(tiled ? { tiled: true } : {}), draft }, (_key, value: unknown) =>
+    isTiledAsset(value)
+      ? {
+          [PENDING_TILES_MARK]: true,
+          w: value.w,
+          h: value.h,
+          tileSize: value.tileSize,
+          tiles: value.tiles.map((tile) => (tile ? tile.key : null)),
+        }
+      : value,
+  );
+}
+
+/** Rebuild snapshot tiled assets from tiles this tab holds (the stored draft's). */
+function resolvePendingTiles(draft: unknown): unknown {
+  if (!record(draft) || !record(draft.assets)) return draft;
+  const assets: Record<string, unknown> = {};
+  for (const [id, asset] of Object.entries(draft.assets)) {
+    if (!record(asset) || asset[PENDING_TILES_MARK] !== true) {
+      assets[id] = asset;
+      continue;
+    }
+    if (!Array.isArray(asset.tiles) || asset.tileSize !== TILE_SIZE) throw new Error('Invalid pending draft');
+    const tiles = asset.tiles.map((key: unknown): AssetTile | null => {
+      if (key === null) return null;
+      const tile = typeof key === 'string' ? knownTile(key) : undefined;
+      if (!tile) throw new Error('Pending draft tiles are unavailable');
+      return tile;
+    });
+    assets[id] = { w: asset.w, h: asset.h, tileSize: TILE_SIZE, tiles };
+  }
+  return { ...draft, assets };
+}
+
 let pendingTokenCounter = 0;
 function newPendingToken(): string {
   const uuid =
@@ -1010,9 +1078,12 @@ export function nextPendingDraftRevision(
  * snapshot, so it only skips snapshots that could not have fit anyway.
  */
 export function estimatedPendingDraftBytes(value: Draft): number {
+  const used = referencedAssets(value.history, value.assets);
+  // Tile Blobs cannot be written as JSON; such drafts rely on IndexedDB.
+  if (hasTiledAssets(used)) return Number.POSITIVE_INFINITY;
   let total = 0;
-  for (const asset of Object.values(referencedAssets(value.history, value.assets)))
-    total += typeof asset?.url === 'string' ? asset.url.length : 0;
+  for (const asset of Object.values(used))
+    total += isPngAsset(asset) ? asset.url.length : 0;
   return total;
 }
 
@@ -1030,7 +1101,19 @@ export function stagePendingDraft(
   try {
     // Asset data URLs dominate the encoded size. Skip drafts that cannot fit
     // before validating or stringifying anything; IndexedDB stays authoritative.
-    if (estimatedPendingDraftBytes(value) > MAX_PENDING_DRAFT_BYTES)
+    // Tiled documents are written as tile keys, and only when every tile is
+    // already stored for this draft (a fresh stroke relies on IndexedDB).
+    const used = referencedAssets(value.history, value.assets);
+    const tiled = hasTiledAssets(used);
+    if (tiled) {
+      const stored = persistedTiles.get(id);
+      let pngBytes = 0;
+      for (const asset of Object.values(used)) {
+        if (isPngAsset(asset)) pngBytes += asset.url.length;
+        else if (!stored || asset.tiles.some((tile) => tile && !stored.has(tile.key))) return undefined;
+      }
+      if (pngBytes > MAX_PENDING_DRAFT_BYTES) return undefined;
+    } else if (estimatedPendingDraftBytes(value) > MAX_PENDING_DRAFT_BYTES)
       return undefined;
     const previous = readPendingDraft(id);
     const stagedRevision = nextPendingDraftRevision(
@@ -1043,7 +1126,7 @@ export function stagePendingDraft(
       localRevision: stagedRevision,
     });
     const token = newPendingToken();
-    const encoded = JSON.stringify({ token, draft: safe });
+    const encoded = pendingSnapshotJson(token, safe, tiled);
     if (encoded.length > MAX_PENDING_DRAFT_BYTES) return undefined;
     sessionStorage.setItem(PENDING_DRAFT_PREFIX + id, encoded);
     return token;
@@ -1053,14 +1136,28 @@ export function stagePendingDraft(
   }
 }
 
-function readPendingDraft(id: string): PendingDraftRecord | undefined {
+/**
+ * Read this tab's write-ahead snapshot. A tiled snapshot's revision and token
+ * are available without its tiles; `resolveTiles` rebuilds the full draft from
+ * the tiles of the stored draft (read first) and fails closed when any is
+ * missing.
+ */
+function readPendingDraft(id: string, resolveTiles = false): PendingDraftRecord | undefined {
   try {
     const encoded = sessionStorage.getItem(PENDING_DRAFT_PREFIX + id);
     if (!encoded) return undefined;
     const parsed: unknown = JSON.parse(encoded);
     if (record(parsed) && 'draft' in parsed) {
       const token = typeof parsed.token === 'string' ? parsed.token : undefined;
-      return { token, draft: validateDraft(parsed.draft) };
+      if (parsed.tiled === true && !resolveTiles) {
+        const revision = record(parsed.draft) ? parsed.draft.localRevision : undefined;
+        if (!validRevision(revision)) throw new Error('Invalid pending draft');
+        return { token, draft: { localRevision: revision } as Draft };
+      }
+      return {
+        token,
+        draft: validateDraft(parsed.tiled === true ? resolvePendingTiles(parsed.draft) : parsed.draft),
+      };
     }
     // Read snapshots written by the pre-token implementation.
     return { draft: validateDraft(parsed) };
@@ -1159,15 +1256,15 @@ async function readStoredDraft(
             );
             if ((draft.localRevision || 0) !== manifest.localRevision)
               throw new Error('Draft manifest revision mismatch');
+            persistedTiles.set(id, new Set(Object.keys(manifest.tileRefs || {})));
             // Every asset was just hash-verified and validated; remember that
             // so the first save after recovery stays incremental.
             rememberVerifiedAssets(
               draft.assets,
               new Map(
-                Object.entries(manifest.assetRefs).map(([assetId, ref]) => [
-                  assetId,
-                  ref.hash,
-                ]),
+                Object.entries(manifest.assetRefs).flatMap(([assetId, ref]) =>
+                  'hash' in ref ? [[assetId, ref.hash] as const] : [],
+                ),
               ),
             );
             resolve(draft);
@@ -1229,9 +1326,10 @@ export async function discardDraft(id: string, expectedRevision: number) {
 
 export async function readDraft(id: string): Promise<Draft | undefined> {
   if (!validId(id)) throw new Error('Invalid draft ID');
-  const pending = readPendingDraft(id);
   const db = await openDatabase();
   const saved = await readStoredDraft(db, id);
+  // Read after the stored draft: a tiled snapshot takes its tiles from it.
+  const pending = readPendingDraft(id, true);
   if (saved === undefined) return pending?.draft;
   if (
     !pending ||
@@ -1268,7 +1366,7 @@ function commitDraftManifest(
   id: string,
   expectedRevision: number,
   manifest: DraftManifest,
-  needed: ReadonlyMap<string, string>,
+  needed: ReadonlyMap<string, string | Blob>,
 ): Promise<{ assetWrites: number; assetDeletes: number; bytesWritten: number }> {
   return new Promise((resolve, reject) => {
     const stats = { assetWrites: 0, assetDeletes: 0, bytesWritten: 0 };
@@ -1297,7 +1395,7 @@ function commitDraftManifest(
         for (const [key, value] of plan.puts) {
           blobs.put(value, key);
           stats.assetWrites += 1;
-          stats.bytesWritten += value.bytes.byteLength;
+          stats.bytesWritten += 'blob' in value ? value.blob.size : value.bytes.byteLength;
         }
         for (const key of plan.deletes) blobs.delete(key);
         stats.assetDeletes = plan.deletes.length;
@@ -1346,12 +1444,19 @@ export async function saveDraft(
     // this tab are matched by identity instead of being re-scanned.
     const safeValue = prepareDraftForStorage(value);
     const db = await openDatabase();
-    const hashes = await hashDraftAssets(safeValue.assets);
+    const { hashes, tiles } = await hashDraftAssets(safeValue.assets);
     const hashedAssets = lastSaveStats.hashedAssets;
-    const manifest = createDraftManifest(safeValue, revision, hashes);
-    const needed = new Map<string, string>();
+    const manifest = createDraftManifest(
+      safeValue,
+      revision,
+      hashes,
+      undefined,
+      new Map([...tiles].map(([key, tile]) => [key, tile.hash])),
+    );
+    const needed = new Map<string, string | Blob>();
     for (const [assetId, asset] of Object.entries(safeValue.assets))
-      needed.set(hashes.get(assetId)!, asset.url);
+      if (isPngAsset(asset)) needed.set(hashes.get(assetId)!, asset.url);
+    for (const tile of tiles.values()) needed.set(tile.hash, tile.blob);
     const stats = await commitDraftManifest(
       db,
       id,
@@ -1359,6 +1464,7 @@ export async function saveDraft(
       manifest,
       needed,
     );
+    persistedTiles.set(id, new Set(Object.keys(manifest.tileRefs || {})));
     clearPendingDraft(id, revision, pendingToken);
     lastSaveStats = {
       revision,

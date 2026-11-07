@@ -2,9 +2,11 @@ import {
   referencedAssets,
   renderFrame,
   validateFrame,
+  type Asset,
   type Assets,
   type Frame,
 } from './document.ts';
+import { isAssetShape } from './tiledAssets.ts';
 import type { TileCache } from './tilePlan.ts';
 import { CompositeCache } from './compositeCache.ts';
 import { assetsToSend } from './workerAssets.ts';
@@ -191,10 +193,10 @@ let workerPrime: WorkerPrime | null = null;
 
 /** Offer a committed raster's pixels to the render worker (large frames only). */
 export function primeWorkerDecodedAsset(
-  asset: { url: string; w: number; h: number } | undefined,
+  asset: Asset | undefined,
   source: HTMLCanvasElement,
 ): boolean {
-  if (!asset || typeof asset.url !== 'string') return false;
+  if (!isAssetShape(asset)) return false;
   if (source.width !== asset.w || source.height !== asset.h) return false;
   if (asset.w * asset.h < WORKER_MIN_PIXELS || !canRenderInWorker()) return false;
   try {

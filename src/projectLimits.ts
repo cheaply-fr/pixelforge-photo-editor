@@ -16,6 +16,7 @@
  * at their content bounds (see layer-pixel-budget-contract.md), so sparse
  * layers cost what they contain, not the canvas area.
  */
+import { uniqueAssetBytes } from './tiledAssets.ts';
 
 /** Most layers (of any kind) one frame may hold. */
 export const MAX_DOCUMENT_LAYERS = 512;
@@ -97,9 +98,11 @@ export function assetByteBudgetMessage(budgetBytes: number): string {
   );
 }
 
-/** Total encoded length of the data URLs in an asset map. */
-export function assetBytes(assets: Record<string, { url: string } | undefined>): number {
-  let total = 0;
-  for (const asset of Object.values(assets)) if (asset) total += asset.url.length;
-  return total;
+/**
+ * Encoded size of an asset map in data-URL bytes: each legacy data URL's
+ * length, plus each distinct tile's base64 PNG length (tiles shared between
+ * assets count once; see tiled-layer-assets-contract.md).
+ */
+export function assetBytes(assets: Record<string, unknown>): number {
+  return uniqueAssetBytes(assets);
 }

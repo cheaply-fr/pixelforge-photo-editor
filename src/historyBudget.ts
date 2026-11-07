@@ -1,5 +1,6 @@
 import { referencedAssets, type Assets, type Frame } from './document.ts';
 import { MAX_PROJECT_ASSETS, PROJECT_ASSET_BYTES_CEILING } from './projectLimits.ts';
+import { assetStorageUnits, uniqueAssetBytes } from './tiledAssets.ts';
 
 /**
  * Undo/redo history capacity.
@@ -9,10 +10,13 @@ import { MAX_PROJECT_ASSETS, PROJECT_ASSET_BYTES_CEILING } from './projectLimits
  * count — decide how far back a large document can be undone. Both undo steps
  * (before the current index) and redo steps (after it) share one budget.
  *
- * Assets are held as `data:image/png;base64,…` strings. Browsers store these
+ * Small assets are `data:image/png;base64,…` strings. Browsers store these
  * ASCII strings one byte per character, so `url.length` is the retained heap
- * cost of each asset (the decoded PNG is 3/4 of that). Budgets below are in
- * those retained bytes and are counted once per distinct asset id.
+ * cost of each asset (the decoded PNG is 3/4 of that). Large assets are grids
+ * of content-addressed PNG tile Blobs shared between history steps
+ * (tiled-layer-assets-contract.md); each distinct tile costs the base64
+ * length of its PNG. Budgets below are in those bytes and count each legacy
+ * asset id and each distinct tile once.
  */
 export const MIB = 1024 * 1024;
 /** Maximum number of history states (undo + current + redo) kept in memory. */
@@ -86,17 +90,16 @@ export function detectHistoryBudget(): HistoryBudget {
   });
 }
 
-/** Retained bytes of one asset (one-byte data-URL string). */
-export function assetBytes(asset: { url: string } | undefined): number {
-  return asset && typeof asset.url === 'string' ? asset.url.length : 0;
+/** Retained bytes of one asset (data-URL length, or its distinct tiles). */
+export function assetBytes(asset: unknown): number {
+  let total = 0;
+  for (const [, bytes] of assetStorageUnits('', asset)) total += bytes;
+  return total;
 }
 
-/** Distinct-asset bytes referenced by a set of frames. */
+/** Distinct-asset bytes referenced by a set of frames (shared tiles once). */
 export function historyAssetBytes(history: readonly Frame[], assets: Assets): number {
-  let total = 0;
-  for (const asset of Object.values(referencedAssets(history as Frame[], assets)))
-    total += assetBytes(asset);
-  return total;
+  return uniqueAssetBytes(referencedAssets(history as Frame[], assets));
 }
 
 export const formatMiB = (bytes: number) => `${Math.ceil(bytes / MIB)} MB`;
@@ -104,43 +107,52 @@ export const formatMiB = (bytes: number) => `${Math.ceil(bytes / MIB)} MB`;
 type Window = { start: number; end: number };
 
 /**
- * Shared window accounting: tracks distinct asset ids across a contiguous
- * frame range with reference counts, so growing or shrinking it is O(frame).
+ * Shared window accounting: tracks distinct storage units (legacy asset ids
+ * and tile keys) across a contiguous frame range with reference counts, so
+ * growing or shrinking it is O(frame). The asset count limit still counts
+ * distinct asset ids, as `validateDraft` does.
  */
-function windowAccounting(history: readonly Frame[], assets: Assets) {
-  const ids = history.map((frame) => Object.keys(referencedAssets([frame], assets)));
-  const counts = new Map<string, number>();
+function windowAccounting(history: readonly Frame[], assets: Assets, flattened = false) {
+  const perFrame = history.map((frame) => {
+    const used = referencedAssets([frame], assets);
+    const units = new Map<string, number>();
+    for (const [id, asset] of Object.entries(used))
+      if (flattened) units.set(`asset:${id}`, assetBytes(asset));
+      else for (const [unit, bytes] of assetStorageUnits(id, asset)) units.set(unit, bytes);
+    return { ids: Object.keys(used), units: [...units] };
+  });
+  const unitCounts = new Map<string, number>();
+  const idCounts = new Map<string, number>();
   let bytes = 0;
+  const bump = (counts: Map<string, number>, key: string, delta: number) => {
+    const count = (counts.get(key) || 0) + delta;
+    if (count <= 0) counts.delete(key);
+    else counts.set(key, count);
+    return count;
+  };
   return {
     get bytes() {
       return bytes;
     },
     add(i: number) {
-      for (const id of ids[i]) {
-        const count = counts.get(id) || 0;
-        if (!count) bytes += assetBytes(assets[id]);
-        counts.set(id, count + 1);
-      }
+      for (const [unit, size] of perFrame[i].units) if (bump(unitCounts, unit, 1) === 1) bytes += size;
+      for (const id of perFrame[i].ids) bump(idCounts, id, 1);
     },
     remove(i: number) {
-      for (const id of ids[i]) {
-        const count = counts.get(id) || 0;
-        if (count <= 1) {
-          counts.delete(id);
-          bytes -= assetBytes(assets[id]);
-        } else counts.set(id, count - 1);
-      }
+      for (const [unit, size] of perFrame[i].units)
+        if (unitCounts.has(unit) && bump(unitCounts, unit, -1) === 0) bytes -= size;
+      for (const id of perFrame[i].ids) if (idCounts.has(id)) bump(idCounts, id, -1);
     },
     /** Bytes the window would cost if frame `i` were added (without adding). */
     costWith(i: number) {
       let next = bytes;
-      for (const id of ids[i]) if (!counts.get(id)) next += assetBytes(assets[id]);
+      for (const [unit, size] of perFrame[i].units) if (!unitCounts.get(unit)) next += size;
       return next;
     },
     /** Distinct assets the window would reference if frame `i` were added. */
     assetsWith(i: number) {
-      let next = counts.size;
-      for (const id of ids[i]) if (!counts.get(id)) next += 1;
+      let next = idCounts.size;
+      for (const id of perFrame[i].ids) if (!idCounts.get(id)) next += 1;
       return next;
     },
   };
@@ -188,6 +200,18 @@ export function trimHistoryToBudget(
   };
 }
 
+export type PersistLimits = {
+  maxSteps?: number;
+  maxBytes?: number;
+  maxAssets?: number;
+  /**
+   * Count every asset at its full size, as interchange that flattens tiled
+   * assets to one PNG each (portable bundle v3, cloud) will store it, instead
+   * of counting shared tiles once as drafts do.
+   */
+  flattened?: boolean;
+};
+
 export type PersistedHistoryWindow = {
   /** Inclusive range of in-memory history indexes that are persisted. */
   start: number;
@@ -210,14 +234,14 @@ export function selectPersistedHistory(
   history: readonly Frame[],
   index: number,
   assets: Assets,
-  limits: { maxSteps?: number; maxBytes?: number; maxAssets?: number } = {},
+  limits: PersistLimits = {},
 ): PersistedHistoryWindow {
   if (!history.length || !Number.isInteger(index) || index < 0 || index >= history.length)
     throw new Error('Cannot persist an invalid history position');
   const maxSteps = Math.max(1, Math.floor(limits.maxSteps ?? DRAFT_HISTORY_MAX_STEPS));
   const maxBytes = limits.maxBytes ?? DRAFT_HISTORY_MAX_BYTES;
   const maxAssets = limits.maxAssets ?? DRAFT_HISTORY_MAX_ASSETS;
-  const account = windowAccounting(history, assets);
+  const account = windowAccounting(history, assets, limits.flattened === true);
   account.add(index);
   let start = index,
     end = index,
@@ -260,7 +284,7 @@ type PersistableDraft = {
  */
 export function persistableHistoryDraft<T extends PersistableDraft>(
   value: T,
-  limits?: { maxSteps?: number; maxBytes?: number; maxAssets?: number },
+  limits?: PersistLimits,
 ): { draft: T; window: PersistedHistoryWindow } {
   const window = selectPersistedHistory(value.history, value.index, value.assets, limits);
   const source = value.settings.historySourceIndex;

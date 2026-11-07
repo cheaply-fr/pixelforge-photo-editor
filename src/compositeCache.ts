@@ -10,6 +10,7 @@
  * alone, so a reused asset ID can not alias stale pixels.
  */
 import { assetFingerprint } from './layerFilterCache.ts';
+import { isAssetShape, type AnyAsset } from './tiledAssets.ts';
 
 type KeyLayer = {
   id: string;
@@ -24,7 +25,7 @@ type KeyFrame = {
   layers: readonly KeyLayer[];
   groups?: readonly { id: string }[];
 };
-type KeyAsset = { url: string; w: number; h: number };
+type KeyAsset = AnyAsset;
 
 /** Below this many layers a full render is cheap and nothing is retained. */
 export const COMPOSITE_CACHE_MIN_LAYERS = 8;
@@ -72,7 +73,7 @@ export function compositeLayerKeys(
       .sort()
       .map((id) => {
         const asset = assets[id];
-        return asset && typeof asset.url === 'string' ? `${id}=${assetFingerprint(asset)}` : `${id}=?`;
+        return isAssetShape(asset) ? `${id}=${assetFingerprint(asset)}` : `${id}=?`;
       })
       .join(',');
     const key = `${JSON.stringify(layer)}#${prints}`;

@@ -180,6 +180,19 @@ import {
   validClippingRelationship,
 } from './layerClipping.ts';
 import { isTextWarp, normalizeTextWarp, textWarpTransform, type TextWarp } from './textWarp.ts';
+import {
+  TILED_ASSET_MIN_PIXELS,
+  dataUrlBytes,
+  drawTiledAsset,
+  isTiledAsset,
+  tileCanvas,
+  tileRect,
+  tiledAssetFingerprint,
+  validTiledAsset,
+  verifyTileDecodes,
+  type PngAsset,
+  type TiledAsset,
+} from './tiledAssets.ts';
 
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = GROUP_BLEND_MODES;
@@ -486,8 +499,13 @@ export type Frame = {
    */
   reference?: ReferenceImage;
 };
-export type Asset = { url: string; w: number; h: number };
+/**
+ * An immutable raster: a PNG data URL, or (for large canvases) a grid of
+ * content-addressed PNG tile Blobs (docs/tiled-layer-assets-contract.md).
+ */
+export type Asset = PngAsset | TiledAsset;
 export type Assets = Record<string, Asset>;
+export type { PngAsset, TiledAsset };
 /** Nested documents are intentionally bounded so malformed drafts cannot recurse forever. */
 export const MAX_NESTED_SMART_OBJECT_DEPTH = 4;
 export const identity = (): Matrix => [1, 0, 0, 1, 0, 0];
@@ -1287,6 +1305,7 @@ export function validAdjustments(v: unknown): v is Adjustments {
   );
 }
 export function validAsset(value: unknown): value is Asset {
+  if (isTiledAsset(value)) return validTiledAsset(value);
   if (
     !record(value) ||
     !integer(value.w, 1, 16000) ||
@@ -1899,13 +1918,54 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
   }
   return used;
 }
-export function addAsset(assets: Assets, canvas: HTMLCanvasElement): string {
+/**
+ * Store a canvas as a new immutable asset and return its id (or the id of an
+ * existing asset with identical content). Canvases of at least
+ * `TILED_ASSET_MIN_PIXELS` are stored as content-addressed tiles: tiles whose
+ * pixels some live asset already holds are shared, so an edit encodes only
+ * the tiles it changed. Smaller canvases, and callers that need a data URL
+ * (`tiled: false`, e.g. the reference overlay `<img>`), get one PNG data URL.
+ */
+export function addAsset(
+  assets: Assets,
+  canvas: HTMLCanvasElement,
+  options: { tiled?: boolean } = {},
+): string {
+  if (options.tiled !== false && canvas.width * canvas.height >= TILED_ASSET_MIN_PIXELS) {
+    const { asset } = tileCanvas(canvas);
+    const fingerprint = tiledAssetFingerprint(asset);
+    const existing = Object.keys(assets).find((id) => {
+      const candidate = assets[id];
+      return isTiledAsset(candidate) && tiledAssetFingerprint(candidate) === fingerprint;
+    });
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    assets[id] = asset;
+    return id;
+  }
   const url = canvas.toDataURL();
-  const existing = Object.keys(assets).find((id) => assets[id].url === url);
+  const existing = Object.keys(assets).find((id) => (assets[id] as PngAsset).url === url);
   if (existing) return existing;
   const id = crypto.randomUUID();
   assets[id] = { url, w: canvas.width, h: canvas.height };
   return id;
+}
+/**
+ * One PNG data-URL asset with the pixels of a tiled asset, for interchange
+ * that predates tiles (portable bundle v3, cloud payloads). Not memoized:
+ * flattened data URLs of a long history would pin hundreds of megabytes.
+ */
+export async function flattenTiledAsset(asset: TiledAsset): Promise<PngAsset> {
+  const canvas = surface(asset.w, asset.h);
+  await drawTiledAsset(asset, canvas.getContext('2d')!);
+  return { url: canvas.toDataURL('image/png'), w: asset.w, h: asset.h };
+}
+/** Copy of an asset map in which every tiled asset is a PNG data URL. */
+export async function flattenTiledAssets(assets: Assets): Promise<Record<string, PngAsset>> {
+  const out: Record<string, PngAsset> = {};
+  for (const [id, asset] of Object.entries(assets))
+    out[id] = isTiledAsset(asset) ? await flattenTiledAsset(asset) : asset;
+  return out;
 }
 export function rasterFrame(
   canvas: HTMLCanvasElement,
@@ -2011,18 +2071,39 @@ export async function verifyAssetsDecode(
   list: readonly Asset[],
   options: { concurrency?: number; assertCurrent?: () => void } = {},
 ): Promise<void> {
-  const queue = [...list];
-  const lanes = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 4)));
+  // Tiled assets share most tiles across history steps: verify each distinct
+  // tile once (its key fixes its size) instead of assembling every version.
+  const queue: Array<() => Promise<void>> = [];
+  const tiles = new Set<string>();
   let failure: unknown;
-  const lane = async () => {
-    while (queue.length && failure === undefined) {
-      options.assertCurrent?.();
-      const asset = queue.shift()!;
-      try {
+  for (const asset of list) {
+    if (!isTiledAsset(asset)) {
+      queue.push(async () => {
         const image = await decodeNewAsset(asset);
         const closable = image as unknown as { close?: () => void };
         if (typeof closable.close === 'function') closable.close();
         else (image as HTMLImageElement).src = '';
+      });
+      continue;
+    }
+    if (!validTiledAsset(asset)) {
+      failure ??= new Error('Invalid or oversized project image');
+      continue;
+    }
+    asset.tiles.forEach((tile, index) => {
+      if (!tile || tiles.has(tile.key)) return;
+      tiles.add(tile.key);
+      const rect = tileRect(asset.w, asset.h, index);
+      queue.push(() => verifyTileDecodes(tile, rect.w, rect.h));
+    });
+  }
+  const lanes = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 4)));
+  const lane = async () => {
+    while (queue.length && failure === undefined) {
+      options.assertCurrent?.();
+      const task = queue.shift()!;
+      try {
+        await task();
       } catch (error) {
         failure ??= error;
       }
@@ -2034,7 +2115,7 @@ export async function verifyAssetsDecode(
 }
 export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
   // Full validation (regex + PNG header) runs once per content in decodeNewAsset.
-  if (!asset || typeof asset !== 'object' || typeof asset.url !== 'string')
+  if (!asset || typeof asset !== 'object' || (typeof (asset as PngAsset).url !== 'string' && !isTiledAsset(asset)))
     return Promise.reject(new Error('Invalid or oversized project image'));
   const key = assetFingerprint(asset);
   const cached = decoded.get(key);
@@ -2080,7 +2161,7 @@ export function primeDecodedAsset(
   asset: Asset,
   source: CanvasImageSource & { width: number; height: number },
 ): boolean {
-  if (!asset || typeof asset.url !== 'string') return false;
+  if (!asset || (typeof (asset as PngAsset).url !== 'string' && !isTiledAsset(asset))) return false;
   if (source.width !== asset.w || source.height !== asset.h) return false;
   const key = assetFingerprint(asset);
   if (decoded.has(key)) return true;
@@ -2108,7 +2189,8 @@ export function primeDecodedAssetPixels(
   key: string,
   pixels: Uint8ClampedArray,
 ): boolean {
-  if (!asset || typeof asset.url !== 'string' || decoded.has(key)) return false;
+  if (!asset || (typeof (asset as PngAsset).url !== 'string' && !isTiledAsset(asset)) || decoded.has(key))
+    return false;
   if (key !== assetFingerprint(asset)) return false;
   if (pixels.length !== asset.w * asset.h * 4) return false;
   if (typeof createImageBitmap !== 'function' || typeof ImageData !== 'function') return false;
@@ -2132,22 +2214,11 @@ export function primeDecodedAssetPixels(
  * fetching data: URLs, so `fetch` is not used.)
  */
 export async function dataUrlBlob(url: string): Promise<Blob> {
-  const encoded = url.slice(url.indexOf(',') + 1);
-  const native = (Uint8Array as unknown as { fromBase64?: (value: string) => Uint8Array }).fromBase64;
-  if (typeof native === 'function') {
-    try {
-      return new Blob([native(encoded) as Uint8Array<ArrayBuffer>], { type: 'image/png' });
-    } catch {
-      // Fall through to the manual decode.
-    }
-  }
-  const binary = atob(encoded),
-    bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return new Blob([bytes], { type: 'image/png' });
+  return new Blob([dataUrlBytes(url)], { type: 'image/png' });
 }
 async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
   if (!validAsset(asset)) throw new Error('Invalid or oversized project image');
+  if (isTiledAsset(asset)) return decodeTiled(asset);
   if (typeof Image === 'function') {
     const image = new Image();
     image.src = asset.url;
@@ -2163,6 +2234,25 @@ async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
     return image as unknown as HTMLImageElement;
   }
   throw new Error('Image decoding is unavailable in this browser.');
+}
+/**
+ * Assemble a tiled asset. The main thread returns a canvas presented like a
+ * decoded image (`naturalWidth`/`naturalHeight`); a worker returns an
+ * ImageBitmap, like its data-URL decode.
+ */
+async function decodeTiled(asset: TiledAsset): Promise<HTMLImageElement> {
+  if (typeof document === 'undefined' && typeof OffscreenCanvas === 'function') {
+    const canvas = new OffscreenCanvas(asset.w, asset.h);
+    await drawTiledAsset(asset, canvas.getContext('2d')!);
+    return canvas.transferToImageBitmap() as unknown as HTMLImageElement;
+  }
+  const canvas = surface(asset.w, asset.h);
+  await drawTiledAsset(asset, canvas.getContext('2d')!);
+  Object.defineProperties(canvas, {
+    naturalWidth: { value: asset.w, configurable: true },
+    naturalHeight: { value: asset.h, configurable: true },
+  });
+  return canvas as unknown as HTMLImageElement;
 }
 export function surface(w: number, h: number) {
   const canvas =

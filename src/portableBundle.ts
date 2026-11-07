@@ -8,6 +8,7 @@
  */
 import { validateDraft, type Draft } from './drafts.ts';
 import type { Asset, Assets } from './document.ts';
+import { isTiledAsset, type PngAsset, type TiledAsset } from './tiledAssets.ts';
 import { MAX_PROJECT_ASSETS, PROJECT_ASSET_BYTES_CEILING } from './projectLimits.ts';
 
 export const PORTABLE_BUNDLE_KIND = 'pixelforge-project' as const;
@@ -277,14 +278,24 @@ function portableDocument(value: Draft): PortableDocument {
   return document;
 }
 
-export async function writePortableBundle(input: unknown): Promise<Blob> {
+export type PortableWriteOptions = {
+  /**
+   * Flatten a tiled asset to one PNG data URL (v3 stores one PNG per asset;
+   * see tiled-layer-assets-contract.md). Without it, tiled assets are rejected.
+   */
+  flatten?: (asset: TiledAsset) => Promise<PngAsset>;
+};
+
+export async function writePortableBundle(input: unknown, options: PortableWriteOptions = {}): Promise<Blob> {
   const draft = validateDraft(input);
   const document = portableDocument(draft);
   const documentBytes = jsonBytes(document);
   const assets: PortableAssetManifest[] = [];
   const files: ZipInput[] = [];
   for (const id of Object.keys(draft.assets).sort()) {
-    const asset = draft.assets[id];
+    const stored = draft.assets[id];
+    if (isTiledAsset(stored) && !options.flatten) throw new Error('Tiled project images must be flattened before export');
+    const asset = isTiledAsset(stored) ? await options.flatten!(stored) : stored;
     const bytes = decodeBase64(asset.url);
     if (bytes.byteLength > PORTABLE_MAX_ASSET_BYTES) throw new Error('Portable asset exceeds 80 MiB');
     const dimensions = readPngDimensions(bytes);

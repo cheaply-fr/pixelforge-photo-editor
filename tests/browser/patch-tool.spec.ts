@@ -226,11 +226,31 @@ test('Patch snapshots a compatible active selection mask for replay', async ({ p
   await expect(page.locator('footer')).toContainText('Patch applied nondestructively');
   const saved = await project(page);
   const stroke = saved.history[saved.index].layers.at(-1)!.patchStrokes![0];
-  expect(stroke.selectionMask).toBe(maskId);
+  // The snapshot reuses the selection's mask: the same asset, or (when the
+  // layer is large enough to be stored as tiles, tiled-layer-assets-contract.md)
+  // an asset with exactly the same pixels.
+  const snapshot = stroke.selectionMask!;
+  if (snapshot !== maskId) {
+    const pixels = (url: string) =>
+      page.evaluate(async (source) => {
+        const image = new Image();
+        image.src = source;
+        await image.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d')!;
+        context.drawImage(image, 0, 0);
+        const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        const digest = await crypto.subtle.digest('SHA-256', data);
+        return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+      }, url);
+    expect(await pixels(saved.assets[snapshot].url)).toBe(await pixels(maskUrl));
+  }
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   const restored = await project(page);
-  expect(restored.history[restored.index].layers.at(-1)!.patchStrokes![0].selectionMask).toBe(maskId);
+  expect(restored.history[restored.index].layers.at(-1)!.patchStrokes![0].selectionMask).toBe(snapshot);
 });
 
 test('Patch rejects locked layers without changing the draft', async ({

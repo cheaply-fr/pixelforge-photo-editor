@@ -10,11 +10,14 @@ import {
   readDraft,
   saveDraft,
   setDraftDatabaseForTesting,
+  stagePendingDraft,
   validateDraft,
 } from '../src/drafts.ts';
 import {
   DRAFT_MANIFEST_FORMAT,
   DRAFT_MANIFEST_KIND,
+  DRAFT_TILED_MANIFEST_FORMAT,
+  DRAFT_TILE_KIND,
   createDraftManifest,
   decodeDraftManifest,
   draftAssetKey,
@@ -25,6 +28,8 @@ import {
 } from '../src/draftAssetStore.ts';
 import { createDraftBundle } from '../src/draftBundle.ts';
 import { neutral } from '../src/document.ts';
+import { clearTileIndexForTesting, knownTile, tileAssetFromBands, validTiledAsset } from '../src/tiledAssets.ts';
+import { assetFingerprint } from '../src/layerFilterCache.ts';
 
 /* ------------------------------------------------------------------------ */
 /* Minimal in-memory IndexedDB double: ordered async requests, buffered     */
@@ -485,4 +490,222 @@ test('write-ahead size is estimated from referenced assets without serializing',
   large.history = [frame(ids[0])];
   large.index = 0;
   assert.ok(estimatedPendingDraftBytes(large) < 4 * 1024 * 1024);
+});
+
+/* ------------------------------------------------------------------------ */
+/* Tiled assets (format 4, tiled-layer-assets-contract.md)                   */
+/* ------------------------------------------------------------------------ */
+
+/** Pixels of a 600x300 layer; strokes change tile 0 a little more. */
+const tiledPixels = (() => {
+  const data = new Uint8ClampedArray(600 * 300 * 4);
+  let state = 99;
+  for (let i = 0; i < data.length; i += 4) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    data.set([state & 255, (state >>> 8) & 255, (state >>> 16) & 255, 255], i);
+  }
+  return data;
+})();
+let tileSerial = 0;
+/** A tiled asset (fake PNG Blobs) after `strokes` edits confined to tile 0. */
+function tiledVersion(strokes, base) {
+  const data = tiledPixels.slice();
+  for (let n = 1; n <= strokes; n += 1) data[(n * 600 + 5) * 4] ^= 0x3c;
+  return tileAssetFromBands(
+    600,
+    300,
+    (y, rows) => data.subarray(y * 2400, (y + rows) * 2400),
+    () => {
+      tileSerial += 1;
+      return new Blob([new Uint8Array([137, 80, 78, 71, tileSerial & 255, tileSerial >> 8])], { type: 'image/png' });
+    },
+    base,
+  ).asset;
+}
+/** History of `steps` strokes on one tiled layer, plus one legacy data-URL layer. */
+function tiledDraft(steps) {
+  const assets = {};
+  const history = [];
+  let previous;
+  for (let step = 0; step < steps; step += 1) {
+    previous = tiledVersion(step, previous);
+    assets[ids[step]] = previous;
+    const f = frame(ids[step]);
+    history.push({
+      ...f,
+      w: 600,
+      h: 300,
+      layers: [...f.layers, { ...f.layers[0], id: ids[29], name: 'Legacy', asset: ids[28] }],
+    });
+  }
+  assets[ids[28]] = asset(1234);
+  return { version: CURRENT_DRAFT_VERSION, name: 'Tiled', index: steps - 1, settings, assets, history };
+}
+
+test('tiled drafts save as format 4 with one record per distinct tile and reload with shared tiles', async () => {
+  clearTileIndexForTesting();
+  const input = tiledDraft(3);
+  await saveDraft(draftA, input, 0);
+  const pointer = db.stores.drafts.get(draftA);
+  assert.equal(pointer.format, DRAFT_TILED_MANIFEST_FORMAT);
+  assert.ok(isDraftManifest(pointer));
+  // 6 tiles, plus one new tile per later stroke, plus the legacy asset.
+  assert.equal(Object.keys(pointer.tileRefs).length, 8);
+  assert.equal(db.assetKeys(draftA).length, 9);
+  const tileRecords = db
+    .assetKeys(draftA)
+    .map((key) => db.stores.draftBlobs.get(key))
+    .filter((value) => value.kind === DRAFT_TILE_KIND);
+  assert.equal(tileRecords.length, 8);
+  assert.ok(tileRecords.every((record) => record.blob instanceof Blob));
+  assert.ok(!JSON.stringify(pointer).includes('data:image'));
+
+  clearTileIndexForTesting();
+  setDraftDatabaseForTesting(db);
+  const read = await readDraft(draftA);
+  assert.equal(read.localRevision, 1);
+  assert.deepEqual(read.history, normalized(input, 1).history);
+  assert.deepEqual(read.assets[ids[28]], input.assets[ids[28]], 'legacy data URL asset is unchanged');
+  for (const id of ids.slice(0, 3)) {
+    assert.ok(validTiledAsset(read.assets[id]));
+    assert.equal(assetFingerprint(read.assets[id]), assetFingerprint(input.assets[id]));
+  }
+  // Unchanged tiles are one object across all history steps after reload,
+  assert.equal(read.assets[ids[0]].tiles[3], read.assets[ids[2]].tiles[3]);
+  assert.notEqual(read.assets[ids[0]].tiles[0], read.assets[ids[2]].tiles[0]);
+  // and register in the tab-wide index, so the next commit reuses them.
+  assert.equal(knownTile(read.assets[ids[2]].tiles[5].key), read.assets[ids[2]].tiles[5]);
+  for (const [index, tile] of read.assets[ids[2]].tiles.entries())
+    assert.deepEqual(
+      new Uint8Array(await tile.blob.arrayBuffer()),
+      new Uint8Array(await input.assets[ids[2]].tiles[index].blob.arrayBuffer()),
+    );
+});
+
+test('a stroke on a tiled layer writes only its new tile record', async () => {
+  clearTileIndexForTesting();
+  await saveDraft(draftA, tiledDraft(3), 0);
+  const before = db.log.length;
+  await saveDraft(draftA, tiledDraft(4), 1);
+  const puts = db.log.slice(before).filter(([op, store]) => op === 'put' && store === 'draftBlobs');
+  assert.equal(puts.length, 1, 'one new tile, nothing else rewritten');
+  assert.equal(db.stores.draftBlobs.get(puts[0][2]).kind, DRAFT_TILE_KIND);
+  assert.equal(lastDraftSaveStats().assetWrites, 1);
+  assert.ok(lastDraftSaveStats().bytesWritten < 64);
+  // Dropping old steps collects only the tiles no remaining step references.
+  const latest = tiledDraft(4);
+  const trimmed = { ...latest, history: latest.history.slice(2), index: 1 };
+  await saveDraft(draftA, trimmed, 2);
+  const pointer = db.stores.drafts.get(draftA);
+  assert.equal(Object.keys(pointer.tileRefs).length, 7);
+  assert.equal(db.assetKeys(draftA).length, 8);
+  const read = await readDraft(draftA);
+  assert.equal(read.history.length, 2);
+});
+
+test('format 4 manifests and tile records fail closed when forged or damaged', async () => {
+  clearTileIndexForTesting();
+  await saveDraft(draftA, tiledDraft(2), 0);
+  const pointer = db.stores.drafts.get(draftA);
+  const tileKey = Object.keys(pointer.tileRefs)[0];
+  const refId = Object.keys(pointer.assetRefs).find((id) => pointer.assetRefs[id].tiles);
+  const ref = pointer.assetRefs[refId];
+  const withRef = (next) => ({ ...pointer, assetRefs: { ...pointer.assetRefs, [refId]: next } });
+  // Structural forgeries.
+  assert.equal(isDraftManifest({ ...pointer, format: 3 }), false, 'tiled refs need format 4');
+  assert.equal(isDraftManifest({ ...pointer, tileRefs: undefined }), false);
+  assert.equal(isDraftManifest({ ...pointer, tileRefs: { ...pointer.tileRefs, BAD: 'x' } }), false);
+  assert.equal(isDraftManifest(withRef({ ...ref, tiles: ref.tiles.slice(1) })), false);
+  assert.equal(
+    isDraftManifest(withRef({ ...ref, tiles: ['f'.repeat(32), ...ref.tiles.slice(1)] })),
+    false,
+    'every tile key must be in tileRefs',
+  );
+  assert.equal(isDraftManifest(withRef({ ...ref, tileSize: 128 })), false);
+  assert.equal(isDraftManifest(withRef({ ...ref, w: 0 })), false);
+  // Damaged tile bytes fail the checksum; a missing or mistyped record fails the read.
+  const records = new Map(
+    db.assetKeys(draftA).map((key) => {
+      const value = db.stores.draftBlobs.get(key);
+      return [value.hash, value];
+    }),
+  );
+  const target = pointer.tileRefs[tileKey];
+  const damaged = new Map(records);
+  damaged.set(target, { ...records.get(target), blob: new Blob([new Uint8Array([1, 2, 3])]) });
+  await assert.rejects(decodeDraftManifest(pointer, damaged), /checksum/);
+  const missing = new Map(records);
+  missing.delete(target);
+  await assert.rejects(decodeDraftManifest(pointer, missing), /missing/);
+  const swapped = new Map(records);
+  swapped.set(target, { kind: 'pixelforge-draft-asset', hash: target, bytes: new Uint8Array([1]).buffer });
+  await assert.rejects(decodeDraftManifest(pointer, swapped), /invalid/);
+  // The stored draft is still readable.
+  assert.equal((await readDraft(draftA)).history.length, 2);
+});
+
+test('drafts without tiled assets keep format 3 for older builds, and legacy drafts move to tiles on save', async () => {
+  clearTileIndexForTesting();
+  await saveDraft(draftA, draftWithSteps(2), 0);
+  assert.equal(db.stores.drafts.get(draftA).format, DRAFT_MANIFEST_FORMAT);
+  const legacy = await readDraft(draftA);
+  // The next edit stores the layer tiled; the draft moves to format 4 and the
+  // old data-URL assets stay loadable from history.
+  const tiled = tiledVersion(0);
+  const next = {
+    ...legacy,
+    assets: { ...legacy.assets, [ids[5]]: tiled },
+    history: [...legacy.history, { ...frame(ids[5]), w: 600, h: 300 }],
+    index: 2,
+  };
+  await saveDraft(draftA, next, 1);
+  assert.equal(db.stores.drafts.get(draftA).format, DRAFT_TILED_MANIFEST_FORMAT);
+  const read = await readDraft(draftA);
+  assert.deepEqual(read.assets[ids[0]], legacy.assets[ids[0]]);
+  assert.equal(assetFingerprint(read.assets[ids[5]]), assetFingerprint(tiled));
+});
+
+test('tiled drafts skip the JSON write-ahead snapshot and plan Blob tile records', () => {
+  clearTileIndexForTesting();
+  assert.equal(estimatedPendingDraftBytes(tiledDraft(1)), Number.POSITIVE_INFINITY);
+  const planned = planDraftAssetWrites(draftA, new Map([['a'.repeat(64), new Blob([new Uint8Array(4)])]]), []);
+  assert.equal(planned.puts[0][1].kind, DRAFT_TILE_KIND);
+  assert.ok(planned.puts[0][1].blob instanceof Blob);
+});
+
+test('a tiled write-ahead snapshot stores tile keys only and recovers from the stored tiles', async () => {
+  const items = new Map();
+  globalThis.sessionStorage = {
+    getItem: (key) => (items.has(key) ? items.get(key) : null),
+    setItem: (key, value) => items.set(key, String(value)),
+    removeItem: (key) => items.delete(key),
+  };
+  try {
+    clearTileIndexForTesting();
+    await saveDraft(draftA, tiledDraft(2), 0);
+    // Unsaved tiles (a fresh stroke) are never staged: IndexedDB is authoritative.
+    assert.equal(stagePendingDraft(draftA, { ...tiledDraft(3), localRevision: 1 }, 2), undefined);
+    // A rename of the stored pixels is staged as small JSON with tile keys.
+    const renamed = { ...tiledDraft(2), name: 'Renamed before reload', localRevision: 1 };
+    const token = stagePendingDraft(draftA, renamed, 2);
+    assert.equal(typeof token, 'string');
+    const [encoded] = [...items.values()];
+    assert.ok(encoded.length < 64 * 1024);
+    assert.ok(!encoded.includes('"blob"'));
+    const read = await readDraft(draftA);
+    assert.equal(read.name, 'Renamed before reload');
+    assert.equal(read.localRevision, 1, 'rebased onto the stored revision');
+    assert.equal(read.assets[ids[1]].tiles[4], renamed.assets[ids[1]].tiles[4]);
+    assert.equal(assetFingerprint(read.assets[ids[1]]), assetFingerprint(renamed.assets[ids[1]]));
+    // A snapshot whose tiles cannot be found is discarded, not half-adopted.
+    const parsed = JSON.parse(encoded);
+    const tiledId = Object.keys(parsed.draft.assets).find((assetId) => parsed.draft.assets[assetId].tiles);
+    parsed.draft.assets[tiledId].tiles[0] = 'f'.repeat(32);
+    items.set([...items.keys()][0], JSON.stringify(parsed));
+    const fallback = await readDraft(draftA);
+    assert.equal(fallback.name, 'Tiled');
+    assert.equal(items.size, 0);
+  } finally {
+    delete globalThis.sessionStorage;
+  }
 });
