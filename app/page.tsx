@@ -2288,6 +2288,7 @@ export default function Home() {
       setLayerSelection,
       travel,
       paint,
+      schedulePaint,
     } = doc;
   // A render can outlive the React event that started it. Keep a mutable
   // revision mirror so async layer commands can reject stale ownership even
@@ -2712,6 +2713,19 @@ export default function Home() {
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
+  /**
+   * Coalesce the live preview of a painting gesture. Stamping into
+   * `g.buffer` stays synchronous per pointer event; only the full-document
+   * composite is limited to one in flight and one per animation frame. The
+   * request re-reads the gesture when it runs, so it shows the latest buffer
+   * and is dropped once the gesture has been committed or abandoned.
+   */
+  const previewGesture = (g: Gesture) =>
+    schedulePaint(() =>
+      gesture.current === g && g.buffer && g.layer
+        ? { frame: g.frame, overrides: { [g.layer.id]: g.buffer } }
+        : null,
+    );
   // Pointer whose paint gesture waits for a trimmed layer to expand.
   const expansionPointer = useRef<{
     pointerId: number;
@@ -11149,7 +11163,7 @@ export default function Home() {
         sourceAnchor: cloneSource,
         destinationAnchor: g.start,
       });
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11175,7 +11189,7 @@ export default function Home() {
           foreground: brushColor(color),
           background: brushColor(backgroundColor),
         }) || Boolean(g.changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11185,7 +11199,7 @@ export default function Home() {
         threshold: g.redEyeThreshold ?? 36,
         amount: (g.redEyeAmount ?? 100) / 100,
       });
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11267,7 +11281,7 @@ export default function Home() {
         colorTolerance,
         brushOpacity / 100,
       );
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11287,7 +11301,7 @@ export default function Home() {
         selectionMask: g.selectionMask,
       });
       g.changed = Boolean(g.changed || changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11314,7 +11328,7 @@ export default function Home() {
         );
       bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
       g.changed = Boolean(g.changed || result.changed);
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11358,7 +11372,7 @@ export default function Home() {
       g.brushPoints = [...(g.brushPoints || []), ...segmentPoints];
       g.moved = true;
       g.last = local;
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       return;
     }
     if (g.tool === 'background-eraser' && !g.buffer) {
@@ -11396,7 +11410,7 @@ export default function Home() {
         selectionMask: g.selectionMask,
       });
       g.changed = Boolean(g.changed || changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11441,7 +11455,7 @@ export default function Home() {
         colorTolerance,
         brushOpacity / 100,
       );
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11486,7 +11500,7 @@ export default function Home() {
         mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
         color: g.tool === 'eraser' ? undefined : brushColor(color),
       });
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       g.smoothedLast = destination;
       g.last = local;
     } else if (
