@@ -8,7 +8,7 @@
  * every other layer's PNG data on each render. If the mirror is ever wrong,
  * the worker reports the missing assets and the request is resent in full.
  */
-type AnyAsset = { url: string; w: number; h: number };
+type AnyAsset = { w: number; h: number };
 type AssetMap<A extends AnyAsset> = Record<string, A>;
 
 /** Assets of a request the worker does not already hold, by fingerprint. */

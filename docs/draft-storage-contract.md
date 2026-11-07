@@ -4,13 +4,14 @@ PixelForge local drafts live in the `pixelforge-documents` IndexedDB database (s
 
 ## Storage formats
 
-Three record layouts can appear under a draft ID in `drafts`. All of them load; only format 3 is written.
+Four record layouts can appear under a draft ID in `drafts`. All of them load; format 3 is written for drafts without tiled assets and format 4 for drafts that reference any (see `tiled-layer-assets-contract.md`).
 
 | Format | Pointer in `drafts` | Payload | Status |
 | --- | --- | --- | --- |
 | 1 | The complete `Draft` object | inline | read, migrated on next save |
 | 2 | `kind: "pixelforge-draft-bundle"`, bundle version 1, SHA-256 checksum and ordered chunk keys | UTF-8 JSON split into ≤ 1 MiB chunks in `draftBlobs` (64 MiB / 256 chunk limit) | read, migrated on next save |
-| 3 | `kind: "pixelforge-draft-manifest"`, `format: 3` — the draft's history, index, name, settings, metadata and cloud link, with `assets` replaced by `assetRefs` (asset ID → SHA-256, width, height) | one record per distinct asset content in `draftBlobs` | current |
+| 3 | `kind: "pixelforge-draft-manifest"`, `format: 3` — the draft's history, index, name, settings, metadata and cloud link, with `assets` replaced by `assetRefs` (asset ID → SHA-256, width, height) | one record per distinct asset content in `draftBlobs` | current (no tiled assets) |
+| 4 | as format 3, plus tiled `assetRefs` (`{ w, h, tileSize: 256, tiles: [tileKey \| null] }`) and `tileRefs` (tile key → SHA-256 of the tile PNG) | one record per distinct data-URL asset and one `{ kind: "pixelforge-draft-tile", hash, blob }` record per distinct tile, both at `asset:<draftId>:<sha256>` | current (tiled assets) |
 
 A format 3 asset record is stored at `asset:<draftId>:<sha256>` with value `{ kind: "pixelforge-draft-asset", hash, bytes }`, where `bytes` is the ASCII bytes of the PNG data URL. Records are addressed by content hash rather than asset ID, because transient preview assets may reuse an ID for different pixels; a hash can never alias older content. Records are namespaced per draft, so duplicating a draft writes its own copy and garbage collection never has to reason about other drafts. The pointer keeps `localRevision` and `name` at the top level, so older builds still detect revision conflicts against it, and an older build that cannot read format 3 fails closed ("Recovery unavailable") instead of adopting partial data.
 

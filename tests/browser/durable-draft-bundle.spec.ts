@@ -22,6 +22,7 @@ async function replaceWithLargeBundle(page: Page, id: string) {
     const current = await new Promise<{
       pointer: Record<string, unknown>;
       assets: Map<string, string>;
+      tiles: Map<string, Blob>;
     }>((resolve, reject) => {
       const opened = indexedDB.open('pixelforge-documents');
       opened.onerror = () => reject(opened.error);
@@ -30,11 +31,12 @@ async function replaceWithLargeBundle(page: Page, id: string) {
         const transaction = database.transaction(['drafts', 'draftBlobs']);
         const pointerRequest = transaction.objectStore('drafts').get(draftId);
         const assets = new Map<string, string>();
+        const tiles = new Map<string, Blob>();
         pointerRequest.onerror = () => reject(pointerRequest.error);
         pointerRequest.onsuccess = () => {
           const pointer = pointerRequest.result as Record<string, unknown>;
-          const refs = pointer.assetRefs as Record<string, { hash: string }>;
-          for (const hash of new Set(Object.values(refs).map((ref) => ref.hash))) {
+          const refs = pointer.assetRefs as Record<string, { hash?: string }>;
+          for (const hash of new Set(Object.values(refs).flatMap((ref) => (ref.hash ? [ref.hash] : [])))) {
             const request = transaction
               .objectStore('draftBlobs')
               .get(`asset:${draftId}:${hash}`);
@@ -45,9 +47,15 @@ async function replaceWithLargeBundle(page: Page, id: string) {
               );
             };
           }
+          // Format 4 tiles (tiled-layer-assets-contract.md) are flattened
+          // below, as an older build only ever stored single PNG data URLs.
+          for (const hash of new Set(Object.values((pointer.tileRefs || {}) as Record<string, string>))) {
+            const request = transaction.objectStore('draftBlobs').get(`asset:${draftId}:${hash}`);
+            request.onsuccess = () => tiles.set(hash, (request.result as { blob: Blob }).blob);
+          }
           transaction.oncomplete = () => {
             database.close();
-            resolve({ pointer, assets });
+            resolve({ pointer, assets, tiles });
           };
         };
       };
@@ -56,19 +64,36 @@ async function replaceWithLargeBundle(page: Page, id: string) {
       kind: _kind,
       format: _format,
       savedAt: _savedAt,
+      tileRefs = {},
       assetRefs,
       ...draft
     } = current.pointer as Record<string, unknown> & {
-      assetRefs: Record<string, { hash: string; w: number; h: number }>;
+      tileRefs?: Record<string, string>;
+      assetRefs: Record<string, { hash?: string; w: number; h: number; tiles?: (string | null)[] }>;
     };
+    const flatten = async (ref: { w: number; h: number; tiles?: (string | null)[] }) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = ref.w;
+      canvas.height = ref.h;
+      const context = canvas.getContext('2d')!;
+      const cols = Math.ceil(ref.w / 256);
+      for (const [index, key] of ref.tiles!.entries()) {
+        if (key === null) continue;
+        const bitmap = await createImageBitmap(current.tiles.get(tileRefs[key])!);
+        context.drawImage(bitmap, (index % cols) * 256, Math.floor(index / cols) * 256);
+        bitmap.close();
+      }
+      return canvas.toDataURL('image/png');
+    };
+    const entries: Array<[string, { url: string; w: number; h: number }]> = [];
+    for (const [assetId, ref] of Object.entries(assetRefs))
+      entries.push([
+        assetId,
+        { url: ref.tiles ? await flatten(ref) : current.assets.get(ref.hash!)!, w: ref.w, h: ref.h },
+      ]);
     const original = {
       ...draft,
-      assets: Object.fromEntries(
-        Object.entries(assetRefs).map(([assetId, ref]) => [
-          assetId,
-          { url: current.assets.get(ref.hash)!, w: ref.w, h: ref.h },
-        ]),
-      ),
+      assets: Object.fromEntries(entries),
     } as Record<string, unknown>;
     original.__largeRecoveryFixture = 'x'.repeat(5 * 1024 * 1024);
     const encoded = new TextEncoder().encode(JSON.stringify(original));
@@ -207,9 +232,14 @@ async function corruptOneAsset(page: Page, id: string) {
           const key = keys.result[0] as string;
           const read = blobs.get(key);
           read.onsuccess = () => {
-            const value = read.result as { bytes: ArrayBuffer };
+            const value = read.result as { bytes?: ArrayBuffer; blob?: Blob };
+            if (value.blob) {
+              // A tile record: same size, different bytes.
+              blobs.put({ ...value, blob: new Blob([new Uint8Array(value.blob.size)], { type: 'image/png' }) }, key);
+              return;
+            }
             // Still a syntactically valid PNG data URL, but different bytes.
-            const url = new TextDecoder().decode(value.bytes);
+            const url = new TextDecoder().decode(value.bytes!);
             const parts = url.match(/^(.*)([A-Za-z0-9+/])(=*)$/)!;
             const changed = `${parts[1]}${parts[2] === 'A' ? 'B' : 'A'}${parts[3]}`;
             blobs.put({ ...value, bytes: new TextEncoder().encode(changed).buffer }, key);

@@ -32,9 +32,17 @@ type Stored = {
   localRevision: number;
   history: unknown[];
   index: number;
-  assetRefs: Record<string, { hash: string; w: number; h: number }>;
+  assetRefs: Record<string, { hash?: string; w: number; h: number; tiles?: (string | null)[] }>;
+  tileRefs?: Record<string, string>;
   assetKeys: string[];
 };
+
+/** Distinct records a manifest references: data-URL assets plus tiles (format 4). */
+const referencedRecords = (value: Stored) =>
+  new Set([
+    ...Object.values(value.assetRefs).flatMap((ref) => (ref.hash ? [ref.hash] : [])),
+    ...Object.values(value.tileRefs || {}),
+  ]).size;
 
 /** Read this draft's format 3 manifest and asset record keys from IndexedDB. */
 function stored(page: Page, id: string) {
@@ -60,6 +68,7 @@ function stored(page: Page, id: string) {
               history: value.history,
               index: value.index,
               assetRefs: value.assetRefs,
+              tileRefs: value.tileRefs,
               assetKeys: keys.result.map(String).sort(),
             });
           };
@@ -145,9 +154,7 @@ test('poster strokes save only new assets and reload with identical pixels and h
   const id = draftId(page);
   let previous = await stored(page, id);
   // Every committed manifest references exactly the records that exist.
-  expect(previous.assetKeys).toHaveLength(
-    new Set(Object.values(previous.assetRefs).map((ref) => ref.hash)).size,
-  );
+  expect(previous.assetKeys).toHaveLength(referencedRecords(previous));
   for (const [x, y] of [
     [0.2, 0.2],
     [0.4, 0.5],
@@ -164,13 +171,21 @@ test('poster strokes save only new assets and reload with identical pixels and h
     const added = next.assetKeys.filter((key) => !previous.assetKeys.includes(key));
     const removed = previous.assetKeys.filter((key) => !next.assetKeys.includes(key));
     // One stroke produces one new paint-layer asset; nothing else is rewritten
-    // and nothing still referenced by history is collected.
-    expect(added).toHaveLength(1);
+    // and nothing still referenced by history is collected. A paint layer whose
+    // content bounds reach 1 MP is stored as tiles (tiled-layer-assets-contract.md):
+    // then its new records are exactly its tiles that were not stored yet.
+    const newIds = Object.keys(next.assetRefs).filter((assetId) => !(assetId in previous.assetRefs));
+    expect(newIds).toHaveLength(1);
+    const ref = next.assetRefs[newIds[0]];
+    const hashes = ref.tiles
+      ? [...new Set(ref.tiles.flatMap((key) => (key ? [next.tileRefs![key]] : [])))]
+      : [ref.hash!];
+    const expected = hashes.map((hash) => `asset:${id}:${hash}`).filter((key) => !previous.assetKeys.includes(key));
+    expect(added.sort()).toEqual(expected.sort());
+    expect(added.length).toBeGreaterThanOrEqual(1);
     expect(removed).toHaveLength(0);
     expect(next.history.length).toBe(previous.history.length + 1);
-    expect(next.assetKeys).toHaveLength(
-      new Set(Object.values(next.assetRefs).map((ref) => ref.hash)).size,
-    );
+    expect(next.assetKeys).toHaveLength(referencedRecords(next));
     previous = next;
   }
 

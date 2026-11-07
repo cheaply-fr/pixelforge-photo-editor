@@ -61,6 +61,7 @@ import { prewarmFilterWorkers, primeWorkerDecodedAsset } from '../src/workerRend
 import { PREWARM_FILTER_TYPES } from '../src/filterWorkerPool';
 import {
   addAsset as addDocumentAsset,
+  flattenTiledAssets,
   primeDecodedAsset,
   formatMegapixels,
   layerPixelUsage,
@@ -101,6 +102,7 @@ import {
   type Assets,
   FONTS,
 } from '../src/document';
+import { isPngAsset, type PngAsset } from '../src/tiledAssets';
 import {
   applyImagePixels,
   CALCULATION_MODES,
@@ -3336,9 +3338,29 @@ export default function Home() {
       metadata: { ...metadata },
       settings: settings(),
     }).draft;
+  /**
+   * The document for interchange that stores one PNG per asset (portable
+   * bundle v3, cloud): the history window is chosen by each asset's full
+   * size and tiled assets are flattened (tiled-layer-assets-contract.md).
+   */
+  const interchangeDocumentValue = async (): Promise<Draft> => {
+    const value = persistableHistoryDraft<Draft>(
+      {
+        version: 2,
+        history: history.current,
+        assets: assets.current,
+        index: index.current,
+        name,
+        metadata: { ...metadata },
+        settings: settings(),
+      },
+      { flattened: true },
+    ).draft;
+    return { ...value, assets: await flattenTiledAssets(value.assets) };
+  };
   /** File Info is intentionally local/project-only; never send personal metadata to cloud APIs. */
-  const cloudDocumentValue = (): Draft => {
-    return stripPrivateMetadata(documentValue());
+  const cloudDocumentValue = async (): Promise<Draft> => {
+    return stripPrivateMetadata(await interchangeDocumentValue());
   };
   const restoreSettings = useCallback((s: Settings, fallbackZoom?: number) => {
     setTool(s.tool);
@@ -7236,7 +7258,7 @@ export default function Home() {
       const result = await saveCloudProject(
         link?.id || crypto.randomUUID(),
         link?.generation || '0',
-        cloudDocumentValue(),
+        await cloudDocumentValue(),
       );
       setCloud({ ...result, owner: member.id });
       setCloudMessage(
@@ -7309,7 +7331,7 @@ export default function Home() {
       return;
     }
     try {
-      const blob = await writePortableBundle(documentValue());
+      const blob = await writePortableBundle(await interchangeDocumentValue());
       if (picked?.status === 'picked') {
         await writeToFileHandle(picked.handle, blob);
         setNotice('Editable project file saved with the file picker');
@@ -9017,8 +9039,8 @@ export default function Home() {
     /** Source canvases of the most recently created assets. */
     recent: new Map<string, HTMLCanvasElement>(),
   });
-  const addAsset = (target: Assets, source: HTMLCanvasElement): string => {
-    const id = addDocumentAsset(target, source);
+  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: { tiled?: boolean }): string => {
+    const id = addDocumentAsset(target, source, options);
     const recent = autoTrim.current.recent;
     recent.delete(id);
     recent.set(id, source);
@@ -9405,7 +9427,8 @@ export default function Home() {
         context.drawImage(decoded, 0, 0, size.w, size.h);
       }
       const nextAssets = { ...assets.current };
-      const asset = addAsset(nextAssets, stored);
+      // The overlay shows the reference with an <img>, so keep a data URL.
+      const asset = addAsset(nextAssets, stored, { tiled: false });
       const previous = original.reference;
       const reference: ReferenceImage = previous
         ? { ...previous, asset, name: selected.name.slice(0, 160) }
@@ -16355,11 +16378,11 @@ export default function Home() {
                   );
                 })()
               : null}
-            {frame?.reference?.visible && assets.current[frame.reference.asset] && (
+            {frame?.reference?.visible && isPngAsset(assets.current[frame.reference.asset]) && (
               <img
                 className="reference-overlay"
                 data-testid="reference-overlay"
-                src={assets.current[frame.reference.asset].url}
+                src={(assets.current[frame.reference.asset] as PngAsset).url}
                 alt=""
                 aria-hidden="true"
                 draggable={false}

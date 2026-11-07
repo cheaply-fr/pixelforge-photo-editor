@@ -4,12 +4,22 @@ import { selectTool } from './tool-selection';
 /**
  * A noisy photo makes every raster history step a multi-megabyte PNG asset,
  * the case where the previous 32 MB history budget kept only a few steps.
+ * Large layers are stored as shared 256 × 256 tiles
+ * (tiled-layer-assets-contract.md), so a short stroke now costs only the
+ * tiles it touched; the persistence test paints full-width strokes on a
+ * larger photo to exceed the 64 MB draft history budget again.
  */
 const SIZE = 1400;
+/** Photo size and stroke span used by the draft-window test. */
+const WIDE = { size: 3200, x0: 8, x1: 3192 };
+let size = SIZE;
+let span = { x0: 300, x1: 340 };
 const STROKES = 12;
 const RED = [255, 0, 0, 255];
 
 test.beforeEach(async ({ page }) => {
+  size = SIZE;
+  span = { x0: 300, x1: 340 };
   await page.route(
     'https://marketplace.cheaply.fr/marketplace/api/photoeditor**',
     (route) => route.fulfill({ json: { authenticated: false } }),
@@ -25,7 +35,8 @@ const settled = (page: Page) => expect(canvas(page)).toHaveAttribute('data-rende
 const saveStatus = (page: Page) => page.getByRole('status', { name: 'Draft save status' });
 const strokeY = (i: number) => 60 + i * 100;
 
-async function openNoisyPhoto(page: Page) {
+async function openNoisyPhoto(page: Page, photo = SIZE) {
+  size = photo;
   const png = await page.evaluate((size) => {
     const element = document.createElement('canvas');
     element.width = size;
@@ -45,13 +56,13 @@ async function openNoisyPhoto(page: Page) {
     }
     context.putImageData(image, 0, 0);
     return element.toDataURL('image/png').split(',')[1];
-  }, SIZE);
+  }, size);
   await page.getByTestId('file-input').setInputFiles({
     name: 'noisy-photo.png',
     mimeType: 'image/png',
     buffer: Buffer.from(png, 'base64'),
   });
-  await expect(canvas(page)).toHaveAttribute('width', String(SIZE));
+  await expect(canvas(page)).toHaveAttribute('width', String(size));
   await settled(page);
   await expect(position(page)).toHaveText('1 / 1');
 }
@@ -59,14 +70,14 @@ async function openNoisyPhoto(page: Page) {
 async function clientPoint(page: Page, x: number, y: number) {
   const box = (await canvas(page).boundingBox())!;
   return {
-    clientX: box.x + ((x + 0.5) / SIZE) * box.width,
-    clientY: box.y + ((y + 0.5) / SIZE) * box.height,
+    clientX: box.x + ((x + 0.5) / size) * box.width,
+    clientY: box.y + ((y + 0.5) / size) * box.height,
   };
 }
 
 async function stroke(page: Page, pointerId: number, y: number) {
-  const start = await clientPoint(page, 300, y);
-  const end = await clientPoint(page, 340, y);
+  const start = await clientPoint(page, span.x0, y);
+  const end = await clientPoint(page, span.x1, y);
   await canvas(page).evaluate((element) => {
     element.setPointerCapture = () => undefined;
   });
@@ -159,8 +170,9 @@ test('ten-plus multi-megabyte raster edits can all be undone and redone', async 
 });
 
 test('local saves persist the newest history window and reload restores it', async ({ page }) => {
-  test.setTimeout(240_000);
-  await openNoisyPhoto(page);
+  test.setTimeout(360_000);
+  await openNoisyPhoto(page, WIDE.size);
+  span = { x0: WIDE.x0, x1: WIDE.x1 };
   await paintStrokes(page);
   await expect(saveStatus(page)).toHaveText('Saved on this device', { timeout: 60_000 });
   // Older states stay in memory only and the panel says so.
@@ -178,7 +190,7 @@ test('local saves persist the newest history window and reload restores it', asy
   page.on('pageerror', (error) => errors.push(error.message));
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
-  await expect(canvas(page)).toHaveAttribute('width', String(SIZE));
+  await expect(canvas(page)).toHaveAttribute('width', String(size));
   await expect(position(page)).toHaveText(`${persisted} / ${persisted}`);
   await expectMarks(page, STROKES);
   await expect(note).toHaveCount(0);

@@ -1,4 +1,11 @@
 import {
+  isAssetShape,
+  isPngAsset,
+  isTiledAsset,
+  tiledAssetFingerprint,
+  type AnyAsset,
+} from './tiledAssets.ts';
+import {
   effectiveFilterEffects,
   isNeutralFilterEffects,
   type FilterEffects,
@@ -165,7 +172,7 @@ export function hashString(value: string): string {
   return `${(fnv >>> 0).toString(16).padStart(8, '0')}${(mix >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-type FingerprintAsset = { url: string; w: number; h: number };
+type FingerprintAsset = AnyAsset;
 const fingerprints = new WeakMap<object, { url: string; fingerprint: string }>();
 
 /**
@@ -175,6 +182,7 @@ const fingerprints = new WeakMap<object, { url: string; fingerprint: string }>()
  * 64-bit hash of the encoded data. The hash is memoized per asset object.
  */
 export function assetFingerprint(asset: FingerprintAsset): string {
+  if (isTiledAsset(asset)) return tiledAssetFingerprint(asset);
   const memo = fingerprints.get(asset);
   if (memo && memo.url === asset.url) return memo.fingerprint;
   const fingerprint = `${asset.w}x${asset.h}:${asset.url.length}:${hashString(asset.url)}`;
@@ -196,7 +204,8 @@ export function primeAssetFingerprints(
   if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return;
   for (const [id, fingerprint] of Object.entries(keys as Record<string, unknown>)) {
     const asset = assets[id];
-    if (!asset || typeof asset.url !== 'string' || typeof fingerprint !== 'string') continue;
+    // Tiled fingerprints are cheap to recompute from the tile keys.
+    if (!isPngAsset(asset) || typeof fingerprint !== 'string') continue;
     const match = FINGERPRINT_PATTERN.exec(fingerprint);
     if (
       !match ||
@@ -215,7 +224,7 @@ export function assetFingerprints(
 ): Record<string, string> {
   const keys: Record<string, string> = {};
   for (const [id, asset] of Object.entries(assets))
-    if (asset && typeof asset.url === 'string') keys[id] = assetFingerprint(asset);
+    if (isAssetShape(asset)) keys[id] = assetFingerprint(asset);
   return keys;
 }
 
