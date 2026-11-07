@@ -27,8 +27,10 @@ referencing more than 64 MiB (`DOCUMENT_MAX_ASSET_BYTES`) is refused with an
 explanation that names the device budget.
 
 Local drafts, duplicates, cloud saves and portable projects persist only the
-window around the current state that fits 24 states and ~48 MiB of assets plus
-frame JSON (`selectPersistedHistory`, nearest undo/redo neighbours first), so a
+window around the current state that fits 24 states (the draft schema limit),
+the 64 MiB referenced-asset cap and 768 assets (`selectPersistedHistory`,
+nearest undo/redo neighbours first). Format 3 drafts store assets by content
+hash, so keeping a full window costs one new asset record per edit. So a
 larger in-memory history cannot make a local save fail. The History panel marks
 the remaining states as memory-only; they are not restored after reload. The
 Purge dialog states the capacity and releases that memory immediately.

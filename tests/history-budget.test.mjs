@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 const {
   DOCUMENT_MAX_ASSET_BYTES,
+  DRAFT_HISTORY_MAX_ASSETS,
   DRAFT_HISTORY_MAX_BYTES,
   DRAFT_HISTORY_MAX_STEPS,
   HISTORY_DESKTOP_BYTES,
@@ -44,7 +45,8 @@ test('history capacity is 10x the previous 24 steps / 32 MB budget on desktop', 
   assert.equal(HISTORY_LOW_MEMORY_BYTES, 96 * MIB);
   assert.equal(DOCUMENT_MAX_ASSET_BYTES, 64 * MIB);
   assert.equal(DRAFT_HISTORY_MAX_STEPS, 24);
-  assert.ok(DRAFT_HISTORY_MAX_BYTES < 64 * MIB);
+  assert.equal(DRAFT_HISTORY_MAX_BYTES, 64 * MIB);
+  assert.equal(DRAFT_HISTORY_MAX_ASSETS, 768);
 });
 
 test('device tier selection lowers the budget for mobile and low-memory hints', () => {
@@ -144,8 +146,8 @@ test('draft persistence keeps the current frame and the nearest steps that fit',
   const window = selectPersistedHistory(history, 39, assets);
   assert.equal(window.end, 39);
   assert.ok(window.bytes <= DRAFT_HISTORY_MAX_BYTES);
-  assert.equal(window.end - window.start + 1, 4); // 4 x 10 MB + frame JSON <= 48 MB
-  assert.equal(window.omittedUndo, 36);
+  assert.equal(window.end - window.start + 1, 6); // 6 x 10 MB <= 64 MB referenced-asset cap
+  assert.equal(window.omittedUndo, 34);
   assert.equal(window.omittedRedo, 0);
   // The step limit applies even to tiny steps.
   const small = stack(100, 10);
@@ -161,6 +163,23 @@ test('draft persistence alternates undo and redo neighbours around the current f
   // When one side is exhausted the other side keeps growing.
   const edge = selectPersistedHistory(history, 1, assets, { maxSteps: 5, maxBytes: Infinity });
   assert.deepEqual([edge.start, edge.end], [0, 4]);
+});
+
+test('draft persistence respects the distinct-asset limit', () => {
+  // Each frame references 3 distinct assets; a 7-asset limit allows 2 frames.
+  const assets = {};
+  const history = [];
+  for (let i = 0; i < 5; i += 1) {
+    const f = frame(`a${i}`, `s${i}`);
+    for (const extra of ['m', 'n']) {
+      assets[`${extra}${i}`] = asset(1);
+      f.layers.push({ ...f.layers[0], id: `${extra}${i}-layer`, asset: `${extra}${i}` });
+    }
+    assets[`a${i}`] = asset(1);
+    history.push(f);
+  }
+  const window = selectPersistedHistory(history, 4, assets, { maxAssets: 7 });
+  assert.deepEqual([window.start, window.end], [3, 4]);
 });
 
 test('draft persistence keeps an oversized current frame alone', () => {

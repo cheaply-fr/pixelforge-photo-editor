@@ -28,14 +28,22 @@ export const HISTORY_LOW_MEMORY_BYTES = 96 * MIB;
  * cap, so a document that can be edited can also be saved.
  */
 export const DOCUMENT_MAX_ASSET_BYTES = 64 * MIB;
-/** Local drafts keep at most this many history states (draft schema limit). */
+/**
+ * Local drafts keep at most this many history states. This is the draft
+ * schema limit `validateDraft` enforces for drafts, portable projects and
+ * cloud documents (and that older deployed builds still enforce on load).
+ */
 export const DRAFT_HISTORY_MAX_STEPS = 24;
 /**
- * Serialized bytes (assets + frame JSON) a local draft spends on history. The
- * margin under the 64 MB draft payload cap leaves room for settings/metadata
- * and keeps each automatic save bounded even when memory history is larger.
+ * Referenced image data a persisted history window may use: exactly the
+ * 64 MB referenced-asset cap of `validateDraft`. Format 3 drafts store each
+ * asset once by content hash and write only new ones, so a full window costs
+ * one new asset record per edit rather than a whole-history rewrite; frame
+ * JSON lives in the manifest, which no longer has a 64 MB payload limit.
  */
-export const DRAFT_HISTORY_MAX_BYTES = 48 * MIB;
+export const DRAFT_HISTORY_MAX_BYTES = 64 * MIB;
+/** Distinct assets a draft may reference (`validateDraft` / asset-ref limit). */
+export const DRAFT_HISTORY_MAX_ASSETS = 768;
 
 export type HistoryBudgetTier = 'desktop' | 'standard' | 'low-memory';
 export type HistoryBudget = {
@@ -95,7 +103,7 @@ type Window = { start: number; end: number };
  * Shared window accounting: tracks distinct asset ids across a contiguous
  * frame range with reference counts, so growing or shrinking it is O(frame).
  */
-function windowAccounting(history: readonly Frame[], assets: Assets, extraBytes?: (frame: Frame) => number) {
+function windowAccounting(history: readonly Frame[], assets: Assets) {
   const ids = history.map((frame) => Object.keys(referencedAssets([frame], assets)));
   const counts = new Map<string, number>();
   let bytes = 0;
@@ -104,7 +112,6 @@ function windowAccounting(history: readonly Frame[], assets: Assets, extraBytes?
       return bytes;
     },
     add(i: number) {
-      bytes += extraBytes ? extraBytes(history[i]) : 0;
       for (const id of ids[i]) {
         const count = counts.get(id) || 0;
         if (!count) bytes += assetBytes(assets[id]);
@@ -112,7 +119,6 @@ function windowAccounting(history: readonly Frame[], assets: Assets, extraBytes?
       }
     },
     remove(i: number) {
-      bytes -= extraBytes ? extraBytes(history[i]) : 0;
       for (const id of ids[i]) {
         const count = counts.get(id) || 0;
         if (count <= 1) {
@@ -123,8 +129,14 @@ function windowAccounting(history: readonly Frame[], assets: Assets, extraBytes?
     },
     /** Bytes the window would cost if frame `i` were added (without adding). */
     costWith(i: number) {
-      let next = bytes + (extraBytes ? extraBytes(history[i]) : 0);
+      let next = bytes;
       for (const id of ids[i]) if (!counts.get(id)) next += assetBytes(assets[id]);
+      return next;
+    },
+    /** Distinct assets the window would reference if frame `i` were added. */
+    assetsWith(i: number) {
+      let next = counts.size;
+      for (const id of ids[i]) if (!counts.get(id)) next += 1;
       return next;
     },
   };
@@ -176,14 +188,13 @@ export type PersistedHistoryWindow = {
   /** Inclusive range of in-memory history indexes that are persisted. */
   start: number;
   end: number;
-  /** Estimated serialized bytes (assets + frame JSON). */
+  /** Distinct referenced asset bytes of the persisted window. */
   bytes: number;
   /** In-memory states that are not persisted (memory-only). */
   omittedUndo: number;
   omittedRedo: number;
 };
 
-const frameJsonBytes = (frame: Frame) => JSON.stringify(frame)?.length ?? 0;
 
 /**
  * Choose the contiguous history range a local save should persist: always the
@@ -195,13 +206,14 @@ export function selectPersistedHistory(
   history: readonly Frame[],
   index: number,
   assets: Assets,
-  limits: { maxSteps?: number; maxBytes?: number } = {},
+  limits: { maxSteps?: number; maxBytes?: number; maxAssets?: number } = {},
 ): PersistedHistoryWindow {
   if (!history.length || !Number.isInteger(index) || index < 0 || index >= history.length)
     throw new Error('Cannot persist an invalid history position');
   const maxSteps = Math.max(1, Math.floor(limits.maxSteps ?? DRAFT_HISTORY_MAX_STEPS));
   const maxBytes = limits.maxBytes ?? DRAFT_HISTORY_MAX_BYTES;
-  const account = windowAccounting(history, assets, frameJsonBytes);
+  const maxAssets = limits.maxAssets ?? DRAFT_HISTORY_MAX_ASSETS;
+  const account = windowAccounting(history, assets);
   account.add(index);
   let start = index,
     end = index,
@@ -211,7 +223,7 @@ export function selectPersistedHistory(
   while ((undoOpen || redoOpen) && end - start + 1 < maxSteps) {
     const takeUndo: boolean = undoOpen && (preferUndo || !redoOpen);
     const candidate: number = takeUndo ? start - 1 : end + 1;
-    if (account.costWith(candidate) <= maxBytes) {
+    if (account.costWith(candidate) <= maxBytes && account.assetsWith(candidate) <= maxAssets) {
       account.add(candidate);
       if (takeUndo) start = candidate;
       else end = candidate;
@@ -244,7 +256,7 @@ type PersistableDraft = {
  */
 export function persistableHistoryDraft<T extends PersistableDraft>(
   value: T,
-  limits?: { maxSteps?: number; maxBytes?: number },
+  limits?: { maxSteps?: number; maxBytes?: number; maxAssets?: number },
 ): { draft: T; window: PersistedHistoryWindow } {
   const window = selectPersistedHistory(value.history, value.index, value.assets, limits);
   const source = value.settings.historySourceIndex;

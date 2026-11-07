@@ -24,7 +24,7 @@ project API:
 | Layers in one frame | 32 | Keep layer traversal and the inspector bounded |
 | Undo/redo history (memory) | 240 frames (`HISTORY_MAX_STEPS`) | Bound retained references and redraw work |
 | Referenced history PNG data (memory) | Device-aware: 320 MiB desktop, 128 MiB mobile or ≤ 4 GB `deviceMemory`, 96 MiB ≤ 2 GB (`src/historyBudget.ts`); oldest undo frames trimmed first, redo frames only after every undo frame, the current frame never; 64 MiB current-frame ceiling (`DOCUMENT_MAX_ASSET_BYTES`) | Let large documents keep many raster undo steps without unbounded memory on phones |
-| Persisted history (draft / project / cloud) | Most recent window around the current frame within 24 frames and ~48 MiB of assets + frame JSON (`DRAFT_HISTORY_MAX_*`) | Local saves never fail because the in-memory history is larger; older frames are memory-only and the History panel says so |
+| Persisted history (draft / project / cloud) | Most recent window around the current frame within 24 frames (draft schema limit), the 64 MiB referenced-asset cap and 768 assets (`DRAFT_HISTORY_MAX_*`); incremental format 3 saves write only new asset records | Local saves never fail because the in-memory history is larger; older frames are memory-only and the History panel says so |
 | Portable `.pixelforge` project | 64 MiB of encoded assets | Keep downloads and IndexedDB writes manageable |
 | Private cloud project | 16 MiB per document, 30 projects and 256 MiB per library | Preserve the existing Marketplace API quota |
 | Tiled effect session cache | Device-aware 2–16 MiB process-local LRU (mobile capped at 4 MiB) | Reuse repeat renders without persisting pixels or allowing unbounded mobile memory |
