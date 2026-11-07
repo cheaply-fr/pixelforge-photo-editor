@@ -218,13 +218,17 @@ measurements; these are local/live observations, not CI budgets.
 - Every stroke commit re-encodes the full layer to PNG with `toDataURL`;
   dirty-rect commits or tiled layer storage are needed (P1).
 - Every `pointermove` triggers a full-canvas preview render (a 12k-point
-  stroke took ~5 min); per-animation-frame coalescing is in review as #190
-  (`perf/coalesce-stroke-previews`), with stroke-start decode and per-stroke
-  commit cost queued as its follow-up.
+  stroke took ~5 min); per-animation-frame coalescing shipped in #190
+  (`0f390b0`). Stroke-start decode was addressed by #195 (`bf11abd`, warm
+  committed pixels; local pointer-down → first dab 678–752 ms → 110–204 ms).
+  Per-stroke full-layer commit cost remains: 2.2–2.9 s pointer-up → committed
+  and rendered on a full-canvas 2646×4096 photo layer (#207 harness,
+  `scripts/measure-stroke-commit.mjs`, local); tiled content-addressed layer
+  tiles and Blob-backed assets are in progress in a separate PR.
 - Gaussian Blur at radius 24 timed out the render worker at 10.8 MP;
   radius-independent (O(1) per pixel) blurs, faster median filters and a
-  work-scaled render watchdog are in review as #191
-  (`perf/fast-large-radius-filters`).
+  work-scaled render watchdog shipped in #191 (`2da6669`); the remaining
+  heavy filters followed in #202, #205 and #206 (below).
 - Undo history is bounded to 24 steps / 32 MB of data-URL text, which leaves
   one undo step at this size; a device-aware 240-step undo and redo budget
   (320 MiB desktop, 128 MiB mobile, 96 MiB low-memory) shipped in #189
@@ -234,9 +238,12 @@ measurements; these are local/live observations, not CI budgets.
   assets so each save writes only new assets (local benchmark: ~1.8 s vs
   ~0.1 s per save at 30 MB).
 - Project limits (64 MP stored layer pixels, 64 MB asset/draft caps) force
-  flattening on large posters; ~10× limits (320+ layers, 640 MP, ~640 MB) are
-  in development on `feat/huge-projects`, together with automatic trim, lazy
-  empty layers, render scaling and trimmed-bounds-preserving Rasterize/Merge.
+  flattening on large posters; #193 (`92af070`) raised them to 512 layers
+  and device-aware budgets (desktop 1,024 MP / 1 GiB) with content-bounds
+  paint layers. #203 (`aed3fd8`) cut a 617 MB, 320-layer project's open from
+  ≈ 230 s to ≈ 79 s and reload from 175 s to 53 s (local); `.pixelforge`
+  export stayed at ~107 s. 600 MB+ projects remain slow (fix wave 3 in the
+  rubric).
 - Gaussian Blur radius ≥ 24 on the 10.8 MP layer hit the fixed 30 s worker
   watchdog ("Worker rendering timed out"): the separable kernel cost O(radius)
   per pixel. `perf/fast-large-radius-filters` keeps the exact kernel

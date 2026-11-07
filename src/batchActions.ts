@@ -218,6 +218,7 @@ function applyBatchActionStep(input: HTMLCanvasElement, step: ActionStep): HTMLC
     'filter-fibers': 'fibers',
     'filter-difference-clouds': 'difference-clouds',
     'filter-lens-flare': 'lens-flare',
+    'filter-light-rays': 'light-rays',
     'filter-flame': 'flame',
     'filter-find-edges': 'find-edges',
     'filter-emboss': 'emboss',

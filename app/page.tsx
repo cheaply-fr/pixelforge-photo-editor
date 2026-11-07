@@ -115,9 +115,19 @@ import { normalizeTextLanguage, type TextLanguageSettings } from '../src/textLan
 import { normalizeTextPathBinding } from '../src/textOnPath';
 import {
   createCustomBrushPreset,
-  normalizeCustomBrushPresets,
   type CustomBrushPreset,
 } from '../src/customBrushPresets';
+import {
+  BUILT_IN_BRUSH_PRESETS,
+  browserPresetStorage,
+  builtInBrushPresetById,
+  deleteCustomBrushPreset,
+  mergeBrushPresetLibraries,
+  readStoredBrushPresets,
+  renameCustomBrushPreset,
+  writeStoredBrushPresets,
+} from '../src/brushPresetLibrary';
+import { BrushPresetLibraryControls } from '../src/BrushPresetLibraryControls';
 import {
   createCustomPatternPreset,
   normalizeCustomPatternPresets,
@@ -177,6 +187,7 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import StrokePathDialog, { type StrokePathRequest } from '../src/StrokePathDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
@@ -504,12 +515,24 @@ import {
   BRUSH_SCATTER_DEFAULT,
   BRUSH_SCATTER_MAX,
   DEFAULT_BRUSH_DYNAMICS,
+  brushDabColor,
   brushDabsAt,
   deferFirstBrushDab,
   normalizeBrushDynamics,
   wrapBrushAngle,
   type BrushDynamics,
 } from '../src/brushDynamics';
+import {
+  DEFAULT_PAINT_SYMMETRY,
+  affineMaxScale,
+  applyAffine,
+  normalizePaintSymmetry,
+  paintSymmetryForLayer,
+  symmetryDabCopies,
+  type PaintSymmetrySettings,
+  type SymmetryAffine,
+} from '../src/paintSymmetry';
+import { PaintSymmetryControls, PaintSymmetryOverlay } from '../src/PaintSymmetryControls';
 import {
   BRUSH_TEXTURE_DEFAULT,
   brushTextureOpacity,
@@ -575,6 +598,16 @@ import {
   type PathModel,
 } from '../src/paths';
 import { applySmudgeStroke } from '../src/smudge';
+import {
+  DEFAULT_STROKE_PATH_SETTINGS,
+  STROKE_PATH_TOOL_LABELS,
+  defaultStrokePathChoice,
+  normalizeStrokePathSettings,
+  planStrokePath,
+  strokePathSources,
+  type StrokePathSample,
+  type StrokePathSettings,
+} from '../src/strokePath';
 import { applyRetouchStroke } from '../src/retouch';
 import {
   DEFAULT_HISTORY_BRUSH,
@@ -649,6 +682,7 @@ import {
   isCenteredFilter,
   nudgeFilterCenter,
 } from '../src/filterCenter';
+import LightRaysControls, { lightRaysEffectDefaults } from '../src/LightRaysControls';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -791,6 +825,7 @@ type Command =
   | 'clear-layer'
   | 'fill-layer'
   | 'stroke-selection'
+  | 'stroke-path-brush'
   | 'new-layer'
   | 'new-fill-layer'
   | 'new-adjustment-layer'
@@ -957,6 +992,7 @@ type Command =
   | 'filter-lens-correction'
   | 'filter-adaptive-wide-angle'
   | 'filter-lens-flare'
+  | 'filter-light-rays'
   | 'filter-vanishing-point'
   | 'filter-displace'
   | 'filter-pinch'
@@ -1372,6 +1408,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Combine Shapes → Subtract Front Shape', command: 'combine-shapes-subtract' },
     { label: 'Combine Shapes → Intersect', command: 'combine-shapes-intersect' },
     { label: 'Combine Shapes → Exclude Overlapping Shapes', command: 'combine-shapes-exclude' },
+    { label: 'Stroke Path with Brush…', command: 'stroke-path-brush' },
     { label: 'Align Left', command: 'align-left' },
     { label: 'Align Horizontal Centers', command: 'align-center-horizontal' },
     { label: 'Align Right', command: 'align-right' },
@@ -1507,6 +1544,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'filter-fibers' },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
+    { label: 'Light Rays…', command: 'filter-light-rays' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'filter-sharpen' },
     { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
@@ -1591,6 +1629,8 @@ type Gesture = {
   selectionMask?: Uint8ClampedArray;
   /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
   selectionStroke?: SelectionStroke;
+  /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
+  paintSymmetry?: readonly SymmetryAffine[];
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
   cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -1711,6 +1751,8 @@ type StampCanvasOptions = {
   flipY?: boolean;
   mode: BrushMode;
   color?: BrushColor;
+  /** Background colour for the colour dynamics foreground/background mix jitter. */
+  colorBackground?: BrushColor;
   source?: HTMLCanvasElement;
   sourceX?: number;
   sourceY?: number;
@@ -1853,6 +1895,8 @@ const stampCanvasSegment = (
     spacingState?: BrushSpacingState;
     /** Stamp a deferred first dab even without a direction (stroke end). */
     flushDeferred?: boolean;
+    /** Paint Symmetry transforms (identity first); omitted paints one copy. */
+    symmetry?: readonly SymmetryAffine[];
   },
 ) => {
   const resolved = resolveBrushStamp({
@@ -1883,12 +1927,30 @@ const stampCanvasSegment = (
     positions = brushSegmentPositions(distance, interval, state);
   const stampDabs = (x: number, y: number, dabDirection: { x: number; y: number }, sourceX?: number, sourceY?: number) => {
     for (const dab of brushDabsAt({ x, y }, resolved.size, options.scatter ?? 0, dynamics, dabDirection)) {
+      if (options.symmetry && options.symmetry.length > 1) {
+        // Each copy is the geometric image of the already-jittered dab.
+        const size = dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
+          opacity = options.opacity * dab.opacityScale,
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          // Colour dynamics are resolved once per source dab and shared.
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
+        for (const copy of symmetryDabCopies(options.symmetry, {
+          x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
+        }))
+          changed = stampCanvas(target, {
+            ...options, size, opacity, color, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
+            x: copy.x, y: copy.y, sourceX, sourceY,
+          }) || changed;
+        continue;
+      }
       changed =
         stampCanvas(target, {
           ...options,
           size: dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
           angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
           opacity: options.opacity * dab.opacityScale,
+          // Colour dynamics; dabs without colour offsets keep the exact colour.
+          color: options.color && brushDabColor(options.color, options.colorBackground, dab),
           x: dab.x,
           y: dab.y,
           sourceX,
@@ -1918,6 +1980,38 @@ const stampCanvasSegment = (
         : undefined;
     // Count dabs per spacing step, each with deterministic scatter and jitter.
     stampDabs(x, y, direction, sourceX, sourceY);
+  }
+  return changed;
+};
+
+/**
+ * Stroke Path with Brush: stamp pre-planned arc-length samples (see
+ * `src/strokePath.ts`) with the same dab renderer and brush dynamics as a
+ * pointer stroke. Simulated pressure arrives as per-sample size and opacity
+ * multipliers, so the stamp itself ignores pointer pressure.
+ */
+const stampStrokePathSamples = (
+  target: HTMLCanvasElement,
+  samples: readonly StrokePathSample[],
+  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'>,
+) => {
+  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS;
+  let changed = false;
+  for (const sample of samples) {
+    const size = Math.max(1, options.size * sample.sizeScale),
+      opacity = options.opacity * sample.opacityScale;
+    if (opacity <= 0) continue;
+    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction))
+      changed = stampCanvas(target, {
+        ...options,
+        pointerType: 'mouse',
+        size: dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
+        angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+        opacity: opacity * dab.opacityScale,
+        color: options.color && brushDabColor(options.color, options.colorBackground, dab),
+        x: dab.x,
+        y: dab.y,
+      }) || changed;
   }
   return changed;
 };
@@ -2176,6 +2270,43 @@ const smudgeCanvasSegment = (
 };
 
 /**
+ * Smudge counterpart of `stampStrokePathSamples`: smear between consecutive
+ * samples of each contour, reading the stroke-start pixels like a pointer
+ * Smudge stroke. Pixels are read and written once for the whole path.
+ */
+const smudgeStrokePathSamples = (
+  source: HTMLCanvasElement,
+  destination: HTMLCanvasElement,
+  samples: readonly StrokePathSample[],
+  options: { size: number; hardness: number; flow: number; selectionMask?: Uint8ClampedArray },
+) => {
+  const width = destination.width, height = destination.height,
+    sourcePixels = source.getContext('2d')!.getImageData(0, 0, width, height).data,
+    context = destination.getContext('2d')!,
+    image = context.getImageData(0, 0, width, height);
+  let pixels: Uint8ClampedArray = image.data, changed = false;
+  for (let index = 1; index < samples.length; index += 1) {
+    const from = samples[index - 1], to = samples[index],
+      flow = options.flow * from.opacityScale;
+    if (from.contour !== to.contour || flow <= 0) continue;
+    const result = applySmudgeStroke(sourcePixels, pixels, {
+      width, height, x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+      size: Math.min(10000, Math.max(1, options.size * from.sizeScale)),
+      hardness: options.hardness,
+      flow,
+      selectionMask: options.selectionMask,
+    });
+    pixels = result.pixels;
+    changed = result.changed || changed;
+  }
+  if (changed) {
+    image.data.set(pixels);
+    context.putImageData(image, 0, 0);
+  }
+  return changed;
+};
+
+/**
  * Convert the frame-space selection alpha into the selected raster asset's
  * local pixel space. Tonal tools edit layer assets directly, so sampling the
  * selection once at pointer-down keeps every subsequent segment clipped to
@@ -2294,9 +2425,27 @@ const stampGestureSegment = (
   from: { x: number; y: number },
   to: { x: number; y: number },
   options: Parameters<typeof stampCanvasSegment>[3],
-) =>
-  confinedGestureEdit(g, from, to, brushStampReach(options.size, options.scatter), (target) =>
-    stampCanvasSegment(target, from, to, options));
+) => {
+  const reach = brushStampReach(options.size, options.scatter),
+    symmetry = g.paintSymmetry;
+  if (!symmetry || symmetry.length < 2)
+    return confinedGestureEdit(g, from, to, reach, (target) =>
+      stampCanvasSegment(target, from, to, options));
+  // Paint Symmetry: every copy lands on the same buffer (or raw selection
+  // stroke); the confined region is each copy's transformed segment.
+  const draw = (target: HTMLCanvasElement) =>
+      stampCanvasSegment(target, from, to, { ...options, symmetry }),
+    buffer = g.buffer!,
+    stroke = g.selectionStroke;
+  if (!stroke) return draw(buffer);
+  const changed = draw(stroke.raw);
+  if (changed)
+    for (const transform of symmetry)
+      confineStrokeRect(stroke, buffer, brushSegmentRect(
+        applyAffine(transform, from), applyAffine(transform, to),
+        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height));
+  return changed;
+};
 /** Pattern Stamp counterpart of `stampGestureSegment`. */
 const patternGestureSegment = (
   g: Gesture,
@@ -2551,7 +2700,9 @@ export default function Home() {
     [pressureOpacity, setPressureOpacity] = useState(false),
     [pressureCurve, setPressureCurve] = useState<BrushPressureCurve>('linear'),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
-    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
+    // Saved brush presets start from this device's library (localStorage).
+    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>(() => readStoredBrushPresets(browserPresetStorage())),
+    [selectedBrushLibraryId, setSelectedBrushLibraryId] = useState(''),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
@@ -2564,6 +2715,7 @@ export default function Home() {
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushDynamics, setBrushDynamics] = useState<BrushDynamics>(() => ({ ...DEFAULT_BRUSH_DYNAMICS })),
+    [paintSymmetry, setPaintSymmetry] = useState<PaintSymmetrySettings>(() => ({ ...DEFAULT_PAINT_SYMMETRY })),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
     [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
@@ -2782,6 +2934,10 @@ export default function Home() {
     replayingActionRef = useRef(false),
     batchActionRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    // Storage failures are reported as false and never block editing.
+    writeStoredBrushPresets(browserPresetStorage(), customBrushPresets);
+  }, [customBrushPresets]);
+  useEffect(() => {
     try {
       window.localStorage.setItem(
         'pixelforge.actions.v1',
@@ -2890,6 +3046,8 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  const [strokePathDialog, setStrokePathDialog] = useState<{ pathLayerId?: string; targetLayerId?: string } | null>(null);
+  const [strokePathSettings, setStrokePathSettings] = useState<StrokePathSettings>(() => ({ ...DEFAULT_STROKE_PATH_SETTINGS }));
   const [cameraRawEditing, setCameraRawEditing] = useState(false);
   const [colorRanging, setColorRanging] = useState(false);
   const [fillLayerDialog, setFillLayerDialog] = useState(false);
@@ -2975,7 +3133,7 @@ export default function Home() {
   const saveSequence = useRef(0),
     saving = useRef(false),
     discarding = useRef(false);
-  const { member, checking } = useMember();
+  const { member, checking, unavailable: signInUnavailable, retry: retrySignIn } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [recovering, setRecovering] = useState(false),
@@ -3281,6 +3439,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    paintSymmetry,
     brushTexture,
     brushDual,
     brushBristle,
@@ -3377,7 +3536,8 @@ export default function Home() {
     setPressureOpacity(s.pressureOpacity ?? false);
     setPressureCurve(normalizeBrushPressureCurve(s.pressureCurve));
     setBrushPreset(s.brushPreset ?? 'round-hard');
-    setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
+    // Keep this device's library and add any presets carried by the draft/project.
+    setCustomBrushPresets((currentPresets) => mergeBrushPresetLibraries(currentPresets, s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
@@ -3389,6 +3549,7 @@ export default function Home() {
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
     setBrushDynamics(normalizeBrushDynamics(s.brushDynamics));
+    setPaintSymmetry(normalizePaintSymmetry(s.paintSymmetry));
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
     setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
@@ -3541,7 +3702,33 @@ export default function Home() {
     setBrushWetEdges(preset.brushWetEdges);
     setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
+    if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
+    setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const selectBrushLibraryPreset = (id: string) => {
+    const preset = builtInBrushPresetById(id) ?? customBrushPresets.find((item) => item.id === id);
+    if (preset) applyCustomBrushPreset(preset);
+    else setSelectedBrushLibraryId('');
+  };
+  const renameBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing) return;
+    const label = window.prompt('Rename this brush preset', existing.label);
+    if (label === null) return;
+    try {
+      setCustomBrushPresets(renameCustomBrushPreset(customBrushPresets, existing.id, label));
+      setNotice(`Brush preset renamed to “${label.trim().slice(0, 80)}”`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Brush preset could not be renamed');
+    }
+  };
+  const deleteBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing || !window.confirm(`Delete the brush preset “${existing.label}” from this device?`)) return;
+    setCustomBrushPresets(deleteCustomBrushPreset(customBrushPresets, existing.id));
+    setSelectedBrushLibraryId('');
+    setNotice(`Brush preset “${existing.label}” deleted from this device`);
   };
   const defineBrushPreset = () => {
     const label = window.prompt('Name this brush preset', 'Custom brush');
@@ -3573,6 +3760,7 @@ export default function Home() {
         brushWetEdges,
         brushBuildUp,
         brushFlow,
+        brushOpacity,
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -6744,6 +6932,7 @@ export default function Home() {
                     : type === 'shear'
                       ? 90
                       : 0,
+                ...(type === 'light-rays' ? lightRaysEffectDefaults() : {}),
               },
       )
     )
@@ -7033,6 +7222,7 @@ export default function Home() {
         brushSmoothing,
         brushScatter,
         brushDynamics,
+        paintSymmetry,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -7154,6 +7344,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    paintSymmetry,
     brushTexture,
     brushDual,
     brushBristle,
@@ -8585,6 +8776,118 @@ export default function Home() {
         setNotice(`Selection stroked with ${width}px ${color}`);
     } catch {
       setNotice('Could not stroke the selection');
+    }
+  };
+  /** Stroke Path with Brush: choose defaults and open the dialog. */
+  const openStrokePathDialog = () => {
+    const f = current();
+    if (!f.layers.some((item) => item.kind === 'path')) {
+      setNotice('Create a Pen path layer before stroking a path');
+      return;
+    }
+    const choice = defaultStrokePathChoice(f.layers, f.active, selectedIdsForFrame(f),
+      (item) => item.kind === 'raster' && item.visible && !layerIsLocked(f, item));
+    if (!choice.targetLayerId) {
+      setNotice('Add a visible, unlocked paint layer to stroke the path onto');
+      return;
+    }
+    setStrokePathDialog(choice);
+  };
+  /**
+   * Paint the current brush (or Pencil, Eraser, Smudge) along path layers
+   * onto one raster layer, confined to the selection, as one undo step.
+   */
+  const strokePathWithBrush = async (request: StrokePathRequest) => {
+    setStrokePathDialog(null);
+    const settings = normalizeStrokePathSettings(request);
+    setStrokePathSettings(settings);
+    let f = current();
+    const chosen = f.layers.find((item) => item.id === request.targetLayerId);
+    if (!chosen || chosen.kind !== 'raster' || layerIsLocked(f, chosen) || !chosen.visible) {
+      setNotice('Select a visible, unlocked raster layer to stroke the path onto');
+      return;
+    }
+    // The target becomes the active layer so the stroke expands and commits
+    // like any paint stroke (a path layer may have been active).
+    if (f.active !== chosen.id) setLayerSelection([chosen.id], chosen.id);
+    await expandRasterLayerForPaint();
+    f = current();
+    const layer = f.layers.find((item) => item.id === chosen.id);
+    const sources = strokePathSources(
+      f.layers.filter((item): item is Extract<Layer, { kind: 'path' }> => item.kind === 'path'),
+      request.pathLayerId, settings.scope,
+    );
+    if (!layer || layer.kind !== 'raster') return;
+    if (!sources.length) {
+      dropUnusedExpansion();
+      setNotice(settings.scope === 'all' ? 'No visible path layers to stroke' : 'Choose a path layer to stroke');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        buffer = surface(image.naturalWidth, image.naturalHeight);
+      buffer.getContext('2d')!.drawImage(image, 0, 0);
+      const selectionMask = f.selection
+        ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
+        : undefined;
+      if (current() !== f) {
+        setNotice('Stroke Path cancelled because the document changed');
+        return;
+      }
+      const tool = settings.tool,
+        brushSize = localSize(layer.matrix, size),
+        plan = planStrokePath(
+          sources.map((item) => ({ path: item.path, matrix: item.matrix })),
+          layer.matrix,
+          { ...settings, size: brushSize, spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing },
+        );
+      let changed: boolean;
+      if (tool === 'smudge') {
+        const source = surface(buffer.width, buffer.height);
+        source.getContext('2d')!.drawImage(image, 0, 0);
+        changed = smudgeStrokePathSamples(source, buffer, plan.samples, {
+          size: brushSize, hardness, flow: brushOpacity / 100, selectionMask,
+        });
+      } else {
+        changed = stampStrokePathSamples(buffer, plan.samples, {
+          size: brushSize,
+          hardness: tool === 'pencil' ? 100 : hardness,
+          opacity: (brushOpacity / 100) * (brushFlow / 100),
+          spacing: brushSpacing,
+          scatter: brushScatter,
+          dynamics: brushDynamics,
+          texture: brushTexture,
+          dual: brushDual,
+          secondaryPreset: secondaryBrushPreset,
+          bristle: brushBristle,
+          wetEdges: brushWetEdges,
+          buildUp: brushBuildUp,
+          angle: brushAngle,
+          roundness: tool === 'pencil' ? 100 : brushRoundness,
+          flipX: brushFlipX,
+          flipY: brushFlipY,
+          mode: tool === 'eraser' ? 'destination-out' : 'source-over',
+          color: tool === 'eraser' ? undefined : brushColor(color),
+          colorBackground: brushColor(backgroundColor),
+        });
+        // Photoshop confines painting to the active selection.
+        if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
+      }
+      if (!changed) {
+        dropUnusedExpansion();
+        setNotice('Stroke Path painted nothing: the path lies outside this layer or selection');
+        return;
+      }
+      const asset = addPaintedAsset(buffer);
+      const label = STROKE_PATH_TOOL_LABELS[tool];
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
+        setNotice(
+          `Path stroked with ${label}${settings.simulatePressure ? ' (simulated pressure)' : ''}` +
+          `${plan.limited ? '; spacing widened to stay within the dab limit' : ''}; undo restores the layer`,
+        );
+    } catch (error) {
+      dropUnusedExpansion();
+      setNotice(error instanceof Error ? `Could not stroke the path: ${error.message}` : 'Could not stroke the path');
     }
   };
   const clearActiveLayer = async () => {
@@ -11860,6 +12163,8 @@ export default function Home() {
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
+      // Paint Symmetry is fixed for the stroke at pointer-down.
+      g.paintSymmetry = paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix);
       g.pending = (async () => {
         try {
           const image = await decodeAsset(assets.current[rasterAsset!]),
@@ -11904,6 +12209,7 @@ export default function Home() {
               flipY: brushFlipY,
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
               color: tool === 'eraser' ? undefined : brushColor(color),
+              colorBackground: brushColor(backgroundColor),
             });
             from = destination;
             stabilized = destination;
@@ -12480,6 +12786,7 @@ export default function Home() {
         flipY: brushFlipY,
         mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
         color: g.tool === 'eraser' ? undefined : brushColor(color),
+        colorBackground: brushColor(backgroundColor),
       });
       previewGesture(g);
       g.smoothedLast = destination;
@@ -13090,6 +13397,7 @@ export default function Home() {
           flipY: brushFlipY,
           mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
           color: g.tool === 'eraser' ? undefined : brushColor(color),
+          colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
       const asset = addPaintedAsset(g.buffer);
@@ -14249,6 +14557,7 @@ export default function Home() {
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
     else if (command === 'stroke-selection') return strokeSelection();
+    else if (command === 'stroke-path-brush') openStrokePathDialog();
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
@@ -14589,6 +14898,8 @@ export default function Home() {
       chooseFilterEffect('adaptive-wide-angle', 'Adaptive Wide Angle (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
+    else if (command === 'filter-light-rays')
+      chooseFilterEffect('light-rays', 'Light Rays (local approximation)');
     else if (command === 'filter-vanishing-point') return applyPerspectiveWarp('Vanishing Point');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
@@ -14959,6 +15270,7 @@ export default function Home() {
       case 'filter-tree':
       case 'filter-clouds':
       case 'filter-lens-flare':
+      case 'filter-light-rays':
       case 'filter-picture-frame':
       case 'filter-fibers':
       case 'filter-difference-clouds':
@@ -15076,6 +15388,9 @@ export default function Home() {
         return !frame.selection;
       case 'stroke-selection':
         return !frame.selection || !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'stroke-path-brush':
+        return !frame.layers.some((item) => item.kind === 'path') ||
+          !frame.layers.some((item) => item.kind === 'raster' && item.visible && !layerIsLocked(frame, item));
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'lock-layers':
@@ -15399,6 +15714,20 @@ export default function Home() {
           mode={selectionRefineValue}
           close={() => setSelectionRefining(null)}
           apply={(radius) => void applySelectionRefinement(radius)}
+        />
+      )}
+      {strokePathDialog && frame && (
+        <StrokePathDialog
+          paths={frame.layers.filter((item) => item.kind === 'path').reverse().map((item) => ({ id: item.id, name: item.name }))}
+          targets={frame.layers
+            .filter((item) => item.kind === 'raster' && item.visible && !layerIsLocked(frame, item))
+            .reverse()
+            .map((item) => ({ id: item.id, name: item.name }))}
+          initial={strokePathSettings}
+          initialPathLayerId={strokePathDialog.pathLayerId}
+          initialTargetLayerId={strokePathDialog.targetLayerId}
+          close={() => setStrokePathDialog(null)}
+          apply={(request) => void strokePathWithBrush(request)}
         />
       )}
       {selectionFeathering && (
@@ -15817,7 +16146,7 @@ export default function Home() {
             <Download /> Export
           </button>
           <ReleaseStatus />
-          <AccountMenu member={member} checking={checking} />
+          <AccountMenu member={member} checking={checking} unavailable={signInUnavailable} retry={retrySignIn} />
         </div>
       </header>
       <section className="docbar">
@@ -16398,6 +16727,15 @@ export default function Home() {
                 className="quick-mask-overlay"
                 data-testid="quick-mask-overlay"
                 aria-hidden="true"
+              />
+            )}
+            {frame && (tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+              <PaintSymmetryOverlay
+                value={paintSymmetry}
+                onChange={setPaintSymmetry}
+                canvasWidth={frame.w}
+                canvasHeight={frame.h}
+                toCanvas={point}
               />
             )}
             {(() => {
@@ -17523,6 +17861,16 @@ export default function Home() {
                   </button>
                 </label>
               )}
+              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && (
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!frame?.layers.some((item) => item.kind === 'path')}
+                  onClick={openStrokePathDialog}
+                >
+                  Stroke Path with Brush…
+                </button>
+              )}
               {tool === 'polygon' && (
                 <label className="select-row">
                   <span>Polygon variant</span>
@@ -17605,26 +17953,15 @@ export default function Home() {
                           ))}
                         </select>
                       </label>
-                      {customBrushPresets.length > 0 && (
-                        <label className="select-row">
-                          <span>Saved brush preset</span>
-                          <select
-                            aria-label="Saved brush preset"
-                            defaultValue=""
-                            onChange={(event) => {
-                              const preset = customBrushPresets.find((item) => item.id === event.target.value);
-                              if (preset) applyCustomBrushPreset(preset);
-                            }}
-                          >
-                            <option value="">Choose saved preset</option>
-                            {customBrushPresets.map((preset) => (
-                              <option key={preset.id} value={preset.id}>
-                                {preset.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
+                      <BrushPresetLibraryControls
+                        builtIns={BUILT_IN_BRUSH_PRESETS}
+                        saved={customBrushPresets}
+                        selectedId={selectedBrushLibraryId}
+                        onSelect={selectBrushLibraryPreset}
+                        onSave={defineBrushPreset}
+                        onRename={renameBrushLibraryPreset}
+                        onDelete={deleteBrushLibraryPreset}
+                      />
                     </>
                   )}
                   {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
@@ -17643,6 +17980,14 @@ export default function Home() {
                         ))}
                       </select>
                     </label>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && frame && (
+                    <PaintSymmetryControls
+                      value={paintSymmetry}
+                      onChange={setPaintSymmetry}
+                      canvasWidth={frame.w}
+                      canvasHeight={frame.h}
+                    />
                   )}
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&
@@ -17788,6 +18133,38 @@ export default function Home() {
                             max={100}
                             set={(opacityJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, opacityJitter }))}
                           />
+                          {(tool === 'brush' || tool === 'pencil') && (
+                            <>
+                              <Slider
+                                label="Hue jitter"
+                                value={brushDynamics.hueJitter}
+                                min={0}
+                                max={100}
+                                set={(hueJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, hueJitter }))}
+                              />
+                              <Slider
+                                label="Saturation jitter"
+                                value={brushDynamics.saturationJitter}
+                                min={0}
+                                max={100}
+                                set={(saturationJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, saturationJitter }))}
+                              />
+                              <Slider
+                                label="Brightness jitter"
+                                value={brushDynamics.brightnessJitter}
+                                min={0}
+                                max={100}
+                                set={(brightnessJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, brightnessJitter }))}
+                              />
+                              <Slider
+                                label="Foreground/background jitter"
+                                value={brushDynamics.colorMixJitter}
+                                min={0}
+                                max={100}
+                                set={(colorMixJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, colorMixJitter }))}
+                              />
+                            </>
+                          )}
                           <Slider
                             label="Texture"
                             value={brushTexture}
@@ -18340,6 +18717,9 @@ export default function Home() {
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
             )}
+            {filterEffects.type === 'light-rays' && (
+              <p>Seeded local light-ray approximation: generated rays or Starburst spikes, or radial streaks of the layer&apos;s own bright pixels, around an editable centre. It is a bounded local render, not a physical light simulation.</p>
+            )}
             {filterEffects.type === 'lens-flare' && (
               <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
             )}
@@ -18542,6 +18922,9 @@ export default function Home() {
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
+                {filterEffects.type === 'light-rays' && (
+                  <LightRaysControls effect={filterEffects} change={setFilterEffects} />
+                )}
             {filterEffects.type === 'picture-frame' && (
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
@@ -18571,7 +18954,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
