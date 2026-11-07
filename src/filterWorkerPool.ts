@@ -62,6 +62,39 @@ export function filterWorkerCount(hints: NavigatorHints | undefined = globalThis
   return Math.max(1, Math.min(mobile ? FILTER_WORKERS_MAX_MOBILE : FILTER_WORKERS_MAX_DESKTOP, cores - 1));
 }
 
+/** How often a running worker job re-checks an `isCancelled` predicate. */
+export const FILTER_CANCEL_POLL_MS = 50;
+
+/**
+ * Call `onCancel` once when `signal` aborts or `isCancelled()` turns true
+ * (polled, because render-worker cancellation is a predicate, not an event).
+ * Returns a function that stops watching.
+ */
+export function watchCancellation(
+  signal: AbortSignal | undefined,
+  isCancelled: (() => boolean) | undefined,
+  onCancel: () => void,
+): () => void {
+  let done = false;
+  const fire = () => {
+    if (done) return;
+    stop();
+    onCancel();
+  };
+  signal?.addEventListener('abort', fire, { once: true });
+  const timer = isCancelled
+    ? setInterval(() => {
+        if (isCancelled()) fire();
+      }, FILTER_CANCEL_POLL_MS)
+    : undefined;
+  function stop() {
+    done = true;
+    signal?.removeEventListener('abort', fire);
+    if (timer !== undefined) clearInterval(timer);
+  }
+  return stop;
+}
+
 function abortError(): Error {
   const error = new Error('Filter rendering cancelled');
   error.name = 'AbortError';
@@ -88,6 +121,8 @@ export class FilterWorkerPool {
   private nextId = 1;
   /** Set after a worker fails to load or crashes; callers fall back. */
   broken = false;
+  /** Kernel types already JIT-warmed in every live worker. */
+  readonly warmed = new Set<string>();
 
   constructor(options: { size: number; createWorker: () => FilterWorkerLike; idleMs?: number }) {
     this.size = Math.max(1, Math.floor(options.size));
@@ -119,9 +154,11 @@ export class FilterWorkerPool {
       return;
     }
     if (task.worker && this.busy.get(task.worker) === task) {
-      // A running kernel cannot be interrupted; drop its worker instead.
+      // A running kernel cannot be interrupted; drop its worker instead. Its
+      // replacement is created lazily on the next request, cold.
       this.busy.delete(task.worker);
       task.worker.terminate();
+      this.warmed.clear();
       task.reject(abortError());
       this.pump();
     }
@@ -176,12 +213,14 @@ export class FilterWorkerPool {
     const index = this.idle.indexOf(worker);
     if (index >= 0) this.idle.splice(index, 1);
     worker.terminate();
+    this.warmed.clear();
     task?.reject(error);
     this.pump();
   }
 
   /** Stop every worker; queued tasks are rejected as cancelled. */
   terminate(): void {
+    this.warmed.clear();
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = undefined;
     for (const task of this.queue.splice(0)) task.reject(abortError());
@@ -279,8 +318,9 @@ export async function applyFilterEffectsParallel(
         running.clear();
         reject(error);
       };
-      onAbort = () => fail(abortError());
-      options.signal?.addEventListener('abort', onAbort, { once: true });
+      // Interrupt running bands as soon as the render is cancelled, not only
+      // when the next band completes.
+      onAbort = watchCancellation(options.signal, options.isCancelled, () => fail(abortError()));
       const launch = () => {
         while (!failed && running.size < pool.size && next < bands.length) {
           if (cancelled()) return fail(abortError());
@@ -321,7 +361,7 @@ export async function applyFilterEffectsParallel(
     if (cancelled()) throw abortError();
     return applyFilterEffectsPixels(pixels, width, height, effect);
   } finally {
-    if (onAbort) options.signal?.removeEventListener('abort', onAbort);
+    onAbort?.();
   }
   return output;
 }
@@ -330,7 +370,10 @@ export async function applyFilterEffectsParallel(
  * Tile renderer for the tiled document path: runs each tile's kernel in the
  * pool, falling back to the serial kernel if the pool fails.
  */
-export function pooledTileRenderer(pool: FilterWorkerPool) {
+export function pooledTileRenderer(
+  pool: FilterWorkerPool,
+  cancellation: { signal?: AbortSignal; isCancelled?: () => boolean } = {},
+) {
   return async (
     input: Uint8ClampedArray,
     width: number,
@@ -338,17 +381,73 @@ export function pooledTileRenderer(pool: FilterWorkerPool) {
     effect: FilterEffects,
     renderCenter?: { x: number; y: number },
   ): Promise<Uint8ClampedArray> => {
+    if (cancellation.signal?.aborted || cancellation.isCancelled?.()) throw abortError();
     if (pool.broken) return applyFilterEffectsPixels(input, width, height, effect, renderCenter);
     const copy = input.slice();
+    const job = pool.run({
+      kind: 'pixels', effect, width, height, renderCenter, pixels: copy.buffer as ArrayBuffer,
+    }, [copy.buffer as ArrayBuffer]);
+    // Cancelling terminates this tile's busy worker (like the band path); the
+    // pool refills lazily on the next request.
+    const stop = watchCancellation(cancellation.signal, cancellation.isCancelled, job.cancel);
     try {
-      return await pool.run({
-        kind: 'pixels', effect, width, height, renderCenter, pixels: copy.buffer as ArrayBuffer,
-      }, [copy.buffer as ArrayBuffer]).promise;
+      return await job.promise;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw error;
       return applyFilterEffectsPixels(input, width, height, effect, renderCenter);
+    } finally {
+      stop();
     }
   };
+}
+
+const WARM_WIDTH = 96;
+const WARM_HEIGHT = 40;
+let warmSource: Uint8ClampedArray | undefined;
+
+function warmPixels(): Uint8ClampedArray {
+  if (!warmSource) {
+    warmSource = new Uint8ClampedArray(WARM_WIDTH * WARM_HEIGHT * 4);
+    let state = 7;
+    for (let index = 0; index < warmSource.length; index += 1) {
+      state = (Math.imul(state, 1103515245) + 12345) >>> 0;
+      warmSource[index] = (index & 3) === 3 ? 255 : state >>> 24;
+    }
+  }
+  return warmSource;
+}
+
+/** Heavy filters whose kernels are worth warming before first use. */
+export const PREWARM_FILTER_TYPES = [
+  'smart-blur', 'smart-sharpen', 'surface-blur', 'reduce-noise', 'shape-blur', 'lens-blur', 'path-blur',
+] as const;
+
+/**
+ * Start every worker and JIT-compile the given kernels on a tiny band, so the
+ * first real render does not pay start-up and tier-up costs. Each type is
+ * warmed once per live pool; returns the number of warm-up jobs queued.
+ */
+export function prewarmFilterPool(
+  types: readonly string[],
+  pool: FilterWorkerPool | undefined = sharedFilterWorkerPool(),
+): number {
+  if (!pool || pool.broken) return 0;
+  let queued = 0;
+  for (const type of types) {
+    if (pool.warmed.has(type)) continue;
+    const effect = effectiveFilterEffects({ type: type as FilterEffects['type'], amount: 100, radius: type === 'path-blur' ? 32 : 8 });
+    if (filterBandHalo(effect) === undefined) continue;
+    pool.warmed.add(type);
+    for (let worker = 0; worker < pool.size; worker += 1) {
+      const pixels = warmPixels().slice();
+      pool.run({
+        kind: 'band', effect, width: WARM_WIDTH, height: WARM_HEIGHT,
+        readStart: 0, readRows: WARM_HEIGHT, start: 0, end: WARM_HEIGHT, pixels: pixels.buffer as ArrayBuffer,
+      }, [pixels.buffer as ArrayBuffer]).promise.catch(() => undefined);
+      queued += 1;
+    }
+  }
+  return queued;
 }
 
 /** Serial in-process band renderer, exported for tests of the pool protocol. */

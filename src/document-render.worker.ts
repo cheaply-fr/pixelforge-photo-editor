@@ -12,6 +12,7 @@ import type {
   TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import type { FilterBandProgress } from './filterBands.ts';
+import { prewarmFilterPool } from './filterWorkerPool.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
 import { CompositeCache } from './compositeCache.ts';
 import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
@@ -38,9 +39,11 @@ type RenderRequest = {
   decodedPixels?: Array<{ id: string; key: string; pixels: ArrayBuffer }>;
 };
 type CancelRequest = { kind: 'cancel'; id: number };
+/** Start filter workers and JIT-warm heavy kernels before a render needs them. */
+type PrewarmRequest = { kind: 'prewarm-filters'; types: string[]; filterWorkers?: number };
 /** Drop retained layer-filter surfaces, e.g. after a different document is installed. */
 type ClearCacheRequest = { kind: 'clear-layer-cache' };
-type Request = RenderRequest | CancelRequest | ClearCacheRequest;
+type Request = RenderRequest | CancelRequest | ClearCacheRequest | PrewarmRequest;
 type Response =
   | { kind: 'progress'; id: number; completed: number; total: number }
   | { kind: 'tiled-progress'; id: number; progress: TiledNeighborhoodProgress }
@@ -79,6 +82,14 @@ let assetStore = new Map<string, Assets[string]>();
 /** Composite below the active layer, reused while the layers below are unchanged. */
 const compositeCache = new CompositeCache<HTMLCanvasElement>();
 let activeId: number | undefined;
+
+/** Apply (or clear) the page's test override of the filter pool size. */
+function applyFilterWorkerOverride(value: unknown): void {
+  const filterScope = globalThis as typeof globalThis & { __PIXELFORGE_FILTER_WORKERS__?: number };
+  if (Number.isSafeInteger(value) && (value as number) >= 0)
+    filterScope.__PIXELFORGE_FILTER_WORKERS__ = value as number;
+  else delete filterScope.__PIXELFORGE_FILTER_WORKERS__;
+}
 
 function cancellationError(): Error {
   if (typeof DOMException === 'function')
@@ -138,6 +149,12 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     cancelled.add(request.id);
     return;
   }
+  if (request?.kind === 'prewarm-filters') {
+    applyFilterWorkerOverride(request.filterWorkers);
+    if (Array.isArray(request.types))
+      prewarmFilterPool(request.types.filter((type) => typeof type === 'string').slice(0, 16));
+    return;
+  }
   if (request?.kind === 'clear-layer-cache') {
     // Entries are content-keyed, so clearing only releases memory; a render
     // already in flight keeps its own references and stays correct.
@@ -184,10 +201,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
             primeDecodedAssetPixels(asset, prime.key, new Uint8ClampedArray(prime.pixels));
         }
       const tiledMaxWorkingBytes = validateTiledBudget(request.tiledMaxWorkingBytes);
-      const filterScope = globalThis as typeof globalThis & { __PIXELFORGE_FILTER_WORKERS__?: number };
-      if (Number.isSafeInteger(request.filterWorkers) && (request.filterWorkers as number) >= 0)
-        filterScope.__PIXELFORGE_FILTER_WORKERS__ = request.filterWorkers;
-      else delete filterScope.__PIXELFORGE_FILTER_WORKERS__;
+      applyFilterWorkerOverride(request.filterWorkers);
       output = (await renderFrame(
         request.frame,
         request.assets,

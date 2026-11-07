@@ -20,6 +20,7 @@ import {
   fastSpinRadialBlur,
   fastSurfaceBlur,
   fastZoomRadialBlur,
+  type RowRange,
 } from './fastNeighborhoodFilters.ts';
 
 export const FILTER_EFFECT_TYPES = [
@@ -766,6 +767,7 @@ function applyLensBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
   const offsets: Array<[number, number]> = [[0, 0]];
   const goldenAngle = Math.PI * (3 - Math.sqrt(5));
@@ -776,7 +778,7 @@ function applyLensBlur(
       Math.round(Math.sin(sample * goldenAngle) * distance),
     ]);
   }
-  fastLensBlur(source, width, height, offsets, output, strength);
+  fastLensBlur(source, width, height, offsets, output, strength, rows);
 }
 
 /**
@@ -819,8 +821,9 @@ function applySmartBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  fastSmartBlur(source, width, height, radius, output, strength);
+  fastSmartBlur(source, width, height, radius, output, strength, rows);
 }
 
 /**
@@ -836,8 +839,9 @@ function applySurfaceBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  fastSurfaceBlur(source, width, height, radius, output, strength);
+  fastSurfaceBlur(source, width, height, radius, output, strength, rows);
 }
 
 /**
@@ -890,8 +894,9 @@ function applyShapeBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  fastShapeBlur(source, width, height, radius, output, strength);
+  fastShapeBlur(source, width, height, radius, output, strength, rows);
 }
 
 function applyAverageBlur(
@@ -3160,11 +3165,14 @@ function applySmartSharpen(
   radius: number,
   output: Uint8ClampedArray,
   amount: number,
+  rows?: RowRange,
 ): void {
   const reference = new Uint8ClampedArray(source.length);
-  applySmartBlur(source, width, height, radius, reference, 1);
+  applySmartBlur(source, width, height, radius, reference, 1, rows);
   const strength = clamp(amount, 0, 100) / 100;
-  for (let offset = 0; offset < source.length; offset += 4) {
+  const first = rows ? Math.max(0, rows.start) * width * 4 : 0;
+  const last = rows ? Math.min(height, rows.end) * width * 4 : source.length;
+  for (let offset = first; offset < last; offset += 4) {
     const alpha = source[offset + 3];
     output[offset + 3] = alpha;
     if (!alpha) continue;
@@ -3432,8 +3440,9 @@ function applyReduceNoise(
   effect: FilterEffects,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  fastReduceNoise(source, width, height, effect.radius, effect.threshold ?? 25, output, strength);
+  fastReduceNoise(source, width, height, effect.radius, effect.threshold ?? 25, output, strength, rows);
 }
 
 /**
@@ -3697,6 +3706,12 @@ export function applyFilterEffectsPixels(
   height: number,
   value: Partial<FilterEffects> | undefined,
   renderCenter?: { x: number; y: number },
+  /**
+   * Render only these output rows of band-safe heavy filters (Smart Blur /
+   * Sharpen, Surface, Shape, Lens, Reduce Noise); other rows keep the source
+   * bytes. Other effects ignore it. Used by the parallel band renderer.
+   */
+  rows?: RowRange,
 ): Uint8ClampedArray {
   validateDimensions(data, width, height);
   const effect = effectiveFilterEffects(value);
@@ -3732,15 +3747,15 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'sharpen-edges') {
     applySharpenEdges(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-sharpen') {
-    applySmartSharpen(data, width, height, effect.radius, output, effect.amount);
+    applySmartSharpen(data, width, height, effect.radius, output, effect.amount, rows);
   } else if (effect.type === 'smart-blur') {
-    applySmartBlur(data, width, height, effect.radius, output, strength);
+    applySmartBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'surface-blur') {
-    applySurfaceBlur(data, width, height, effect.radius, output, strength);
+    applySurfaceBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'shape-blur') {
-    applyShapeBlur(data, width, height, effect.radius, output, strength);
+    applyShapeBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'lens-blur') {
-    applyLensBlur(data, width, height, effect.radius, output, strength);
+    applyLensBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'iris-blur') {
     applyIrisBlur(
       data,
@@ -3806,7 +3821,7 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'despeckle') {
     applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
   } else if (effect.type === 'reduce-noise') {
-    applyReduceNoise(data, width, height, effect, output, strength);
+    applyReduceNoise(data, width, height, effect, output, strength, rows);
   } else if (effect.type === 'ai-denoise') {
     applyAiDenoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'ai-sharpen') {

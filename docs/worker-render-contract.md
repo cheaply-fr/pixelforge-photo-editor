@@ -259,8 +259,16 @@ output rows the same way.
   effect, layerId?, completed, total } }`. The client validates it
   (`validFilterBandProgress`: known band-safe effect, 1 ≤ completed ≤ total
   ≤ 4096, no other fields) and restarts the no-progress watchdog.
+* **Pre-warm:** `prewarmFilterWorkers(types, frame)` (called when the Filter
+  menu opens or a heavy filter is chosen) runs at idle time. For frames of at
+  least 2 MP it posts `{ kind: 'prewarm-filters', types, filterWorkers? }` to
+  the persistent render worker; for smaller frames it warms the main-thread
+  pool. Each kernel is warmed once per live pool; losing a worker clears that
+  record.
 * **Cancellation and failure:** cancellation stops dispatch and terminates
-  busy filter workers, which are recreated on demand. A worker that fails to
+  busy filter workers, in both the band and the tile paths; they are
+  recreated on demand. Busy jobs watch the abort signal and poll the
+  render's `isCancelled` predicate every 50 ms. A worker that fails to
   load or crashes marks the pool broken, and the serial kernels produce the
   same bytes. Idle filter workers are terminated after 20 s.
 

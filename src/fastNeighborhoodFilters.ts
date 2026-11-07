@@ -39,6 +39,19 @@ const UNIT_ALPHA = (() => {
   return table;
 })();
 
+/**
+ * Optional output rows [start, end). Rows outside it are still read as
+ * neighbours but are not rendered (their output keeps the source bytes);
+ * the parallel band renderer uses this to skip its halo rows.
+ */
+export type RowRange = { start: number; end: number };
+
+function rowSpan(rows: RowRange | undefined, height: number): [number, number] {
+  if (!rows) return [0, height];
+  const start = Math.max(0, Math.min(height, Math.floor(rows.start)));
+  return [start, Math.max(start, Math.min(height, Math.floor(rows.end)))];
+}
+
 /** Rows processed per band; auxiliary planes are allocated per band only. */
 const BAND_ROWS = 64;
 
@@ -172,6 +185,7 @@ export function fastSmartBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
   const bounded = Math.max(1, Math.min(8, Math.round(radius)));
   const scale = 18 + bounded * 2;
@@ -184,8 +198,9 @@ export function fastSmartBlur(
   // Interleaved per sample: [alpha·exp(L/s), alpha·exp(-L/s)]; padding is 0.
   const range = new Float64Array(band.luma.length * 2);
   const factors = new Float64Array(2);
-  for (let bandStart = 0; bandStart < height; bandStart += BAND_ROWS) {
-    const bandEnd = Math.min(height, bandStart + BAND_ROWS);
+  const [firstRow, endRow] = rowSpan(rows, height);
+  for (let bandStart = firstRow; bandStart < endRow; bandStart += BAND_ROWS) {
+    const bandEnd = Math.min(endRow, bandStart + BAND_ROWS);
     fillPaddedBand(source, width, height, bandStart, bandEnd, band);
     const count = (bandEnd - bandStart + bounded * 2) * band.stride;
     for (let sample = 0; sample < count; sample += 1) {
@@ -253,6 +268,7 @@ export function fastSurfaceBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
   const bounded = Math.max(1, Math.min(8, Math.round(radius)));
   const threshold = 12 + bounded * 3;
@@ -262,8 +278,9 @@ export function fastSurfaceBlur(
     for (let dx = -bounded; dx <= bounded; dx += 1)
       spatial[(dy + bounded) * side + dx + bounded] = 1 / (1 + dx * dx + dy * dy);
   const band = createPaddedBand(width, height, bounded);
-  for (let bandStart = 0; bandStart < height; bandStart += BAND_ROWS) {
-    const bandEnd = Math.min(height, bandStart + BAND_ROWS);
+  const [firstRow, endRow] = rowSpan(rows, height);
+  for (let bandStart = firstRow; bandStart < endRow; bandStart += BAND_ROWS) {
+    const bandEnd = Math.min(endRow, bandStart + BAND_ROWS);
     fillPaddedBand(source, width, height, bandStart, bandEnd, band);
     for (let y = bandStart; y < bandEnd; y += 1)
       surfaceBlurRow(source, width, y, bandStart, band, spatial, threshold, output, strength);
@@ -359,6 +376,7 @@ export function fastShapeBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
   const bounded = Math.max(1, Math.min(12, Math.round(radius)));
   const pad = bounded + 2;
@@ -368,7 +386,8 @@ export function fastShapeBlur(
   // Ring of double prefix sums, interleaved [R·A, G·A, B·A, A] per position.
   const ring = new Float64Array(ringSize * stride);
   const ringRow = new Int32Array(ringSize).fill(-1);
-  for (let y = 0; y < height; y += 1) {
+  const [firstRow, endRow] = rowSpan(rows, height);
+  for (let y = firstRow; y < endRow; y += 1) {
     const rowMin = Math.max(0, y - bounded), rowMax = Math.min(height - 1, y + bounded);
     for (let row = rowMin; row <= rowMax; row += 1) {
       const slot = row % ringSize;
@@ -440,6 +459,7 @@ export function fastReduceNoise(
   thresholdValue: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
   const radius = Math.max(1, Math.min(8, Math.round(radiusValue)));
   const preserve = Math.max(1, Math.min(255, Math.round(thresholdValue)));
@@ -454,8 +474,9 @@ export function fastReduceNoise(
     for (let dx = -radius; dx <= radius; dx += 1)
       spatial[(dy + radius) * side + dx + radius] = 1 / (1 + Math.hypot(dx, dy));
   const band = createPaddedBand(width, height, radius);
-  for (let bandStart = 0; bandStart < height; bandStart += BAND_ROWS) {
-    const bandEnd = Math.min(height, bandStart + BAND_ROWS);
+  const [firstRow, endRow] = rowSpan(rows, height);
+  for (let bandStart = firstRow; bandStart < endRow; bandStart += BAND_ROWS) {
+    const bandEnd = Math.min(endRow, bandStart + BAND_ROWS);
     fillPaddedBand(source, width, height, bandStart, bandEnd, band);
     const count = (bandEnd - bandStart + radius * 2) * band.stride;
     for (let sample = 0; sample < count; sample += 1)
@@ -533,6 +554,7 @@ export function fastLensBlur(
   offsets: ReadonlyArray<readonly [number, number]>,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
   const merged = new Map<string, [number, number, number]>();
   for (const [dx, dy] of offsets) {
@@ -550,7 +572,8 @@ export function fastLensBlur(
     tapOffset[index] = (dy * width + dx) * 4;
     reach = Math.max(reach, Math.abs(dx), Math.abs(dy));
   });
-  for (let y = 0; y < height; y += 1)
+  const [firstRow, endRow] = rowSpan(rows, height);
+  for (let y = firstRow; y < endRow; y += 1)
     lensBlurRow(source, width, height, y, reach, tapX, tapY, tapWeight, tapOffset, output, strength);
 }
 

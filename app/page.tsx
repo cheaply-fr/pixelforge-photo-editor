@@ -57,7 +57,8 @@ import {
   CloudConflictError,
   type CloudLink,
 } from '../src/cloud';
-import { primeWorkerDecodedAsset } from '../src/workerRender';
+import { prewarmFilterWorkers, primeWorkerDecodedAsset } from '../src/workerRender';
+import { PREWARM_FILTER_TYPES } from '../src/filterWorkerPool';
 import {
   addAsset as addDocumentAsset,
   primeDecodedAsset,
@@ -2817,6 +2818,12 @@ export default function Home() {
   const openMenu = (menu: MenuName, focus: 'first' | 'last' = 'first') => {
     pendingMenuFocus.current[menu] = focus;
     setActiveMenu(menu);
+    if (menu === 'Filter') {
+      // Warm the filter worker pool at idle time, so a heavy filter chosen
+      // next does not pay worker start-up and JIT tier-up.
+      const frame = current();
+      prewarmFilterWorkers(PREWARM_FILTER_TYPES, { w: frame.w, h: frame.h });
+    }
   };
   const closeMenu = (restoreFocus = false) => {
     const menu = activeMenu;
@@ -6350,6 +6357,8 @@ export default function Home() {
   };
   const applyFilterEffectChoice = (type: FilterEffectType, label: string) => {
     if (type !== 'none') {
+      const frame = current();
+      prewarmFilterWorkers([type], { w: frame.w, h: frame.h });
       setLastFilterType(type);
       try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
     }
