@@ -341,3 +341,24 @@ test('radial 4 copies of a stamped dab are exact quarter turns', async () => {
       for (let x = 0; x < size; x += 1)
         assert.equal(layers[k][((x) * size + (40 - y)) * 4 + 3], layers[k - 1][(y * size + x) * 4 + 3], `turn ${k} at ${x},${y}`);
 });
+
+test('symmetry copies share the source dab colour jitter deterministically', async () => {
+  const { brushDabsAt, brushDabColor, normalizeBrushDynamics } = await import('../src/brushDynamics.ts');
+  const dynamics = normalizeBrushDynamics({ hueJitter: 80, saturationJitter: 40, brightnessJitter: 30, sizeJitter: 50, angleJitter: 50 });
+  const transforms = paintSymmetryTransforms(settings({ mode: 'mandala', segments: 5, rotation: 12 }), W, H);
+  const foreground = [200, 40, 10, 255], background = [10, 200, 240, 255];
+  // The page resolves the colour once per source dab, then places every copy.
+  const paint = () => brushDabsAt({ x: 812, y: 333 }, 30, 0, dynamics).flatMap((dab) => {
+    const color = brushDabColor(foreground, background, dab);
+    return symmetryDabCopies(transforms, { x: dab.x, y: dab.y, angle: 0, flipX: false, flipY: false })
+      .map((copy) => ({ ...copy, color }));
+  });
+  const first = paint();
+  assert.equal(first.length, 10);
+  assert.deepEqual(first, paint(), 'repeatable');
+  assert.ok(first.every((copy) => copy.color.join() === first[0].color.join()), 'every copy shares the colour');
+  assert.notDeepEqual(first[0].color, foreground, 'the fixture jitters the colour');
+  // Re-seeding at a copy's own position would break the symmetry.
+  const atCopy = brushDabsAt({ x: first[3].x, y: first[3].y }, 30, 0, dynamics)[0];
+  assert.notDeepEqual(brushDabColor(foreground, background, atCopy), first[0].color);
+});

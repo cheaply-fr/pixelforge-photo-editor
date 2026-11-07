@@ -139,42 +139,48 @@ and priorities are in
 
 - **Layer → Trim Layer to Content** and the layer pixel budget notice are
   shipped (#183, merged `8a82ad6`, deployed in `f5e4135`/`cba6253`).
-  Automatic trim, lazy empty layers and trimmed-bounds-preserving Rasterize
-  and Merge are in development on `feat/huge-projects` (A).
+  Automatic content-bounds storage for new/trimmed/moved paint layers, lazy
+  empty layers and bounds-preserving Rasterize shipped in #193 (`92af070`).
 - **Edit → Undo/Redo depth:** user request for 10× undo and redo depth
-  (240 steps, device-aware 320/128/96 MiB budgets; today 24 steps / 32 MB,
+  (240 steps, device-aware 320/128/96 MiB budgets; was 24 steps / 32 MB,
   which is one step on a 2646×4096 document) shipped in #189 (merged and
   deployed `1c40122`), which also makes **Window → History** show capacity
   and mark memory-only states.
-- **Huge projects (user request "don't flatten"):** ~10× project limits —
-  320+ layers, 640 MP stored layer pixels, ~640 MB asset/draft/project caps —
-  in development on `feat/huge-projects` (A), with render scaling.
-- **Edit → Paste (P1, in development G):** an OS clipboard image did not
-  reach the paste handler via Ctrl+V when the editor's shortcut was active
-  and no internal clipboard existed; OS image paste via Ctrl+V and
-  Edit → Paste is in development on `feat/reference-layer-paste-export`.
-- **Layer → Layer Style (P2, in development E):** larger shadow ranges plus
-  Outer Glow and Inner Glow on `feat/glow-styles-and-blend-modes`.
-- **Layer blend modes (P2, in development E):** colour dodge/burn, linear
-  dodge/burn, soft/hard light, exclusion, hue, saturation, colour and
-  luminosity on `feat/glow-styles-and-blend-modes`.
-- **Filter → Blur → Gaussian Blur (P1, in development C):** radius 24 timed
-  out the render worker at 10.8 MP; radius-independent blurs and a
-  work-scaled watchdog are in PR #191 (`perf/fast-large-radius-filters`).
-- **Filter → Convert for Smart Filters / filter stacking (P2, queued after
-  C):** one live filter per raster layer; stacking needs Layer → Rasterize
-  between filters.
-- **Filter → Blur → Radial Blur (P2, queued after C):** centre X/Y are integer percentages
-  (1% ≈ 41 px at 4096 px); allow fractional or pixel centres and on-canvas
-  placement.
-- **"Mask from selection" (P3, in review D):** consumes (deselects)
-  the selection in one undo step on `fix/retouch-selection-and-clone-source`.
-- **Reference image (proposed File/View command, P2, in development G):** non-exported, non-printing
-  reference layer or panel with eyedropper sampling, outside the layer
-  budget.
-- **File → Export (P3, in development G):** in the Claude desktop built-in
-  browser a PNG export reported "downloaded" but wrote no file while
-  `.pixelforge` ZIPs worked; hardened downloads (anchor in the DOM, deferred
-  revoke, explicit MIME, File System Access save picker where available).
-- **Gradient options (P3, in development F):** Replace mode, blend modes and
-  opacity on `feat/brush-gradient-options`.
+- **Huge projects (user request "don't flatten"):** shipped in #193 —
+  512 layers / 128 groups, device-aware stored-pixel and data budgets
+  (desktop 1,024 MP / 1 GiB), `.pixelforge` up to 1 GiB. Open/reload of
+  large projects sped up in #203; 600 MB+ projects are still slow (fix
+  wave 3, W3-2).
+- **Edit → Paste / Paste Image from Clipboard:** OS clipboard images now
+  paste with focus anywhere outside text fields, plus an Edit-menu command
+  using the async Clipboard API (#198, `bf93da1`).
+- **Layer → Layer Style:** Outer Glow and Inner Glow, shadow blur up to
+  250 px (#197, `f37a4f8`); backdrop-blended outer effects and Gaussian /
+  Linear (legacy) shadow falloff (#204, `4552ed6`). Open: effects inside
+  folders and on clipped layers, Knockout and Fill opacity (W3-5, W3-6).
+- **Layer blend modes:** 26 modes for layers and folders (#197).
+- **Filter → Blur → Gaussian Blur:** radius-independent blurs and a
+  work-scaled watchdog (#191, `2da6669`); remaining heavy filters faster
+  (#202) and parallel (#205, #206). The 4-core speed-up is unconfirmed on
+  low-core devices (W3-4).
+- **Filter stacking:** Add filter to stack, hide/show, reorder, remove
+  (#199, `455cc3b`); Edit stacked filter in place (#204). Open: per-filter
+  blend modes and masks (W3-7).
+- **Filter → Blur → Radial Blur and other centred filters:** centres at
+  sub-pixel precision with px fields and an on-canvas crosshair (#199).
+- **Layer → Mask from selection:** consumes (deselects) the selection in the
+  same undo step (#196, `137ef33`).
+- **File → Place reference image…:** non-exported reference/guide image
+  with optional eyedropper sampling (#200, `51a7ba4`).
+- **File → Export:** hardened downloads and **Save with file picker…** /
+  **File → Save project with file picker…** (#198). Whether the Claude
+  desktop built-in browser now writes the PNG is unverified (W3-12).
+  Export speed of very large projects is unchanged (W3-3).
+- **Gradient options:** Replace mode, blend modes and opacity (#194,
+  `5b7bc63`); live preview (#201).
+- **Filter → Distort → Perspective Warp / Vanishing Point / Puppet Warp:**
+  canvas-space handles on layers stored at content bounds (#207,
+  `257e744`).
+
+Deployment runs per PR and the open items (W3-n) are in the rubric's
+"Fix wave 2 — merged and deployed" and "Fix wave 3" tables.

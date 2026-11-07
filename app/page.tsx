@@ -113,9 +113,19 @@ import { normalizeTextLanguage, type TextLanguageSettings } from '../src/textLan
 import { normalizeTextPathBinding } from '../src/textOnPath';
 import {
   createCustomBrushPreset,
-  normalizeCustomBrushPresets,
   type CustomBrushPreset,
 } from '../src/customBrushPresets';
+import {
+  BUILT_IN_BRUSH_PRESETS,
+  browserPresetStorage,
+  builtInBrushPresetById,
+  deleteCustomBrushPreset,
+  mergeBrushPresetLibraries,
+  readStoredBrushPresets,
+  renameCustomBrushPreset,
+  writeStoredBrushPresets,
+} from '../src/brushPresetLibrary';
+import { BrushPresetLibraryControls } from '../src/BrushPresetLibraryControls';
 import {
   createCustomPatternPreset,
   normalizeCustomPatternPresets,
@@ -502,6 +512,7 @@ import {
   BRUSH_SCATTER_DEFAULT,
   BRUSH_SCATTER_MAX,
   DEFAULT_BRUSH_DYNAMICS,
+  brushDabColor,
   brushDabsAt,
   deferFirstBrushDab,
   normalizeBrushDynamics,
@@ -1722,6 +1733,8 @@ type StampCanvasOptions = {
   flipY?: boolean;
   mode: BrushMode;
   color?: BrushColor;
+  /** Background colour for the colour dynamics foreground/background mix jitter. */
+  colorBackground?: BrushColor;
   source?: HTMLCanvasElement;
   sourceX?: number;
   sourceY?: number;
@@ -1900,12 +1913,14 @@ const stampCanvasSegment = (
         // Each copy is the geometric image of the already-jittered dab.
         const size = dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
           opacity = options.opacity * dab.opacityScale,
-          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset);
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          // Colour dynamics are resolved once per source dab and shared.
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
         for (const copy of symmetryDabCopies(options.symmetry, {
           x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
         }))
           changed = stampCanvas(target, {
-            ...options, size, opacity, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
+            ...options, size, opacity, color, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
             x: copy.x, y: copy.y, sourceX, sourceY,
           }) || changed;
         continue;
@@ -1916,6 +1931,8 @@ const stampCanvasSegment = (
           size: dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
           angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
           opacity: options.opacity * dab.opacityScale,
+          // Colour dynamics; dabs without colour offsets keep the exact colour.
+          color: options.color && brushDabColor(options.color, options.colorBackground, dab),
           x: dab.x,
           y: dab.y,
           sourceX,
@@ -2596,7 +2613,9 @@ export default function Home() {
     [pressureOpacity, setPressureOpacity] = useState(false),
     [pressureCurve, setPressureCurve] = useState<BrushPressureCurve>('linear'),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
-    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
+    // Saved brush presets start from this device's library (localStorage).
+    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>(() => readStoredBrushPresets(browserPresetStorage())),
+    [selectedBrushLibraryId, setSelectedBrushLibraryId] = useState(''),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
@@ -2828,6 +2847,10 @@ export default function Home() {
     replayingActionRef = useRef(false),
     batchActionRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    // Storage failures are reported as false and never block editing.
+    writeStoredBrushPresets(browserPresetStorage(), customBrushPresets);
+  }, [customBrushPresets]);
+  useEffect(() => {
     try {
       window.localStorage.setItem(
         'pixelforge.actions.v1',
@@ -3021,7 +3044,7 @@ export default function Home() {
   const saveSequence = useRef(0),
     saving = useRef(false),
     discarding = useRef(false);
-  const { member, checking } = useMember();
+  const { member, checking, unavailable: signInUnavailable, retry: retrySignIn } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [recovering, setRecovering] = useState(false),
@@ -3404,7 +3427,8 @@ export default function Home() {
     setPressureOpacity(s.pressureOpacity ?? false);
     setPressureCurve(normalizeBrushPressureCurve(s.pressureCurve));
     setBrushPreset(s.brushPreset ?? 'round-hard');
-    setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
+    // Keep this device's library and add any presets carried by the draft/project.
+    setCustomBrushPresets((currentPresets) => mergeBrushPresetLibraries(currentPresets, s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
@@ -3569,7 +3593,33 @@ export default function Home() {
     setBrushWetEdges(preset.brushWetEdges);
     setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
+    if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
+    setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const selectBrushLibraryPreset = (id: string) => {
+    const preset = builtInBrushPresetById(id) ?? customBrushPresets.find((item) => item.id === id);
+    if (preset) applyCustomBrushPreset(preset);
+    else setSelectedBrushLibraryId('');
+  };
+  const renameBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing) return;
+    const label = window.prompt('Rename this brush preset', existing.label);
+    if (label === null) return;
+    try {
+      setCustomBrushPresets(renameCustomBrushPreset(customBrushPresets, existing.id, label));
+      setNotice(`Brush preset renamed to “${label.trim().slice(0, 80)}”`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Brush preset could not be renamed');
+    }
+  };
+  const deleteBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing || !window.confirm(`Delete the brush preset “${existing.label}” from this device?`)) return;
+    setCustomBrushPresets(deleteCustomBrushPreset(customBrushPresets, existing.id));
+    setSelectedBrushLibraryId('');
+    setNotice(`Brush preset “${existing.label}” deleted from this device`);
   };
   const defineBrushPreset = () => {
     const label = window.prompt('Name this brush preset', 'Custom brush');
@@ -3601,6 +3651,7 @@ export default function Home() {
         brushWetEdges,
         brushBuildUp,
         brushFlow,
+        brushOpacity,
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -11935,6 +11986,7 @@ export default function Home() {
               flipY: brushFlipY,
               mode: tool === 'eraser' ? 'destination-out' : 'source-over',
               color: tool === 'eraser' ? undefined : brushColor(color),
+              colorBackground: brushColor(backgroundColor),
             });
             from = destination;
             stabilized = destination;
@@ -12511,6 +12563,7 @@ export default function Home() {
         flipY: brushFlipY,
         mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
         color: g.tool === 'eraser' ? undefined : brushColor(color),
+        colorBackground: brushColor(backgroundColor),
       });
       previewGesture(g);
       g.smoothedLast = destination;
@@ -13121,6 +13174,7 @@ export default function Home() {
           flipY: brushFlipY,
           mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
           color: g.tool === 'eraser' ? undefined : brushColor(color),
+          colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
       const asset = addPaintedAsset(g.buffer);
@@ -15848,7 +15902,7 @@ export default function Home() {
             <Download /> Export
           </button>
           <ReleaseStatus />
-          <AccountMenu member={member} checking={checking} />
+          <AccountMenu member={member} checking={checking} unavailable={signInUnavailable} retry={retrySignIn} />
         </div>
       </header>
       <section className="docbar">
@@ -17645,26 +17699,15 @@ export default function Home() {
                           ))}
                         </select>
                       </label>
-                      {customBrushPresets.length > 0 && (
-                        <label className="select-row">
-                          <span>Saved brush preset</span>
-                          <select
-                            aria-label="Saved brush preset"
-                            defaultValue=""
-                            onChange={(event) => {
-                              const preset = customBrushPresets.find((item) => item.id === event.target.value);
-                              if (preset) applyCustomBrushPreset(preset);
-                            }}
-                          >
-                            <option value="">Choose saved preset</option>
-                            {customBrushPresets.map((preset) => (
-                              <option key={preset.id} value={preset.id}>
-                                {preset.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
+                      <BrushPresetLibraryControls
+                        builtIns={BUILT_IN_BRUSH_PRESETS}
+                        saved={customBrushPresets}
+                        selectedId={selectedBrushLibraryId}
+                        onSelect={selectBrushLibraryPreset}
+                        onSave={defineBrushPreset}
+                        onRename={renameBrushLibraryPreset}
+                        onDelete={deleteBrushLibraryPreset}
+                      />
                     </>
                   )}
                   {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
@@ -17836,6 +17879,38 @@ export default function Home() {
                             max={100}
                             set={(opacityJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, opacityJitter }))}
                           />
+                          {(tool === 'brush' || tool === 'pencil') && (
+                            <>
+                              <Slider
+                                label="Hue jitter"
+                                value={brushDynamics.hueJitter}
+                                min={0}
+                                max={100}
+                                set={(hueJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, hueJitter }))}
+                              />
+                              <Slider
+                                label="Saturation jitter"
+                                value={brushDynamics.saturationJitter}
+                                min={0}
+                                max={100}
+                                set={(saturationJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, saturationJitter }))}
+                              />
+                              <Slider
+                                label="Brightness jitter"
+                                value={brushDynamics.brightnessJitter}
+                                min={0}
+                                max={100}
+                                set={(brightnessJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, brightnessJitter }))}
+                              />
+                              <Slider
+                                label="Foreground/background jitter"
+                                value={brushDynamics.colorMixJitter}
+                                min={0}
+                                max={100}
+                                set={(colorMixJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, colorMixJitter }))}
+                              />
+                            </>
+                          )}
                           <Slider
                             label="Texture"
                             value={brushTexture}

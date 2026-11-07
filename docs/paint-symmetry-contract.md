@@ -18,7 +18,9 @@ tip Angle) apply to every mode.
   dab's deterministic jitter, so strokes stay exactly symmetric and
   repeatable. Rotated copies add the rotation to the tip angle; mirrored copies
   map the tip angle θ to 2α − θ for an axis at α and swap the tip's handedness.
-  Paper-fixed modulation (Texture, Dual brush, Bristle) is evaluated at each
+  Colour dynamics (hue/saturation/brightness/mix jitter) are resolved once
+  per source dab and shared by every copy. Paper-fixed modulation (Texture,
+  Dual brush, Bristle) is evaluated at each
   copy's own position. A secondary brush tip keeps its own preset angle.
 - The symmetry set is fixed at pointer-down for the whole stroke. All copies
   paint into the same stroke buffer; with an active selection each copy's

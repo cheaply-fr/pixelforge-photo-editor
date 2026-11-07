@@ -207,6 +207,8 @@ and undo/redo, feathered Clone edge, Healing, Pattern Stamp and Color Replace
 confinement, Alt-click source during a pending commit on a 2646×4096 poster,
 Mask from selection then Mask Brush outside with one-step undo/redo).
 
-Painting Size up to 5000 px shipped in #187 (`6a42943`). In development (fix
-wave 2): `feat/brush-gradient-options` adds spacing and scatter above 100%,
-count and count jitter, and a true pen lift at pressure 0; it is not merged.
+Painting Size up to 5000 px shipped in #187 (`6a42943`). Spacing and scatter
+above 100%, count and count jitter and a true pen lift at pressure 0 shipped in
+#194 (`5b7bc63`); symmetric count jitter in #201 (`521188b`). Selection
+confinement and the kept Alt-click source above shipped in #196 (`137ef33`).
+See [`brush-dynamics-contract.md`](./brush-dynamics-contract.md).

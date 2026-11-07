@@ -27,8 +27,10 @@ export type CustomBrushPreset = {
   brushWetEdges: number;
   brushBuildUp: number;
   brushFlow: number;
-  /** Optional scatter axes, Count and jitter; presets saved before these existed omit it. */
+  /** Optional scatter axes, Count, jitter and colour dynamics; presets saved before these existed omit it. */
   brushDynamics?: BrushDynamics;
+  /** Optional brush opacity 1–100%; presets saved before it existed keep the current opacity. */
+  brushOpacity?: number;
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -49,7 +51,8 @@ export function validCustomBrushPreset(value: unknown): value is CustomBrushPres
     finite(candidate.brushSmoothing, 0, 100) && finite(candidate.brushScatter, 0, BRUSH_SCATTER_MAX) &&
     finite(candidate.brushTexture, 0, 100) && finite(candidate.brushDual, 0, 100) && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) === (candidate.secondaryBrushPreset ?? 'none') &&
     finite(candidate.brushBristle, 0, 100) && finite(candidate.brushWetEdges ?? 0, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100) &&
-    (candidate.brushDynamics === undefined || validBrushDynamics(candidate.brushDynamics))
+    (candidate.brushDynamics === undefined || validBrushDynamics(candidate.brushDynamics)) &&
+    (candidate.brushOpacity === undefined || finite(candidate.brushOpacity, 1, 100))
   );
 }
 

@@ -274,3 +274,21 @@ test('symmetry settings survive a reload', async ({ page }) => {
   await settled(page);
   for (let k = 0; k < 6; k += 1) expect(await pixel(page, ...polar(500, 300, 325, 60 * k)), `copy ${k}`).toEqual(RED);
 });
+
+test('colour jitter is shared by every symmetry copy of a dab', async ({ page }) => {
+  await brush(page, 'Brush', 40);
+  await setRange(page, 'Hue jitter', 100);
+  await setRange(page, 'Brightness jitter', 40);
+  await symmetry(page, 'radial');
+  await page.getByLabel('Symmetry segments value', { exact: true }).fill('4');
+  // One click: one dab, four copies.
+  const point = await at(page, 850, 400);
+  await page.mouse.click(point.x, point.y);
+  await settled(page);
+  await expect(footer(page)).toContainText('Paint layer updated');
+  const copies = await Promise.all(([[850, 400], [600, 650], [350, 400], [600, 150]] as Array<[number, number]>)
+    .map(([x, y]) => pixel(page, x, y)));
+  expect(copies[0][3]).toBe(255);
+  expect(copies[0]).not.toEqual(RED);
+  for (const copy of copies.slice(1)) expect(copy).toEqual(copies[0]);
+});
