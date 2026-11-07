@@ -117,8 +117,9 @@ test('brush reach covers the stamp radius, scatter offset and an anti-aliasing m
   assert.equal(brushStampReach(20), 12);
   assert.equal(brushStampReach(20, 100), 27);
   assert.equal(brushStampReach(20, 50), 19.5);
-  // Scatter is clamped like the brush engine; bad sizes fall back to 1px.
-  assert.equal(brushStampReach(20, 500), 27);
+  // Scatter (0–1,000%) is clamped like the brush engine; bad sizes fall back to 1px.
+  assert.equal(brushStampReach(20, 500), 87);
+  assert.equal(brushStampReach(20, 5000), 162);
   assert.equal(brushStampReach(Number.NaN), 2.5);
   assert.equal(brushStampReach(0), 2.5);
 });

@@ -15,8 +15,9 @@ whole stroke is one undo step and reload/project export retains the result.
 ## History Brush (Y)
 
 History Brush uses a selected local undo-history frame as its source. The source
-index is bounded to the current 24-frame history window and is persisted with
-the draft. If the selected frame is evicted, the editor clamps to the nearest
+index can address any frame of the in-memory history (up to 240 frames) and is
+persisted with the draft, re-based onto the persisted 24-frame window (dropped
+when its frame is memory-only). If the selected frame is evicted, the editor clamps to the nearest
 available frame. A stroke restores historical RGBA through brush opacity, flow,
 hardness and selection alpha; it never changes the source frame. The current
 stroke is committed as one undo step and is safe to cancel by switching tools.

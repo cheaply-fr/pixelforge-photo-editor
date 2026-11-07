@@ -34,6 +34,10 @@ const project = async (page: Page) => {
         feather: number;
         parts?: Array<{ operation: string }>;
       };
+      previousSelection?: {
+        feather: number;
+        parts?: Array<{ operation: string }>;
+      };
     }>;
     index: number;
     assets: Record<string, { url: string; w: number; h: number }>;
@@ -157,7 +161,9 @@ test('selection subtract and intersect compose deterministic alpha masks', async
     await saved(page);
     const exported = await project(page);
     const frame = exported.history[exported.index];
-    const selection = frame.selection as {
+    // Mask from selection consumes the selection; Reselect keeps it.
+    expect(frame.selection).toBeUndefined();
+    const selection = frame.previousSelection as {
       parts: Array<{ operation: string }>;
     };
     expect(selection.parts.map((part) => part.operation)).toEqual([
@@ -179,7 +185,7 @@ test('selection subtract and intersect compose deterministic alpha masks', async
   await page.reload();
   await saved(page);
   const roundTrip = await project(page);
-  expect(roundTrip.history[roundTrip.index].selection?.parts?.map((part) => part.operation)).toEqual([
+  expect(roundTrip.history[roundTrip.index].previousSelection?.parts?.map((part) => part.operation)).toEqual([
     'replace',
     'intersect',
   ]);
@@ -200,7 +206,8 @@ test('feathered selections preserve intermediate edge alpha and survive reload',
   await saved(page);
   let exported = await project(page);
   let frame = exported.history[exported.index];
-  const selection = frame.selection!;
+  expect(frame.selection).toBeUndefined();
+  const selection = frame.previousSelection!;
   expect(selection.feather).toBe(40);
   const mask = exported.assets[frame.layers[0].mask!];
   const samples = await Promise.all([
@@ -218,6 +225,6 @@ test('feathered selections preserve intermediate edge alpha and survive reload',
   await saved(page);
   exported = await project(page);
   frame = exported.history[exported.index];
-  expect(frame.selection?.feather).toBe(40);
+  expect(frame.previousSelection?.feather).toBe(40);
   expect(frame.layers[0].mask).toBeTruthy();
 });

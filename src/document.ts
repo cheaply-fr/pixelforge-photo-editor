@@ -1,3 +1,4 @@
+import { validReferenceImage, type ReferenceImage } from './referenceImage.ts';
 import { rotateHuePixels } from './hue.ts';
 import {
   applyColorBalancePixels,
@@ -73,7 +74,7 @@ import {
   validFilterEffects,
   type FilterEffects,
 } from './filterEffects.ts';
-import { effectiveSmartFilters, validSmartFilters } from './smartFilters.ts';
+import { effectiveSmartFilters, validSmartFilters, type SmartFilterEntry } from './smartFilters.ts';
 import {
   applyTiledNeighborhoodEffect,
   isTiledNeighborhoodBlur,
@@ -83,6 +84,15 @@ import {
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import type { TileCache } from './tilePlan.ts';
+import type { FilterBandProgress } from './filterBands.ts';
+import {
+  applyFilterEffectsParallel,
+  FILTER_PARALLEL_MIN_PIXELS,
+  isParallelFilterEffect,
+  pooledTileRenderer,
+  sharedFilterWorkerPool,
+  type FilterWorkerPool,
+} from './filterWorkerPool.ts';
 import {
   assetFingerprint,
   detectLayerFilterCacheBudget,
@@ -139,12 +149,30 @@ import {
 import {
   applyLayerStylesPixels,
   isNeutralLayerStyles,
+  layerStyleBackdropPasses,
   validLayerStyles,
   neutralLayerStyles,
+  withLayerStylePart,
   type LayerStyles,
+  type LayerStylesWithPart,
 } from './layerStyles.ts';
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
+import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
+import {
+  COMPOSITE_CACHE_MIN_LAYERS,
+  compositeCheckpoint,
+  compositeLayerKeys,
+  type CompositeCache,
+} from './compositeCache.ts';
+import {
+  LAYER_PIXEL_CEILING,
+  MAX_DOCUMENT_GROUPS,
+  MAX_DOCUMENT_LAYERS,
+  assetByteBudgetMessage,
+  assetBytes,
+  detectProjectLimits,
+} from './projectLimits.ts';
 import {
   applyClippingAlpha,
   clippingBase,
@@ -257,7 +285,7 @@ type Common = {
   /** Optional nondestructive known-matte colour decontamination. */
   matting?: MattingSettings;
   /** Optional bounded ordered nondestructive filter stack. */
-  smartFilters?: FilterEffects[];
+  smartFilters?: SmartFilterEntry[];
   /** Optional source-to-base relationship for a nondestructive clipping mask. */
   clippingTo?: string;
   /** Optional local transform-link identity shared by ordinary layers. */
@@ -452,6 +480,11 @@ export type Frame = {
   slices?: SliceRect[];
   /** Optional active slice pointer, validated against `slices`. */
   activeSliceId?: string;
+  /**
+   * Optional reference / guide image overlay. It is not a layer: export,
+   * flatten, merge and the layer pixel budget ignore it.
+   */
+  reference?: ReferenceImage;
 };
 export type Asset = { url: string; w: number; h: number };
 export type Assets = Record<string, Asset>;
@@ -730,6 +763,8 @@ export const commonLayer = (name: string): Common => ({
     colorOverlay: { ...neutralLayerStyles.colorOverlay },
     gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
     patternOverlay: { ...neutralLayerStyles.patternOverlay },
+    outerGlow: { ...neutralLayerStyles.outerGlow },
+    innerGlow: { ...neutralLayerStyles.innerGlow },
   },
 });
 export function multiply(a: Matrix, b: Matrix): Matrix {
@@ -878,12 +913,29 @@ export function inversePoint(
 }
 
 /** Convert a display-space diameter to a conservative local-space diameter. */
+export const LOCAL_BRUSH_MAX_DIAMETER = 10000;
 export function localSize(matrix: Matrix, diameter: number): number {
   const determinant = Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]);
-  return Math.max(0.25, diameter / Math.max(0.0001, Math.sqrt(determinant)));
+  // Cap at the 10,000 px every paint engine accepts so a 5,000 px brush on a
+  // down-scaled layer cannot exceed engine validation and abort the stroke.
+  return Math.min(LOCAL_BRUSH_MAX_DIAMETER, Math.max(0.25, diameter / Math.max(0.0001, Math.sqrt(determinant))));
 }
-export const filterCSS = (a: Adjustments) =>
-  `${a.filter === 'none' ? '' : a.filter} brightness(${a.brightness}%) contrast(${a.contrast}%) saturate(${a.saturation}%) blur(${a.blur}px)`;
+/**
+ * Canvas filter for the CSS-backed basic adjustments. Neutral values return
+ * `'none'`: an identity filter chain such as `brightness(100%) blur(0px)` still
+ * routes every draw through the browser's filter pipeline, which made each
+ * full-document composite (and every live brush preview) of a large raster
+ * layer cost hundreds of milliseconds for no visible change.
+ */
+export const filterCSS = (a: Adjustments) => {
+  const parts: string[] = [];
+  if (a.filter && a.filter !== 'none') parts.push(a.filter);
+  if (a.brightness !== 100) parts.push(`brightness(${a.brightness}%)`);
+  if (a.contrast !== 100) parts.push(`contrast(${a.contrast}%)`);
+  if (a.saturation !== 100) parts.push(`saturate(${a.saturation}%)`);
+  if (a.blur !== 0) parts.push(`blur(${a.blur}px)`);
+  return parts.length ? parts.join(' ') : 'none';
+};
 
 /** Fill in adjustment fields introduced after the v2 document format.
  *
@@ -1287,8 +1339,6 @@ export function effectiveTextLayer<T extends Layer>(
       : {}),
   } as T;
 }
-/** Total raster pixels the top-level layers of one document may store. */
-export const LAYER_PIXEL_BUDGET = 64000000;
 /** Format a pixel count as megapixels with at most one decimal place. */
 export function formatMegapixels(
   pixels: number,
@@ -1301,9 +1351,12 @@ export function formatMegapixels(
   return (rounded / 10).toFixed(1).replace(/\.0$/, '');
 }
 /** Clear, actionable message used when an edit would exceed the layer pixel budget. */
-export function layerPixelBudgetMessage(requiredPixels: number): string {
+export function layerPixelBudgetMessage(
+  requiredPixels: number,
+  budgetPixels: number = detectProjectLimits().layerPixelBudget,
+): string {
   return (
-    `Layer pixel budget reached: layers may store ${formatMegapixels(LAYER_PIXEL_BUDGET)} MP in total ` +
+    `Layer pixel budget reached: layers may store ${formatMegapixels(budgetPixels)} MP in total on this device ` +
     `and this edit needs ${formatMegapixels(requiredPixels, 'up')} MP. ` +
     'Merge or trim layers (Layer > Trim Layer to Content), or use a smaller canvas.'
   );
@@ -1311,10 +1364,15 @@ export function layerPixelBudgetMessage(requiredPixels: number): string {
 /** Distinct from the generic malformed-document error so the UI can explain it. */
 export class LayerPixelBudgetError extends Error {
   readonly requiredPixels: number;
-  constructor(requiredPixels: number) {
-    super(layerPixelBudgetMessage(requiredPixels));
+  readonly budgetPixels: number;
+  constructor(
+    requiredPixels: number,
+    budgetPixels: number = detectProjectLimits().layerPixelBudget,
+  ) {
+    super(layerPixelBudgetMessage(requiredPixels, budgetPixels));
     this.name = 'LayerPixelBudgetError';
     this.requiredPixels = requiredPixels;
+    this.budgetPixels = budgetPixels;
   }
 }
 /**
@@ -1351,7 +1409,7 @@ export function validateFrame(
     Number(value.w) * Number(value.h) > 16000000 ||
     !Array.isArray(value.layers) ||
     !value.layers.length ||
-    value.layers.length > 32
+    value.layers.length > MAX_DOCUMENT_LAYERS
   )
     return fail();
   if (value.imageSize !== undefined && !validImageSizeMetadata(value.imageSize))
@@ -1363,7 +1421,7 @@ export function validateFrame(
   const ids = new Set<string>();
   if (value.groups !== undefined && !Array.isArray(value.groups)) return fail();
   const groups = Array.isArray(value.groups) ? value.groups : [];
-  if (groups.length > 32) return fail();
+  if (groups.length > MAX_DOCUMENT_GROUPS) return fail();
   for (const group of groups) {
     if (
       !record(group) ||
@@ -1504,7 +1562,7 @@ export function validateFrame(
       )
         return fail();
       if (
-        layer.patchStrokes?.some(
+        [...(layer.kind === 'raster' ? layer.spotHealing ?? [] : []), ...(layer.patchStrokes ?? [])].some(
           (stroke) =>
             stroke.selectionMask !== undefined &&
             (!Object.hasOwn(assets, stroke.selectionMask) ||
@@ -1755,9 +1813,54 @@ export function validateFrame(
   )
     return fail();
   if (!validId(value.active) || !ids.has(value.active)) return fail();
+  if (
+    value.reference !== undefined &&
+    (nestedDepth > 0 || !validReferenceImage(value.reference, assets))
+  )
+    return fail();
   // Checked last so malformed data keeps the generic error and a valid but
   // oversized stack gets an actionable explanation.
-  if (pixels > LAYER_PIXEL_BUDGET) throw new LayerPixelBudgetError(pixels);
+  if (pixels > LAYER_PIXEL_CEILING)
+    throw new LayerPixelBudgetError(pixels, LAYER_PIXEL_CEILING);
+}
+/**
+ * Device budget for an edit. validateFrame only enforces the device
+ * independent format ceiling, so a project made on a larger device still
+ * opens; an edit may not grow stored pixels past this device's budget, while
+ * edits that keep or reduce usage are always allowed.
+ */
+export function assertLayerPixelBudgetForEdit(
+  next: Pick<Frame, 'layers'>,
+  previous: Pick<Frame, 'layers'> | undefined,
+  assets: Assets,
+  budgetPixels: number = detectProjectLimits().layerPixelBudget,
+): void {
+  const pixels = layerPixelUsage(next, assets);
+  if (pixels <= budgetPixels) return;
+  if (previous && pixels <= layerPixelUsage(previous, assets)) return;
+  throw new LayerPixelBudgetError(pixels, budgetPixels);
+}
+/**
+ * Device byte budget for the PNG data an edit leaves referenced (`retained`
+ * is the history-trimmed asset set). As with pixels, an edit that does not
+ * grow the current frame's data is always allowed, so a project opened from a
+ * larger device remains editable.
+ */
+export function assertAssetByteBudgetForEdit(
+  retained: Assets,
+  next: Frame,
+  previous: Frame | undefined,
+  assets: Assets,
+  budgetBytes: number = detectProjectLimits().assetByteBudget,
+): void {
+  if (assetBytes(retained) <= budgetBytes) return;
+  if (
+    previous &&
+    assetBytes(referencedAssets([next], assets)) <=
+      assetBytes(referencedAssets([previous], assets))
+  )
+    return;
+  throw new Error(assetByteBudgetMessage(budgetBytes));
 }
 export function referencedAssets(history: Frame[], assets: Assets): Assets {
   const used: Assets = {};
@@ -1768,6 +1871,8 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
       used[frame.previousSelection.mask] = assets[frame.previousSelection.mask];
     if (frame.quickMask?.asset && assets[frame.quickMask.asset])
       used[frame.quickMask.asset] = assets[frame.quickMask.asset];
+    if (frame.reference?.asset && assets[frame.reference.asset])
+      used[frame.reference.asset] = assets[frame.reference.asset];
     for (const entry of frame.savedSelections?.selections || []) {
       if (entry.selection.mask && assets[entry.selection.mask])
         used[entry.selection.mask] = assets[entry.selection.mask];
@@ -1778,6 +1883,11 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
         used[layer.asset] = assets[layer.asset];
         if (layer.kind === 'smart-object' && layer.contents)
           Object.assign(used, referencedAssets([layer.contents], assets));
+        // Selection snapshots of Spot Healing and Patch strokes must survive
+        // history trimming and drafts even after the selection is dropped.
+        for (const stroke of layer.kind === 'raster' ? [...(layer.spotHealing || []), ...(layer.patchStrokes || [])] : [])
+          if (stroke.selectionMask && assets[stroke.selectionMask])
+            used[stroke.selectionMask] = assets[stroke.selectionMask];
         for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
         for (const move of layer.kind === 'raster' ? layer.contentAwareMoves || [] : [])
@@ -1871,6 +1981,57 @@ export function releaseRetiredDecodedAssets(): void {
 export function decodedAssetCacheStats(): { entries: number; pixels: number; maxPixels: number } {
   return { entries: decoded.size, pixels: decodedPixels, maxPixels: decodedAssetBudgetPixels() };
 }
+/**
+ * Check that every asset decodes to its declared size without keeping the
+ * decoded pixels: installs validate whole projects (including undo history)
+ * and must not flood the bounded decoded-asset cache. Runs `concurrency`
+ * decodes at a time; the first failure rejects.
+ */
+/**
+ * Asset ids a fresh render of `frame` is guaranteed to decode: the source of
+ * every visible, plainly composited raster layer (opacity above zero, not in
+ * a hidden folder, not skipped by `layerRenderSkippable`). A decode failure
+ * there fails the render, so install-time verification can leave these to
+ * the render and verify only the rest (hidden layers, masks, undo history).
+ */
+export function assetsDecodedByRender(frame: Frame, assets: Assets): Set<string> {
+  const groups = new Map((frame.groups || []).map((group) => [group.id, group]));
+  const ids = new Set<string>();
+  for (const layer of frame.layers) {
+    if (layer.kind !== 'raster' || layer.fillColor !== undefined || !layer.visible || !(layer.opacity > 0))
+      continue;
+    const group = layer.groupId ? groups.get(layer.groupId) : undefined;
+    if (layer.groupId && (!group || !group.visible || !(group.opacity > 0))) continue;
+    if (layerRenderSkippable(layer, frame, assets)) continue;
+    if (Object.hasOwn(assets, layer.asset)) ids.add(layer.asset);
+  }
+  return ids;
+}
+export async function verifyAssetsDecode(
+  list: readonly Asset[],
+  options: { concurrency?: number; assertCurrent?: () => void } = {},
+): Promise<void> {
+  const queue = [...list];
+  const lanes = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 4)));
+  let failure: unknown;
+  const lane = async () => {
+    while (queue.length && failure === undefined) {
+      options.assertCurrent?.();
+      const asset = queue.shift()!;
+      try {
+        const image = await decodeNewAsset(asset);
+        const closable = image as unknown as { close?: () => void };
+        if (typeof closable.close === 'function') closable.close();
+        else (image as HTMLImageElement).src = '';
+      } catch (error) {
+        failure ??= error;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(lanes, queue.length) }, lane));
+  if (failure !== undefined) throw failure;
+  options.assertCurrent?.();
+}
 export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
   // Full validation (regex + PNG header) runs once per content in decodeNewAsset.
   if (!asset || typeof asset !== 'object' || typeof asset.url !== 'string')
@@ -1882,8 +2043,14 @@ export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
     decoded.set(key, cached);
     return cached.promise;
   }
-  const pending = decodeNewAsset(asset);
-  const entry: DecodedEntry = { promise: pending, pixels: asset.w * asset.h };
+  return rememberDecoded(key, decodeNewAsset(asset), asset.w * asset.h);
+}
+function rememberDecoded(
+  key: string,
+  pending: Promise<HTMLImageElement>,
+  pixels: number,
+): Promise<HTMLImageElement> {
+  const entry: DecodedEntry = { promise: pending, pixels };
   decoded.set(key, entry);
   decodedPixels += entry.pixels;
   // A failed decode must not poison later attempts for the same content.
@@ -1901,6 +2068,84 @@ export function decodeAsset(asset: Asset): Promise<HTMLImageElement> {
   }
   return pending;
 }
+/**
+ * Seed the decoded-asset cache with pixels the caller already holds for a
+ * freshly encoded asset (for example the buffer a brush stroke just committed),
+ * so the next decode of that asset — the next stroke's start, or a main-thread
+ * render — does not decode the PNG data URL again. The source is copied into
+ * a private surface, so later changes to the caller's canvas cannot leak into
+ * the cache. Returns false when the source does not match the asset.
+ */
+export function primeDecodedAsset(
+  asset: Asset,
+  source: CanvasImageSource & { width: number; height: number },
+): boolean {
+  if (!asset || typeof asset.url !== 'string') return false;
+  if (source.width !== asset.w || source.height !== asset.h) return false;
+  const key = assetFingerprint(asset);
+  if (decoded.has(key)) return true;
+  const snapshot = surface(asset.w, asset.h);
+  snapshot.getContext('2d')!.drawImage(source, 0, 0);
+  // Present the snapshot like a decoded <img> to callers that size buffers
+  // from naturalWidth/naturalHeight.
+  Object.defineProperties(snapshot, {
+    naturalWidth: { value: asset.w, configurable: true },
+    naturalHeight: { value: asset.h, configurable: true },
+  });
+  void rememberDecoded(
+    key,
+    Promise.resolve(snapshot as unknown as HTMLImageElement),
+    asset.w * asset.h,
+  );
+  return true;
+}
+/**
+ * Worker-side seeding: accept already decoded pixels for an asset whose
+ * content fingerprint the main thread computed. Dimensions must match.
+ */
+export function primeDecodedAssetPixels(
+  asset: Asset,
+  key: string,
+  pixels: Uint8ClampedArray,
+): boolean {
+  if (!asset || typeof asset.url !== 'string' || decoded.has(key)) return false;
+  if (key !== assetFingerprint(asset)) return false;
+  if (pixels.length !== asset.w * asset.h * 4) return false;
+  if (typeof createImageBitmap !== 'function' || typeof ImageData !== 'function') return false;
+  const image = new ImageData(
+    pixels as unknown as Uint8ClampedArray<ArrayBuffer>,
+    asset.w,
+    asset.h,
+  );
+  void rememberDecoded(
+    key,
+    createImageBitmap(image) as unknown as Promise<HTMLImageElement>,
+    asset.w * asset.h,
+  );
+  return true;
+}
+/**
+ * Bytes of a validated base64 PNG data URL as a Blob. Uses the native
+ * `Uint8Array.fromBase64` where available and otherwise a plain indexed loop:
+ * the previous `Uint8Array.from(binary, mapFn)` cost about a second per
+ * 10 MP layer in the render worker. (The production CSP does not allow
+ * fetching data: URLs, so `fetch` is not used.)
+ */
+export async function dataUrlBlob(url: string): Promise<Blob> {
+  const encoded = url.slice(url.indexOf(',') + 1);
+  const native = (Uint8Array as unknown as { fromBase64?: (value: string) => Uint8Array }).fromBase64;
+  if (typeof native === 'function') {
+    try {
+      return new Blob([native(encoded) as Uint8Array<ArrayBuffer>], { type: 'image/png' });
+    } catch {
+      // Fall through to the manual decode.
+    }
+  }
+  const binary = atob(encoded),
+    bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: 'image/png' });
+}
 async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
   if (!validAsset(asset)) throw new Error('Invalid or oversized project image');
   if (typeof Image === 'function') {
@@ -1912,10 +2157,7 @@ async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
     return image;
   }
   if (typeof createImageBitmap === 'function' && typeof Blob === 'function') {
-    const encoded = asset.url.slice(asset.url.indexOf(',') + 1),
-      binary = atob(encoded),
-      bytes = Uint8Array.from(binary, (value) => value.charCodeAt(0)),
-      image = await createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    const image = await createImageBitmap(await dataUrlBlob(asset.url));
     if (image.width !== asset.w || image.height !== asset.h)
       throw new Error('Project image dimensions do not match');
     return image as unknown as HTMLImageElement;
@@ -2118,6 +2360,14 @@ export type RenderOptions = {
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
   /** Report bounded tile completion before the final telemetry envelope. */
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
+  /** Report completed row bands of a parallel full-frame filter. */
+  onFilterProgress?: (progress: FilterBandProgress) => void;
+  /**
+   * Filter worker pool for heavy neighbourhood filters. Omit for this
+   * context's shared pool (when the device has spare cores); pass null to
+   * keep every filter on the calling thread.
+   */
+  filterPool?: FilterWorkerPool | null;
   /** Internal recursion guard for editable nested Smart Object contents. */
   nestedDepth?: number;
   /**
@@ -2125,14 +2375,75 @@ export type RenderOptions = {
    * cache; pass null to render every filter from scratch.
    */
   layerFilterCache?: ByteLruCache<CanvasImageSource> | null;
+  /**
+   * Reuse the composite below the active layer between renders of large
+   * stacks (see compositeCache.ts). Applies to the outermost render only.
+   */
+  compositeCache?: CompositeCache<HTMLCanvasElement>;
 };
+
+/**
+ * Decode a stored selection snapshot (Patch / Spot Healing) to one coverage
+ * byte per pixel: alpha, or the red channel for legacy opaque grey masks.
+ */
+async function decodeSelectionAlpha(asset: Assets[string]): Promise<Uint8ClampedArray> {
+  const maskImage = await decodeAsset(asset);
+  const maskSurface = surface(maskImage.naturalWidth, maskImage.naturalHeight);
+  const maskContext = maskSurface.getContext('2d')!;
+  maskContext.drawImage(maskImage, 0, 0);
+  const rgba = maskContext.getImageData(0, 0, maskSurface.width, maskSurface.height).data;
+  const alpha = new Uint8ClampedArray(maskSurface.width * maskSurface.height);
+  for (let pixel = 0; pixel < alpha.length; pixel += 1)
+    alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
+  return alpha;
+}
+
+function renderFilterPool(options: RenderOptions | undefined): FilterWorkerPool | undefined {
+  return options?.filterPool === null ? undefined : (options?.filterPool ?? sharedFilterWorkerPool());
+}
+
+/**
+ * Apply a filter effect to a surface in place. Band-safe heavy filters on
+ * large surfaces run as parallel row bands in the filter worker pool, with
+ * per-band progress and cancellation; the bytes equal the serial path.
+ */
+async function applyFilterEffectsToSurface(
+  target: HTMLCanvasElement,
+  effect: Partial<FilterEffects> | undefined,
+  options: RenderOptions | undefined,
+  layerId: string,
+): Promise<void> {
+  const pool = renderFilterPool(options);
+  if (
+    !pool ||
+    pool.broken ||
+    !isParallelFilterEffect(effect) ||
+    target.width * target.height < FILTER_PARALLEL_MIN_PIXELS
+  ) {
+    applyFilterEffects(target, effect);
+    return;
+  }
+  const context = target.getContext('2d');
+  if (!context) return;
+  const image = context.getImageData(0, 0, target.width, target.height);
+  const type = effectiveFilterEffects(effect).type;
+  const result = await applyFilterEffectsParallel(image.data, target.width, target.height, effect, {
+    pool,
+    signal: options?.signal,
+    isCancelled: options?.isCancelled,
+    onProgress: (completed, total) =>
+      options?.onFilterProgress?.({ kind: 'filter-band-progress', effect: type, layerId, completed, total }),
+  });
+  image.data.set(result);
+  context.putImageData(image, 0, 0);
+}
 
 /** Render a raster layer's bounded style stack in local coordinates. */
 function applyRasterLayerStyles(
   source: CanvasImageSource,
   width: number,
   height: number,
-  styles: Partial<LayerStyles> | undefined,
+  styles: LayerStylesWithPart | undefined,
 ): HTMLCanvasElement | CanvasImageSource {
   if (isNeutralLayerStyles(styles)) return source;
   const styled = surface(width, height), context = styled.getContext('2d')!;
@@ -2143,6 +2454,78 @@ function applyRasterLayerStyles(
   return styled;
 }
 
+/**
+ * Composite a frame-space surface onto the output with a layer/folder blend.
+ * Canvas-native modes use the compositor directly (one drawImage, unchanged
+ * from the historical path); PixelForge's software modes read both surfaces
+ * once and apply the shared W3C source-over reference from `blendModes.ts`.
+ */
+function compositeFrameSurface(
+  context: CanvasRenderingContext2D,
+  image: CanvasImageSource,
+  width: number,
+  height: number,
+  opacity: number,
+  blend: Layer['blend'],
+) {
+  if (isNativeCanvasBlendMode(blend)) {
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalAlpha = opacity;
+    context.globalCompositeOperation = blend;
+    context.filter = 'none';
+    context.drawImage(image, 0, 0);
+    context.restore();
+    return;
+  }
+  if (opacity <= 0) return;
+  const source = surface(width, height),
+    sourceContext = source.getContext('2d')!;
+  sourceContext.drawImage(image, 0, 0);
+  const sourcePixels = sourceContext.getImageData(0, 0, width, height).data,
+    backdrop = context.getImageData(0, 0, width, height);
+  blendPixelsInPlace(backdrop.data, sourcePixels, opacity, blend);
+  context.putImageData(backdrop, 0, 0);
+}
+
+/** True when a layer's blend cannot be expressed by Canvas compositing. */
+const softwareBlend = (layer: Pick<Layer, 'blend'>) =>
+  !isNativeCanvasBlendMode(layer.blend);
+
+/**
+ * True when an ungrouped layer cannot change the composite, so the renderer
+ * skips it without decoding its asset or allocating surfaces: a fully
+ * transparent layer, or a plain raster layer whose stored bounds lie entirely
+ * outside the canvas. Adjustment layers and layers with styles, live filters
+ * or masks are never skipped by position because they can paint elsewhere.
+ */
+export function layerRenderSkippable(
+  layer: Layer,
+  frame: Pick<Frame, 'w' | 'h' | 'layers'>,
+  assets: Assets,
+): boolean {
+  if (layer.opacity === 0) return true;
+  if (layer.kind !== 'raster' || layer.fillColor !== undefined) return false;
+  const asset = assets[layer.asset];
+  if (!asset) return false;
+  const [a, b, c, d, e, f] = layer.matrix;
+  if (a !== 1 || b !== 0 || c !== 0 || d !== 1) return false;
+  if (
+    !isNeutralLayerStyles(layer.styles) ||
+    !isNeutralFilterEffects(effectiveFilterEffects(layer.adjustments.filterEffects)) ||
+    layer.smartFilters?.length ||
+    layer.vectorMask ||
+    layer.spotHealing?.length ||
+    layer.patchStrokes?.length ||
+    layer.contentAwareFills?.length ||
+    layer.contentAwareMoves?.length ||
+    layer.contentAwareScales?.length ||
+    // A clipping base defines where its clipped layers show.
+    frame.layers.some((item) => item.clippingTo === layer.id)
+  )
+    return false;
+  return e >= frame.w || f >= frame.h || e + asset.w <= 0 || f + asset.h <= 0;
+}
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
@@ -2152,15 +2535,53 @@ export async function renderFrame(
   const nestedDepth = options?.nestedDepth ?? 0;
   if (nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
     throw new Error('Nested Smart Object depth exceeds the local safety limit');
+  // The prefix composite cache applies to the outermost render only; nested
+  // folder, clipping and decorated-layer renders never see it.
+  const compositeCache =
+    nestedDepth === 0 && frame.layers.length >= COMPOSITE_CACHE_MIN_LAYERS
+      ? options?.compositeCache
+      : undefined;
+  if (options?.compositeCache) options = { ...options, compositeCache: undefined };
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group])),
     renderedGroups = new Set<string>();
   const reportProgress = (layerIndex: number) =>
     options?.onProgress?.(layerIndex + 1, frame.layers.length);
+  let startIndex = 0,
+    checkpoint = -1,
+    keys: string[] | undefined;
+  if (compositeCache) {
+    keys = compositeLayerKeys(frame, assets, overrides);
+    checkpoint = compositeCheckpoint(frame, overrides);
+    const hit = compositeCache.match(frame.w, frame.h, keys);
+    if (hit) {
+      // Every layer the snapshot holds is unchanged: start above it.
+      context.drawImage(hit.surface, 0, 0);
+      for (const id of hit.groups) renderedGroups.add(id);
+      startIndex = hit.index + 1;
+      reportProgress(hit.index);
+    }
+  }
   for (const [layerIndex, layer] of frame.layers.entries()) {
+    if (layerIndex < startIndex) continue;
     if (options?.isCancelled?.())
       throw new DOMException('Document rendering cancelled', 'AbortError');
+    if (compositeCache && keys && layerIndex === checkpoint + 1 && checkpoint >= startIndex) {
+      // Layers 0..checkpoint are complete: keep a copy for the next render.
+      const snapshot = compositeCache.reusable(frame.w, frame.h) ?? surface(frame.w, frame.h),
+        snapshotContext = snapshot.getContext('2d')!;
+      snapshotContext.clearRect(0, 0, frame.w, frame.h);
+      snapshotContext.drawImage(out, 0, 0);
+      compositeCache.store({
+        w: frame.w,
+        h: frame.h,
+        keys: keys.slice(0, checkpoint + 1),
+        index: checkpoint,
+        surface: snapshot,
+        groups: [...renderedGroups],
+      });
+    }
     if (
       options?.yieldEveryLayers &&
       layerIndex > 0 &&
@@ -2198,17 +2619,11 @@ export async function renderFrame(
       );
       if (options?.isCancelled?.())
         throw new DOMException('Document rendering cancelled', 'AbortError');
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = group.opacity;
-      context.globalCompositeOperation = group.blend;
-      context.filter = 'none';
-      context.drawImage(isolated, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, isolated, frame.w, frame.h, group.opacity, group.blend);
       reportProgress(layerIndex);
       continue;
     }
-    if (!layer.visible) {
+    if (!layer.visible || layerRenderSkippable(layer, frame, assets)) {
       reportProgress(layerIndex);
       continue;
     }
@@ -2268,13 +2683,50 @@ export async function renderFrame(
         clippedPixels = applyClippingAlpha(sourcePixels.data, basePixels.data);
       sourcePixels.data.set(clippedPixels);
       sourceContext.putImageData(sourcePixels, 0, 0);
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = layer.opacity;
-      context.globalCompositeOperation = layer.blend;
-      context.filter = 'none';
-      context.drawImage(sourceSurface, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
+      reportProgress(layerIndex);
+      continue;
+    }
+    const backdropPasses = layer.kind === 'adjustment' ? [] : layerStyleBackdropPasses(layer.styles);
+    if (backdropPasses.length) {
+      // A Drop Shadow or Outer Glow with its own blend mode composites onto
+      // the pixels beneath this layer (the current output), as in editors that
+      // blend each effect separately. Each outer effect renders alone through
+      // the layer's full local/frame pipeline (filters, transform, masks,
+      // adjustments), then the body without outer effects uses the layer's
+      // own blend. Layer opacity scales every pass. The nested one-layer
+      // renders carry a part tag, so they never re-enter this branch.
+      const nestedOptions = options?.onProgress ? { ...options, onProgress: undefined } : options;
+      const renderPart = (part: 'body' | 'drop-shadow' | 'outer-glow') =>
+        renderFrame(
+          {
+            ...frame,
+            layers: [
+              {
+                ...layer,
+                groupId: undefined,
+                opacity: 1,
+                blend: 'source-over',
+                styles: withLayerStylePart(layer.styles, part),
+              } as Layer,
+            ],
+            groups: [],
+            active: layer.id,
+          },
+          assets,
+          overrides,
+          nestedOptions,
+        );
+      for (const pass of backdropPasses) {
+        const effect = await renderPart(pass.part);
+        if (options?.isCancelled?.())
+          throw new DOMException('Document rendering cancelled', 'AbortError');
+        compositeFrameSurface(context, effect, frame.w, frame.h, layer.opacity, pass.blend);
+      }
+      const body = await renderPart('body');
+      if (options?.isCancelled?.())
+        throw new DOMException('Document rendering cancelled', 'AbortError');
+      compositeFrameSurface(context, body, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2302,13 +2754,7 @@ export async function renderFrame(
           options?.onProgress ? { ...options, onProgress: undefined } : options,
         ),
         masked = applyVectorMaskSurface(nested, frame.w, frame.h, layer);
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = layer.opacity;
-      context.globalCompositeOperation = layer.blend;
-      context.filter = 'none';
-      context.drawImage(masked, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, masked, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2358,13 +2804,28 @@ export async function renderFrame(
           correctedContext.putImageData(correctedImage, 0, 0);
         }
       }
-      context.save();
-      context.setTransform(1, 0, 0, 1, 0, 0);
-      context.globalAlpha = layer.opacity;
-      context.globalCompositeOperation = layer.blend;
-      context.filter = 'none';
-      context.drawImage(corrected, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, corrected, frame.w, frame.h, layer.opacity, layer.blend);
+      reportProgress(layerIndex);
+      continue;
+    }
+    if (softwareBlend(layer)) {
+      // Canvas has no operator for this mode. Render the layer once with
+      // Normal/100% into an isolated surface (same local stage, cache and
+      // transforms), then apply opacity and the software blend exactly once.
+      const isolated = await renderFrame(
+        {
+          ...frame,
+          layers: [{ ...layer, groupId: undefined, opacity: 1, blend: 'source-over' } as Layer],
+          groups: [],
+          active: layer.id,
+        },
+        assets,
+        overrides,
+        options?.onProgress ? { ...options, onProgress: undefined } : options,
+      );
+      if (options?.isCancelled?.())
+        throw new DOMException('Document rendering cancelled', 'AbortError');
+      compositeFrameSurface(context, isolated, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2427,8 +2888,14 @@ export async function renderFrame(
         cleanedContext = cleaned.getContext('2d')!;
       cleanedContext.drawImage(rasterSource, 0, 0);
       const imageData = cleanedContext.getImageData(0, 0, cleaned.width, cleaned.height);
+      // Strokes made inside a selection carry a layer-space alpha snapshot.
+      const healingMasks: Record<string, Uint8ClampedArray> = {};
+      for (const stroke of layer.spotHealing) {
+        if (!stroke.selectionMask || healingMasks[stroke.selectionMask]) continue;
+        healingMasks[stroke.selectionMask] = await decodeSelectionAlpha(assets[stroke.selectionMask]);
+      }
       imageData.data.set(
-        applySpotHealingStrokes(imageData.data, cleaned.width, cleaned.height, layer.spotHealing),
+        applySpotHealingStrokes(imageData.data, cleaned.width, cleaned.height, layer.spotHealing, healingMasks),
       );
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
@@ -2445,20 +2912,7 @@ export async function renderFrame(
       const patchMasks: Record<string, Uint8ClampedArray> = {};
       for (const stroke of layer.patchStrokes) {
         if (!stroke.selectionMask || patchMasks[stroke.selectionMask]) continue;
-        const maskImage = await decodeAsset(assets[stroke.selectionMask]);
-        const maskSurface = surface(maskImage.naturalWidth, maskImage.naturalHeight);
-        const maskContext = maskSurface.getContext('2d')!;
-        maskContext.drawImage(maskImage, 0, 0);
-        const rgba = maskContext.getImageData(
-          0,
-          0,
-          maskSurface.width,
-          maskSurface.height,
-        ).data;
-        const alpha = new Uint8ClampedArray(maskSurface.width * maskSurface.height);
-        for (let pixel = 0; pixel < alpha.length; pixel += 1)
-          alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
-        patchMasks[stroke.selectionMask] = alpha;
+        patchMasks[stroke.selectionMask] = await decodeSelectionAlpha(assets[stroke.selectionMask]);
       }
       imageData.data.set(
         applyPatchStrokes(
@@ -2601,7 +3055,7 @@ export async function renderFrame(
         stackedContext = stacked.getContext('2d')!;
       stackedContext.drawImage(rasterSource, 0, 0);
       for (const effect of effectiveSmartFilters(layer.smartFilters))
-        applyFilterEffects(stacked, effect);
+        await applyFilterEffectsToSurface(stacked, effect, options, layer.id);
       rasterSource = stacked;
     }
     if (computeLocal && isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
@@ -2640,6 +3094,19 @@ export async function renderFrame(
               maxWorkingBytes: options.tiledMaxWorkingBytes,
               signal: options.signal,
               isCancelled: options.isCancelled,
+              ...(() => {
+                // Heavy tiles run in the filter worker pool, several at once.
+                const pool = renderFilterPool(options);
+                return pool && !pool.broken
+                  ? {
+                      renderTile: pooledTileRenderer(pool, {
+                        signal: options.signal,
+                        isCancelled: options.isCancelled,
+                      }),
+                      concurrency: pool.size,
+                    }
+                  : {};
+              })(),
               onTelemetry: (telemetry) =>
                 options.onTiledTelemetry?.({ ...telemetry, layerId: layer.id }),
               onProgress: (completed, total, meta) =>
@@ -2667,13 +3134,13 @@ export async function renderFrame(
           // draft. Fall back to the existing full-frame path for this render.
           const fallback = surface(filteredWidth, filteredHeight);
           fallback.getContext('2d')!.drawImage(rasterSource, 0, 0);
-          applyFilterEffects(fallback, filterEffect);
+          await applyFilterEffectsToSurface(fallback, filterEffect, options, layer.id);
           rasterSource = fallback;
         }
       } else {
         const filtered = surface(filteredWidth, filteredHeight);
         filtered.getContext('2d')!.drawImage(rasterSource, 0, 0);
-        applyFilterEffects(filtered, filterEffect);
+        await applyFilterEffectsToSurface(filtered, filterEffect, options, layer.id);
         rasterSource = filtered;
       }
     }
@@ -2738,6 +3205,8 @@ export async function renderFrame(
                 colorOverlay: { ...neutralLayerStyles.colorOverlay },
                 gradientOverlay: { ...neutralLayerStyles.gradientOverlay },
                 patternOverlay: { ...neutralLayerStyles.patternOverlay },
+                outerGlow: { ...neutralLayerStyles.outerGlow },
+                innerGlow: { ...neutralLayerStyles.innerGlow },
               },
               adjustments: {
                 ...effectiveAdjustments(layer.adjustments),
@@ -2779,11 +3248,7 @@ export async function renderFrame(
       applyAutoAdjustments(styled, layer.adjustments);
       applyFilterEffects(styled, layer.adjustments.filterEffects);
       applyPhotoAdjustments(styled, layer.adjustments.photoAdjustments);
-      context.save();
-      context.globalAlpha = layer.opacity * groupOpacity;
-      context.globalCompositeOperation = layer.blend;
-      context.drawImage(styled, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, styled, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2846,11 +3311,7 @@ export async function renderFrame(
         );
         maskContext.putImageData(maskedImage, 0, 0);
       }
-      context.save();
-      context.globalAlpha = layer.opacity * groupOpacity;
-      context.globalCompositeOperation = layer.blend;
-      context.drawImage(masked, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, masked, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -2894,18 +3355,15 @@ export async function renderFrame(
       applyCurves(leveled, layer.adjustments);
       applyAutoAdjustments(leveled, layer.adjustments);
       applyPhotoAdjustments(leveled, layer.adjustments.photoAdjustments);
-      context.save();
-      context.globalAlpha = layer.opacity * groupOpacity;
-      context.globalCompositeOperation = layer.blend;
-      context.drawImage(leveled, 0, 0);
-      context.restore();
+      compositeFrameSurface(context, leveled, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
     context.save();
     context.setTransform(...layer.matrix);
     context.globalAlpha = layer.opacity * groupOpacity;
-    context.globalCompositeOperation = layer.blend;
+    // Software modes returned through the isolated branch above.
+    context.globalCompositeOperation = layer.blend as GlobalCompositeOperation;
     context.filter = filterCSS(layer.adjustments);
     if (override) {
       context.drawImage(rasterSource!, 0, 0);

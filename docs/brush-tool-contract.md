@@ -41,7 +41,7 @@ Extend `Settings` with validated, backward-compatible values:
 | `hardness` | 0–100 (percent) | 100 | Radius at which a stamp reaches full alpha; 0 is a fully soft edge and 100 is a hard circle |
 | `pressureSize` | boolean | false | Apply supported pen pressure to diameter |
 | `pressureOpacity` | boolean | false | Apply supported pen pressure to stamp alpha |
-| `spacing` | 1–100 (percent) | 25 | Distance between dabs as a percentage of the resolved diameter |
+| `spacing` | 1–1000 (percent) | 25 | Distance between dabs as a percentage of the resolved diameter |
 | `angle` | -180–180 (degrees) | 0 | Rotation of the local tip ellipse |
 | `roundness` | 1–100 (percent) | 100 | Circular tip at 100; lower values compress the local vertical axis |
 | `flipX`, `flipY` | boolean | false | Explicit local tip mirror controls; symmetric tips may render identical pixels |
@@ -61,8 +61,10 @@ size is a separate performance change.
 
 Use one shared stamp primitive for Brush, Eraser, Clone and Healing:
 
-1. Clamp pointer pressure to `[0, 1]`; use `1` when the event pressure is
-   missing or zero for a mouse/touch fallback.
+1. Clamp pointer pressure to `[0, 1]`; use `1` for mouse input and when the
+   event pressure is missing, out of range, or a zero touch reading. A pen
+   reading of `0` is kept: with a pressure mapping enabled, pressure at or
+   below `0.01` is a pen lift and the dab paints nothing.
 2. If `pressureSize` is enabled, multiply the configured diameter by pressure
    (with a documented minimum diameter, for example `0.25 × size`); otherwise
    retain the configured diameter.
@@ -166,12 +168,45 @@ space. Quick Mask edits the selection itself and is not confined. Without a
 selection every tool takes the previous, unconfined path with no extra work.
 
 Sampling the selection is a whole-layer pass at stroke start, the same cost
-Gradient, Paint Bucket and the retouch tools already pay. "Mask from
-selection" keeps the selection active, so painting the new mask outside it
-needs Select > Deselect first.
+Gradient, Paint Bucket and the retouch tools already pay.
+
+Clone Stamp, Healing Brush, Pattern Stamp, Red Eye, Color Replacement and
+Background Eraser use the same confined stroke (`confinedGestureEdit` in
+`app/page.tsx`): each segment is drawn into the unconfined copy, reading the
+immutable stroke-start source, and only the rectangle it can reach is blended
+back by selection coverage, so preview and commit match. Magic Eraser, like
+Fill, ignores clicks outside the selection and blends its result by coverage.
+Smudge, Blur/Sharpen, Dodge/Burn/Sponge and Mixer/History/Art History brushes
+already applied the layer-space selection mask through their own pixel
+kernels. Spot Healing and Patch store nondestructive stroke metadata that is
+rendered later, so at pointer-down they capture the active selection — any
+shape (rectangle, ellipse, lasso, polygon, pixel mask), feathered or
+inverted — as a layer-space alpha asset and store its id on the stroke
+(`selectionMask`). Replay scales every write by that coverage, so the stroke
+stays inside the selection after Deselect, undo/redo, reload and project
+import (see `spot-healing-contract.md` and `patch-tool-contract.md`).
+
+Option/Alt-click on Clone or Healing sets the source without touching pixels
+or history and is handled before the in-flight gesture guard, so a source
+chosen while the previous stroke is still decoding or committing (2646×4096
+documents) is honoured by the next stroke; a stroke already in flight keeps the
+anchor it started with. A white crosshair (`clone-source-marker`) shows the
+source on the canvas while Clone or Healing is active.
+
+"Mask from selection" consumes the selection as Photoshop does: one undo step
+adds the mask and deselects (Select > Reselect restores it), so the new mask
+can be painted outside the old selection straight away.
 
 Evidence: `mixRectByMask`, `brushStampReach` and `brushSegmentRect` in
-`src/selectionClip.ts` with `tests/selection-clip.test.mjs`, and
+`src/selectionClip.ts` with `tests/selection-clip.test.mjs`,
 `tests/browser/brush-selection.spec.ts` on desktop and mobile (brush with live
 preview and undo, eraser, pencil with an inverted selection, feathered edge,
-no-selection stroke, Mask Eraser).
+no-selection stroke, Mask Eraser), and `tests/browser/retouch-selection.spec.ts`
+on desktop and mobile (Clone across a rectangular selection with live preview
+and undo/redo, feathered Clone edge, Healing, Pattern Stamp and Color Replace
+confinement, Alt-click source during a pending commit on a 2646×4096 poster,
+Mask from selection then Mask Brush outside with one-step undo/redo).
+
+Painting Size up to 5000 px shipped in #187 (`6a42943`). In development (fix
+wave 2): `feat/brush-gradient-options` adds spacing and scatter above 100%,
+count and count jitter, and a true pen lift at pressure 0; it is not merged.

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  decodeAsset,
+  assertAssetByteBudgetForEdit,
+  assertLayerPixelBudgetForEdit,
+  assetsDecodedByRender,
+  verifyAssetsDecode,
   referencedAssets,
   validateFrame,
   type Assets,
@@ -10,6 +13,11 @@ import { sanitizeClippingRelations } from './layerClipping';
 import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
+import {
+  createPreviewScheduler,
+  type PreviewRequest,
+  type PreviewScheduler,
+} from './previewScheduler';
 import type {
   TiledNeighborhoodProgress,
   TiledRenderTelemetry,
@@ -20,11 +28,18 @@ import {
   toggleLayerSelection,
 } from './layerSelection';
 import { TileCache } from './tilePlan';
+import { detectHistoryBudget, trimHistoryToBudget } from './historyBudget';
 import { detectTileCacheBudget } from './tileCachePolicy';
 
 export type RenderProgress = {
   completed: number;
   total: number;
+};
+
+/** Arguments for one coalesced live-gesture preview render. */
+export type GesturePreview = {
+  frame: Frame;
+  overrides?: Record<string, HTMLCanvasElement>;
 };
 
 export type LayerSelectionIntent = {
@@ -48,6 +63,8 @@ export function useDocument(onError: (message: string) => void) {
   const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
   const [tiledProgress, setTiledProgress] = useState<TiledNeighborhoodProgress | null>(null);
   const [tiledCacheBudget] = useState(() => detectTileCacheBudget());
+  // Device-aware undo/redo capacity (steps + retained image bytes).
+  const [historyBudget] = useState(() => detectHistoryBudget());
   const renderSequence = useRef(0),
     renderAbort = useRef<AbortController | null>(null),
     documentRevision = useRef(0),
@@ -58,8 +75,15 @@ export function useDocument(onError: (message: string) => void) {
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };
-  useEffect(() => () => renderAbort.current?.abort(), []);
-  const paint = useCallback(
+  const previewScheduler = useRef<PreviewScheduler<GesturePreview> | null>(null);
+  useEffect(
+    () => () => {
+      previewScheduler.current?.cancel();
+      renderAbort.current?.abort();
+    },
+    [],
+  );
+  const renderNow = useCallback(
     async (value: Frame, overrides?: Record<string, HTMLCanvasElement>) => {
       const sequence = ++renderSequence.current;
       renderAbort.current?.abort();
@@ -122,6 +146,35 @@ export function useDocument(onError: (message: string) => void) {
     },
     [onError],
   );
+  const renderNowRef = useRef(renderNow);
+  useEffect(() => {
+    renderNowRef.current = renderNow;
+  }, [renderNow]);
+  /**
+   * Render immediately. Any explicit render (commit, undo, cancel, document
+   * install) supersedes a scheduled live preview, so a gesture preview can
+   * never paint over a newer document state.
+   */
+  const paint = useCallback(
+    (value: Frame, overrides?: Record<string, HTMLCanvasElement>) => {
+      previewScheduler.current?.cancel();
+      return renderNow(value, overrides);
+    },
+    [renderNow],
+  );
+  /**
+   * Schedule a coalesced live preview: at most one render in flight and one
+   * started per animation frame. The request is evaluated when the frame
+   * runs, so it renders the latest gesture buffer; return null when the
+   * gesture has ended.
+   */
+  const schedulePaint = useCallback((request: PreviewRequest<GesturePreview>) => {
+    previewScheduler.current ??= createPreviewScheduler<GesturePreview>({
+      render: ({ frame: value, overrides }) => renderNowRef.current(value, overrides),
+    });
+    previewScheduler.current.request(request);
+  }, []);
+  const cancelScheduledPaint = useCallback(() => previewScheduler.current?.cancel(), []);
   const publish = useCallback(
     (value: Frame) => {
       documentRevision.current += 1;
@@ -141,26 +194,28 @@ export function useDocument(onError: (message: string) => void) {
         // remain undoable instead of producing an unusable document.
         const sanitized = sanitizeClippingRelations(value);
         validateFrame(sanitized, assets.current);
-        let next = replace
+        const previousFrame = replace ? undefined : history.current[index.current];
+        assertLayerPixelBudgetForEdit(sanitized, previousFrame, assets.current);
+        const candidate = replace
           ? [sanitized]
           : [...history.current.slice(0, index.current + 1), sanitized];
-        let used = referencedAssets(next, assets.current);
-        while (
-          next.length > 1 &&
-          (next.length > 24 ||
-            Object.values(used).reduce((n, a) => n + a.url.length, 0) >
-              32 * 1024 * 1024)
-        ) {
-          next = next.slice(1);
-          used = referencedAssets(next, assets.current);
-        }
-        if (
-          Object.values(used).reduce((n, a) => n + a.url.length, 0) >
-          64 * 1024 * 1024
-        )
-          throw new Error(
-            'This document exceeds 64 MB. Export a copy before adding more images.',
-          );
+        // Oldest undo states go first; the new current frame is always kept.
+        const trimmed = trimHistoryToBudget(
+          candidate,
+          candidate.length - 1,
+          assets.current,
+          historyBudget,
+        );
+        // The current document's image data is bounded by this device's
+        // budget (see projectLimits.ts); edits that do not grow it are allowed.
+        assertAssetByteBudgetForEdit(
+          referencedAssets([sanitized], assets.current),
+          sanitized,
+          previousFrame,
+          assets.current,
+        );
+        const next = trimmed.history;
+        const used = referencedAssets(next, assets.current);
         history.current = next;
         index.current = next.length - 1;
         assets.current = used;
@@ -179,10 +234,11 @@ export function useDocument(onError: (message: string) => void) {
         return false;
       }
     },
-    [publish, onError, paint],
+    [publish, onError, paint, historyBudget],
   );
   const install = useCallback(async (draft: Draft) => {
     const expected = history.current[index.current];
+    previewScheduler.current?.cancel();
     renderAbort.current?.abort();
     const installController = new AbortController();
     renderAbort.current = installController;
@@ -199,18 +255,26 @@ export function useDocument(onError: (message: string) => void) {
     setTiledTelemetry(null);
     setTiledProgress(null);
     try {
-      // Validate every history asset before switching, so undo never discovers a corrupt import.
-      for (const asset of Object.values(draft.assets)) {
-        assertCurrentInstall();
-        await decodeAsset(asset);
-        assertCurrentInstall();
-      }
       // Release the previous document's retained filtered layers before the
       // installed one fills the cache. Keys are content-based, so this bounds
       // memory rather than preventing stale reuse.
       clearLayerFilterCaches();
+      // Validate every history asset before switching, so undo never
+      // discovers a corrupt import. Decodes run a few at a time, are not
+      // retained, and overlap the render below instead of preceding it.
+      // Sources the render below decodes anyway (a failure there fails the
+      // install too) are not decoded twice.
+      const rendered = assetsDecodedByRender(draft.history[draft.index], draft.assets);
+      const unrendered = Object.entries(draft.assets)
+        .filter(([id]) => !rendered.has(id))
+        .map(([, asset]) => asset);
+      const validation = verifyAssetsDecode(unrendered, {
+        concurrency: 4,
+        assertCurrent: assertCurrentInstall,
+      });
+      validation.catch(() => installController.abort());
       // Decode and render before switching documents, preserving the current work on import failure.
-      const image = await renderFrameWithWorker(
+      const rendering = renderFrameWithWorker(
         draft.history[draft.index],
         draft.assets,
         undefined,
@@ -232,6 +296,24 @@ export function useDocument(onError: (message: string) => void) {
           },
         },
       );
+      let image: CanvasImageSource;
+      try {
+        [, image] = await Promise.all([validation, rendering]);
+      } catch (error) {
+        void rendering.then(
+          (rendered) => {
+            if ('close' in rendered && typeof rendered.close === 'function') rendered.close();
+          },
+          () => undefined,
+        );
+        // A newer import or render superseded this one: report it as such,
+        // whichever step noticed first.
+        assertCurrentInstall();
+        // A failed asset decode cancels the render; report the decode failure.
+        await validation;
+        assertCurrentInstall();
+        throw error;
+      }
       try {
         assertCurrentInstall();
         if (history.current[index.current] !== expected)
@@ -297,6 +379,72 @@ export function useDocument(onError: (message: string) => void) {
     },
     [publish],
   );
+  /**
+   * Replace the newest history entry (and optionally the `dropPrevious`
+   * entries before it) without adding an undo step. Used by automatic layer
+   * storage to fold a pixel-identical paint-time expansion step into the
+   * stroke (or drop it when the gesture made no change), without
+   * re-rendering. Refuses when `expected` is no longer the current entry;
+   * like any edit, it discards redo entries above it.
+   */
+  const amend = useCallback(
+    (value: Frame, expected: Frame, dropPrevious = 0, keep: Assets = {}) => {
+      if (
+        history.current[index.current] !== expected ||
+        !Number.isInteger(dropPrevious) ||
+        dropPrevious < 0 ||
+        dropPrevious > index.current
+      )
+        return false;
+      try {
+        const sanitized = sanitizeClippingRelations(value);
+        const available = { ...keep, ...assets.current };
+        validateFrame(sanitized, available);
+        const next = [
+          ...history.current.slice(0, index.current - dropPrevious),
+          sanitized,
+        ];
+        history.current = next;
+        index.current = next.length - 1;
+        assets.current = referencedAssets(next, available);
+        documentRevision.current += 1;
+        setFrame(sanitized);
+        setRevision((v) => v + 1);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+  /**
+   * Replace the entry just below the current one with a pixel-identical frame
+   * (e.g. a layer grown in place for a paint tool, restored to its stored
+   * bounds once the stroke is committed above it). `keep` re-adds assets the
+   * replacement references that history pruning may have released.
+   */
+  const restorePrevious = useCallback(
+    (expectedTop: Frame, expectedPrevious: Frame, value: Frame, keep: Assets = {}) => {
+      const below = index.current - 1;
+      if (
+        below < 0 ||
+        history.current[index.current] !== expectedTop ||
+        history.current[below] !== expectedPrevious
+      )
+        return false;
+      const nextAssets = { ...keep, ...assets.current };
+      try {
+        validateFrame(value, nextAssets);
+      } catch {
+        return false;
+      }
+      assets.current = nextAssets;
+      history.current[below] = value;
+      assets.current = referencedAssets(history.current, assets.current);
+      return true;
+    },
+    [],
+  );
   const travel = useCallback(
     (direction: number) => {
       const target = index.current + direction;
@@ -318,8 +466,13 @@ export function useDocument(onError: (message: string) => void) {
     tiledTelemetry,
     tiledProgress,
     tiledCacheBudget,
+    historyBudget,
     paint,
+    schedulePaint,
+    cancelScheduledPaint,
     commit,
+    amend,
+    restorePrevious,
     install,
     select,
     setLayerSelection,

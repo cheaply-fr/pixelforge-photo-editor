@@ -303,3 +303,25 @@ path styling remain staged.
 
 
 Interaction preference note: custom tool bindings accept a bare alphanumeric key or a validated Shift/Ctrl/Alt/Cmd chord, normalize collisions deterministically, and persist through reload. Keyboard Shortcuts also supports validated local menu-command overrides for alphanumeric, punctuation and function-key chords with exact modifier matching and reload persistence; browser-reserved shortcuts and disabled menu entries remain explicit limitations. See [`command-shortcuts-contract.md`](./command-shortcuts-contract.md).
+
+## Large-document painting findings (2026-11-07)
+
+Toolbar-tool items from a live 2646×4096 painting session. The full list
+with release evidence and priorities is in
+[`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07).
+
+| Tool | Status | Evidence / remaining work |
+| --- | --- | --- |
+| Gradient | **Shipped** — Transparent end fades the adjacent colour to alpha 0 | #181, merged `8def856`, deployed in `f5e4135`/`cba6253`. Open (P3): a second gradient on the same layer composites over existing pixels; document it or add a replace mode |
+| Lasso, Polygonal Lasso, Magnetic Lasso, Elliptical/Rectangular Marquee | **Shipped** — off-canvas lassos clipped instead of rejected; off-canvas ellipse keeps its shape; rectangle overshoot fixed | #182, merged `fab25db`, deployed in `f5e4135`/`cba6253` |
+| Brush, Pencil, Eraser, Mask Brush/Eraser, Adjustment Brush | **Shipped** — confined to the active selection with feathered edges | #184, merged and deployed `cba6253`; see [`brush-tool-contract.md`](./brush-tool-contract.md#selection-confinement) |
+| Paint tools on trimmed layers | **Shipped** — grow trimmed layers on demand | #183, merged `8a82ad6`. Spot Healing, Patch, Red Eye, History and Art History brushes do not grow; two undo steps per first stroke |
+| Clone Stamp, Healing Brush and other retouch tools | **In development (D)** — respect the active selection; Alt-click clone source no longer dropped while the previous stroke commits | `fix/retouch-selection-and-clone-source` (no PR yet); follow-up of #184 |
+| Painting Size | **Shipped** — 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` | #187, merged `6a42943`, deployed `6a42943` (run 42332588876) |
+| Live stroke preview | **In development (B)** — one preview per animation frame instead of per `pointermove` | PR #190 open (`perf/coalesce-stroke-previews`) |
+| Stroke start / commit | **Queued (B follow-up, P1)** — ~2 s active-layer decode at pointer-down on 10.8 MP; full-layer PNG encode per stroke | Reuse decoded layers in gesture code; dirty-rect or tiled layer storage |
+| Brush dynamics | **In development (F)** — spacing/scatter above 100%, count and count jitter, true pen lift at pressure 0 | `feat/brush-gradient-options` (no PR yet) |
+| Eyedropper with a reference image | **In development (G)** — non-exported reference/guide layer sampled by the eyedropper | `feat/reference-layer-paste-export` (no PR yet) |
+| Gradient options | **In development (F)** — Replace mode, blend modes and opacity (a second gradient currently composites over existing pixels) | `feat/brush-gradient-options` (no PR yet) |
+
+Workstream letters A–G refer to the fix-wave-2 table in the [rubric](./roadmap-progress-rubric.md#fix-wave-2--in-development-2026-11-07).

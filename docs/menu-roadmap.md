@@ -130,3 +130,51 @@ These tables record the visible commands verbatim where practical. Groups provid
 | F — Advanced assistance | Content-aware warps/fills, raw/lens/mesh pipelines, subject/sky/object tools, harmonization, optional generation, remote connections and plugins | Quality/licensing/privacy/free-operation criteria, quotas, opt-in remote processing where needed and cancellation/provider failure tests |
 
 This is a dependency schedule, not a calendar commitment. Advanced local features may ship before an unrelated provider integration when their prerequisites and tests are complete. Filter Gallery is a browsable effect workflow, not proof that every individual effect works. Adobe Fonts/Stock/PDF preset references are capability prompts; no Adobe service, content library or compatible file format is claimed until explicitly integrated and validated.
+
+## Large-document painting findings (2026-11-07)
+
+Menu-command items from a live 2646×4096 painting session; release evidence
+and priorities are in
+[`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07).
+
+- **Layer → Trim Layer to Content** and the layer pixel budget notice are
+  shipped (#183, merged `8a82ad6`, deployed in `f5e4135`/`cba6253`).
+  Automatic trim, lazy empty layers and trimmed-bounds-preserving Rasterize
+  and Merge are in development on `feat/huge-projects` (A).
+- **Edit → Undo/Redo depth:** user request for 10× undo and redo depth
+  (240 steps, device-aware 320/128/96 MiB budgets; today 24 steps / 32 MB,
+  which is one step on a 2646×4096 document) shipped in #189 (merged and
+  deployed `1c40122`), which also makes **Window → History** show capacity
+  and mark memory-only states.
+- **Huge projects (user request "don't flatten"):** ~10× project limits —
+  320+ layers, 640 MP stored layer pixels, ~640 MB asset/draft/project caps —
+  in development on `feat/huge-projects` (A), with render scaling.
+- **Edit → Paste (P1, in development G):** an OS clipboard image did not
+  reach the paste handler via Ctrl+V when the editor's shortcut was active
+  and no internal clipboard existed; OS image paste via Ctrl+V and
+  Edit → Paste is in development on `feat/reference-layer-paste-export`.
+- **Layer → Layer Style (P2, in development E):** larger shadow ranges plus
+  Outer Glow and Inner Glow on `feat/glow-styles-and-blend-modes`.
+- **Layer blend modes (P2, in development E):** colour dodge/burn, linear
+  dodge/burn, soft/hard light, exclusion, hue, saturation, colour and
+  luminosity on `feat/glow-styles-and-blend-modes`.
+- **Filter → Blur → Gaussian Blur (P1, in development C):** radius 24 timed
+  out the render worker at 10.8 MP; radius-independent blurs and a
+  work-scaled watchdog are in PR #191 (`perf/fast-large-radius-filters`).
+- **Filter → Convert for Smart Filters / filter stacking (P2, queued after
+  C):** one live filter per raster layer; stacking needs Layer → Rasterize
+  between filters.
+- **Filter → Blur → Radial Blur (P2, queued after C):** centre X/Y are integer percentages
+  (1% ≈ 41 px at 4096 px); allow fractional or pixel centres and on-canvas
+  placement.
+- **"Mask from selection" (P3, in review D):** consumes (deselects)
+  the selection in one undo step on `fix/retouch-selection-and-clone-source`.
+- **Reference image (proposed File/View command, P2, in development G):** non-exported, non-printing
+  reference layer or panel with eyedropper sampling, outside the layer
+  budget.
+- **File → Export (P3, in development G):** in the Claude desktop built-in
+  browser a PNG export reported "downloaded" but wrote no file while
+  `.pixelforge` ZIPs worked; hardened downloads (anchor in the DOM, deferred
+  revoke, explicit MIME, File System Access save picker where available).
+- **Gradient options (P3, in development F):** Replace mode, blend modes and
+  opacity on `feat/brush-gradient-options`.

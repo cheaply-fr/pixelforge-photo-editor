@@ -20,11 +20,12 @@ project API:
 | Resource | Current limit | Why it exists |
 | --- | ---: | --- |
 | Imported canvas or image asset | 16 megapixels and 16,000 px per edge | Avoid unbounded decoded Canvas2D allocations |
-| Raster layers in one frame | 64 megapixels of stored layer assets (shown in the Layers panel; trimmed layers count only their stored bounds, see `layer-pixel-budget-contract.md`) | Bound the amount of source data retained by an editable frame |
-| Layers in one frame | 32 | Keep layer traversal and the inspector bounded |
-| Undo history | 24 frames | Bound retained references and redraw work |
-| Referenced history PNG data | approximately 32 MiB before old frames are trimmed; 64 MiB current-frame ceiling | Keep local history from growing without limit |
-| Portable `.pixelforge` project | 64 MiB of encoded assets | Keep downloads and IndexedDB writes manageable |
+| Raster layers in one frame | Device-aware stored layer pixels: 1,024 MP desktop, 384 MP 4 GB, 256 MP phones, 128 MP ≤ 2 GB (1,024 MP format ceiling). Paint layers are stored at their content bounds automatically; see `layer-pixel-budget-contract.md` | Bound the amount of source data retained by an editable frame |
+| Layers in one frame | 512 (128 groups) | Keep layer traversal and the inspector bounded |
+| Undo/redo history (memory) | 240 frames (`HISTORY_MAX_STEPS`) | Bound retained references and redraw work |
+| Referenced history PNG data (memory) | Device-aware: 320 MiB desktop, 128 MiB mobile or ≤ 4 GB `deviceMemory`, 96 MiB ≤ 2 GB (`src/historyBudget.ts`); oldest undo frames trimmed first, redo frames only after every undo frame, the current frame never. The current document's PNG data is bounded by the device budget in `src/projectLimits.ts` (1 GiB desktop, 384 MiB 4 GB, 256 MiB phones, 128 MiB ≤ 2 GB) | Let large documents keep many raster undo steps without unbounded memory on phones |
+| Persisted history (draft / project / cloud) | Most recent window around the current frame within 24 frames (draft schema limit), 64 MiB of referenced assets and 4,096 assets (`DRAFT_HISTORY_MAX_*`); the current frame is always persisted, up to the 1 GiB draft ceiling; incremental format 3 saves write only new asset records | Local saves never fail because the in-memory history is larger; older frames are memory-only and the History panel says so |
+| Portable `.pixelforge` project and local draft | 1 GiB archive / referenced PNG data and 4,096 assets (format ceiling) | Keep downloads and IndexedDB writes bounded while allowing large layered posters |
 | Private cloud project | 16 MiB per document, 30 projects and 256 MiB per library | Preserve the existing Marketplace API quota |
 | Tiled effect session cache | Device-aware 2–16 MiB process-local LRU (mobile capped at 4 MiB) | Reuse repeat renders without persisting pixels or allowing unbounded mobile memory |
 
@@ -32,6 +33,10 @@ These are protection limits, not a promise that every device can edit at the
 maximum. A 16 MP RGBA surface is approximately 64 MiB before Canvas backing
 store overhead; a stroke may temporarily require more than one surface. PNG
 URL length is also an encoded representation and does not equal decoded memory.
+History budgets count each distinct asset's data-URL length once: browsers keep
+these ASCII strings at one byte per character, so the length is the retained
+heap cost (the PNG itself is 3/4 of it). Decoded bitmaps are bounded separately
+by the decoded-source cache.
 
 ## Chromium baseline captured in CI
 
@@ -198,3 +203,213 @@ The test output prints a JSON sample and attaches
 `performance-baseline.json` to the Playwright report. Keep the browser version,
 project, viewport, DPR and commit alongside any comparison; otherwise a timing
 number is not reproducible evidence.
+
+## Large-document painting findings (2026-11-07)
+
+Measured during a live 2646×4096 (10.8 MP) painting session and in PR
+measurements; these are local/live observations, not CI budgets.
+
+- #185 (merged `f5e4135`, deployed) caches per-layer filter output and decoded
+  sources: an unrelated opacity edit with two Clouds layers fell from
+  4.9–9.7 s to 2.0–3.1 s locally. The tiled blur path is not cached and about
+  2 s of full-frame compositing remains.
+- Stroke start waits ~2 s to decode the active layer at pointer-down; gesture
+  code should reuse decoded layers first-class (P1).
+- Every stroke commit re-encodes the full layer to PNG with `toDataURL`;
+  dirty-rect commits or tiled layer storage are needed (P1).
+- Every `pointermove` triggers a full-canvas preview render (a 12k-point
+  stroke took ~5 min); per-animation-frame coalescing is in review as #190
+  (`perf/coalesce-stroke-previews`), with stroke-start decode and per-stroke
+  commit cost queued as its follow-up.
+- Gaussian Blur at radius 24 timed out the render worker at 10.8 MP;
+  radius-independent (O(1) per pixel) blurs, faster median filters and a
+  work-scaled render watchdog are in review as #191
+  (`perf/fast-large-radius-filters`).
+- Undo history is bounded to 24 steps / 32 MB of data-URL text, which leaves
+  one undo step at this size; a device-aware 240-step undo and redo budget
+  (320 MiB desktop, 128 MiB mobile, 96 MiB low-memory) shipped in #189
+  (merged and deployed `1c40122`).
+- Autosave re-serialised tens of MB per edit and failed once the payload
+  crossed 64 MB; #186 (merged `f95ec93`, deployed) stores content-addressed
+  assets so each save writes only new assets (local benchmark: ~1.8 s vs
+  ~0.1 s per save at 30 MB).
+- Project limits (64 MP stored layer pixels, 64 MB asset/draft caps) force
+  flattening on large posters; ~10× limits (320+ layers, 640 MP, ~640 MB) are
+  in development on `feat/huge-projects`, together with automatic trim, lazy
+  empty layers, render scaling and trimmed-bounds-preserving Rasterize/Merge.
+- Gaussian Blur radius ≥ 24 on the 10.8 MP layer hit the fixed 30 s worker
+  watchdog ("Worker rendering timed out"): the separable kernel cost O(radius)
+  per pixel. `perf/fast-large-radius-filters` keeps the exact kernel
+  (bit-identical) for radius ≤ 8 and uses three cascaded box filters with
+  matched variance and support ≤ radius above that, so cost no longer grows
+  with radius, and scales the watchdog with pixels × layers (see
+  [worker-render-contract.md](worker-render-contract.md)). Tolerance against
+  the exact kernel, enforced by `tests/gaussian-blur.test.mjs`: opaque pixels
+  within 3 levels (mean ≤ 1.5); isolated partly transparent pixels beside
+  strong contrast within ~10 % (28 levels). Integer running sums keep tiled
+  and full-frame renders bit-identical. Median, Dust & Scratches and
+  Reflection Removal now use sliding histograms, and Motion Blur precomputes
+  its taps; all four are byte-identical to before.
+
+### Radius-heavy filter timings (local, Node 24, 1 MP unless noted)
+
+These are single-run local measurements on a shared development machine
+(timings varied by up to ~2× between runs), not CI budgets.
+
+| Filter (radius 64 or its cap) | Before | After |
+| --- | --- | --- |
+| Gaussian Blur, 2646×4096, r 12 / 24 / 64 | 17.0 / 31.0 / 75.1 s | 2.3–3.5 s (any radius) |
+| Gaussian Blur, browser 2646×4096 r 12 / 24 / 64 (render span) | 19.5 s / timeout / timeout | 4.9 / 7.1 / 7.1 s |
+| Gaussian Blur, Unsharp Mask, High Pass, Sharpen More/Edges | 5.9–13.8 s | 0.3–0.7 s |
+| Median, Dust & Scratches (cap 8) | 171–175 s | 0.8–1.0 s |
+| Motion Blur | 3.4 s | 1.7 s |
+
+### Remaining neighbourhood filters (`perf/fast-remaining-filters`)
+
+Smart Blur, Smart Sharpen, Surface Blur, Shape Blur, Reduce Noise, Lens,
+Radial (spin and zoom), Spin and Path Blur now run through
+`src/fastNeighborhoodFilters.ts`. `tests/fast-remaining-filters.test.mjs`
+keeps the previous per-pixel kernels as oracles:
+
+* **Byte-identical:** Surface Blur, Reduce Noise, Lens Blur, zoom Radial Blur,
+  authored and legacy Path Blur.
+* **≤ 1 level:** Smart Blur (range weight `exp(-|ΔL|/s)` factored into
+  per-pixel `exp(±L/s)`, no `exp` per sample) and Shape Blur (exact integer
+  double prefix sums: each diamond-kernel row is a 1-D tent, O(radius) per
+  pixel instead of O(radius²)); only .5 rounding ties can move, asserted on
+  < 0.2 % of channels. Smart Sharpen inherits Smart Blur's reference, so a
+  rare channel can move a few levels (asserted ≤ 12, mean < 0.05).
+* **Rounding ties only:** spin Radial Blur and Spin Blur rotate the centre
+  offset with a cosine/sine table instead of `cos`/`sin` of the summed angle;
+  a sample within ~1e-12 px of a pixel-rounding boundary may pick its
+  neighbour (asserted mean < 0.05 levels, < 0.2 % of channels).
+
+Other changes: per-row kernel functions (V8 optimises them normally instead of
+repeatedly entering on-stack-replaced loops), padded per-band planar float
+copies so the bilateral-style windows have fixed bounds and no bounds checks,
+branch-free weights where the data makes branches unpredictable, tabulated
+spatial/similarity weights, merged duplicate Lens taps with interior offsets,
+and allocation-free bilinear sampling for Path Blur. Tiled and full-frame
+renders stay identical (pure seam tests), and cancellation/progress semantics
+are unchanged.
+
+Local, Node 24, single-threaded on a shared 2.4 GHz Xeon E5-2699A v4 at
+~40 % background load; best of 2 interleaved old/new runs at 1 MP, one run
+at 10.8 MP. Timings varied by up to ~1.5× between runs; these are not CI
+budgets.
+
+| Filter (radius) | 1 MP before → after (s/MP) | Speed-up | 2646×4096 before → after (s) |
+| --- | --- | ---: | --- |
+| Smart Blur (8) | 11.7 → 2.6 | 4.5× | 139.4 → 36.0 |
+| Smart Sharpen (8) | 11.8 → 2.9 | 4.1× | 139.7 → 36.4 |
+| Reduce Noise (8) | 13.7 → 3.0–3.6 | 4.5× | 148.0 → 46.7 |
+| Surface Blur (8) | 4.6 → 2.3 | 2.0× | 53.1 → 30.4 |
+| Shape Blur (12) | 5.0 → 0.55 | 9.2× | 59.3 → 7.6 |
+| Radial Blur, spin (32) | 1.5 → 0.68 | 2.2× | 21.4 → 10.5 |
+| Radial Blur, zoom (32) | 0.80 → 0.61 | 1.3× | 8.4 → 8.5 |
+| Spin Blur, ellipse (32) | 1.75 → 0.64 | 2.8× | 24.8 → 11.3 |
+| Path Blur, authored (32) | 0.47 → 0.37 | 1.3× | 3.0 → 2.2 |
+| Path Blur, legacy (32) | 2.0 → 2.0 | 1.0× | 26.2 → 22.9 |
+| Lens Blur (32) | 0.91 → 0.52 | 1.8× | 10.0 → 6.6 |
+
+In the browser (Playwright, 2000×2000 opaque noisy image, render worker,
+local run) Smart Blur, Smart Sharpen and Reduce Noise at radius 8 settled in
+12–21 s and Shape Blur at radius 12 in ~4 s, all with no watchdog notice;
+`tests/browser/fast-remaining-filters.spec.ts` asserts this under 40 s / 12 s
+watchdogs that the previous kernels (~45–60 s / ~20 s at 4 MP) would exceed.
+
+Still not under 1 s/MP, and why:
+
+* Smart Blur, Smart Sharpen, Surface Blur and Reduce Noise evaluate a
+  data-dependent, non-separable weight for every one of the (2r + 1)² = 289
+  samples at radius 8. A single-threaded JavaScript loop costs ~8–10 ns per
+  sample on this machine, so ~2.3–3.6 s/MP is close to the floor for an
+  exact (or ≤ 1 level) result. A bilateral grid or quantised-range histogram
+  would change the spatial kernel or the threshold decisions and move pixels
+  by several levels, so it was not adopted. Further gains need parallelism
+  (splitting a layer into row bands across nested workers) or Wasm SIMD.
+* Legacy Path Blur (records without authored points, the state of a freshly
+  applied Path Blur) keeps its per-sample rounded premultiplied bilinear
+  sample for byte-exact output; dropping that rounding measured only ~1.6×
+  faster and would change output, so it was left exact.
+
+On a 10.8 MP layer the bilateral family still needs ~30–47 s. That is now
+inside the scaled watchdog's ~95 s no-progress window for one layer (30 s +
+6 s/MP); before, the ~140–150 s Smart Blur, Smart Sharpen and Reduce Noise
+renders exceeded it. Tiled Smart/Surface renders report per-tile progress,
+but full-frame Reduce Noise and Smart Sharpen report progress only per layer.
+(Superseded by the filter worker pool below.)
+
+### Parallel filter workers (`perf/parallel-neighborhood-filters`)
+
+Heavy neighbourhood filters on layers of at least 0.5 MP now run in a pool of
+filter workers separate from the render worker (see
+[worker-render-contract.md](worker-render-contract.md#filter-worker-pool-parallel-bands-and-tiles)).
+Full-frame filters run as row bands with halo rows, and tiled filters keep
+several tiles in flight. Output is byte-identical to the serial kernels, and
+each completed band restarts the no-progress watchdog. Pool size is
+`hardwareConcurrency − 1`, capped at 8 on desktop and 2 on phones or
+devices reporting `deviceMemory ≤ 4`. WebAssembly SIMD was not needed for
+the desktop target and was not added.
+
+Local measurements: Node 24 `worker_threads` running the same pool code, on
+the shared 2.4 GHz Xeon at ~40 % background load. "Serial" is the single-thread
+kernel from #202. The 1 MP pool times include each worker's JIT warm-up.
+
+| Filter (radius 8; legacy Path 32) | 1 MP serial → 8 workers (s/MP) | 2646×4096 serial → 8 workers (s) | 2646×4096, 2 workers (phone cap) (s) |
+| --- | --- | --- | --- |
+| Smart Blur | 3.0 → 0.85 | 36.0 → 5.3 (0.49 s/MP) | 17.6 |
+| Smart Sharpen | 4.2 → 0.79 | 36.4 → 4.9 (0.45 s/MP) | 18.2 |
+| Reduce Noise | 3.8 → 1.09 | 46.7 → 5.8 (0.54 s/MP) | 20.7 |
+| Surface Blur | 2.6 → 0.56 | 30.4 → 4.1 (0.38 s/MP) | 15.5 |
+| Path Blur, legacy | 2.0 → 0.38 | 22.9 → 2.9 (0.26 s/MP) | 10.9 |
+
+Browser, local Playwright on a 44-thread host, 2000×2000 at radius 8,
+measured as render settle time including import overhead:
+
+| Filter | Desktop project (8 workers) | Mobile project (Pixel 7 emulation, 2 workers) |
+| --- | ---: | ---: |
+| Smart Blur | 3.4 s | 7.0 s |
+| Reduce Noise | 2.4 s | 8.5–9.1 s |
+| Smart Sharpen | 2.9 s | 7.0 s |
+
+A 6.8 MP Reduce Noise run with 2 workers took ~14 s under an 8 s no-progress
+window and completed, because each band restarts the window.
+
+Limits:
+
+* The speed-up scales with spare cores. Phones stay at about 1.5–1.9 s/MP by
+  design, to bound memory and heat.
+* Layers under 0.5 MP and the remaining filters stay serial.
+
+### Pool polish (`perf/filter-pool-polish`)
+
+* **Halo rows are no longer rendered.** Band-safe kernels accept an output row
+  range: halo rows are read as neighbours but not filtered. On small layers
+  the halo was 16–37 % extra work. Output is unchanged
+  (`tests/filter-pool-polish.test.mjs`).
+* **Pre-warm.** Opening the Filter menu, or choosing a heavy filter, warms
+  the pool at idle time. It starts every filter worker and runs each heavy
+  kernel once on a 96×40 band so it is JIT-compiled. Warm-up targets the
+  pool that will render: the render worker's nested pool for frames of at
+  least 2 MP, otherwise the main thread's pool. It is skipped below 0.5 MP.
+* **Cancellation interrupts work already in flight.** A cancelled tiled
+  render terminates the filter workers running its tiles, as the band path
+  already did; the pool refills lazily with fresh workers. Render-worker
+  cancellation is a predicate, so busy jobs poll it every 50 ms.
+
+Measurements: local Node 24 `worker_threads`, same shared Xeon at ~40 %
+background load, Reduce Noise radius 8 at 1 MP, first filter on a fresh
+pool:
+
+| Workers | Cold pool (s/MP) | Pre-warmed (s/MP) |
+| ---: | ---: | ---: |
+| 8 | 0.93 | 0.79 |
+| 3 (4-core configuration) | 1.73 | 1.63 |
+
+4-core configuration (3 workers) at 2646×4096: Smart Blur 1.39, Smart
+Sharpen 1.34, Reduce Noise 1.58, Surface Blur 1.22 and legacy Path Blur
+0.92 s/MP. Serial on the same machine is 2.1–4.3 s/MP. So the ~1 s/MP
+estimate for four cores was **not confirmed** on this loaded 2.4 GHz host:
+three workers give ~2.6× over serial, not 3×+. A faster, unloaded 4-core
+desktop may reach it, but that has not been measured.

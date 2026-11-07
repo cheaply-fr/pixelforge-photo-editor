@@ -1,3 +1,9 @@
+import {
+  MAX_PROJECT_ASSETS,
+  PROJECT_ASSET_BYTES_CEILING,
+  assetBytes,
+  formatMebibytes,
+} from './projectLimits.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -81,6 +87,10 @@ import {
 } from './metadata.ts';
 import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
 import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts';
+import { BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from './brushSize.ts';
+import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
+import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
+import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -178,12 +188,14 @@ export type Settings = {
   polygonSides?: number;
   /** Parametric star inner radius (0.1–0.9 of the outer radius). */
   polygonInnerRadius?: number;
-  /** Spacing between brush dabs as a percent of diameter. */
+  /** Spacing between brush dabs as a percent of diameter (1–1,000). */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
   brushSmoothing?: number;
-  /** Deterministic brush stamp scatter amount, from 0 to 100. */
+  /** Deterministic brush stamp scatter amount, from 0 to 1,000 percent of the diameter. */
   brushScatter?: number;
+  /** Scatter axes, Count, Count jitter and size/angle/opacity jitter; absent keys use legacy defaults. */
+  brushDynamics?: Partial<BrushDynamics>;
   /** Gradient geometry for the Gradient tool. */
   gradientMode?: 'linear' | 'radial' | 'reflected';
   /** Gradient endpoint behaviour. */
@@ -200,6 +212,10 @@ export type Settings = {
   gradientStops?: GradientStop[];
   /** Deterministic RGB gradient noise amount, from 0 to 100. */
   gradientNoise?: number;
+  /** How a new gradient combines with existing layer pixels; defaults to Normal (paint over). */
+  gradientBlend?: GradientBlendMode;
+  /** Gradient opacity, from 1 to 100 percent. */
+  gradientOpacity?: number;
   /** Deterministic brush texture amount, from 0 to 100. */
   brushTexture?: number;
   /** Deterministic secondary-brush modulation amount, from 0 to 100. */
@@ -438,20 +454,21 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.zoom as number, 20, 140],
     [candidate.viewZoom === undefined ? 100 : (candidate.viewZoom as number), 1, 3200],
     [candidate.viewRotation ?? 0, -180, 180],
-    [candidate.size as number, 2, 100],
+    // Painting Size widened from 2–100 to 1–5,000 px; older drafts stay valid.
+    [candidate.size as number, BRUSH_SIZE_MIN, BRUSH_SIZE_MAX],
     [candidate.fontSize as number, 16, 160],
   ];
   const brushRanges: [number, number, number][] = [
     [candidate.brushOpacity ?? 100, 1, 100] as [number, number, number],
     [candidate.hardness ?? 100, 0, 100] as [number, number, number],
-    [candidate.spacing ?? 25, 1, 100] as [number, number, number],
+    [candidate.spacing ?? 25, BRUSH_SPACING_MIN, BRUSH_SPACING_MAX] as [number, number, number],
     [candidate.angle ?? 0, -180, 180] as [number, number, number],
     [candidate.roundness ?? 100, 1, 100] as [number, number, number],
     [candidate.colorTolerance ?? 24, 0, 255] as [number, number, number],
     [candidate.tonalExposure ?? 50, 1, 100] as [number, number, number],
     [candidate.spongeVibrance ?? 50, 1, 100] as [number, number, number],
     [candidate.brushSmoothing ?? 0, 0, 100] as [number, number, number],
-    [candidate.brushScatter ?? 0, 0, 100] as [number, number, number],
+    [candidate.brushScatter ?? 0, 0, BRUSH_SCATTER_MAX] as [number, number, number],
     [candidate.brushTexture ?? 0, 0, 100] as [number, number, number],
     [candidate.brushDual ?? 0, 0, 100] as [number, number, number],
     [candidate.brushBristle ?? 0, 0, 100] as [number, number, number],
@@ -482,6 +499,9 @@ function validSettings(settings: unknown): settings is Settings {
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
   if (candidate.gradientReverse !== undefined && typeof candidate.gradientReverse !== 'boolean') return false;
   if (candidate.gradientStops !== undefined && !isGradientStops(candidate.gradientStops)) return false;
+  if (candidate.gradientBlend !== undefined && !validGradientBlendMode(candidate.gradientBlend)) return false;
+  if (candidate.gradientOpacity !== undefined && !validGradientOpacity(candidate.gradientOpacity)) return false;
+  if (candidate.brushDynamics !== undefined && !validBrushDynamics(candidate.brushDynamics)) return false;
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
@@ -644,7 +664,7 @@ export function validateDraft(
     !value.assets ||
     typeof value.assets !== 'object' ||
     Array.isArray(value.assets) ||
-    Object.keys(value.assets).length > 768 ||
+    Object.keys(value.assets).length > MAX_PROJECT_ASSETS ||
     Object.entries(value.assets).some(
       ([id, asset]) =>
         !validId(id) ||
@@ -668,14 +688,10 @@ export function validateDraft(
     }),
   }));
   history.forEach((frame) => validateFrame(frame, value.assets));
-  if (
-    Object.values(value.assets).reduce(
-      (total, asset) => total + asset.url.length,
-      0,
-    ) >
-    64 * 1024 * 1024
-  )
-    throw new Error('Project assets exceed 64 MB');
+  if (assetBytes(value.assets) > PROJECT_ASSET_BYTES_CEILING)
+    throw new Error(
+      `Project assets exceed ${formatMebibytes(PROJECT_ASSET_BYTES_CEILING)} MB`,
+    );
   return {
     ...value,
     version: CURRENT_DRAFT_VERSION,

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   canRenderInWorker,
   renderFrameWithWorker,
+  renderWatchdogBudget,
+  RenderTimeoutError,
   resetPersistentWorkerForTests,
 } from '../src/workerRender.ts';
 import { neutral } from '../src/document.ts';
@@ -777,5 +779,150 @@ test('persistent worker sends asset fingerprints, publishes cache counters and f
   } finally {
     resetPersistentWorkerForTests();
     restoreGlobals();
+  }
+});
+
+function layeredFrame(count) {
+  const base = rectangleFrame();
+  const layers = Array.from({ length: count }, (_, index) => ({
+    ...base.layers[0],
+    id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+    name: `shape ${index + 1}`,
+  }));
+  return { ...base, layers, active: layers[0].id };
+}
+
+test('render watchdog budget scales with pixels and layers within hard ceilings', () => {
+  // 0.48 MP: stall 30 s + 6 s/MP; total 30 s + 15 s per MP × layer.
+  assert.deepEqual(renderWatchdogBudget({ w: 800, h: 600, layers: [{}] }), {
+    stallMs: 32_880,
+    totalMs: 37_200,
+  });
+  // The reported failure: one 10.8 MP raster layer (was a fixed 30 s).
+  const poster = renderWatchdogBudget({ w: 2646, h: 4096, layers: [{}] });
+  assert.ok(poster.stallMs > 90_000 && poster.stallMs < 100_000, JSON.stringify(poster));
+  assert.ok(poster.totalMs > 180_000 && poster.totalMs < 200_000, JSON.stringify(poster));
+  const layered = renderWatchdogBudget({ w: 2646, h: 4096, layers: Array(3).fill({}) });
+  assert.equal(layered.stallMs, poster.stallMs);
+  assert.ok(layered.totalMs > 500_000 && layered.totalMs < 520_000, JSON.stringify(layered));
+  assert.equal(renderWatchdogBudget({ w: 2646, h: 4096, layers: Array(10).fill({}) }).totalMs, 600_000);
+  assert.deepEqual(renderWatchdogBudget({ w: 4000, h: 4000, layers: Array(60).fill({}) }), {
+    stallMs: 120_000,
+    totalMs: 600_000,
+  });
+  assert.deepEqual(renderWatchdogBudget({ w: 1, h: 1, layers: [] }), { stallMs: 30_000, totalMs: 30_000 });
+  setGlobal('__PIXELFORGE_RENDER_TIMEOUT_MS__', 250);
+  try {
+    assert.deepEqual(renderWatchdogBudget({ w: 4000, h: 4000, layers: [{}] }), { stallMs: 250, totalMs: 250 });
+    globalThis.__PIXELFORGE_RENDER_TIMEOUT_MS__ = { stallMs: 20, totalMs: 90 };
+    assert.deepEqual(renderWatchdogBudget({ w: 1, h: 1, layers: [] }), { stallMs: 20, totalMs: 90 });
+    globalThis.__PIXELFORGE_RENDER_TIMEOUT_MS__ = -1;
+    assert.equal(renderWatchdogBudget({ w: 1, h: 1, layers: [] }).stallMs, 30_000);
+  } finally {
+    restoreGlobals();
+  }
+});
+
+function watchdogWorkerHarness(onRender) {
+  const workers = [];
+  class FakeCanvas { getContext() { return {}; } transferToImageBitmap() { return {}; } }
+  class FakeWorker {
+    constructor() { this.terminated = false; this.timers = []; workers.push(this); }
+    postMessage(message) {
+      if (message.kind === 'render') onRender(this, message);
+    }
+    terminate() {
+      this.terminated = true;
+      for (const timer of this.timers) clearInterval(timer);
+    }
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  return workers;
+}
+
+test('a silent worker is stopped by the stall watchdog with a clear, recoverable error', async () => {
+  for (const reuseWorker of [false, true]) {
+    const workers = watchdogWorkerHarness(() => {});
+    setGlobal('__PIXELFORGE_RENDER_TIMEOUT_MS__', { stallMs: 30, totalMs: 5_000 });
+    try {
+      const started = Date.now();
+      await assert.rejects(
+        renderFrameWithWorker(rectangleFrame(), {}, undefined, { forceWorker: true, reuseWorker }),
+        (error) =>
+          error instanceof RenderTimeoutError &&
+          error.name === 'RenderTimeoutError' &&
+          error.code === 'PIXELFORGE_RENDER_TIMEOUT' &&
+          error.stalled === true &&
+          /no progress/.test(error.message) &&
+          /last finished render/.test(error.message) &&
+          /editing still works/.test(error.message),
+      );
+      assert.ok(Date.now() - started < 2_000);
+      assert.equal(workers[0].terminated, true);
+    } finally {
+      resetPersistentWorkerForTests();
+      restoreGlobals();
+    }
+  }
+});
+
+test('progress messages keep a long render alive past the stall window', async () => {
+  for (const reuseWorker of [false, true]) {
+    const frame = layeredFrame(6);
+    watchdogWorkerHarness((worker, message) => {
+      let completed = 0;
+      const timer = setInterval(() => {
+        completed += 1;
+        if (completed <= 6) {
+          worker.onmessage?.({ data: { kind: 'progress', id: message.id, completed, total: 6 } });
+          return;
+        }
+        clearInterval(timer);
+        worker.onmessage?.({ data: {
+          kind: 'result', id: message.id, width: 1, height: 1,
+          image: { width: 1, height: 1, close() {} },
+        } });
+      }, 25);
+      worker.timers.push(timer);
+    });
+    // 7 × 25 ms ≈ 175 ms in total, far beyond the 60 ms stall window.
+    setGlobal('__PIXELFORGE_RENDER_TIMEOUT_MS__', { stallMs: 60, totalMs: 5_000 });
+    try {
+      const progress = [];
+      const image = await renderFrameWithWorker(frame, {}, undefined, {
+        forceWorker: true,
+        reuseWorker,
+        onProgress: (completed) => progress.push(completed),
+      });
+      assert.equal(image.width, 1);
+      assert.deepEqual(progress, [1, 2, 3, 4, 5, 6]);
+    } finally {
+      resetPersistentWorkerForTests();
+      restoreGlobals();
+    }
+  }
+});
+
+test('the total watchdog still stops a worker that reports progress forever', async () => {
+  for (const reuseWorker of [false, true]) {
+    const workers = watchdogWorkerHarness((worker, message) => {
+      worker.timers.push(setInterval(() => {
+        worker.onmessage?.({ data: { kind: 'progress', id: message.id, completed: 1, total: 1 } });
+      }, 10));
+    });
+    setGlobal('__PIXELFORGE_RENDER_TIMEOUT_MS__', { stallMs: 50, totalMs: 150 });
+    try {
+      await assert.rejects(
+        renderFrameWithWorker(rectangleFrame(), {}, undefined, { forceWorker: true, reuseWorker }),
+        (error) => error instanceof RenderTimeoutError && error.stalled === false && /stopped after/.test(error.message),
+      );
+      assert.equal(workers[0].terminated, true);
+    } finally {
+      for (const worker of workers) worker.terminate();
+      resetPersistentWorkerForTests();
+      restoreGlobals();
+    }
   }
 });

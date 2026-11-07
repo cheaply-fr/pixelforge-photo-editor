@@ -6,16 +6,37 @@ standalone implementation is in `src/layerStyles.ts`; it is intentionally
 pure so the main-thread renderer and the OffscreenCanvas worker can share the
 same pixel recipe.
 
-Each layer may persist a `styles` object containing seven optional decorations:
-`dropShadow`, `innerShadow`, `bevelEmboss`, `outline`, `colorOverlay`,
-`gradientOverlay` and `patternOverlay`.
+Each layer may persist a `styles` object containing nine optional decorations:
+`dropShadow`, `innerShadow`, `outerGlow`, `innerGlow`, `bevelEmboss`,
+`outline`, `colorOverlay`, `gradientOverlay` and `patternOverlay`. Documents
+saved before a decoration existed omit it and load with its neutral disabled
+default.
 The values are finite and bounded:
 
-- Drop shadow uses a six-digit hex colour, opacity `0..1`, offsets `-256..256`
-  pixels, and box blur `0..64` pixels.
-- Inner shadow uses a six-digit hex colour, opacity `0..1`, offsets `-256..256`
-  pixels, box blur `0..64` pixels and inward edge distance `1..32` pixels. It
-  is clipped to the source alpha and never paints transparent pixels.
+- Drop shadow uses a six-digit hex colour, opacity `0..1`, offsets
+  `-1000..1000` pixels, and box blur `0..250` pixels.
+- Inner shadow uses a six-digit hex colour, opacity `0..1`, offsets
+  `-1000..1000` pixels, box blur `0..250` pixels and inward edge distance
+  `1..250` pixels. It is clipped to the source alpha and never paints
+  transparent pixels. The edge distance uses a separable van Herk/Gil-Werman
+  square erosion whose cost does not depend on the distance; its pixels are
+  identical to the historical per-pixel square window.
+- Outer glow uses a six-digit hex colour (default `#ffffbe`), opacity `0..1`,
+  size `0..250` pixels, spread `0..100` percent and any layer blend mode
+  (default Screen). The alpha is softened by three radius-independent box
+  passes (an approximately Gaussian falloff about `size` pixels wide) and
+  spread hardens the softened mask like a levels clip, 100% giving a hard
+  edge. It is drawn above the drop shadow and below the outline and source.
+- Inner glow uses the same colour/opacity/size/blend fields plus choke
+  `0..100` percent and source `edge` or `center`. It blurs the inverse alpha
+  (transparent outside the layer), is clipped to the source alpha and is drawn
+  after the inner shadow and before bevel/emboss.
+- Inner Glow's blend mode is applied against the layer's own source pixels.
+  Outer Glow and Drop Shadow blend with the pixels **beneath the layer**:
+  see "Outer effects blend with the backdrop" below.
+- Drop shadow and inner shadow also store `falloff` (`gaussian` or `box`)
+  and the drop shadow stores `blend` (any layer blend mode, default Normal);
+  see "Gaussian shadow falloff" below.
 - Bevel and Emboss uses bounded highlight/shadow colours, opacity `0..1`, a
   light angle `-180..180` degrees, depth `1..32` pixels and blur `0..32`
   pixels. It shades directional alpha edges without changing source pixels.
@@ -63,3 +84,72 @@ This contract deliberately excludes selections, masks, filters, and rasterize:
 Layer Styles decorate the rendered result and never bake or rewrite any of
 those data structures. Gradient stops and editable style ordering remain
 staged until each has its own pixel and persistence contract.
+
+## Large-document bounds (2026-11-07)
+
+Recorded from a 2646×4096 painting session and addressed on
+`feat/glow-styles-and-blend-modes`: shadow blur and glow size go to 250 px,
+offsets to ±1000 px and inner-shadow distance to 250 px. Every blur is a
+sliding-window box pass and the erosion is separable, so the cost grows only
+with the cropped working area (painted bounds plus padding), not with the
+radius; the unit suite renders all four large-radius styles on a 1200×900
+layer within a fixed time bound. Shadows saved by this release keep their
+single box pass (a linear falloff at large radii); the Gaussian option below
+is the default for new layers. Pure tests are in
+[`tests/layer-styles.test.mjs`](../tests/layer-styles.test.mjs); desktop and
+mobile glow falloff, export, undo, reload, import and lock checks are in
+[`tests/browser/blend-modes-glow.spec.ts`](../tests/browser/blend-modes-glow.spec.ts).
+
+## Outer effects blend with the backdrop (fix wave 2 polish)
+
+When an enabled Drop Shadow or Outer Glow uses a blend mode other than
+Normal, `renderFrame` composites the layer in passes instead of one:
+the drop shadow alone, then the outer glow alone, each onto the pixels
+already rendered beneath the layer with its own blend mode, then the layer
+body (source, outline, inner effects, overlays) with the layer's blend mode.
+Layer opacity scales every pass. A Screen glow therefore brightens a dark
+backdrop and leaves a bright one bright, and a Multiply glow darkens it.
+Each pass renders through the same local and frame pipeline as the layer
+(local filters, transform, masks, adjustments), so the viewport, render
+worker, PNG/JPEG/WebP export and merge/flatten all use the same code path.
+The passes are selected by a render-only `renderPart` tag on one-layer render
+copies (`withLayerStylePart`); it is never persisted, and because it lives on
+`styles` it is part of those copies' #185 local filter-cache key.
+
+When both outer effects are Normal (or disabled) the layer keeps the single
+historical pass and its pixels are unchanged. Inside a folder the backdrop is
+the folder's own lower members, since folders composite in isolation. A
+clipped layer's outer effects see no backdrop (the clipping branch renders the
+layer alone), and the layer's filter effect is applied to each pass separately.
+These are local approximations of per-effect compositing, not a claim of
+Photoshop parity (no Knockout, Layer-knocks-out-shadow or Fill opacity).
+
+Local measurement (Node, 2646×4096 layer, 1400×1600 painted, 120 px shadow
+and glow): the three style passes together cost about the same as the single
+pass (≈1.5 s each way); the extra frame-sized surfaces and composites are the
+added cost in the browser.
+
+## Gaussian shadow falloff
+
+Drop and inner shadows store `falloff`: `gaussian` cascades three running-sum
+box passes with variance matched to sigma = blur / 3 and total support ≤ blur
+(`gaussianBoxHalfWidths` from the Gaussian Blur filter, #191, extended to the
+250 px style bound), so the shadow reaches the same visible extent as before
+with a bell-shaped edge instead of a linear ramp; `box` is the historical
+single box pass. New layers (`neutralLayerStyles`) use `gaussian`. A stored
+shadow without the field is a legacy document and resolves to `box` (and the
+drop shadow's missing `blend` to Normal), so existing documents keep their
+exact pixels until the user picks **Falloff → Gaussian**. Invalid values fail
+validation. The Gaussian pass costs about 20% more than the box pass at large
+radii and stays radius-independent.
+
+Evidence: [`tests/effects-polish.test.mjs`](../tests/effects-polish.test.mjs)
+(half-width bounds and variance up to 250 px, bell versus linear profile,
+legacy equivalence, validation, 250 px time bound, backdrop-pass selection,
+parts recomposing to the single pass, cache-key separation) and
+[`tests/browser/effects-polish.spec.ts`](../tests/browser/effects-polish.spec.ts)
+on desktop and mobile (Screen/Multiply Outer Glow and Screen Drop Shadow over a
+dark and a bright layer below checked against the W3C Screen formula, export
+equals canvas, undo, reload; Gaussian versus linear shadow profile, one-step
+undo, and a legacy project without `falloff` importing with the linear
+falloff and identical pixels).

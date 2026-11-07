@@ -1,7 +1,12 @@
 'use client';
 
 import {
+  ArrowDown,
+  ArrowUp,
   Brush,
+  Eye,
+  EyeOff,
+  Trash2,
   Bookmark,
   Crop,
   Download,
@@ -13,6 +18,7 @@ import {
   RotateCcw,
   RotateCw,
   Save,
+  SlidersHorizontal,
   Sparkles,
   Type,
   Undo2,
@@ -41,7 +47,7 @@ import {
   type Draft,
   type Settings,
 } from '../src/drafts';
-import { readPortableBundle, writePortableBundle } from '../src/portableBundle';
+import { PORTABLE_MAX_BYTES, readPortableBundle, writePortableBundle } from '../src/portableBundle';
 import { DEFAULT_DEINTERLACE_SETTINGS } from '../src/deinterlace';
 import {
   useMember,
@@ -51,10 +57,12 @@ import {
   CloudConflictError,
   type CloudLink,
 } from '../src/cloud';
+import { prewarmFilterWorkers, primeWorkerDecodedAsset } from '../src/workerRender';
+import { PREWARM_FILTER_TYPES } from '../src/filterWorkerPool';
 import {
-  addAsset,
+  addAsset as addDocumentAsset,
+  primeDecodedAsset,
   formatMegapixels,
-  LAYER_PIXEL_BUDGET,
   layerPixelUsage,
   identity,
   colorSelectMask,
@@ -205,12 +213,21 @@ import {
   type TrimSides,
 } from '../src/canvasSize';
 import {
+  AUTO_TRIM_MARGIN,
+  autoTrimCandidates,
   canExpandRasterLayer,
   canTrimRasterLayer,
   EXPANDING_PAINT_TOOLS,
+  historySourceOffset,
   planLayerExpansion,
   planLayerTrim,
 } from '../src/layerTrim';
+import {
+  MAX_DOCUMENT_GROUPS,
+  MAX_DOCUMENT_LAYERS,
+  detectProjectLimits,
+  formatMebibytes,
+} from '../src/projectLimits';
 import {
   alignmentDelta,
   distributionDeltas,
@@ -255,6 +272,21 @@ import {
   type MaskRefinementStroke,
 } from '../src/maskRefinement';
 import { type ExportFormat } from '../src/export';
+import { downloadBlob, pickSaveFile, writeToFileHandle } from '../src/download';
+import {
+  clipboardImageFile,
+  imageFileFromClipboardItems,
+  isTextEditingTarget,
+  readClipboardImage,
+} from '../src/clipboardImage';
+import ReferencePanel from '../src/ReferencePanel';
+import {
+  createReferenceImage,
+  referenceObjectFit,
+  referenceSourcePixel,
+  referenceStoredSize,
+  type ReferenceImage,
+} from '../src/referenceImage';
 import ActionsPanel from '../src/ActionsPanel';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
@@ -363,10 +395,48 @@ import {
   BRUSH_DEFAULT_ANGLE,
   BRUSH_DEFAULT_ROUNDNESS,
   BRUSH_DEFAULT_SPACING,
+  BRUSH_SPACING_MAX,
+  BRUSH_SPACING_MIN,
+  normalizeBrushPressure,
   resolveBrushStamp,
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
+import {
+  GRADIENT_BLEND_DEFAULT,
+  GRADIENT_BLEND_LABELS,
+  GRADIENT_BLEND_MODES,
+  GRADIENT_OPACITY_DEFAULT,
+  compositeGradientPixels,
+  normalizeGradientBlendMode,
+  normalizeGradientOpacity,
+  type GradientBlendMode,
+} from '../src/gradientBlend';
+import {
+  SelectionSnapshotCache,
+  maskDigest,
+  selectionSnapshotKey,
+} from '../src/selectionSnapshotCache';
+import {
+  downscaleMask,
+  maskBounds,
+  planGradientPreview,
+  toPreviewPoint,
+  type GradientPreviewPlan,
+} from '../src/gradientPreview';
+import {
+  BRUSH_SIZE_MAX,
+  BRUSH_SIZE_MIN,
+  BRUSH_SIZE_SLIDER_STEPS,
+  brushSizeToSliderPosition,
+  brushSizeValueText,
+  clampBrushSize,
+  sliderPositionToBrushSize,
+  brushSegmentDue,
+  spacedDabPositions,
+  stepBrushSize,
+  type BrushSpacingState,
+} from '../src/brushSize';
 import {
   BRUSH_PRESSURE_CURVES,
   normalizeBrushPressureCurve,
@@ -427,8 +497,16 @@ import {
   stabilizeBrushPoint,
 } from '../src/brushSmoothing';
 import {
+  BRUSH_COUNT_MAX,
+  BRUSH_COUNT_MIN,
   BRUSH_SCATTER_DEFAULT,
-  scatterBrushPoint,
+  BRUSH_SCATTER_MAX,
+  DEFAULT_BRUSH_DYNAMICS,
+  brushDabsAt,
+  deferFirstBrushDab,
+  normalizeBrushDynamics,
+  wrapBrushAngle,
+  type BrushDynamics,
 } from '../src/brushDynamics';
 import {
   BRUSH_TEXTURE_DEFAULT,
@@ -469,6 +547,10 @@ import {
 } from '../src/gradientStops';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
+import {
+  persistableHistoryDraft,
+  type PersistedHistoryWindow,
+} from '../src/historyBudget';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -546,7 +628,25 @@ import {
   neutralFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
-import { appendSmartFilter } from '../src/smartFilters';
+import {
+  appendSmartFilter,
+  moveSmartFilter,
+  removeSmartFilter,
+  replaceSmartFilter,
+  setSmartFilterEnabled,
+  smartFilterEntries,
+  trackedSmartFilterIndex,
+  SMART_FILTER_MAX,
+  type SmartFilterEntry,
+} from '../src/smartFilters';
+import {
+  filterCenterFromFrame,
+  filterCenterFromPercent,
+  filterCenterPercent,
+  filterCenterToFrame,
+  isCenteredFilter,
+  nudgeFilterCenter,
+} from '../src/filterCenter';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -663,6 +763,8 @@ type Command =
   | 'trim'
   | 'reveal-all'
   | 'project-save'
+  | 'project-save-as'
+  | 'reference-place'
   | 'file-info'
   | 'batch-export'
   | 'batch-images'
@@ -682,6 +784,7 @@ type Command =
   | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
+  | 'paste-clipboard-image'
   | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
@@ -1084,6 +1187,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
+    { label: 'Save project with file picker…', command: 'project-save-as' },
+    { label: 'Place reference image…', command: 'reference-place' },
     { label: 'File Info / Privacy…', command: 'file-info' },
     { label: 'Batch export history…', command: 'batch-export' },
     { label: 'Batch export images…', command: 'batch-images' },
@@ -1113,6 +1218,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Paste Image from Clipboard', command: 'paste-clipboard-image' },
     { label: 'Paste Special…', command: 'paste-special' },
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
@@ -1469,14 +1575,22 @@ type Gesture = {
   redEyeAmount?: number;
   /** Local-space nondestructive context-aware cleanup metadata. */
   spotHealingStroke?: SpotHealingStroke;
+  /** Gradient drag: decoded layer and selection, prepared at pointer-down. */
+  gradientBase?: GradientBase;
+  /** Gradient drag: latest layer-local end point for the live preview. */
+  gradientEnd?: { x: number; y: number };
+  /** Spot Healing / Patch: the selection snapshot is still being captured. */
+  selectionPending?: boolean;
   /** Local-space nondestructive source-offset patch metadata. */
   patchStroke?: PatchStroke;
   /** Canvas-space nondestructive mask repair metadata for one gesture. */
   maskRefinementStroke?: MaskRefinementStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
-  /** Unconfined Brush/Pencil/Eraser/mask stroke, present only while a selection confines it. */
+  /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
   selectionStroke?: SelectionStroke;
+  /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
+  cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
   selectionBase?: Uint8ClampedArray;
   /** Existing resolved alpha is retained for replace no-op detection. */
@@ -1521,10 +1635,31 @@ type Gesture = {
     pointerType?: string;
   }>;
   smoothedLast?: { x: number; y: number };
+  /** Dab spacing carried across pointer segments of one stroke. */
+  spacingState?: BrushSpacingState;
   points?: PathNode[];
   lastPressure?: number;
   pointerType?: string;
   moved: boolean;
+};
+
+/** Layer pixels and selection coverage a gradient drag renders over. */
+type GradientBase = {
+  layerCanvas: HTMLCanvasElement;
+  selectionMask?: Uint8ClampedArray;
+  /**
+   * Reduced-resolution live preview for large layers (see
+   * `src/gradientPreview.ts`): the changeable region downscaled once, its
+   * selection coverage, and two full-size override surfaces used in turn
+   * (the preview scheduler keeps at most one render in flight).
+   */
+  preview?: {
+    plan: GradientPreviewPlan;
+    layerSmall: HTMLCanvasElement;
+    maskSmall?: Uint8ClampedArray;
+    buffers: HTMLCanvasElement[];
+    next: number;
+  };
 };
 
 type SlicePreview = SliceRect & { frame: Frame };
@@ -1560,6 +1695,8 @@ type StampCanvasOptions = {
   pressureCurve?: BrushPressureCurve;
   spacing?: number;
   scatter?: number;
+  /** Scatter axes, Count and jitter; omitted means one unjittered dab per step. */
+  dynamics?: BrushDynamics;
   texture?: number;
   dual?: number;
   secondaryPreset?: SecondaryBrushPreset;
@@ -1585,8 +1722,10 @@ const stampCanvas = (
   const texturedOpacity = options.opacity * brushTextureOpacity(options.x, options.y, options.texture ?? 0) *
     dualBrushOpacity(options.x, options.y, options.dual ?? 0) *
     bristleOpacity(options.x, options.y, options.bristle ?? 0),
-    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity }),
-    radius = resolved.radius,
+    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity });
+  // A pen lift (near-zero pressure with pressure mapping on) paints nothing.
+  if (resolved.opacity <= 0) return false;
+  const radius = resolved.radius,
     left = Math.max(0, Math.floor(options.x - radius)),
     top = Math.max(0, Math.floor(options.y - radius)),
     right = Math.min(target.width, Math.floor(options.x + radius) + 1),
@@ -1686,6 +1825,21 @@ const stampCanvas = (
   return changed;
 };
 
+/**
+ * Dab positions along one segment. With a stroke's spacing state, dabs follow
+ * the configured spacing across pointer events (so a 5,000 px brush does not
+ * re-dab every pointermove); without one, both endpoints are stamped.
+ */
+const brushSegmentPositions = (
+  distance: number,
+  interval: number,
+  spacingState?: BrushSpacingState,
+) => {
+  if (spacingState) return spacedDabPositions(distance, interval, spacingState);
+  const steps = Math.max(1, Math.ceil(distance / interval));
+  return Array.from({ length: steps + 1 }, (_, step) => step / steps);
+};
+
 /** Stamp a line at bounded intervals so fast pointer moves remain continuous. */
 const stampCanvasSegment = (
   target: HTMLCanvasElement,
@@ -1694,6 +1848,9 @@ const stampCanvasSegment = (
   options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY'> & {
     sourceAnchor?: { x: number; y: number };
     destinationAnchor?: { x: number; y: number };
+    spacingState?: BrushSpacingState;
+    /** Stamp a deferred first dab even without a direction (stroke end). */
+    flushDeferred?: boolean;
   },
 ) => {
   const resolved = resolveBrushStamp({
@@ -1712,16 +1869,43 @@ const stampCanvasSegment = (
       flipY: options.flipY,
     }),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    steps = Math.max(
-      1,
-      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
-    );
+    interval = Math.max(1, resolved.size * resolved.spacing / 100);
   let changed = false;
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps,
-      x = from.x + (to.x - from.x) * t,
+  const direction = { x: to.x - from.x, y: to.y - from.y },
+    dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS,
+    state = options.spacingState,
+    // Perpendicular-only scatter has no direction for a stroke's first dab:
+    // hold it back and place it with the next segment's direction.
+    deferFirst = Boolean(state && !state.started && !options.sourceAnchor &&
+      deferFirstBrushDab(dynamics, options.scatter ?? 0, direction)),
+    positions = brushSegmentPositions(distance, interval, state);
+  const stampDabs = (x: number, y: number, dabDirection: { x: number; y: number }, sourceX?: number, sourceY?: number) => {
+    for (const dab of brushDabsAt({ x, y }, resolved.size, options.scatter ?? 0, dynamics, dabDirection)) {
+      changed =
+        stampCanvas(target, {
+          ...options,
+          size: dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
+          angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          opacity: options.opacity * dab.opacityScale,
+          x: dab.x,
+          y: dab.y,
+          sourceX,
+          sourceY,
+        }) || changed;
+    }
+  };
+  if (state?.deferredFirst && (distance > 0 || options.flushDeferred)) {
+    const deferred = state.deferredFirst;
+    state.deferredFirst = undefined;
+    stampDabs(deferred.x, deferred.y, direction);
+  }
+  for (const [positionIndex, t] of positions.entries()) {
+    if (deferFirst && positionIndex === 0 && t === 0) {
+      state!.deferredFirst = { x: from.x, y: from.y };
+      continue;
+    }
+    const x = from.x + (to.x - from.x) * t,
       y = from.y + (to.y - from.y) * t,
-      scattered = scatterBrushPoint({ x, y }, resolved.size, options.scatter ?? 0),
       sourceX = options.sourceAnchor
         ? options.sourceAnchor.x +
           (x - (options.destinationAnchor?.x ?? from.x))
@@ -1730,14 +1914,8 @@ const stampCanvasSegment = (
         ? options.sourceAnchor.y +
           (y - (options.destinationAnchor?.y ?? from.y))
         : undefined;
-    changed =
-      stampCanvas(target, {
-        ...options,
-        x: scattered.x,
-        y: scattered.y,
-        sourceX,
-        sourceY,
-      }) || changed;
+    // Count dabs per spacing step, each with deterministic scatter and jitter.
+    stampDabs(x, y, direction, sourceX, sourceY);
   }
   return changed;
 };
@@ -1810,17 +1988,16 @@ const patternCanvasSegment = (
   target: HTMLCanvasElement,
   from: { x: number; y: number },
   to: { x: number; y: number },
-  options: Omit<Parameters<typeof patternCanvas>[1], 'x' | 'y'>,
+  options: Omit<Parameters<typeof patternCanvas>[1], 'x' | 'y'> & {
+    spacingState?: BrushSpacingState;
+  },
 ) => {
   const resolved = resolveBrushStamp(options),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    steps = Math.max(
-      1,
-      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
-    );
+    interval = Math.max(1, resolved.size * resolved.spacing / 100),
+    positions = brushSegmentPositions(distance, interval, options.spacingState);
   let changed = false;
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps;
+  for (const t of positions) {
     changed =
       patternCanvas(target, {
         ...options,
@@ -2086,27 +2263,75 @@ const frameSelectionMask = async (
   return mask;
 };
 /**
- * Stamp a Brush/Pencil/Eraser segment into the gesture buffer, confined to the
- * selection when one was active at pointer-down. Without a selection this is
- * exactly `stampCanvasSegment` on the buffer.
+ * Run one stroke segment of a buffer-based paint or retouch tool, confined to
+ * the selection when one was active at pointer-down. `draw` edits the canvas
+ * it is given and must not change pixels further than `reach` from the
+ * from→to segment. Without a selection it simply draws on the gesture buffer.
+ */
+const confinedGestureEdit = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  reach: number,
+  draw: (target: HTMLCanvasElement) => boolean,
+) => {
+  const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (!stroke) return draw(buffer);
+  const changed = draw(stroke.raw);
+  if (changed)
+    confineStrokeRect(stroke, buffer, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
+  return changed;
+};
+/**
+ * Stamp a Brush/Pencil/Eraser/Clone/Healing segment into the gesture buffer,
+ * confined to the selection when one was active at pointer-down. Without a
+ * selection this is exactly `stampCanvasSegment` on the buffer.
  */
 const stampGestureSegment = (
   g: Gesture,
   from: { x: number; y: number },
   to: { x: number; y: number },
   options: Parameters<typeof stampCanvasSegment>[3],
-) => {
-  const buffer = g.buffer!, stroke = g.selectionStroke;
-  if (!stroke) return stampCanvasSegment(buffer, from, to, options);
-  const changed = stampCanvasSegment(stroke.raw, from, to, options);
-  if (changed)
-    confineStrokeRect(
-      stroke,
-      buffer,
-      brushSegmentRect(from, to, brushStampReach(options.size, options.scatter), buffer.width, buffer.height),
-    );
-  return changed;
-};
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size, options.scatter), (target) =>
+    stampCanvasSegment(target, from, to, options));
+/** Pattern Stamp counterpart of `stampGestureSegment`. */
+const patternGestureSegment = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof patternCanvasSegment>[3],
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
+    patternCanvasSegment(target, from, to, options));
+/** Red Eye counterpart of `stampGestureSegment`. */
+const redEyeGestureStroke = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof redEyeCanvasStroke>[3],
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.radius * 2), (target) =>
+    redEyeCanvasStroke(target, from, to, options));
+/**
+ * Color Replacement and Background Eraser read the stroke-start pixels from
+ * `g.source` and write to the gesture buffer, confined like the stamps above.
+ */
+const sampledGestureStroke = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: { size: number; tolerance: number; opacity: number } & (
+    | { kind: 'replace'; color: string }
+    | { kind: 'background-erase' }
+  ),
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
+    options.kind === 'replace'
+      ? replaceColorStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
+        options.color, options.size, options.tolerance, options.opacity)
+      : eraseBackgroundStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
+        options.size, options.tolerance, options.opacity));
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
   frame: Frame,
@@ -2136,6 +2361,24 @@ const selectionMaskForLayer = async (
         mask[y * width + x] = frameData[(frameY * frame.w + frameX) * 4 + 3];
     }
   return mask;
+};
+/**
+ * Sample the active selection in the layer's pixel space and prepare the
+ * confined stroke over `buffer` (the stroke-start layer pixels). Without a
+ * selection the result is empty and the stroke stays unconfined. Callers
+ * assign the fields only once the gesture is still current.
+ */
+const prepareGestureSelection = async (
+  buffer: HTMLCanvasElement,
+  frame: Frame,
+  layer: Extract<Layer, { kind: 'raster' }>,
+  assets: Assets,
+): Promise<Pick<Gesture, 'selectionMask' | 'selectionStroke'>> => {
+  if (!frame.selection) return {};
+  const selectionMask = await selectionMaskForLayer(
+    frame.selection, frame, layer, assets, buffer.width, buffer.height,
+  );
+  return { selectionMask, selectionStroke: beginSelectionStroke(buffer, selectionMask) };
 };
 
 function readToolbarPreferences() {
@@ -2250,12 +2493,14 @@ export default function Home() {
       tiledTelemetry,
       tiledProgress,
       tiledCacheBudget,
-      commit,
+      historyBudget,
+      commit: commitDocument,
       install,
       select,
       setLayerSelection,
       travel,
       paint,
+      schedulePaint,
     } = doc;
   // A render can outlive the React event that started it. Keep a mutable
   // revision mirror so async layer commands can reject stale ownership even
@@ -2316,6 +2561,7 @@ export default function Home() {
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
+    [brushDynamics, setBrushDynamics] = useState<BrushDynamics>(() => ({ ...DEFAULT_BRUSH_DYNAMICS })),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
     [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
@@ -2330,6 +2576,8 @@ export default function Home() {
     [gradientReverse, setGradientReverse] = useState(false),
     [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
     [gradientNoise, setGradientNoise] = useState(GRADIENT_NOISE_DEFAULT),
+    [gradientBlend, setGradientBlend] = useState<GradientBlendMode>(GRADIENT_BLEND_DEFAULT),
+    [gradientOpacity, setGradientOpacity] = useState(GRADIENT_OPACITY_DEFAULT),
     [gradientStops, setGradientStops] = useState<GradientStop[]>([]),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
@@ -2383,10 +2631,79 @@ export default function Home() {
   }, []);
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
+  // The source is a layer pixel plus the layer placement it was picked in, so
+  // it stays on the same document point when the layer is later stored at
+  // different bounds (content-bounds storage, paint-time expansion).
   const [cloneSource, setCloneSource] = useState<{
     x: number;
     y: number;
+    matrix: Matrix;
   } | null>(null);
+  // The latest source point, readable synchronously by the next pointer-down
+  // even before React re-renders (an Alt-click right after a stroke on a
+  // large document must not be lost or read stale).
+  const cloneSourceRef = useRef<{ x: number; y: number; matrix: Matrix } | null>(null);
+  /** Stored selection snapshots, reused by selection value and by mask content. */
+  const selectionSnapshots = useRef(new SelectionSnapshotCache());
+  /**
+   * Spot Healing and Patch store strokes as metadata that is rendered later,
+   * so the active selection (rectangle, ellipse, lasso or pixel mask) is
+   * captured once at pointer-down as a layer-space alpha asset. The stroke
+   * records its id and replay confines writes to it, also after reload.
+   * Returns undefined without a selection.
+   */
+  const captureSelectionSnapshot = async (
+    frame: Frame,
+    layer: Extract<Layer, { kind: 'raster' }>,
+  ): Promise<string | undefined> => {
+    const selection = frame.selection;
+    if (!selection) return undefined;
+    const asset = assets.current[layer.asset],
+      cache = selectionSnapshots.current,
+      present = (id: string) => Boolean(assets.current[id]),
+      key = selectionSnapshotKey(selection, layer.id, layer.matrix, asset.w, asset.h);
+    // An equal selection on the same placement: no rasterizing or encoding.
+    const known = cache.lookup(key, present);
+    if (known) return known;
+    const mask = await selectionMaskForLayer(selection, frame, layer, assets.current, asset.w, asset.h);
+    if (!mask) return undefined;
+    // An identical mask from another selection value: reuse its asset.
+    const digest = maskDigest(mask, asset.w, asset.h),
+      same = cache.lookupDigest(digest, present);
+    if (same) {
+      cache.remember(key, digest, same);
+      return same;
+    }
+    const maskCanvas = surface(asset.w, asset.h),
+      context = maskCanvas.getContext('2d')!,
+      image = context.createImageData(asset.w, asset.h);
+    for (let pixel = 0; pixel < mask.length; pixel += 1) {
+      const offset = pixel * 4;
+      image.data[offset] = image.data[offset + 1] = image.data[offset + 2] = 255;
+      image.data[offset + 3] = mask[pixel];
+    }
+    context.putImageData(image, 0, 0);
+    const id = addAsset(assets.current, maskCanvas);
+    cache.remember(key, digest, id);
+    return id;
+  };
+  const chooseCloneSource = (point: { x: number; y: number }, matrix: Matrix) => {
+    const next = { x: point.x, y: point.y, matrix };
+    cloneSourceRef.current = next;
+    setCloneSource(next);
+  };
+  /** The clone source in the given layer placement's pixel space. */
+  const cloneSourceIn = (matrix: Matrix): { x: number; y: number } | null => {
+    const source = cloneSourceRef.current;
+    if (!source) return null;
+    const [a, b, c, d, e, f] = source.matrix;
+    const documentPoint = { x: a * source.x + c * source.y + e, y: b * source.x + d * source.y + f };
+    return inversePoint(matrix, documentPoint) || { x: source.x, y: source.y };
+  };
+  const clearCloneSource = () => {
+    cloneSourceRef.current = null;
+    setCloneSource(null);
+  };
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
@@ -2409,6 +2726,7 @@ export default function Home() {
     [commandShortcutBindings, setCommandShortcutBindings] = useState<Record<string, string>>(() => initialCommandShortcutPreferences.bindings),
     [lastFilterType, setLastFilterType] = useState<FilterEffectType | undefined>(() => initialLastFilterType),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
+    [persistedHistory, setPersistedHistory] = useState<PersistedHistoryWindow | null>(null),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
     [spellcheckOpen, setSpellcheckOpen] = useState(false),
@@ -2526,7 +2844,7 @@ export default function Home() {
             command,
             menuItem?.label || command,
             command.startsWith('filter-')
-              ? filterActionParameters(filterEffects)
+              ? filterActionParameters(liveFilterEffects)
               : undefined,
           );
         } catch {
@@ -2601,6 +2919,12 @@ export default function Home() {
   const openMenu = (menu: MenuName, focus: 'first' | 'last' = 'first') => {
     pendingMenuFocus.current[menu] = focus;
     setActiveMenu(menu);
+    if (menu === 'Filter') {
+      // Warm the filter worker pool at idle time, so a heavy filter chosen
+      // next does not pay worker start-up and JIT tier-up.
+      const frame = current();
+      prewarmFilterWorkers(PREWARM_FILTER_TYPES, { w: frame.w, h: frame.h });
+    }
   };
   const closeMenu = (restoreFocus = false) => {
     const menu = activeMenu;
@@ -2655,6 +2979,8 @@ export default function Home() {
     [recovering, setRecovering] = useState(false),
     [cloudMessage, setCloudMessage] = useState(''),
     [cloudConflict, setCloudConflict] = useState<CloudConflictError | null>(null);
+  /** The filter-stack entry the Filter effects controls currently edit, if any. */
+  const [filterStackEdit, setFilterStackEdit] = useState<{ layerId: string; index: number } | null>(null);
   const active = frame?.layers.find((l) => l.id === frame.active),
     adjustments = active ? effectiveAdjustments(active.adjustments) : neutral;
   const {
@@ -2672,13 +2998,188 @@ export default function Home() {
     curves,
     colorBalance,
     sharpenNoise,
-    filterEffects,
+    filterEffects: liveFilterEffects,
     photoAdjustments,
   } = adjustments;
+  // While a stacked filter is selected for editing, the Filter effects
+  // controls (type, sliders, centre fields and crosshair) show and change that
+  // entry instead of the live filter. A stale selection (another layer, or an
+  // entry removed by undo) falls back to the live filter.
+  const filterStackEntries = active && isRasterContentLayer(active) ? smartFilterEntries(active.smartFilters) : [];
+  const filterStackEditIndex =
+    filterStackEdit && active && filterStackEdit.layerId === active.id && filterStackEdit.index < filterStackEntries.length
+      ? filterStackEdit.index
+      : null;
+  const filterEffects =
+    filterStackEditIndex !== null ? filterStackEntries[filterStackEditIndex].effect : liveFilterEffects;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
+  /**
+   * Encode a committed paint buffer as an asset and keep its decoded pixels
+   * warm: the next stroke on this layer copies them instead of decoding the
+   * PNG it was just encoded from, and the render worker receives the pixels
+   * with the commit render instead of decoding the data URL again.
+   */
+  const addPaintedAsset = (buffer: HTMLCanvasElement) => {
+    const id = addAsset(assets.current, buffer);
+    const asset = assets.current[id];
+    primeDecodedAsset(asset, buffer);
+    primeWorkerDecodedAsset(asset, buffer);
+    return id;
+  };
+  /**
+   * Coalesce the live preview of a painting gesture. Stamping into
+   * `g.buffer` stays synchronous per pointer event; only the full-document
+   * composite is limited to one in flight and one per animation frame. The
+   * request re-reads the gesture when it runs, so it shows the latest buffer
+   * and is dropped once the gesture has been committed or abandoned.
+   */
+  const previewGesture = (g: Gesture) =>
+    schedulePaint(() =>
+      gesture.current === g && g.buffer && g.layer
+        ? { frame: g.frame, overrides: { [g.layer.id]: g.buffer } }
+        : null,
+    );
+  /** Decoded layer pixels and selection coverage a gradient drag renders over. */
+  const prepareGradientBase = async (
+    frame: Frame,
+    layer: Extract<Layer, { kind: 'raster' }>,
+  ): Promise<GradientBase> => {
+    const image = await decodeAsset(assets.current[layer.asset]),
+      width = image.naturalWidth,
+      height = image.naturalHeight,
+      layerCanvas = surface(width, height);
+    layerCanvas.getContext('2d')!.drawImage(image, 0, 0);
+    // Photoshop confines a gradient to the active selection.
+    const selectionMask = await selectionMaskForLayer(
+      frame.selection, frame, layer, assets.current, width, height,
+    );
+    // Large layers preview only the region the gradient can change, at a
+    // bounded resolution; the commit still renders every layer pixel.
+    const plan = planGradientPreview(
+      width,
+      height,
+      selectionMask ? (maskBounds(selectionMask, width, height) ?? { x: 0, y: 0, width: 0, height: 0 }) : null,
+    );
+    if (!plan) return { layerCanvas, selectionMask };
+    const layerSmall = surface(Math.max(1, plan.width), Math.max(1, plan.height));
+    if (plan.width > 0) {
+      const smallContext = layerSmall.getContext('2d')!;
+      smallContext.imageSmoothingQuality = 'high';
+      smallContext.drawImage(
+        layerCanvas,
+        plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height,
+        0, 0, plan.width, plan.height,
+      );
+    }
+    return {
+      layerCanvas,
+      selectionMask,
+      preview: {
+        plan,
+        layerSmall,
+        maskSmall: selectionMask && plan.width > 0 ? downscaleMask(selectionMask, width, plan) : undefined,
+        buffers: [],
+        next: 0,
+      },
+    };
+  };
+  /**
+   * Render the gradient from `start` to `end` over the prepared layer with the
+   * current Mode, Opacity, Noise, Dither and selection. Shared by the live
+   * drag preview and the pointer-up commit, so both show the same pixels.
+   */
+  const renderGradientBuffer = (
+    base: GradientBase,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) => {
+    const { layerCanvas, selectionMask } = base,
+      buffer = surface(layerCanvas.width, layerCanvas.height);
+    buffer.getContext('2d')!.drawImage(layerCanvas, 0, 0);
+    // Render the gradient on its own surface, then composite it onto the
+    // layer with the chosen Mode and Opacity (Normal paints over).
+    const gradientSurface = surface(buffer.width, buffer.height),
+      context = gradientSurface.getContext('2d')!,
+      gradient = gradientMode === 'radial'
+        ? context.createRadialGradient(
+          start.x,
+          start.y,
+          0,
+          start.x,
+          start.y,
+          Math.max(1, Math.hypot(end.x - start.x, end.y - start.y)),
+        )
+        : context.createLinearGradient(start.x, start.y, end.x, end.y);
+    // A transparent end fades the adjacent colour's alpha (not toward
+    // transparent white, which leaves a pale fringe in canvas gradients).
+    for (const stop of buildGradientColorStops({
+      mode: gradientMode,
+      color,
+      backgroundColor,
+      end: gradientEnd,
+      reverse: gradientReverse,
+      midpoint: gradientMidpoint,
+      midpointPosition: gradientMidpointPosition,
+      stops: gradientStops,
+    })) gradient.addColorStop(stop.offset, stop.color);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, buffer.width, buffer.height);
+    let gradientPixels: Uint8ClampedArray = context.getImageData(0, 0, buffer.width, buffer.height).data;
+    if (gradientNoise > 0 || gradientDither > 0) {
+      gradientPixels = applyGradientNoise(gradientPixels, buffer.width, buffer.height, gradientNoise);
+      gradientPixels = applyGradientDither(gradientPixels, buffer.width, buffer.height, gradientDither);
+    }
+    const bufferContext = buffer.getContext('2d')!,
+      layerPixels = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+    layerPixels.data.set(compositeGradientPixels(
+      layerPixels.data,
+      gradientPixels,
+      gradientBlend,
+      normalizeGradientOpacity(gradientOpacity) / 100,
+    ));
+    bufferContext.putImageData(layerPixels, 0, 0);
+    if (selectionMask) confineToSelection(layerCanvas, buffer, selectionMask);
+    return buffer;
+  };
+  /**
+   * Live gradient while dragging: the latest end point is rendered at most
+   * once per animation frame (and one render in flight) through the shared
+   * preview scheduler; pointer-up commits one undo step.
+   */
+  const previewGradient = (g: Gesture) =>
+    schedulePaint(() => {
+      if (gesture.current !== g || !g.gradientBase || !g.layer || !g.moved) return null;
+      const end = g.gradientEnd ?? g.last;
+      const base = g.gradientBase, preview = base.preview;
+      if (!preview)
+        return { frame: g.frame, overrides: { [g.layer.id]: renderGradientBuffer(base, g.start, end) } };
+      // Reduced preview: only the changeable region is re-rendered, at the
+      // planned scale, and upscaled into one of two full-size surfaces that
+      // already hold the untouched layer pixels outside that region.
+      const { plan } = preview, index = preview.next;
+      preview.next = 1 - index;
+      let output = preview.buffers[index];
+      if (!output) {
+        output = surface(base.layerCanvas.width, base.layerCanvas.height);
+        output.getContext('2d')!.drawImage(base.layerCanvas, 0, 0);
+        preview.buffers[index] = output;
+      }
+      if (plan.width > 0) {
+        const small = renderGradientBuffer(
+          { layerCanvas: preview.layerSmall, selectionMask: preview.maskSmall },
+          toPreviewPoint(plan, g.start),
+          toPreviewPoint(plan, end),
+        );
+        const context = output.getContext('2d')!;
+        context.clearRect(plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height);
+        context.imageSmoothingEnabled = true;
+        context.drawImage(small, 0, 0, plan.width, plan.height, plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height);
+      }
+      return { frame: g.frame, overrides: { [g.layer.id]: output } };
+    });
   // Pointer whose paint gesture waits for a trimmed layer to expand.
   const expansionPointer = useRef<{
     pointerId: number;
@@ -2777,6 +3278,7 @@ export default function Home() {
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushDynamics,
     brushTexture,
     brushDual,
     brushBristle,
@@ -2791,6 +3293,8 @@ export default function Home() {
     gradientReverse,
     gradientDither,
     gradientNoise,
+    gradientBlend,
+    gradientOpacity,
     gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -2819,15 +3323,19 @@ export default function Home() {
     defaultTypeStyle,
     ...neutral,
   });
-  const documentValue = (): Draft => ({
-    version: 2,
-    history: history.current,
-    assets: assets.current,
-    index: index.current,
-    name,
-    metadata: { ...metadata },
-    settings: settings(),
-  });
+  // Drafts, duplicates, cloud saves and portable projects keep the most
+  // recent history states that fit the draft limits; the in-memory undo/redo
+  // stack can be larger (see src/historyBudget.ts).
+  const documentValue = (): Draft =>
+    persistableHistoryDraft<Draft>({
+      version: 2,
+      history: history.current,
+      assets: assets.current,
+      index: index.current,
+      name,
+      metadata: { ...metadata },
+      settings: settings(),
+    }).draft;
   /** File Info is intentionally local/project-only; never send personal metadata to cloud APIs. */
   const cloudDocumentValue = (): Draft => {
     return stripPrivateMetadata(documentValue());
@@ -2840,7 +3348,7 @@ export default function Home() {
     setViewRotation(normalizeViewRotation(s.viewRotation ?? 0));
     setColor(s.color);
     setBackgroundColor(s.backgroundColor || '#ffffff');
-    setSize(s.size);
+    setSize(clampBrushSize(s.size));
     setBrushOpacity(s.brushOpacity ?? 100);
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
@@ -2858,6 +3366,7 @@ export default function Home() {
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
+    setBrushDynamics(normalizeBrushDynamics(s.brushDynamics));
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
     setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
@@ -2872,6 +3381,8 @@ export default function Home() {
     setGradientReverse(s.gradientReverse ?? false);
     setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
     setGradientNoise(s.gradientNoise ?? GRADIENT_NOISE_DEFAULT);
+    setGradientBlend(normalizeGradientBlendMode(s.gradientBlend));
+    setGradientOpacity(normalizeGradientOpacity(s.gradientOpacity));
     setGradientStops(normalizeGradientStops(s.gradientStops));
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
@@ -2921,6 +3432,7 @@ export default function Home() {
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
+    setBrushDynamics,
     setBrushTexture,
     setBrushDual,
     setBrushBristle,
@@ -2935,6 +3447,8 @@ export default function Home() {
     setGradientReverse,
     setGradientDither,
     setGradientNoise,
+    setGradientBlend,
+    setGradientOpacity,
     setGradientStops,
     setBrushAngle,
     setBrushRoundness,
@@ -2972,7 +3486,7 @@ export default function Home() {
     const preset = brushPresetById(id);
     if (!preset) return;
     setBrushPreset(id);
-    setSize(preset.size);
+    setSize(clampBrushSize(preset.size));
     setHardness(preset.hardness);
     setBrushSpacing(preset.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushAngle(preset.angle ?? BRUSH_DEFAULT_ANGLE);
@@ -2985,7 +3499,7 @@ export default function Home() {
     setNotice(`Brush preset “${preset.label}” applied`);
   };
   const applyCustomBrushPreset = (preset: CustomBrushPreset) => {
-    setSize(preset.size);
+    setSize(clampBrushSize(preset.size));
     setHardness(preset.hardness);
     setBrushSpacing(preset.spacing);
     setBrushAngle(preset.angle);
@@ -2997,6 +3511,7 @@ export default function Home() {
     setPressureCurve(normalizeBrushPressureCurve(preset.pressureCurve));
     setBrushSmoothing(preset.brushSmoothing);
     setBrushScatter(preset.brushScatter);
+    setBrushDynamics(normalizeBrushDynamics(preset.brushDynamics));
     setBrushTexture(preset.brushTexture);
     setBrushDual(preset.brushDual);
     setSecondaryBrushPreset(preset.secondaryBrushPreset);
@@ -3028,6 +3543,7 @@ export default function Home() {
         pressureCurve,
         brushSmoothing,
         brushScatter,
+        brushDynamics,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -3507,12 +4023,7 @@ export default function Home() {
         output.toBlob(resolve, 'image/png'),
       );
       if (!blob) throw new Error('Could not encode the slice');
-      const url = URL.createObjectURL(blob),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${plan.slices[0].name}.png`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(blob, `${plan.slices[0].name}.png`);
       setSliceName(plan.slices[0].name);
       setNotice(
         `Slice downloaded: ${plan.slices[0].name}.png · ${slice.width} × ${slice.height} px`,
@@ -3963,16 +4474,12 @@ export default function Home() {
           bounds: { w: f.w, h: f.h },
         },
       );
-      const url = URL.createObjectURL(
-          new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
-            type: 'application/json',
-          }),
-        ),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${savedSelectionName || 'selection'}.pixelselection`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(
+        new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
+          type: 'application/json',
+        }),
+        `${savedSelectionName || 'selection'}.pixelselection`,
+      );
       setNotice('Selection file downloaded');
     } catch (error) {
       setNotice(
@@ -4244,7 +4751,7 @@ export default function Home() {
   };
   const pasteLoremIpsum = () => {
     const f = current();
-    if (f.layers.length >= 32) {
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
       setNotice('Layer limit reached; remove a layer before inserting text');
       return;
     }
@@ -4923,7 +5430,7 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : `${label} failed`);
     }
   };
-  const applyPerspectiveWarp = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
+  const perspectiveWarpLayer = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
@@ -4964,7 +5471,7 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : `Could not apply ${mode}`);
     }
   };
-  const applyPuppetWarp = async () => {
+  const puppetWarpLayer = async () => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
@@ -5241,16 +5748,31 @@ export default function Home() {
       setNotice('Unlock this layer before editing its mask');
       return;
     }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return;
+    }
     const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
+    if (current() !== f) {
+      setNotice('Mask from selection cancelled because the document changed');
+      return;
+    }
     const maskId = addAsset(assets.current, mask);
+    // Like Photoshop, the selection is consumed into the mask: one undo step
+    // adds the mask and deselects, and Select > Reselect restores it.
     if (
-      editLayer({
-        mask: maskId,
-        maskEnabled: true,
-        maskInverted: false,
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id
+            ? ({ ...item, mask: maskId, maskEnabled: true, maskInverted: false } as Layer)
+            : item,
+        ),
+        selection: undefined,
+        previousSelection: f.selection,
       })
     )
-      setNotice('Nondestructive layer mask created');
+      setNotice('Nondestructive layer mask created; selection cleared (Select > Reselect restores it)');
   };
   const invertLayerMask = () => {
     const f = current(),
@@ -5705,8 +6227,8 @@ export default function Home() {
       return;
     }
     const f = current();
-    if (f.layers.length >= 32) {
-      setNotice('32-layer limit reached; remove a layer before generating an image');
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached; remove a layer before generating an image`);
       return;
     }
     try {
@@ -5966,10 +6488,26 @@ export default function Home() {
       return { ...action, steps, updatedAt: new Date().toISOString() };
     }));
   };
+  /**
+   * Commit Filter effects parameters to their current target: the live filter,
+   * or the stacked entry selected for editing (one undoable metadata edit;
+   * the #185 cache key follows because it hashes the normalised stack).
+   */
+  const commitFilterEffects = (next: Adjustments['filterEffects']) => {
+    if (filterStackEditIndex === null) return adjust({ filterEffects: next });
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer?.smartFilters?.length) return false;
+    try {
+      return editLayer({ smartFilters: replaceSmartFilter(layer.smartFilters, filterStackEditIndex, next) });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not change the stacked filter');
+      return false;
+    }
+  };
   const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) => {
     const next = { ...filterEffects, ...patch };
-    const changed = adjust({ filterEffects: next });
-    if (changed) updateRecordedFilterParameters(next);
+    const changed = commitFilterEffects(next);
+    if (changed && filterStackEditIndex === null) updateRecordedFilterParameters(next);
     return changed;
   };
   const setPhotoAdjustments = (
@@ -6035,14 +6573,36 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Color profile conversion failed; the draft is unchanged');
     }
   };
+  // Live filters render over the stored asset. A paint layer stored at its
+  // content bounds (or a new empty layer) is grown to the canvas first, so a
+  // generator such as Clouds or a blur covers the canvas, not the stored box.
   const chooseFilterEffect = (type: FilterEffectType, label: string) => {
+    if (filterStackEditIndex !== null && type === 'none') {
+      setNotice('Remove the stacked filter, or choose Done to edit the live filter');
+      return;
+    }
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (
+      type !== 'none' &&
+      layer?.kind === 'raster' &&
+      canTrimRasterLayer(layer) &&
+      rasterExpansionTarget(f)
+    ) {
+      void expandRasterLayerForPaint().then(() => applyFilterEffectChoice(type, label));
+      return;
+    }
+    applyFilterEffectChoice(type, label);
+  };
+  const applyFilterEffectChoice = (type: FilterEffectType, label: string) => {
     if (type !== 'none') {
+      const frame = current();
+      prewarmFilterWorkers([type], { w: frame.w, h: frame.h });
       setLastFilterType(type);
       try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
     }
     if (
-      adjust({
-        filterEffects:
+      commitFilterEffects(
           type === 'none'
             ? { ...neutralFilterEffects }
             : {
@@ -6163,12 +6723,14 @@ export default function Home() {
                       ? 90
                       : 0,
               },
-      })
+      )
     )
       setNotice(
         type === 'none'
           ? 'Local filter effect cleared'
-          : `${label} applied; remains editable in Filter effects`,
+          : filterStackEditIndex !== null
+            ? `Stacked filter ${filterStackEditIndex + 1} is now ${label}`
+            : `${label} applied; remains editable in Filter effects`,
       );
   };
   const convertForSmartFilters = () => {
@@ -6204,6 +6766,27 @@ export default function Home() {
     if (editLayer({ smartFilters: [] }))
       setNotice(`Smart Filter stack cleared${layer?.smartFilters?.length ? '; undo restores it' : ''}`);
   };
+  /** Apply one undoable reorder/toggle/remove edit to the active layer's filter stack. */
+  const editSmartFilterStack = (
+    change: (stack: SmartFilterEntry[]) => SmartFilterEntry[],
+    message: string,
+  ) => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer?.smartFilters?.length) return false;
+    try {
+      if (editLayer({ smartFilters: change(layer.smartFilters) })) {
+        setNotice(message);
+        return true;
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not change the filter stack');
+    }
+    return false;
+  };
+  const filterTypeLabel = (type: string) =>
+    type.split('-').map((word, index) => (index ? word : word[0].toUpperCase() + word.slice(1))).join(' ');
+  /** Live filter-centre drag preview (frame space) before the edit commits. */
+  const [filterCenterDrag, setFilterCenterDrag] = useState<{ centerX: number; centerY: number } | null>(null);
   const chooseFilter = (filter: string, label: string) => {
     if (adjust({ filter }))
       setNotice(`${label} applied to selected layer; remains editable`);
@@ -6377,7 +6960,7 @@ export default function Home() {
         x.bezierCurveTo(350, y - 38, 610, y + 34, 980, y - 6);
         x.stroke();
       }
-      commit(rasterFrame(c, assets.current), true);
+      commitDocument(rasterFrame(c, assets.current), true);
       setViewZoomState(fittedZoom(stage.current, c.width, c.height));
       setReady(true);
     })();
@@ -6385,7 +6968,7 @@ export default function Home() {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, initialDraft, install, paint, restoreSettings]);
+  }, [assets, commitDocument, initialDraft, install, paint, restoreSettings]);
   // Advertise which draft this tab has open so a bookmark-less `/editor` tab
   // does not silently attach to it (see the opening effect above).
   useEffect(() => {
@@ -6397,7 +6980,7 @@ export default function Home() {
     const sequence = ++saveSequence.current;
     saving.current = true;
     setSaveStatus('Saving on this device…');
-    const value: Draft = {
+    const fullValue: Draft = {
       version: 2,
       cloud,
       history: history.current.slice(),
@@ -6427,6 +7010,7 @@ export default function Home() {
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
+        brushDynamics,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -6442,6 +7026,8 @@ export default function Home() {
         gradientDither,
         gradientStops,
         gradientNoise,
+        gradientBlend,
+        gradientOpacity,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -6472,6 +7058,18 @@ export default function Home() {
       },
       metadata: { ...metadata },
     };
+    // Persist only the history window that fits the local draft limits so a
+    // larger in-memory undo/redo stack can never make local saves fail.
+    const { draft: value, window: persistedWindow } =
+      persistableHistoryDraft(fullValue);
+    setPersistedHistory((previous) =>
+      previous &&
+      previous.start === persistedWindow.start &&
+      previous.end === persistedWindow.end &&
+      previous.omittedRedo === persistedWindow.omittedRedo
+        ? previous
+        : persistedWindow,
+    );
     const pendingToken = stagePendingDraft(
       draftId,
       value,
@@ -6533,6 +7131,7 @@ export default function Home() {
     brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushDynamics,
     brushTexture,
     brushDual,
     brushBristle,
@@ -6548,6 +7147,8 @@ export default function Home() {
     gradientDither,
     gradientStops,
     gradientNoise,
+    gradientBlend,
+    gradientOpacity,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -6698,16 +7299,28 @@ export default function Home() {
       setCloudBusy(false);
     }
   };
-  const exportProject = async () => {
+  const exportProject = async (withPicker = false) => {
+    const filename = (name || 'untitled') + '.pixelforge';
+    // Ask for the destination first, while the click's user activation is
+    // still valid; building a large bundle can outlast that window.
+    const picked = withPicker ? await pickSaveFile(filename, window) : undefined;
+    if (picked?.status === 'cancelled') {
+      setNotice('Project save cancelled');
+      return;
+    }
     try {
       const blob = await writePortableBundle(documentValue());
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = (name || 'untitled') + '.pixelforge';
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setNotice('Editable project file downloaded');
+      if (picked?.status === 'picked') {
+        await writeToFileHandle(picked.handle, blob);
+        setNotice('Editable project file saved with the file picker');
+        return;
+      }
+      downloadBlob(blob, filename);
+      setNotice(
+        picked?.status === 'unavailable'
+          ? `${picked.reason} Editable project file downloaded instead`
+          : 'Editable project file downloaded',
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Project could not be downloaded');
     }
@@ -6716,8 +7329,8 @@ export default function Home() {
     if (!selected) return;
     const expected = current();
     try {
-      if (selected.size > 64 * 1024 * 1024)
-        throw new Error('Project file exceeds 64 MB');
+      if (selected.size > PORTABLE_MAX_BYTES)
+        throw new Error(`Project file exceeds ${formatMebibytes(PORTABLE_MAX_BYTES)} MB`);
       const saved = selected.type === 'application/json' || selected.name.toLowerCase().endsWith('.json')
         ? validateDraft(JSON.parse(await selected.text()))
         : await readPortableBundle(selected);
@@ -7007,8 +7620,8 @@ export default function Home() {
   };
   const addLayer = (layer: Layer) => {
     const f = current();
-    if (f.layers.length >= 32) {
-      setNotice('32-layer limit reached');
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       void paint(f);
       return false;
     }
@@ -7087,8 +7700,8 @@ export default function Home() {
       setNotice('Unlock all selected layers before grouping');
       return;
     }
-    if ((f.groups || []).length >= 32) {
-      setNotice('32-group limit reached');
+    if ((f.groups || []).length >= MAX_DOCUMENT_GROUPS) {
+      setNotice(`${MAX_DOCUMENT_GROUPS}-group limit reached`);
       return;
     }
     const group: Group = {
@@ -7331,10 +7944,13 @@ export default function Home() {
   };
   const addPaint = () => {
     const f = current();
+    // A new paint layer stores one transparent pixel; the first paint tool
+    // grows it to the canvas and the stroke is then stored at its content
+    // bounds, so empty layers cost nothing against the layer pixel budget.
     addLayer({
       ...commonLayer('Paint ' + f.layers.length),
       kind: 'raster',
-      asset: addAsset(assets.current, surface(f.w, f.h)),
+      asset: addAsset(assets.current, surface(1, 1)),
     });
     setTool('brush');
   };
@@ -7349,8 +7965,8 @@ export default function Home() {
       setNotice('Unlock all selected layers before duplicating');
       return;
     }
-    if (f.layers.length + layers.length > 32) {
-      setNotice('32-layer limit reached');
+    if (f.layers.length + layers.length > MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       return;
     }
     const copies = layers.map((layer) => ({
@@ -7448,7 +8064,23 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Fade could not be applied');
     }
   };
-  const applyImage = async () => {
+  // Apply Image, Calculations and the destructive warps work in canvas space:
+  // grow a paint layer stored at its content bounds to the canvas first (a
+  // pixel-identical in-place step), and restore its stored bounds if the
+  // command is cancelled. Warp handles are therefore canvas coordinates for
+  // every paint layer, however it is stored.
+  const onCanvasSizedLayer = (run: () => Promise<void>) => async () => {
+    await expandRasterLayerForPaint();
+    try {
+      await run();
+    } finally {
+      dropUnusedExpansion();
+    }
+  };
+  const applyPerspectiveWarp = (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') =>
+    onCanvasSizedLayer(() => perspectiveWarpLayer(mode))();
+  const applyPuppetWarp = onCanvasSizedLayer(puppetWarpLayer);
+  const applyImage = onCanvasSizedLayer(async () => {
     const beforeFrame = current();
     const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
     if (!layer || layer.kind !== 'raster') {
@@ -7528,8 +8160,8 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Apply Image could not be applied');
     }
-  };
-  const calculateImage = async () => {
+  });
+  const calculateImage = onCanvasSizedLayer(async () => {
     const beforeFrame = current();
     const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
     if (!layer || layer.kind !== 'raster') {
@@ -7619,7 +8251,7 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Calculations could not be applied');
     }
-  };
+  });
   const copyLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -7802,6 +8434,9 @@ export default function Home() {
     if (layer) editLayer({ visible: !layer.visible });
   };
   const fillActiveLayer = async () => {
+    // A paint layer stored at its content bounds (or a new empty layer) is
+    // grown to the canvas first, so Fill covers the whole selection.
+    await expandRasterLayerForPaint();
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (
@@ -7855,7 +8490,7 @@ export default function Home() {
   };
   /** Paint an editable inner border from the current selection onto the active raster layer. */
   const strokeSelection = async () => {
-    const f = current(),
+    let f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (!f.selection) {
       setNotice('Create a selection before stroking it');
@@ -7872,6 +8507,13 @@ export default function Home() {
       setNotice('Stroke width must be a number');
       return;
     }
+    // Grow a layer stored at its content bounds so the border is not clipped.
+    const layerId = layer.id;
+    await expandRasterLayerForPaint();
+    f = current();
+    const expanded = f.layers.find((item) => item.id === layerId);
+    if (!f.selection || !expanded || expanded.kind !== 'raster') return;
+    layer = expanded;
     try {
       const image = await decodeAsset(assets.current[layer.asset]),
         output = surface(image.naturalWidth, image.naturalHeight),
@@ -8107,6 +8749,8 @@ export default function Home() {
                 ),
               }
             : {}),
+          // The reference guide is never flattened into pixels; keep it.
+          ...(f.reference ? { reference: f.reference } : {}),
           selectedLayerIds: [flattened.active],
         })
       )
@@ -8309,7 +8953,7 @@ export default function Home() {
    * Returns false only when the budget refuses the expansion and the press
    * starts outside the stored pixels, where the tool could not store anything.
    */
-  const expandRasterLayerForPaint = async (press: {
+  const expandRasterLayerForPaint = async (press?: {
     x: number;
     y: number;
   }): Promise<boolean> => {
@@ -8319,10 +8963,11 @@ export default function Home() {
     const { layer, source, plan } = target;
     const required =
       layerPixelUsage(f, assets.current) - source.w * source.h + plan.w * plan.h;
-    if (required > LAYER_PIXEL_BUDGET) {
+    if (required > detectProjectLimits().layerPixelBudget) {
       setNotice(
         `Layer pixel budget reached: this layer stays ${source.w} × ${source.h} px, so paint outside it is not stored. Merge or trim other layers to paint the whole canvas.`,
       );
+      if (!press) return true;
       const local = inversePoint(layer.matrix, press);
       return Boolean(
         local &&
@@ -8338,16 +8983,114 @@ export default function Home() {
       const buffer = surface(plan.w, plan.h);
       buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
       const asset = addAsset(assets.current, buffer);
-      commit({
-        ...f,
-        layers: f.layers.map((item) =>
-          item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
-        ),
-      });
+      // The expansion is pixel-identical, so it replaces the current history
+      // entry instead of adding one: undo is unaffected and the page does not
+      // reflow (e.g. a growing History list on phones) under the pointer.
+      const expanded = doc.amend(
+        {
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+          ),
+        },
+        f,
+      );
+      autoTrim.current.recent.clear();
+      if (expanded)
+        autoTrim.current.expansions.set(current(), { layerId: layer.id, before: f, source: [layer.asset, source] });
     } catch {
       // Painting continues inside the layer's existing bounds.
     }
     return true;
+  };
+  // Automatic layer storage. When a step replaces the pixels of a paint layer
+  // that is stored at its content bounds (a new empty layer, a trimmed or
+  // moved layer, or one just grown for a paint tool), the new pixels are
+  // stored at their bounding box (plus a small margin) in the same commit,
+  // so each stroke stays one undo step and sparse layers cost what they hold. The pixels come from the canvas the
+  // step just encoded, so this is synchronous and cannot race other edits.
+  const autoTrim = useRef({
+    /** History entries grown in place for a paint tool, by frame identity. */
+    expansions: new WeakMap<Frame, { layerId: string; before: Frame; source: [string, Assets[string]] }>(),
+    /** Assets already known to fit their content. */
+    known: new Set<string>(),
+    /** Source canvases of the most recently created assets. */
+    recent: new Map<string, HTMLCanvasElement>(),
+  });
+  const addAsset = (target: Assets, source: HTMLCanvasElement): string => {
+    const id = addDocumentAsset(target, source);
+    const recent = autoTrim.current.recent;
+    recent.delete(id);
+    recent.set(id, source);
+    while (recent.size > 4) recent.delete(recent.keys().next().value!);
+    return id;
+  };
+  const storeAtContentBounds = (value: Frame, base: Frame, expandedLayerId?: string): Frame => {
+    const state = autoTrim.current;
+    const ids = autoTrimCandidates(value, base, assets.current, state.known, expandedLayerId);
+    if (!ids.length) return value;
+    const replaced = new Map<string, { asset: string; matrix: Matrix }>();
+    for (const id of ids) {
+      const layer = value.layers.find((item) => item.id === id);
+      if (!layer || layer.kind !== 'raster') continue;
+      const source = state.recent.get(layer.asset),
+        stored = assets.current[layer.asset];
+      if (!source || !stored || source.width !== stored.w || source.height !== stored.h) continue;
+      try {
+        const context = source.getContext('2d');
+        if (!context) continue;
+        const plan = planLayerTrim(
+          context.getImageData(0, 0, stored.w, stored.h).data,
+          stored.w,
+          stored.h,
+          layer.matrix,
+          AUTO_TRIM_MARGIN,
+        );
+        if (!plan) {
+          state.known.add(layer.asset);
+          continue;
+        }
+        const cropped = surface(plan.crop.width, plan.crop.height);
+        cropped.getContext('2d')!.drawImage(source, -plan.crop.x, -plan.crop.y);
+        const asset = addAsset(assets.current, cropped);
+        state.known.add(asset);
+        replaced.set(id, { asset, matrix: plan.matrix });
+      } catch {
+        // Keep the full asset; storage optimisation is best effort.
+      }
+    }
+    if (!replaced.size) return value;
+    return {
+      ...value,
+      layers: value.layers.map((item) =>
+        replaced.has(item.id) && item.kind === 'raster' ? { ...item, ...replaced.get(item.id)! } : item,
+      ),
+    };
+  };
+  const commit = (value: Frame, replace = false, nextAssets?: Assets): boolean => {
+    if (replace) return commitDocument(value, replace, nextAssets);
+    const previous = current();
+    const expansion = previous ? autoTrim.current.expansions.get(previous) : undefined;
+    const stored = previous ? storeAtContentBounds(value, previous, expansion?.layerId) : value;
+    const committed = commitDocument(stored, false, nextAssets);
+    // Only canvases encoded for this step may be read back for trimming.
+    autoTrim.current.recent.clear();
+    // The entry below was grown in place for this step; restore its
+    // pixel-identical stored-bounds frame so undo returns to the compact layer.
+    if (committed && expansion && previous)
+      doc.restorePrevious(current(), previous, expansion.before, {
+        [expansion.source[0]]: expansion.source[1],
+      });
+    return committed;
+  };
+  // A paint-time expansion whose gesture ended without a commit (cancelled,
+  // or the tool made no change) is restored to its stored bounds.
+  const dropUnusedExpansion = () => {
+    const top = current();
+    const expansion = autoTrim.current.expansions.get(top);
+    if (gesture.current || expansionPointer.current || !expansion) return;
+    // The stored-bounds asset may have been released with the replaced entry.
+    doc.amend(expansion.before, top, 0, { [expansion.source[0]]: expansion.source[1] });
   };
   const applyMatting = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
@@ -8568,6 +9311,162 @@ export default function Home() {
       if (file.current) file.current.value = '';
       if (layerFile.current) layerFile.current.value = '';
     }
+  };
+  /**
+   * Paste an image from the operating-system clipboard as a new raster layer
+   * through the asynchronous Clipboard API (Edit → Paste Image from
+   * Clipboard, or the keyboard fallback below). Bytes stay local.
+   */
+  const pasteSystemClipboardImage = async () => {
+    const result = await readClipboardImage(
+      typeof navigator === 'undefined' ? undefined : navigator.clipboard,
+    );
+    if (!result.ok) {
+      setNotice(result.message);
+      return;
+    }
+    await load(clipboardImageFile(result.blob, result.type), true);
+  };
+  // Ctrl/Cmd+V normally produces a native `paste` event, handled by the
+  // document listener below. Some embedded browsers deliver the keydown but no
+  // paste event; if none arrives shortly, read the clipboard asynchronously.
+  const keyboardPasteFallback = useRef<number | undefined>(undefined);
+  const scheduleKeyboardPasteFallback = () => {
+    window.clearTimeout(keyboardPasteFallback.current);
+    keyboardPasteFallback.current = window.setTimeout(() => {
+      keyboardPasteFallback.current = undefined;
+      void pasteSystemClipboardImage();
+    }, 300);
+  };
+  useEffect(() => () => window.clearTimeout(keyboardPasteFallback.current), []);
+  useEffect(() => {
+    // Listen on the document, not the editor root: when focus is on <body>
+    // (fresh load, after a menu or dialog closes) the paste event targets the
+    // body and never reaches a handler on the application element.
+    const onPaste = (event: ClipboardEvent) => {
+      if (isTextEditingTarget(event.target)) return;
+      window.clearTimeout(keyboardPasteFallback.current);
+      keyboardPasteFallback.current = undefined;
+      if (!ready || cloudBusy || recovering || document.querySelector('dialog[open]')) return;
+      // The internal layer clipboard stays authoritative; Ctrl+V already
+      // pasted the copied layer from the keydown shortcut.
+      if (hasClipboard) return;
+      const image = imageFileFromClipboardItems(event.clipboardData?.items);
+      if (!image) {
+        if (event.clipboardData?.types.length)
+          setNotice('The clipboard does not contain an image.');
+        return;
+      }
+      event.preventDefault();
+      void load(clipboardImageFile(image, image.type), true);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  });
+  const referenceFile = useRef<HTMLInputElement>(null);
+  const referencePixels = useRef<{ asset: string; data: ImageData } | null>(null);
+  const chooseReferenceFile = () => {
+    if (current().reference?.locked) {
+      setNotice('Unlock the reference image before replacing it');
+      return;
+    }
+    referenceFile.current?.click();
+  };
+  /**
+   * Place (or replace) the document's reference image. It is decoded locally,
+   * stored downscaled and kept out of layers, export and the pixel budget.
+   */
+  const placeReference = async (selected?: File) => {
+    const reset = () => {
+      if (referenceFile.current) referenceFile.current.value = '';
+    };
+    const importInfo = selected ? describeImportFormat(selected.name, selected.type) : null;
+    if (!selected || !importInfo?.tryDecode) {
+      setNotice(importInfo?.disclosure || 'Choose a browser-readable image file');
+      reset();
+      return;
+    }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before placing a reference image');
+      reset();
+      return;
+    }
+    const original = current();
+    try {
+      if (selected.size > 64 * 1024 * 1024) throw new Error('Image file exceeds 64 MB');
+      const decoded = await decodeImportedRaster(selected, importInfo);
+      if (current() !== original) throw new Error('Document changed during import. Please try again.');
+      const size = referenceStoredSize(decoded.width, decoded.height);
+      let stored = decoded;
+      if (size.w !== decoded.width || size.h !== decoded.height) {
+        stored = surface(size.w, size.h);
+        const context = stored.getContext('2d')!;
+        context.imageSmoothingQuality = 'high';
+        context.drawImage(decoded, 0, 0, size.w, size.h);
+      }
+      const nextAssets = { ...assets.current };
+      const asset = addAsset(nextAssets, stored);
+      const previous = original.reference;
+      const reference: ReferenceImage = previous
+        ? { ...previous, asset, name: selected.name.slice(0, 160) }
+        : createReferenceImage(asset, selected.name);
+      if (commit({ ...original, reference }, false, nextAssets))
+        setNotice(
+          `Reference image placed (${size.w} × ${size.h} px); it is a guide only and is not exported`,
+        );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The reference image could not be opened');
+    } finally {
+      reset();
+    }
+  };
+  const updateReference = (patch: Partial<ReferenceImage>) => {
+    const f = current();
+    if (!f.reference) return;
+    const structural = ['opacity', 'fit', 'asset'].some((key) => key in patch);
+    if (f.reference.locked && structural) {
+      setNotice('Unlock the reference image to change it');
+      return;
+    }
+    commit({ ...f, reference: { ...f.reference, ...patch } });
+  };
+  const removeReference = () => {
+    const f = current();
+    if (!f.reference) return;
+    if (f.reference.locked) {
+      setNotice('Unlock the reference image before removing it');
+      return;
+    }
+    const { reference: _removed, ...rest } = f;
+    if (commit(rest)) setNotice('Reference image removed');
+  };
+  /** Sample the reference bitmap under a document point as #rrggbb. */
+  const sampleReference = async (x: number, y: number): Promise<string | null> => {
+    const f = current();
+    const reference = f.reference;
+    const asset = reference ? assets.current[reference.asset] : undefined;
+    if (!reference || !asset) return null;
+    const point = referenceSourcePixel(reference.fit, f.w, f.h, asset.w, asset.h, x, y);
+    if (!point) return null;
+    if (referencePixels.current?.asset !== reference.asset) {
+      const image = await decodeAsset(asset);
+      const scratch = surface(asset.w, asset.h);
+      const context = scratch.getContext('2d', { willReadFrequently: true })!;
+      context.drawImage(image, 0, 0);
+      referencePixels.current = {
+        asset: reference.asset,
+        data: context.getImageData(0, 0, asset.w, asset.h),
+      };
+    }
+    const { data } = referencePixels.current;
+    const offset = (point.y * data.width + point.x) * 4;
+    if (data.data[offset + 3] === 0) return null;
+    return (
+      '#' +
+      [data.data[offset], data.data[offset + 1], data.data[offset + 2]]
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('')
+    );
   };
   const importSmartObject = async (
     selected?: File,
@@ -8864,12 +9763,9 @@ export default function Home() {
       viewRotation,
     );
   };
+  // Pen pressure 0 is a real pen lift; mouse and zero touch pressure stay full.
   const pressure = (e: React.PointerEvent<HTMLCanvasElement>) =>
-    (e.pointerType === 'pen' || e.pointerType === 'touch') &&
-    e.pressure > 0 &&
-    e.pressure <= 1
-      ? e.pressure
-      : 1;
+    normalizeBrushPressure(e.pointerType, e.pressure);
   /** Apply a canvas-space alpha stroke to a detached mask preview. */
   const refineMaskCanvas = (
     target: HTMLCanvasElement,
@@ -9432,6 +10328,22 @@ export default function Home() {
       await g.pending;
       return;
     }
+    // Option/Alt-click sets the Clone/Healing source, as in Photoshop. It
+    // changes no pixels and creates no history, so it is honoured even while
+    // the previous stroke is still decoding or committing: the next stroke
+    // reads the new anchor, and a stroke already in flight keeps its own.
+    if ((tool === 'clone' || tool === 'heal') && e.altKey && frame) {
+      const f = current(),
+        layer = f.layers.find((item) => item.id === f.active);
+      if (layer?.kind === 'raster') {
+        const p = point(e);
+        chooseCloneSource(inversePoint(layer.matrix, p) || p, layer.matrix);
+        setNotice(
+          `${tool === 'heal' ? 'Healing' : 'Clone'} source set; drag on the image to paint it`,
+        );
+        return;
+      }
+    }
     if (gesture.current || !frame) return;
     if (
       !skipExpansion &&
@@ -9452,14 +10364,38 @@ export default function Home() {
         // The pointer may already be gone; the release replay handles it.
       }
       let proceed = true;
+      const before = canvas.current?.getBoundingClientRect();
+      // A clone/heal press samples the source chosen when it happened, even if
+      // an Alt-click picks a new source while the layer is being grown.
+      const pressSource = cloneSourceRef.current;
       try {
         proceed = await expandRasterLayerForPaint(point(e));
       } finally {
         expansionPointer.current = null;
       }
       if (!proceed) return;
-      await pointerDown(e, true);
-      if (pending.release) await pointerUp(pending.release);
+      // The expansion commit can reflow the page (e.g. on phones), moving the
+      // canvas under the pointer. Replay the press at the same document
+      // point it had when it happened.
+      const after = canvas.current?.getBoundingClientRect();
+      const replay = <T extends { clientX: number; clientY: number }>(event: T): T =>
+        before && after && (before.left !== after.left || before.top !== after.top)
+          ? (Object.create(event, {
+              clientX: { value: event.clientX + after.left - before.left },
+              clientY: { value: event.clientY + after.top - before.top },
+            }) as T)
+          : event;
+      const latestSource = cloneSourceRef.current;
+      cloneSourceRef.current = pressSource;
+      try {
+        await pointerDown(replay(e), true);
+      } finally {
+        if (latestSource !== pressSource) cloneSourceRef.current = latestSource;
+      }
+      if (pending.release) {
+        await pointerUp(replay(pending.release));
+        dropUnusedExpansion();
+      }
       return;
     }
     if (
@@ -9701,6 +10637,14 @@ export default function Home() {
       setNotice('Rotate View: drag around the canvas; use Reset view to restore');
       return;
     }
+    if (tool === 'eyedropper' && current().reference?.sample && current().reference?.visible) {
+      const sampled = await sampleReference(p.x, p.y);
+      if (sampled) {
+        setColor(sampled);
+        setNotice('Color sampled from reference image');
+      } else setNotice('No reference pixel here; reference not sampled');
+      return;
+    }
     if (tool === 'eyedropper') {
       const pixel = canvas
         .current!.getContext('2d')!
@@ -9839,10 +10783,19 @@ export default function Home() {
         const image = await decodeAsset(assets.current[layer.asset]),
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
+        // Like Fill, Magic Eraser only removes pixels inside the selection.
+        const selectionMask = await selectionMaskForLayer(
+          f.selection, f, layer, assets.current, buffer.width, buffer.height,
+        );
+        if (selectionMask && maskCoverageAt(selectionMask, buffer.width, buffer.height, local.x, local.y) === 0) {
+          setNotice('Click inside the selection to erase');
+          return;
+        }
         if (!eraseMagicRegion(buffer, local.x, local.y, colorTolerance)) {
           setNotice('No contiguous pixels matched at that point');
           return;
         }
+        if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -9897,6 +10850,9 @@ export default function Home() {
             1,
             1,
           ).data;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.source = source;
           g.buffer = buffer;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
@@ -9908,18 +10864,12 @@ export default function Home() {
               pointerType: g.pointerType,
             },
           ]) {
-            eraseBackgroundStroke(
-              source,
-              buffer,
-              g.replaceTarget,
-              from.x,
-              from.y,
-              point.x,
-              point.y,
-              localSize(layer.matrix, size),
-              colorTolerance,
-              brushOpacity / 100,
-            );
+            sampledGestureStroke(g, from, point, {
+              kind: 'background-erase',
+              size: localSize(layer.matrix, size),
+              tolerance: colorTolerance,
+              opacity: brushOpacity / 100,
+            });
             from = point;
           }
           g.queued = undefined;
@@ -10096,8 +11046,14 @@ export default function Home() {
             if (tool === 'art-history-brush' && (sourceLayer?.kind !== 'raster' || !sourceLayer.asset))
               throw new Error('Art History source does not contain this raster layer; choose another snapshot');
             if (sourceLayer?.kind === 'raster' && sourceLayer.asset) {
-              const candidate = await decodeAsset(assets.current[sourceLayer.asset]);
-              if (candidate.naturalWidth === currentImage.naturalWidth && candidate.naturalHeight === currentImage.naturalHeight) {
+              const candidate = await decodeAsset(assets.current[sourceLayer.asset]),
+                // Layers stored at their content bounds may sit at different
+                // bounds in the snapshot; align both in document space.
+                offset = historySourceOffset(layer.matrix, sourceLayer.matrix);
+              if (offset) {
+                source.getContext('2d')!.clearRect(0, 0, source.width, source.height);
+                source.getContext('2d')!.drawImage(candidate, offset.x, offset.y);
+              } else if (candidate.naturalWidth === currentImage.naturalWidth && candidate.naturalHeight === currentImage.naturalHeight) {
                 source.getContext('2d')!.clearRect(0, 0, source.width, source.height);
                 source.getContext('2d')!.drawImage(candidate, 0, 0);
               } else if (tool === 'art-history-brush') {
@@ -10252,12 +11208,35 @@ export default function Home() {
           },
         };
       gesture.current = g;
-      void paint({
-        ...f,
-        layers: f.layers.map((item) => item.id === layer.id
-          ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
-          : item),
-      });
+      const previewSpotHealing = () => {
+        if (gesture.current !== g) return;
+        void paint({
+          ...f,
+          layers: f.layers.map((item) => item.id === layer.id
+            ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
+            : item),
+        });
+      };
+      if (f.selection) {
+        // Confine the stroke to the selection: capture it before the first
+        // preview so the preview and the committed stroke match.
+        g.selectionPending = true;
+        g.pending = (async () => {
+          try {
+            const selectionMask = await captureSelectionSnapshot(f, layer);
+            g.selectionPending = false;
+            if (selectionMask && g.spotHealingStroke) g.spotHealingStroke.selectionMask = selectionMask;
+          } catch {
+            if (gesture.current === g) gesture.current = null;
+            setNotice('Could not read the selection for Spot Healing');
+            return;
+          }
+          previewSpotHealing();
+        })();
+        await g.pending;
+        return;
+      }
+      previewSpotHealing();
       return;
     }
     if (tool === 'patch') {
@@ -10265,8 +11244,9 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before Patch');
         return;
       }
+      const cloneSource = cloneSourceIn(layer.matrix);
       if (!cloneSource) {
-        setCloneSource(local);
+        chooseCloneSource(local, layer.matrix);
         setNotice('Patch source set; drag on the image to paint the patch');
         return;
       }
@@ -10279,12 +11259,6 @@ export default function Home() {
       const asset = assets.current[layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
         y = Math.max(0, Math.min(asset.h - 1, local.y)),
-        selectionMask =
-          f.selection?.mask &&
-          assets.current[f.selection.mask]?.w === asset.w &&
-          assets.current[f.selection.mask]?.h === asset.h
-            ? f.selection.mask
-            : undefined,
         g: Gesture = {
           tool,
           start: { x, y },
@@ -10302,16 +11276,38 @@ export default function Home() {
               x: cloneSource.x - x,
               y: cloneSource.y - y,
             },
-            ...(selectionMask ? { selectionMask } : {}),
           },
         };
       gesture.current = g;
-      void paint({
-        ...f,
-        layers: f.layers.map((item) => item.id === layer.id
-          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), g.patchStroke!] }
-          : item),
-      });
+      const previewPatch = () => {
+        if (gesture.current !== g) return;
+        void paint({
+          ...f,
+          layers: f.layers.map((item) => item.id === layer.id
+            ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), g.patchStroke!] }
+            : item),
+        });
+      };
+      if (f.selection) {
+        // Any selection shape is captured in layer space (also for moved or
+        // scaled layers), so replay stays aligned after reload.
+        g.selectionPending = true;
+        g.pending = (async () => {
+          try {
+            const selectionMask = await captureSelectionSnapshot(f, layer);
+            g.selectionPending = false;
+            if (selectionMask && g.patchStroke) g.patchStroke.selectionMask = selectionMask;
+          } catch {
+            if (gesture.current === g) gesture.current = null;
+            setNotice('Could not read the selection for Patch');
+            return;
+          }
+          previewPatch();
+        })();
+        await g.pending;
+        return;
+      }
+      previewPatch();
       return;
     }
     if (tool === 'clone' || tool === 'heal') {
@@ -10323,16 +11319,11 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before retouching');
         return;
       }
-      // Match Photoshop's Option/Alt-click source workflow.  A source can be
-      // re-anchored between strokes without switching tools; the click only
-      // updates the source point and must never create a history entry.
-      if (tool === 'clone' && e.altKey) {
-        setCloneSource(local);
-        setNotice('Clone source set; drag on the image to paint it');
-        return;
-      }
-      if (!cloneSource) {
-        setCloneSource(local);
+      // Option/Alt-click is handled before the gesture guard above so a
+      // source click is never dropped; a first plain click also sets it.
+      const sourceAnchor = cloneSourceIn(layer.matrix);
+      if (!sourceAnchor) {
+        chooseCloneSource(local, layer.matrix);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
@@ -10345,47 +11336,61 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
+        cloneAnchor: sourceAnchor,
+        spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
         ],
       } as Gesture;
-      const sourceAnchor = cloneSource;
       gesture.current = g;
       g.pending = (async () => {
-        const sourceImage = await decodeAsset(assets.current[layer.asset]),
-          source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
-        source.getContext('2d')!.drawImage(sourceImage, 0, 0);
-        if (gesture.current !== g) return;
-        g.source = source;
-        g.buffer = surface(source.width, source.height);
-        g.buffer.getContext('2d')!.drawImage(source, 0, 0);
-        let from = g.start;
-        for (const point of g.queued || [
-          { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
-        ]) {
-          stampCanvasSegment(g.buffer, from, point, {
-            size: localSize(layer.matrix, size),
-            hardness,
-            opacity: brushOpacity / 100,
-            pointerType: point.pointerType,
-            pressure: point.pressure,
-            pressureSize,
-            pressureOpacity,
-            pressureCurve,
-            spacing: brushSpacing,
-            angle: brushAngle,
-            roundness: brushRoundness,
-            flipX: brushFlipX,
-            flipY: brushFlipY,
-            mode: tool === 'heal' ? 'heal' : 'clone',
-            source,
-            sourceAnchor,
-            destinationAnchor: g.start,
-          });
-          from = point;
+        try {
+          const sourceImage = await decodeAsset(assets.current[layer.asset]),
+            source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
+          source.getContext('2d')!.drawImage(sourceImage, 0, 0);
+          if (gesture.current !== g) return;
+          const buffer = surface(source.width, source.height);
+          buffer.getContext('2d')!.drawImage(source, 0, 0);
+          // Photoshop confines Clone Stamp and Healing Brush to the selection.
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
+          g.buffer = buffer;
+          g.source = source;
+          let from = g.start;
+          for (const point of g.queued || [
+            { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
+          ]) {
+            stampGestureSegment(g, from, point, {
+              spacingState: g.spacingState,
+              size: localSize(layer.matrix, size),
+              hardness,
+              opacity: brushOpacity / 100,
+              pointerType: point.pointerType,
+              pressure: point.pressure,
+              pressureSize,
+              pressureOpacity,
+              pressureCurve,
+              spacing: brushSpacing,
+              angle: brushAngle,
+              roundness: brushRoundness,
+              flipX: brushFlipX,
+              flipY: brushFlipY,
+              mode: tool === 'heal' ? 'heal' : 'clone',
+              source,
+              sourceAnchor,
+              destinationAnchor: g.start,
+            });
+            from = point;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          if (gesture.current !== g) return;
+          gesture.current = null;
+          void paint(f);
+          setNotice(`Could not prepare ${tool === 'heal' ? 'Healing' : 'Clone'} stroke`);
         }
-        g.queued = undefined;
-        void paint(f, { [layer.id]: g.buffer });
       })();
       await g.pending;
       return;
@@ -10412,6 +11417,7 @@ export default function Home() {
         patternId,
         patternTileSize,
         moved: false,
+        spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
         ],
@@ -10426,6 +11432,9 @@ export default function Home() {
             );
           buffer.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [
@@ -10436,7 +11445,8 @@ export default function Home() {
             },
           ]) {
             g.changed =
-              patternCanvasSegment(g.buffer, from, point, {
+              patternGestureSegment(g, from, point, {
+                spacingState: g.spacingState,
                 size: localSize(layer.matrix, size),
                 hardness,
                 opacity: brushOpacity / 100,
@@ -10498,10 +11508,13 @@ export default function Home() {
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [g.start]) {
-            redEyeCanvasStroke(buffer, from, point, {
+            redEyeGestureStroke(g, from, point, {
               radius: localSize(layer.matrix, size) / 2,
               threshold: g.redEyeThreshold ?? 36,
               amount: (g.redEyeAmount ?? 100) / 100,
@@ -10555,24 +11568,22 @@ export default function Home() {
               1,
               1,
             ).data;
+          const buffer = surface(source.width, source.height);
+          buffer.getContext('2d')!.drawImage(source, 0, 0);
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.source = source;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
-          g.buffer = surface(source.width, source.height);
-          g.buffer.getContext('2d')!.drawImage(source, 0, 0);
-          replaceColorStroke(
-            source,
-            g.buffer,
-            g.replaceTarget,
-            local.x,
-            local.y,
-            local.x,
-            local.y,
+          g.buffer = buffer;
+          sampledGestureStroke(g, local, local, {
+            kind: 'replace',
             color,
             size,
-            colorTolerance,
-            brushOpacity / 100,
-          );
-          void paint(f, { [layer.id]: g.buffer });
+            tolerance: colorTolerance,
+            opacity: brushOpacity / 100,
+          });
+          void paint(f, { [layer.id]: buffer });
         } catch {
           gesture.current = null;
           setNotice('Could not prepare color replacement');
@@ -10592,7 +11603,7 @@ export default function Home() {
         );
         return;
       }
-      gesture.current = {
+      const g: Gesture = {
         tool,
         start: local,
         last: local,
@@ -10600,6 +11611,19 @@ export default function Home() {
         layer,
         moved: false,
       };
+      gesture.current = g;
+      // Decode the layer and sample the selection once, in the background, so
+      // the drag can show the gradient live; pointer-up waits for it.
+      g.pending = prepareGradientBase(f, layer).then(
+        (base) => {
+          if (gesture.current !== g) return;
+          g.gradientBase = base;
+          if (g.moved) previewGradient(g);
+        },
+        () => {
+          // The commit path retries the preparation and reports failures.
+        },
+      );
       return;
     }
     if (tool === 'magic-wand') {
@@ -10808,6 +11832,7 @@ export default function Home() {
       lastPressure: pressure(e),
       pointerType: e.pointerType,
       moved: false,
+      spacingState: { started: false, carry: 0 },
       queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
     } as Gesture;
     gesture.current = g;
@@ -10832,6 +11857,7 @@ export default function Home() {
           ]) {
             const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
             stampGestureSegment(g, from, destination, {
+              spacingState: g.spacingState,
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -10842,6 +11868,7 @@ export default function Home() {
               pressureCurve,
               spacing: brushSpacing,
               scatter: brushScatter,
+              dynamics: brushDynamics,
               texture: brushTexture,
               dual: brushDual,
               secondaryPreset: secondaryBrushPreset,
@@ -10873,6 +11900,7 @@ export default function Home() {
     if (quickMaskGesture.current && quickMaskRef.current) {
       const p = point(e),
         g = quickMaskGesture.current;
+      if (!brushSegmentDue(Math.hypot(p.x - g.last.x, p.y - g.last.y), size)) return;
       updateQuickMaskAt(quickMaskRef.current, p.x, p.y, g.selected);
       g.last = p;
       return;
@@ -10943,6 +11971,9 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
+      // Until the selection snapshot is ready, record points only; the
+      // capture paints the first preview with every point so far.
+      if (g.selectionPending) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
@@ -10964,12 +11995,19 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
+      if (g.selectionPending) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
           ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       });
+      return;
+    }
+    if (g.tool === 'gradient' && g.layer?.kind === 'raster') {
+      g.gradientEnd = local;
+      g.last = local;
+      if (g.gradientBase) previewGradient(g);
       return;
     }
     if (g.tool === 'freeform-pen') {
@@ -11071,9 +12109,10 @@ export default function Home() {
       (g.tool === 'clone' || g.tool === 'heal') &&
       g.buffer &&
       g.source &&
-      cloneSource
+      g.cloneAnchor
     ) {
-      stampCanvasSegment(g.buffer, g.last, local, {
+      stampGestureSegment(g, g.last, local, {
+        spacingState: g.spacingState,
         size: localSize(g.layer!.matrix, size),
         hardness,
         opacity: brushOpacity / 100,
@@ -11089,16 +12128,17 @@ export default function Home() {
         flipY: brushFlipY,
         mode: g.tool === 'heal' ? 'heal' : 'clone',
         source: g.source,
-        sourceAnchor: cloneSource,
+        sourceAnchor: g.cloneAnchor,
         destinationAnchor: g.start,
       });
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
     if (g.tool === 'pattern-stamp' && g.buffer) {
       g.changed =
-        patternCanvasSegment(g.buffer, g.last, local, {
+        patternGestureSegment(g, g.last, local, {
+          spacingState: g.spacingState,
           size: localSize(g.layer!.matrix, size),
           hardness,
           opacity: brushOpacity / 100,
@@ -11117,17 +12157,17 @@ export default function Home() {
           foreground: brushColor(color),
           background: brushColor(backgroundColor),
         }) || Boolean(g.changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
     if (g.tool === 'red-eye' && g.buffer) {
-      redEyeCanvasStroke(g.buffer, g.last, local, {
+      redEyeGestureStroke(g, g.last, local, {
         radius: localSize(g.layer!.matrix, size) / 2,
         threshold: g.redEyeThreshold ?? 36,
         amount: (g.redEyeAmount ?? 100) / 100,
       });
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11197,19 +12237,13 @@ export default function Home() {
       g.source &&
       g.replaceTarget
     ) {
-      eraseBackgroundStroke(
-        g.source,
-        g.buffer,
-        g.replaceTarget,
-        g.last.x,
-        g.last.y,
-        local.x,
-        local.y,
-        localSize(g.layer!.matrix, size),
-        colorTolerance,
-        brushOpacity / 100,
-      );
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      sampledGestureStroke(g, g.last, local, {
+        kind: 'background-erase',
+        size: localSize(g.layer!.matrix, size),
+        tolerance: colorTolerance,
+        opacity: brushOpacity / 100,
+      });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11221,6 +12255,7 @@ export default function Home() {
       });
     }
     if (g.tool === 'smudge' && g.buffer && g.source) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer!.matrix, size))) return;
       const changed = smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
         size: localSize(g.layer!.matrix, size),
         hardness,
@@ -11228,11 +12263,12 @@ export default function Home() {
         selectionMask: g.selectionMask,
       });
       g.changed = Boolean(g.changed || changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
     if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.source && g.layer) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer.matrix, size))) return;
       const sourceContext = g.source.getContext('2d')!,
         bufferContext = g.buffer.getContext('2d')!,
         result = applyRetouchStroke(
@@ -11254,7 +12290,7 @@ export default function Home() {
         );
       bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
       g.changed = Boolean(g.changed || result.changed);
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11298,7 +12334,7 @@ export default function Home() {
       g.brushPoints = [...(g.brushPoints || []), ...segmentPoints];
       g.moved = true;
       g.last = local;
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       return;
     }
     if (g.tool === 'background-eraser' && !g.buffer) {
@@ -11323,6 +12359,7 @@ export default function Home() {
       g.buffer &&
       g.source
     ) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer!.matrix, size))) return;
       const changed = tonalCanvasSegment(g.source, g.buffer, g.last, local, {
         size: localSize(g.layer!.matrix, size),
         hardness,
@@ -11335,7 +12372,7 @@ export default function Home() {
         selectionMask: g.selectionMask,
       });
       g.changed = Boolean(g.changed || changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11367,20 +12404,14 @@ export default function Home() {
       g.replaceTarget &&
       g.layer
     ) {
-      replaceColorStroke(
-        g.source,
-        g.buffer,
-        g.replaceTarget,
-        g.last.x,
-        g.last.y,
-        local.x,
-        local.y,
+      sampledGestureStroke(g, g.last, local, {
+        kind: 'replace',
         color,
         size,
-        colorTolerance,
-        brushOpacity / 100,
-      );
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+        tolerance: colorTolerance,
+        opacity: brushOpacity / 100,
+      });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -11402,6 +12433,7 @@ export default function Home() {
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
       stampGestureSegment(g, from, destination, {
+        spacingState: g.spacingState,
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -11409,8 +12441,10 @@ export default function Home() {
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+        pressureCurve,
         spacing: brushSpacing,
         scatter: brushScatter,
+        dynamics: brushDynamics,
         texture: brushTexture,
         dual: brushDual,
         secondaryPreset: secondaryBrushPreset,
@@ -11424,7 +12458,7 @@ export default function Home() {
         mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
         color: g.tool === 'eraser' ? undefined : brushColor(color),
       });
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       g.smoothedLast = destination;
       g.last = local;
     } else if (
@@ -12004,8 +13038,12 @@ export default function Home() {
       g.pointerType = g.pointerType || e.pointerType;
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
-      if (g.moved && (from.x !== destination.x || from.y !== destination.y))
+      // A deferred first dab (perpendicular-only scatter) is placed now,
+      // using the last segment's direction or both axes for a click.
+      if ((g.moved && (from.x !== destination.x || from.y !== destination.y)) || g.spacingState?.deferredFirst)
         stampGestureSegment(g, from, destination, {
+          flushDeferred: true,
+          spacingState: g.spacingState,
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -12016,6 +13054,7 @@ export default function Home() {
           pressureCurve,
           spacing: brushSpacing,
           scatter: brushScatter,
+          dynamics: brushDynamics,
           texture: brushTexture,
           dual: brushDual,
           secondaryPreset: secondaryBrushPreset,
@@ -12030,7 +13069,7 @@ export default function Home() {
           color: g.tool === 'eraser' ? undefined : brushColor(color),
         });
       g.smoothedLast = destination;
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
@@ -12243,51 +13282,10 @@ export default function Home() {
     } else if (g.tool === 'gradient' && g.moved && g.layer) {
       try {
         if (g.layer.kind !== 'raster') return;
-        const image = await decodeAsset(assets.current[g.layer.asset]),
-          buffer = surface(image.naturalWidth, image.naturalHeight);
-        buffer.getContext('2d')!.drawImage(image, 0, 0);
-        // Photoshop confines a gradient to the active selection.
-        const selectionMask = await selectionMaskForLayer(
-          f.selection, f, g.layer, assets.current, buffer.width, buffer.height,
-        );
-        const context = buffer.getContext('2d')!,
-          gradient = gradientMode === 'radial'
-            ? context.createRadialGradient(
-              g.start.x,
-              g.start.y,
-              0,
-              g.start.x,
-              g.start.y,
-              Math.max(1, Math.hypot(local.x - g.start.x, local.y - g.start.y)),
-            )
-            : context.createLinearGradient(
-              g.start.x,
-              g.start.y,
-              local.x,
-              local.y,
-            );
-        // A transparent end fades the adjacent colour's alpha (not toward
-        // transparent white, which leaves a pale fringe in canvas gradients).
-        for (const stop of buildGradientColorStops({
-          mode: gradientMode,
-          color,
-          backgroundColor,
-          end: gradientEnd,
-          reverse: gradientReverse,
-          midpoint: gradientMidpoint,
-          midpointPosition: gradientMidpointPosition,
-          stops: gradientStops,
-        })) gradient.addColorStop(stop.offset, stop.color);
-        context.fillStyle = gradient;
-        context.fillRect(0, 0, buffer.width, buffer.height);
-        if (gradientNoise > 0 || gradientDither > 0) {
-          const imageData = context.getImageData(0, 0, buffer.width, buffer.height);
-          let pixels = applyGradientNoise(imageData.data, buffer.width, buffer.height, gradientNoise);
-          pixels = applyGradientDither(pixels, buffer.width, buffer.height, gradientDither);
-          imageData.data.set(pixels);
-          context.putImageData(imageData, 0, 0);
-        }
-        if (selectionMask) confineToSelection(image, buffer, selectionMask);
+        // The live preview prepared the decoded layer and selection at
+        // pointer-down; the commit renders the same pixels for the release point.
+        const base = g.gradientBase ?? await prepareGradientBase(f, g.layer);
+        const buffer = renderGradientBuffer(base, g.start, local);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -12311,7 +13309,7 @@ export default function Home() {
         setNotice('No Art History Brush change');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (commit({
         ...f,
         layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item),
@@ -12327,7 +13325,7 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12342,7 +13340,8 @@ export default function Home() {
     } else if (g.tool === 'pattern-stamp' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
         g.changed =
-          patternCanvasSegment(g.buffer, g.last, local, {
+          patternGestureSegment(g, g.last, local, {
+            spacingState: g.spacingState,
             size: localSize(g.layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
@@ -12366,7 +13365,7 @@ export default function Home() {
         setNotice('No Pattern Stamp change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12430,12 +13429,12 @@ export default function Home() {
         setNotice('Selection Brush selection created');
     } else if (g.tool === 'red-eye' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
-        redEyeCanvasStroke(g.buffer, g.last, local, {
+        redEyeGestureStroke(g, g.last, local, {
           radius: localSize(g.layer.matrix, size) / 2,
           threshold: g.redEyeThreshold ?? 36,
           amount: (g.redEyeAmount ?? 100) / 100,
         });
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12452,19 +13451,13 @@ export default function Home() {
         g.replaceTarget &&
         (g.last.x !== local.x || g.last.y !== local.y)
       )
-        eraseBackgroundStroke(
-          g.source,
-          g.buffer,
-          g.replaceTarget,
-          g.last.x,
-          g.last.y,
-          local.x,
-          local.y,
-          localSize(g.layer.matrix, size),
-          colorTolerance,
-          brushOpacity / 100,
-        );
-      const asset = addAsset(assets.current, g.buffer);
+        sampledGestureStroke(g, g.last, local, {
+          kind: 'background-erase',
+          size: localSize(g.layer.matrix, size),
+          tolerance: colorTolerance,
+          opacity: brushOpacity / 100,
+        });
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12489,7 +13482,7 @@ export default function Home() {
         setNotice('No Smudge change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12529,7 +13522,7 @@ export default function Home() {
         setNotice(`No ${g.tool === 'blur' ? 'Blur' : 'Sharpen'} change applied`);
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
         setNotice(`${g.tool === 'blur' ? 'Blur' : 'Sharpen'} stroke applied`);
     } else if (
@@ -12556,7 +13549,7 @@ export default function Home() {
         setNotice('No tonal change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12569,7 +13562,7 @@ export default function Home() {
           `${g.tool === 'sponge' ? 'Sponge' : g.tool === 'dodge' ? 'Dodge' : 'Burn'} stroke applied`,
         );
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -13005,6 +13998,7 @@ export default function Home() {
         }
         if (k === 'x' && !e.shiftKey) cutLayer();
         if (k === 'v' && !e.shiftKey && hasClipboard) pasteLayer();
+        if (browserImagePaste) scheduleKeyboardPasteFallback();
         if (k === 't') beginLayerTransform();
         return;
       }
@@ -13025,9 +14019,8 @@ export default function Home() {
       }
       if (e.key === '[' || e.key === ']') {
         e.preventDefault();
-        setSize((value) =>
-          Math.max(2, Math.min(100, value + (e.key === ']' ? 2 : -2))),
-        );
+        const direction = e.key === ']' ? 1 : -1;
+        setSize((value) => stepBrushSize(value, direction));
         return;
       }
       if (e.altKey) return;
@@ -13142,6 +14135,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -13170,6 +14164,8 @@ export default function Home() {
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') return revealAll();
     else if (command === 'project-save') void exportProject();
+    else if (command === 'project-save-as') void exportProject(true);
+    else if (command === 'reference-place') chooseReferenceFile();
     else if (command === 'file-info') setFileInfoOpen(true);
     else if (command === 'batch-export')
       setBatchExporting({
@@ -13225,6 +14221,7 @@ export default function Home() {
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'paste-clipboard-image') void pasteSystemClipboardImage();
     else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
     else if (command === 'fill-layer') return fillActiveLayer();
@@ -13276,7 +14273,7 @@ export default function Home() {
     else if (command === 'combine-shapes-exclude') return combineSelectedShapes('exclude');
     else if (command === 'patch-tool') {
       setTool('patch');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Patch tool selected; click a source, then drag a destination');
     } else if (command === 'mixer-brush-tool') {
       setTool('mixer-brush');
@@ -13599,11 +14596,11 @@ export default function Home() {
       if (cropPreview) cancelCropPreview();
       if (perspectiveCropPreview) cancelPerspectiveCropPreview();
       setTool('slice');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Drag on the image to select a slice');
     } else if (command === 'slice-select') {
       setTool('slice-select');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice(
         current().slices?.length
           ? 'Click a saved slice to select and edit it'
@@ -13612,7 +14609,7 @@ export default function Home() {
     } else if (command === 'frame') {
       if (slicePreview) cancelSlicePreview();
       setTool('frame');
-      setCloneSource(null);
+      clearCloneSource();
       setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
     else if (command === 'rotate-right') return transform('right');
@@ -13699,6 +14696,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -13750,11 +14748,13 @@ export default function Home() {
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
-        return !hasClipboard || frame.layers.length >= 32;
+        return !hasClipboard || frame.layers.length >= MAX_DOCUMENT_LAYERS;
+      case 'paste-clipboard-image':
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'paste-special':
-        return !hasClipboard || frame.layers.length >= 32;
+        return !hasClipboard || frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'new-layer':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'trim-layer':
         return !layer || locked || !canTrimRasterLayer(layer);
       case 'clear-layer':
@@ -13767,7 +14767,7 @@ export default function Home() {
             const candidate = frame.layers.find((item) => item.id === id);
             return !candidate || layerIsLocked(frame, candidate);
           }) ||
-          frame.layers.length + selectedIdsForFrame(frame).length > 32
+          frame.layers.length + selectedIdsForFrame(frame).length > MAX_DOCUMENT_LAYERS
         );
       case 'link-smart-objects':
         return (
@@ -13807,7 +14807,7 @@ export default function Home() {
             const candidate = frame.layers.find((item) => item.id === id);
             return !candidate || Boolean(candidate.groupId) || layerIsLocked(frame, candidate);
           }) ||
-          (frame.groups || []).length >= 32
+          (frame.groups || []).length >= MAX_DOCUMENT_GROUPS
         );
       case 'ungroup-layer':
         return (
@@ -13851,7 +14851,7 @@ export default function Home() {
       case 'prompt-to-edit':
         return !layer || !layer.visible || locked;
       case 'generate-image':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -13993,7 +14993,7 @@ export default function Home() {
       case 'transform-selection':
         return !frame.selection;
       case 'create-work-path':
-        return !frame.selection || frame.layers.length >= 32;
+        return !frame.selection || frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'define-custom-path':
         return !layer || layer.kind !== 'path' || locked;
       case 'update-custom-path':
@@ -14087,7 +15087,7 @@ export default function Home() {
       case 'text-on-path':
         return !layer || layer.kind !== 'text' || locked || !frame.layers.some((candidate) => candidate.kind === 'path');
       case 'paste-lorem':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'convert-to-shape':
         return !layer || layer.kind !== 'text' || locked || !layer.visible;
       case 'rasterize-type':
@@ -14156,7 +15156,7 @@ export default function Home() {
       void paint(current());
     }
     setTool(id);
-    setCloneSource(null);
+    clearCloneSource();
     closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
   };
@@ -14241,21 +15241,15 @@ export default function Home() {
         setDrag(false);
         void load(e.dataTransfer.files[0]);
       }}
-      onPaste={(e) => {
-        // Keep the internal layer clipboard authoritative when it exists. If
-        // it does not, accept an image item from the browser/OS clipboard as
-        // a new editable raster layer. Text and unsupported clipboard types
-        // remain untouched so native editing controls keep their behavior.
-        if (hasClipboard) return;
-        const image = Array.from(e.clipboardData.items).find((item) =>
-          item.kind === 'file' && item.type.startsWith('image/'),
-        );
-        const file = image?.getAsFile();
-        if (!file) return;
-        e.preventDefault();
-        void load(file, true);
-      }}
     >
+      <input
+        ref={referenceFile}
+        data-testid="reference-input"
+        className="hidden"
+        type="file"
+        accept="image/*,.svg,.svgz,.heic,.heif,.tif,.tiff,.psd,.psb,.pdf"
+        onChange={(event) => void placeReference(event.target.files?.[0])}
+      />
       <input
         ref={layerFile}
         data-testid="layer-input"
@@ -15331,11 +16325,50 @@ export default function Home() {
               data-rendering={doc.rendering ? 'true' : 'false'}
               onPointerDown={(e) => void pointerDown(e)}
               onPointerMove={pointerMove}
-              onPointerUp={(e) => void pointerUp(e)}
-              onPointerCancel={(e) => void pointerUp(e)}
+              onPointerUp={(e) => void pointerUp(e).then(dropUnusedExpansion)}
+              onPointerCancel={(e) => void pointerUp(e).then(dropUnusedExpansion)}
               onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
+            {frame && cloneSource && (tool === 'clone' || tool === 'heal')
+              ? (() => {
+                  // The source is stored in the layer placement it was picked
+                  // in; show it where the next stroke will sample on the canvas.
+                  const [a, b, c, d, e, f] = cloneSource.matrix,
+                    x = a * cloneSource.x + c * cloneSource.y + e,
+                    y = b * cloneSource.x + d * cloneSource.y + f,
+                    arm = Math.max(10, Math.max(frame.w, frame.h) / 60);
+                  return (
+                    <svg
+                      className="clone-source-overlay"
+                      data-testid="clone-source-marker"
+                      data-x={Math.round(x)}
+                      data-y={Math.round(y)}
+                      viewBox={`0 0 ${frame.w} ${frame.h}`}
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <circle cx={x} cy={y} r={arm * 0.6} />
+                      <line x1={x - arm} y1={y} x2={x + arm} y2={y} />
+                      <line x1={x} y1={y - arm} x2={x} y2={y + arm} />
+                    </svg>
+                  );
+                })()
+              : null}
+            {frame?.reference?.visible && assets.current[frame.reference.asset] && (
+              <img
+                className="reference-overlay"
+                data-testid="reference-overlay"
+                src={assets.current[frame.reference.asset].url}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                style={{
+                  opacity: frame.reference.opacity,
+                  objectFit: referenceObjectFit(frame.reference.fit),
+                }}
+              />
+            )}
             {quickMasking && (
               <canvas
                 ref={quickMaskOverlayCanvas}
@@ -15344,6 +16377,70 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
+            {(() => {
+              // On-canvas centre handle for centred filters. Dragging previews
+              // locally and commits one undoable edit on release; arrow keys
+              // nudge by one layer pixel (Shift: ten), Home recentres.
+              if (
+                !frame ||
+                !active ||
+                !isRasterContentLayer(active) ||
+                !active.visible ||
+                !isCenteredFilter(filterEffects.type)
+              )
+                return null;
+              const asset = assets.current[active.asset];
+              if (!asset) return null;
+              const center = filterCenterDrag ?? {
+                centerX: filterEffects.centerX,
+                centerY: filterEffects.centerY,
+              };
+              const at = filterCenterToFrame(active.matrix, asset.w, asset.h, center.centerX, center.centerY);
+              const fromPointer = (event: React.PointerEvent<HTMLButtonElement>) =>
+                filterCenterFromFrame(active.matrix, asset.w, asset.h, point(event));
+              const commitCenter = (next: { centerX: number; centerY: number }) => {
+                if (next.centerX !== filterEffects.centerX || next.centerY !== filterEffects.centerY)
+                  setFilterEffects(next);
+              };
+              return (
+                <div className="filter-center-overlay" data-testid="filter-center-overlay">
+                  <button
+                    type="button"
+                    className="filter-center-handle"
+                    data-testid="filter-center-handle"
+                    data-center-x={center.centerX}
+                    data-center-y={center.centerY}
+                    style={{ left: `${(at.x / frame.w) * 100}%`, top: `${(at.y / frame.h) * 100}%` }}
+                    aria-label={`Filter center ${filterCenterPercent(center.centerX)}% across, ${filterCenterPercent(center.centerY)}% down. Drag, or use arrow keys to move one pixel, Shift for ten, Home to recenter.`}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.currentTarget.setPointerCapture?.(event.pointerId);
+                      const next = fromPointer(event);
+                      if (next) setFilterCenterDrag(next);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!filterCenterDrag) return;
+                      const next = fromPointer(event);
+                      if (next) setFilterCenterDrag(next);
+                    }}
+                    onPointerUp={(event) => {
+                      if (!filterCenterDrag) return;
+                      const next = fromPointer(event) ?? filterCenterDrag;
+                      setFilterCenterDrag(null);
+                      commitCenter(next);
+                    }}
+                    onPointerCancel={() => setFilterCenterDrag(null)}
+                    onKeyDown={(event) => {
+                      const next = nudgeFilterCenter(center, asset.w, asset.h, event.key, event.shiftKey);
+                      if (!next) return;
+                      event.preventDefault();
+                      commitCenter(next);
+                    }}
+                  />
+                </div>
+              );
+            })()}
             {frame && (frame.measurements?.length || measurementPreview) ? (
               <svg
                 className="measurement-overlay"
@@ -15724,6 +16821,8 @@ export default function Home() {
             <HistoryPanel
               history={history.current}
               currentIndex={index.current}
+              persisted={persistedHistory}
+              budget={historyBudget}
               restore={(targetIndex) => {
                 const distance = targetIndex - index.current;
                 if (!distance) return;
@@ -16293,6 +17392,37 @@ export default function Home() {
                 </label>
               )}
               {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient mode</span>
+                  <select
+                    aria-label="Gradient mode"
+                    value={gradientBlend}
+                    onChange={(event) => setGradientBlend(normalizeGradientBlendMode(event.target.value))}
+                  >
+                    {GRADIENT_BLEND_MODES.map((mode) => (
+                      <option key={mode} value={mode}>{GRADIENT_BLEND_LABELS[mode]}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Gradient opacity"
+                  value={gradientOpacity}
+                  min={1}
+                  max={100}
+                  set={setGradientOpacity}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <p className="adjust-note">
+                  Normal paints over existing pixels, so a second gradient builds on the first;
+                  Replace discards the layer’s pixels (inside any selection). Blend modes combine
+                  the gradient with what is already painted.
+                </p>
+              )}
+              {tool === 'gradient' && (
                 <Slider
                   label="Dither"
                   value={gradientDither}
@@ -16405,14 +17535,7 @@ export default function Home() {
                 />
               )}
               {tool !== 'magic-eraser' && (
-                <Slider
-                  label="Size"
-                  value={size}
-                  min={2}
-                  max={100}
-                  set={setSize}
-                  suffix="px"
-                />
+                <BrushSizeControl value={size} set={setSize} />
               )}
               {(tool === 'brush' ||
                 tool === 'pencil' ||
@@ -16571,8 +17694,8 @@ export default function Home() {
                       <Slider
                         label="Spacing"
                         value={brushSpacing}
-                        min={1}
-                        max={100}
+                        min={BRUSH_SPACING_MIN}
+                        max={BRUSH_SPACING_MAX}
                         set={setBrushSpacing}
                         suffix="%"
                       />
@@ -16590,9 +17713,57 @@ export default function Home() {
                             label="Scatter"
                             value={brushScatter}
                             min={0}
-                            max={100}
+                            max={BRUSH_SCATTER_MAX}
                             set={setBrushScatter}
                             suffix="%"
+                          />
+                          <label className="check-row">
+                            <input
+                              aria-label="Scatter both axes"
+                              type="checkbox"
+                              checked={brushDynamics.scatterBothAxes}
+                              onChange={(event) => {
+                                const scatterBothAxes = event.target.checked;
+                                setBrushDynamics((current) => ({ ...current, scatterBothAxes }));
+                              }}
+                            />
+                            Scatter both axes
+                          </label>
+                          <Slider
+                            label="Count"
+                            value={brushDynamics.count}
+                            min={BRUSH_COUNT_MIN}
+                            max={BRUSH_COUNT_MAX}
+                            set={(count) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, count }))}
+                            suffix=""
+                          />
+                          <Slider
+                            label="Count jitter"
+                            value={brushDynamics.countJitter}
+                            min={0}
+                            max={100}
+                            set={(countJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, countJitter }))}
+                          />
+                          <Slider
+                            label="Size jitter"
+                            value={brushDynamics.sizeJitter}
+                            min={0}
+                            max={100}
+                            set={(sizeJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, sizeJitter }))}
+                          />
+                          <Slider
+                            label="Angle jitter"
+                            value={brushDynamics.angleJitter}
+                            min={0}
+                            max={100}
+                            set={(angleJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, angleJitter }))}
+                          />
+                          <Slider
+                            label="Opacity jitter"
+                            value={brushDynamics.opacityJitter}
+                            min={0}
+                            max={100}
+                            set={(opacityJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, opacityJitter }))}
                           />
                           <Slider
                             label="Texture"
@@ -16684,7 +17855,9 @@ export default function Home() {
                         dynamics; Wet edges and Build-up are deterministic local
                         opacity approximations, while full physical tip
                         simulation and wet-media buildup remain staged. Scatter is a deterministic local
-                        stamp offset.
+                        stamp offset (up to 1,000% of the diameter; perpendicular to the stroke unless
+                        both axes is on). Count places several dabs per spacing step; jitter varies each
+                        dab deterministically, so replaying a stroke gives the same pixels.
                       </p>
                     </>
                   )}
@@ -16728,7 +17901,9 @@ export default function Home() {
                         <p className="adjust-note">
                           Pressure mapping is off by default. Pen and touch
                           inputs use full size and opacity until each option is
-                          enabled.
+                          enabled. With an option on, near-zero pen pressure is a
+                          pen lift and paints nothing; mouse input always paints
+                          at full pressure.
                         </p>
                       </>
                     )}
@@ -17015,6 +18190,15 @@ export default function Home() {
               action="Clear"
               onClick={() => chooseFilterEffect('none', 'Filter effect')}
             />
+            {filterStackEditIndex !== null && (
+              <p className="adjust-note filter-stack-editing" data-testid="filter-stack-editing">
+                Editing stacked filter {filterStackEditIndex + 1}.{' '}
+                {filterTypeLabel(filterEffects.type)}. Each change is one undo step.{' '}
+                <button type="button" onClick={() => setFilterStackEdit(null)}>
+                  Done
+                </button>
+              </p>
+            )}
             <select
               className="text-input"
               aria-label="Filter effect"
@@ -17472,18 +18656,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Pinch center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Pinch center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17502,26 +18686,26 @@ export default function Home() {
                         <option value="bloat">Bloat</option>
                       </select>
                     </label>
-                    <Slider label="Liquify center X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
-                    <Slider label="Liquify center Y" value={Math.round(filterEffects.centerY * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
+                    <Slider label="Liquify center X" value={filterCenterPercent(filterEffects.centerX)} min={0} max={100} set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })} suffix="%" />
+                    <Slider label="Liquify center Y" value={filterCenterPercent(filterEffects.centerY)} min={0} max={100} set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })} suffix="%" />
                   </>
                 )}
                 {filterEffects.type === 'ripple' && (
                   <>
                     <Slider
                       label="Ripple center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Ripple center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17530,18 +18714,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Spherize center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Spherize center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17561,18 +18745,18 @@ export default function Home() {
                     </label>
                     <Slider
                       label="Correction centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Correction centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17582,18 +18766,18 @@ export default function Home() {
                     <p>Bounded anisotropic wide-angle correction with editable line-preservation biases. The authored centre stays fixed and transparent padding remains untouched; Photoshop constraint drawing and camera calibration remain staged.</p>
                     <Slider
                       label="Correction centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Correction centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -17618,18 +18802,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Flare centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Flare centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -17676,18 +18860,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Focal centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Focal centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17709,18 +18893,18 @@ export default function Home() {
                     )}
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center X' : 'Blur center X'}
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center Y' : 'Blur center Y'}
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17729,18 +18913,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Path center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Path center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17749,18 +18933,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Focus centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Focus height"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -17977,18 +19161,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Flame origin X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Flame origin Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={20}
                       max={95}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <label className="slider">
@@ -18015,8 +19199,8 @@ export default function Home() {
                 )}
                 {filterEffects.type === 'tree' && (
                   <>
-                    <Slider label="Tree origin X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
-                    <Slider label="Tree origin Y" value={Math.round(filterEffects.centerY * 100)} min={20} max={98} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
+                    <Slider label="Tree origin X" value={filterCenterPercent(filterEffects.centerX)} min={0} max={100} set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })} suffix="%" />
+                    <Slider label="Tree origin Y" value={filterCenterPercent(filterEffects.centerY)} min={20} max={98} set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })} suffix="%" />
                     <Slider label="Branch count" value={filterEffects.tree?.branches ?? 5} min={2} max={8} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), branches: value } })} />
                     <Slider label="Leafiness" value={filterEffects.tree?.leafiness ?? 55} min={0} max={100} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), leafiness: value } })} suffix="%" />
                     <label className="slider"><span><b>Tree seed (0–4294967295)</b><output>{filterEffects.seed}</output></span><input className="text-input tree-seed-input" aria-label="Tree seed" type="number" min={0} max={0xffffffff} step={1} value={filterEffects.seed} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) setFilterEffects({ seed: value }); }} /></label>
@@ -18053,12 +19237,195 @@ export default function Home() {
                     </label>
                   </>
                 )}
+                {(filterEffects.type === 'twirl' || filterEffects.type === 'polar-coordinates') && (
+                  <>
+                    <Slider
+                      label={filterEffects.type === 'twirl' ? 'Twirl center X' : 'Polar center X'}
+                      value={filterCenterPercent(filterEffects.centerX)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label={filterEffects.type === 'twirl' ? 'Twirl center Y' : 'Polar center Y'}
+                      value={filterCenterPercent(filterEffects.centerY)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {isCenteredFilter(filterEffects.type) && active && isRasterContentLayer(active) && assets.current[active.asset] && (() => {
+                  // Exact, sub-pixel centre entry in layer pixels; the sliders
+                  // above stay in whole percent for quick keyboard steps.
+                  const { w, h } = assets.current[active.asset];
+                  const field = (axis: 'x' | 'y') => {
+                    const span = Math.max(0, (axis === 'x' ? w : h) - 1);
+                    const fraction = axis === 'x' ? filterEffects.centerX : filterEffects.centerY;
+                    return (
+                      <label className="slider">
+                        <span>
+                          <b>{`Filter center ${axis.toUpperCase()} (px)`}</b>
+                          <output>{`${filterCenterPercent(fraction)}%`}</output>
+                        </span>
+                        <input
+                          className="text-input"
+                          aria-label={`Filter center ${axis.toUpperCase()} in pixels`}
+                          type="number"
+                          min={0}
+                          max={span}
+                          step={0.1}
+                          value={Math.round(fraction * span * 10) / 10}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (event.target.value === '' || !Number.isFinite(value) || !span) return;
+                            const next = filterCenterFromPercent((Math.min(span, Math.max(0, value)) / span) * 100);
+                            setFilterEffects(axis === 'x' ? { centerX: next } : { centerY: next });
+                          }}
+                        />
+                      </label>
+                    );
+                  };
+                  return (
+                    <>
+                      {field('x')}
+                      {field('y')}
+                      <p className="adjust-note">
+                        Drag the crosshair on the canvas to place the center,
+                        or focus it and use the arrow keys (Shift moves ten
+                        pixels, Home recenters).
+                      </p>
+                    </>
+                  );
+                })()}
                 <p className="adjust-note">
                   This effect stays editable in the project and is applied to
                   the rendered layer. The original asset remains unchanged.
                 </p>
               </>
             )}
+            {active && isRasterContentLayer(active) && (() => {
+              const entries = filterStackEntries;
+              const liveNeutral = isNeutralFilterEffects(effectiveFilterEffects(liveFilterEffects));
+              /** Keep the edited entry selected when the stack is reordered or trimmed. */
+              const trackEdit = (
+                change: Parameters<typeof trackedSmartFilterIndex>[1],
+              ) => {
+                if (filterStackEditIndex === null) return;
+                const next = trackedSmartFilterIndex(filterStackEditIndex, change);
+                setFilterStackEdit(next === null ? null : { layerId: active.id, index: next });
+              };
+              return (
+                <fieldset className="filter-stack" aria-label="Filter stack">
+                  <button
+                    type="button"
+                    disabled={liveNeutral || entries.length >= SMART_FILTER_MAX}
+                    onClick={convertForSmartFilters}
+                  >
+                    Add filter to stack ({entries.length}/{SMART_FILTER_MAX})
+                  </button>
+                  {entries.length > 0 && (
+                    <>
+                      <p className="adjust-note">
+                        Stacked filters render first, in this order, then the
+                        filter above. Choose another filter to stack it too.
+                      </p>
+                      <ol aria-label="Stacked filters">
+                        {entries.map(({ effect, enabled }, index) => {
+                          const name = `${index + 1}. ${filterTypeLabel(effect.type)}`;
+                          const editing = filterStackEditIndex === index;
+                          return (
+                            <li
+                              key={`${index}-${effect.type}`}
+                              data-enabled={enabled ? 'true' : 'false'}
+                              data-editing={editing ? 'true' : undefined}
+                            >
+                              <span title={name}>{name}</span>
+                              <button
+                                type="button"
+                                aria-pressed={editing}
+                                aria-label={`${editing ? 'Stop editing' : 'Edit'} stacked filter ${name}`}
+                                title={editing ? 'Done editing' : 'Edit parameters'}
+                                onClick={() => {
+                                  setFilterStackEdit(editing ? null : { layerId: active.id, index });
+                                  setNotice(
+                                    editing
+                                      ? 'Filter effects controls edit the live filter again'
+                                      : `Filter effects controls now edit stacked filter ${name}`,
+                                  );
+                                }}
+                              >
+                                <SlidersHorizontal size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-pressed={enabled}
+                                aria-label={`${enabled ? 'Hide' : 'Show'} stacked filter ${name}`}
+                                title={enabled ? 'Hide' : 'Show'}
+                                onClick={() =>
+                                  editSmartFilterStack(
+                                    (stack) => setSmartFilterEnabled(stack, index, !enabled),
+                                    `${filterTypeLabel(effect.type)} ${enabled ? 'hidden' : 'shown'} in the filter stack`,
+                                  )
+                                }
+                              >
+                                {enabled ? <Eye size={15} /> : <EyeOff size={15} />}
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Apply stacked filter ${name} earlier`}
+                                title="Apply earlier"
+                                disabled={index === 0}
+                                onClick={() => {
+                                  if (editSmartFilterStack(
+                                    (stack) => moveSmartFilter(stack, index, -1),
+                                    `${filterTypeLabel(effect.type)} now applies earlier`,
+                                  ))
+                                    trackEdit({ kind: 'move', index, offset: -1, length: entries.length });
+                                }}
+                              >
+                                <ArrowUp size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Apply stacked filter ${name} later`}
+                                title="Apply later"
+                                disabled={index === entries.length - 1}
+                                onClick={() => {
+                                  if (editSmartFilterStack(
+                                    (stack) => moveSmartFilter(stack, index, 1),
+                                    `${filterTypeLabel(effect.type)} now applies later`,
+                                  ))
+                                    trackEdit({ kind: 'move', index, offset: 1, length: entries.length });
+                                }}
+                              >
+                                <ArrowDown size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Remove stacked filter ${name}`}
+                                title="Remove"
+                                onClick={() => {
+                                  if (editSmartFilterStack(
+                                    (stack) => removeSmartFilter(stack, index),
+                                    `${filterTypeLabel(effect.type)} removed from the filter stack; undo restores it`,
+                                  ))
+                                    trackEdit({ kind: 'remove', index });
+                                }}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </>
+                  )}
+                </fieldset>
+              );
+            })()}
           </section>
           <section className="panel cloud-panel">
             <h3>My projects</h3>
@@ -18109,6 +19476,23 @@ export default function Home() {
             )}
             <p aria-live="polite">{cloudMessage}</p>
           </section>
+          {frame && (
+            <ReferencePanel
+              reference={frame.reference}
+              size={
+                frame.reference && assets.current[frame.reference.asset]
+                  ? {
+                      w: assets.current[frame.reference.asset].w,
+                      h: assets.current[frame.reference.asset].h,
+                    }
+                  : undefined
+              }
+              disabled={quickMasking}
+              choose={chooseReferenceFile}
+              update={updateReference}
+              remove={removeReference}
+            />
+          )}
         </aside>
       </div>
       <footer>
@@ -18211,5 +19595,90 @@ function Slider({
         onChange={(e) => set(+e.target.value)}
       />
     </label>
+  );
+}
+
+/**
+ * Shared painting-tool Size: an exact numeric field (labelled "Size") plus a
+ * perceptual logarithmic slider so 1–5,000 px stays usable on one track.
+ * Arrow/Page keys on the slider use the same proportional steps as `[`/`]`.
+ */
+function BrushSizeControl({
+  value,
+  set,
+}: {
+  value: number;
+  set: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commitDraft = (text: string) => {
+    const parsed = Number(text);
+    if (text.trim() !== '' && Number.isFinite(parsed)) set(clampBrushSize(parsed, value));
+    setDraft(null);
+  };
+  return (
+    <div className="slider brush-size-control">
+      <span>
+        <b>Size</b>
+        <span className="brush-size-value">
+          <input
+            aria-label="Size"
+            className="text-input brush-size-input"
+            type="number"
+            inputMode="numeric"
+            min={BRUSH_SIZE_MIN}
+            max={BRUSH_SIZE_MAX}
+            step={1}
+            value={draft ?? String(value)}
+            onChange={(e) => {
+              const text = e.target.value,
+                parsed = Number(text);
+              // Commit in-range values immediately so typing "800" paints
+              // at 800 px; keep partial/out-of-range text until blur/Enter.
+              if (text.trim() !== '' && Number.isFinite(parsed) && parsed >= BRUSH_SIZE_MIN && parsed <= BRUSH_SIZE_MAX) {
+                set(clampBrushSize(parsed, value));
+                setDraft(Number.isInteger(parsed) ? null : text);
+              } else setDraft(text);
+            }}
+            onBlur={(e) => commitDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitDraft(e.currentTarget.value);
+              else if (e.key === 'Escape') setDraft(null);
+            }}
+          />
+          <output aria-hidden="true">px</output>
+        </span>
+      </span>
+      <input
+        aria-label="Size slider"
+        aria-valuetext={brushSizeValueText(value)}
+        className="brush-size-range"
+        type="range"
+        min={0}
+        max={BRUSH_SIZE_SLIDER_STEPS}
+        step={1}
+        value={brushSizeToSliderPosition(value)}
+        onChange={(e) => set(sliderPositionToBrushSize(+e.target.value))}
+        onKeyDown={(e) => {
+          const direction =
+            e.key === 'ArrowUp' || e.key === 'ArrowRight' || e.key === 'PageUp'
+              ? 1
+              : e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'PageDown'
+                ? -1
+                : 0;
+          if (e.key === 'Home' || e.key === 'End') {
+            e.preventDefault();
+            set(e.key === 'Home' ? BRUSH_SIZE_MIN : BRUSH_SIZE_MAX);
+            return;
+          }
+          if (!direction) return;
+          e.preventDefault();
+          let next = stepBrushSize(value, direction as 1 | -1);
+          if (e.key === 'PageUp' || e.key === 'PageDown')
+            for (let i = 0; i < 4; i += 1) next = stepBrushSize(next, direction as 1 | -1);
+          set(next);
+        }}
+      />
+    </div>
   );
 }

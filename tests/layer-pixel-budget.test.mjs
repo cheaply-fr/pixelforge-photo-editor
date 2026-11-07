@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LAYER_PIXEL_BUDGET,
   LayerPixelBudgetError,
+  assertLayerPixelBudgetForEdit,
   commonLayer,
   formatMegapixels,
   layerPixelBudgetMessage,
   layerPixelUsage,
   validateFrame,
 } from '../src/document.ts';
+import { LAYER_PIXEL_CEILING, projectLimitsForDevice } from '../src/projectLimits.ts';
 import {
   EXPANDING_PAINT_TOOLS,
   canExpandRasterLayer,
@@ -22,6 +23,7 @@ import {
 const url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4j8AAAAASUVORK5CYII=';
 const assetId = (n) => `11111111-1111-4111-8111-${String(n).padStart(12, '0')}`;
 const raster = (asset, patch = {}) => ({ ...commonLayer('Paint'), kind: 'raster', asset, ...patch });
+const POSTER = 2646 * 4096;
 
 /** A poster-sized document with `count` full-canvas paint layers. */
 function poster(count, w = 2646, h = 4096) {
@@ -39,26 +41,27 @@ function pixels(width, height, points = []) {
 
 test('layerPixelUsage counts every raster-content layer asset, including shared assets', () => {
   const { frame, assets } = poster(3);
-  assert.equal(layerPixelUsage(frame, assets), 3 * 2646 * 4096);
+  assert.equal(layerPixelUsage(frame, assets), 3 * POSTER);
   const withVector = {
     ...frame,
     layers: [...frame.layers, { ...commonLayer('Box'), kind: 'rectangle', width: 10, height: 10, color: '#ff0000', stroke: 1, fill: true }],
   };
-  assert.equal(layerPixelUsage(withVector, assets), 3 * 2646 * 4096);
+  assert.equal(layerPixelUsage(withVector, assets), 3 * POSTER);
   assert.equal(layerPixelUsage({ layers: [raster('missing')] }, assets), 0);
 });
 
-test('the poster budget allows five full paint layers and rejects the sixth with a specific error', () => {
-  const five = poster(5);
-  assert.doesNotThrow(() => validateFrame(five.frame, five.assets));
-  assert.ok(layerPixelUsage(five.frame, five.assets) <= LAYER_PIXEL_BUDGET);
-  const six = poster(6);
+test('the format ceiling allows 94 full poster layers and rejects the 95th with a specific error', () => {
+  const fits = poster(94);
+  assert.doesNotThrow(() => validateFrame(fits.frame, fits.assets));
+  assert.ok(layerPixelUsage(fits.frame, fits.assets) <= LAYER_PIXEL_CEILING);
+  const over = poster(95);
   assert.throws(
-    () => validateFrame(six.frame, six.assets),
+    () => validateFrame(over.frame, over.assets),
     (error) => {
       assert.ok(error instanceof LayerPixelBudgetError);
-      assert.equal(error.requiredPixels, 6 * 2646 * 4096);
-      assert.match(error.message, /^Layer pixel budget reached: layers may store 64 MP in total and this edit needs 65.1 MP\./);
+      assert.equal(error.requiredPixels, 95 * POSTER);
+      assert.equal(error.budgetPixels, LAYER_PIXEL_CEILING);
+      assert.match(error.message, /^Layer pixel budget reached: layers may store 1024 MP in total on this device and this edit needs 1029.7 MP\./);
       assert.match(error.message, /Trim Layer to Content/);
       assert.doesNotMatch(error.message, /Invalid layer document/);
       return true;
@@ -66,29 +69,50 @@ test('the poster budget allows five full paint layers and rejects the sixth with
   );
 });
 
-test('malformed documents keep the generic error even when they are also over budget', () => {
-  const six = poster(6);
+test('the device budget refuses edits that grow usage past the tier but allows edits that do not', () => {
+  const mobile = projectLimitsForDevice({ mobile: true, deviceMemory: 8 }).layerPixelBudget;
+  const fits = poster(23), over = poster(24);
+  assert.doesNotThrow(() => assertLayerPixelBudgetForEdit(fits.frame, undefined, fits.assets, mobile));
   assert.throws(
-    () => validateFrame({ ...six.frame, active: 'not-a-layer' }, six.assets),
+    () => assertLayerPixelBudgetForEdit(over.frame, fits.frame, over.assets, mobile),
+    (error) => error instanceof LayerPixelBudgetError && error.budgetPixels === mobile && /256 MP/.test(error.message),
+  );
+  // A project opened from a larger device stays editable: an edit that keeps
+  // or lowers stored pixels is allowed even above this tier's budget.
+  const big = poster(40);
+  const renamed = { ...big.frame, layers: big.frame.layers.map((layer, i) => (i ? layer : { ...layer, name: 'Sky' })) };
+  assert.doesNotThrow(() => assertLayerPixelBudgetForEdit(renamed, big.frame, big.assets, mobile));
+  const fewer = { ...big.frame, layers: big.frame.layers.slice(1), active: big.frame.layers[1].id };
+  assert.doesNotThrow(() => assertLayerPixelBudgetForEdit(fewer, big.frame, big.assets, mobile));
+  assert.throws(
+    () => assertLayerPixelBudgetForEdit(poster(41).frame, big.frame, big.assets, mobile),
+    LayerPixelBudgetError,
+  );
+});
+
+test('malformed documents keep the generic error even when they are also over budget', () => {
+  const over = poster(95);
+  assert.throws(
+    () => validateFrame({ ...over.frame, active: 'not-a-layer' }, over.assets),
     (error) => !(error instanceof LayerPixelBudgetError) && /Invalid layer document/.test(error.message),
   );
   assert.throws(
-    () => validateFrame({ ...six.frame, layers: [...six.frame.layers, { ...six.frame.layers[0] }] }, six.assets),
+    () => validateFrame({ ...over.frame, layers: [...over.frame.layers, { ...over.frame.layers[0] }] }, over.assets),
     /Invalid layer document/,
   );
 });
 
-test('trimmed layers at the budget boundary validate exactly at 64 MP', () => {
+test('trimmed layers at the ceiling boundary validate exactly at 1024 MP', () => {
   const assets = { [assetId(1)]: { url, w: 4000, h: 4000 }, [assetId(2)]: { url, w: 1, h: 1 } };
-  const layers = [1, 2, 3, 4].map(() => raster(assetId(1)));
+  const layers = Array.from({ length: 64 }, () => raster(assetId(1)));
   const frame = { w: 4000, h: 4000, layers, active: layers[0].id };
-  assert.equal(layerPixelUsage(frame, assets), LAYER_PIXEL_BUDGET);
+  assert.equal(layerPixelUsage(frame, assets), LAYER_PIXEL_CEILING);
   assert.doesNotThrow(() => validateFrame(frame, assets));
   const trimmed = raster(assetId(2), { matrix: [1, 0, 0, 1, 1200, 3400] });
   assert.throws(() => validateFrame({ ...frame, layers: [...layers, raster(assetId(2))] }, assets), LayerPixelBudgetError);
   // Replacing one full layer with a trimmed copy frees almost a whole layer.
   const freed = { ...frame, layers: [...layers.slice(1), trimmed], active: trimmed.id };
-  assert.equal(layerPixelUsage(freed, assets), 3 * 16000000 + 1);
+  assert.equal(layerPixelUsage(freed, assets), 63 * 16000000 + 1);
   assert.doesNotThrow(() => validateFrame(freed, assets));
 });
 
@@ -98,10 +122,10 @@ test('megapixel formatting and message are compact and deterministic', () => {
   assert.equal(formatMegapixels(-5), '0');
   assert.equal(formatMegapixels(64000001, 'up'), '64.1');
   assert.equal(formatMegapixels(80000000, 'up'), '80');
-  assert.match(layerPixelBudgetMessage(LAYER_PIXEL_BUDGET + 1), /needs 64.1 MP/);
+  assert.match(layerPixelBudgetMessage(256_000_001, 256_000_000), /needs 256.1 MP/);
   assert.equal(
-    layerPixelBudgetMessage(70_000_000),
-    'Layer pixel budget reached: layers may store 64 MP in total and this edit needs 70 MP. Merge or trim layers (Layer > Trim Layer to Content), or use a smaller canvas.',
+    layerPixelBudgetMessage(270_000_000, 256_000_000),
+    'Layer pixel budget reached: layers may store 256 MP in total on this device and this edit needs 270 MP. Merge or trim layers (Layer > Trim Layer to Content), or use a smaller canvas.',
   );
 });
 

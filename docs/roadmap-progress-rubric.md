@@ -71,11 +71,150 @@ release risk because a failing shard skips deployment.
    in-page fingerprint.
 8. **Layer pixel budget was opaque**: at 2646×4096 the sixth full paint layer
    failed with `Invalid layer document` while the panel said `5 / 32`.
-   Addressed on `feat/layer-pixel-budget` (`docs/layer-pixel-budget-contract.md`):
+   Addressed on `feat/layer-pixel-budget` (`docs/layer-pixel-budget-contract.md`),
+   merged as #183 (`8a82ad6`, see the 2026-11-07 section below):
    a specific budget notice, a Layers-panel usage hint, Layer → Trim Layer to
    Content, and paint-time expansion for the brush/eraser/fill/gradient/retouch
    tools. Remaining: automatic trimming of new layers, expansion for Spot
    Healing/Patch/Red Eye/History brushes and filters on trimmed layers.
+
+## Large-document painting findings (2026-11-07)
+
+Source: painting a 2646×4096 (10.8 MP) "cosmic eye" poster in the live
+editor on 2026-11-07. This section adds evidence lines only; the weighted
+percentages and the 2026-10-26 audit table are unchanged until a full
+re-audit reconciles them. Nothing here claims Photoshop parity.
+
+### Shipped
+
+#181–#185 are merged to `main`. Protected `CI and deploy` run
+**42326133241** succeeded for `f5e4135` (it contains #181–#183 and #185; the
+run for `fab25db` was cancelled as superseded) and run **42330980594**
+succeeded for `cba6253` (#184). On 2026-11-07 `/release.json` and
+`/api/readyz.json` at `https://photoeditor.cheaply.fr` reported
+`cba6253bc8763f05064c4a16a55ac31f2af2e7e4` (built 2026-11-07T02:48:42Z,
+`ready: true`), which contains #181–#185. That is release-identity
+evidence; per-feature live acceptance of each fix has not been independently
+re-run for this record.
+
+| PR | Change | Merge SHA | Deployed in | Remaining limitations |
+| --- | --- | --- | --- | --- |
+| #181 | Gradient "Transparent" end fades the adjacent colour to alpha 0 (it previously faded to transparent white, leaving a grey fringe) | `8def856` | `f5e4135`, `cba6253` | — |
+| #182 | Lasso, Polygonal Lasso and Magnetic Lasso selections that leave the canvas are clipped to it instead of rejected with "Invalid layer document"; an off-canvas Elliptical Marquee keeps its true shape; Rectangular Marquee off-edge overshoot fixed | `fab25db` | `f5e4135`, `cba6253` | — |
+| #183 | Layer pixel budget (64 MP total) explained with a specific message and a Layers-panel readout; Layer → Trim Layer to Content; paint tools grow trimmed layers on demand | `8a82ad6` | `f5e4135`, `cba6253` | No automatic trim; Spot Healing, Patch, Red Eye, History and Art History brushes do not grow trimmed layers; painting a trimmed layer costs two undo steps (expansion + stroke) |
+| #185 | Per-layer filter-result cache and decoded-asset cache (≈2.5–3× faster unrelated edits on large documents, local measurement) | `f5e4135` | `f5e4135`, `cba6253` | Tiled blur path not cached; ~2 s compositing remains at 10.8 MP; pointer-down decode wait unchanged |
+| #184 | Brush, Pencil, Eraser, Mask Brush/Eraser and Adjustment Brush confined to the active selection with feathered edges | `cba6253` | `cba6253` | Clone/Heal stamping still ignores the selection; "Mask from selection" leaves the selection active (Photoshop consumes it) |
+| #186 | Incremental local draft saves: content-addressed IndexedDB asset records (`asset:<draftId>:<sha256>`) so autosave writes only new assets instead of re-serialising tens of MB per edit; one read-write transaction per save, fail-closed reads | `f95ec93` | `f95ec93` | Assets remain base64 PNG data URLs; benchmark is local only |
+| #187 | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps, fast large dabs | `6a42943` | `6a42943` | — |
+| #189 | 10× device-aware undo **and** redo: 240 steps, image budget 320 MiB desktop / 128 MiB mobile or ≤4 GB / 96 MiB ≤2 GB (was 24 steps / 32 MB, one undo step on a 2646×4096 document); History panel states capacity and marks memory-only states | `1c40122` | `1c40122` | Only the persisted window (≤24 states, ~48 MiB) survives reload; assets remain base64 PNG data URLs |
+
+Later releases: `CI and deploy` run **42331771754** succeeded for `f95ec93`
+(#186) and `/release.json` reported
+`f95ec93e3fdc5039df972e1e37b06231509a426d` (built 2026-11-07T02:59:08Z).
+Run **42332588876** succeeded for `6a42943` (#187) and `/release.json` then
+reported `6a429436acc6595468f808961eb1c053cbdae97f` (built
+2026-11-07T03:09:13Z). Release identity only; per-feature live acceptance
+was not re-run.
+
+**"This draft changed in another tab" root cause (fixed in #186).** The
+spurious conflict seen with a single visible tab was cross-tab, not an
+in-tab race: New document writes `localStorage['pixelforge:last-draft']`,
+and any `/editor` tab opened without a `#draft=` hash in the same browser
+profile attached to that draft and saved on load, bumping its revision, so
+the original tab's next save reported a conflict. Each editor tab now holds a
+shared Web Lock `pixelforge:draft-open:<id>`; a hashless open that would fall
+back to `last-draft` checks `navigator.locks.query()` and starts a new draft
+(with a notice) if that draft is open elsewhere. Explicit `#draft=` bookmarks
+keep the conflict flow. Locks are advisory; browsers without Web Locks behave
+as before.
+
+
+`CI and deploy` run **42334414490** succeeded for `1c40122` (#189) and
+`/release.json` reported `1c40122cc42a9295ddf586827c15912cf2aeda74` (built
+2026-11-07T03:32:54Z). This docs record merged as #188 (`40b0e30`).
+
+### Fix wave 2 — in development (2026-11-07)
+
+Following the user's request to document and roadmap every finding, each
+remaining item now has a workstream. Status at write time
+(`gh pr list`, `git ls-remote --heads origin`): none of these is merged.
+
+| Workstream | Branch / PR | Scope |
+| --- | --- | --- |
+| A | `feat/huge-projects` — no remote branch yet | User request "don't flatten — handle huge projects": ~10× limits — 320+ layers (was 32), 640 MP stored layer pixels (was 64 MP), ~640 MB asset/draft/project caps (was 64 MB); automatic trim of layers to content; lazy (unallocated) empty layers; render scaling; Rasterize and Merge preserve trimmed bounds |
+| B | `perf/coalesce-stroke-previews` — PR #190 (open) | One live stroke preview per animation frame instead of per `pointermove` (a 12k-point stroke took ~5 min); skip identity canvas filters. Queued follow-up: stroke-start decode latency (~2 s at 10.8 MP) and per-stroke full-layer PNG commit cost (dirty-rect or tiled layer storage) |
+| C | `perf/fast-large-radius-filters` — PR #191 (open) | Gaussian Blur radius 24 timed out the render worker on 10.8 MP; radius-independent O(1)-per-pixel blurs, faster median filters and a work-scaled render watchdog. Queued follow-up: fractional / on-canvas Radial Blur centres and multi-filter stacks on raster layers without Rasterize |
+| C4 | `perf/filter-pool-polish` — PR open, not merged | Tile-path cancellation terminates busy filter workers (pool refills lazily; render cancellation polled every 50 ms); halo rows are read but no longer rendered; Filter-menu / heavy-filter pre-warm at idle time. Reduce Noise 1 MP first run 0.79 s/MP with 8 workers. 4-core (3 workers) measured 0.9–1.6 s/MP at 10.8 MP on the loaded dev host — the ~1 s/MP estimate is not confirmed there |
+| C3 | `perf/parallel-neighborhood-filters` — merged as #205 (`cc3c465`) | Follow-up to #202: filter worker pool (separate from the render worker; `hardwareConcurrency − 1`, ≤ 8 desktop, ≤ 2 phone) renders Smart Blur, Smart Sharpen, Surface Blur, Reduce Noise, Shape, Lens and legacy Path Blur as halo'd row bands or parallel tiles, byte-identical to the serial kernels, with per-band watchdog progress and cancellation. Local 10.8 MP with 8 workers: 0.26–0.54 s/MP (was 2.1–4.3). Phones stay ~1.5–1.9 s/MP by design |
+| C2 | `perf/fast-remaining-filters` — merged as #202 (`02124b4`) | Follow-up to #191 for the filters still slow on 10.8 MP layers: Shape Blur 9× (O(radius) integer prefix sums), Smart Blur / Smart Sharpen / Reduce Noise ~4–4.5×, Surface Blur 2×, Spin/Radial/Lens 1.8–2.8×, byte-identical or ≤ 1 level against oracle tests (see `performance-budgets.md`). Not reached: < 1 s/MP for the O(radius²) bilateral family (~2.3–3.6 s/MP at radius 8) and legacy Path Blur (~2 s/MP); queued follow-up: band-parallel nested workers or Wasm SIMD |
+| D | `fix/retouch-selection-and-clone-source` — PR open, not merged | Clone Stamp, Healing Brush and the other retouch tools respect the active selection; an Alt-click clone source set while the previous stroke is still committing is no longer dropped; "Mask from selection" consumes (deselects) the selection |
+| E | `feat/glow-styles-and-blend-modes` — PR #197 open, not merged | Blend modes colour dodge/burn, linear dodge/burn, soft/hard light, exclusion, hue, saturation, colour and luminosity; Outer Glow and Inner Glow layer styles; larger shadow ranges |
+| F | `feat/brush-gradient-options` — no remote branch yet | Brush spacing and scatter above 100%, count and count jitter, a true pen lift at pressure 0; Gradient Replace mode, blend modes and opacity |
+| G | `feat/reference-layer-paste-export` — no remote branch yet | Non-exported reference/guide layer with eyedropper sampling; OS clipboard image paste via Ctrl+V and Edit → Paste; hardened downloads (anchor attached to the DOM, deferred revoke, explicit MIME type, File System Access save picker where available) after a PNG export wrote no file in the Claude desktop built-in browser |
+
+### Backlog → workstream mapping
+
+Priority is a suggestion: **P1** blocks or seriously slows large-document
+painting, **P2** is a visible capability gap, **P3** is polish or
+investigation. "Queued" means recorded as a follow-up of that workstream,
+not yet in its branch.
+
+| # | Item | Priority | Workstream | Area / contract |
+| --- | --- | --- | --- | --- |
+| 1 | Stroke-start latency: ~2 s decode of the active 10.8 MP layer at pointer-down; reuse decoded layers as a first-class gesture input | P1 | B (queued) | `performance-budgets.md` |
+| 2 | Commit cost: every stroke re-encodes the full layer to PNG (`toDataURL`); dirty-rect commits or tiled layer storage | P1 | B (queued) | `performance-budgets.md`, `layer-document-format.md` |
+| 3 | Clone Stamp / Healing Brush respect the active selection (follow-up of #184) | P1 | D | `brush-tool-contract.md` |
+| 4 | Ctrl+V of an OS clipboard image did not reach the paste handler | P1 | G | `paste-special-contract.md` |
+| 5 | Additional blend modes for glow and light painting | P2 | E | `group-compositing-contract.md` |
+| 6 | Larger Drop Shadow blur range; Outer Glow and Inner Glow | P2 | E | `layer-styles-contract.md` |
+| 7 | One live filter per raster layer; multi-filter stack without Rasterize | P2 | C (queued) | `smart-filters-contract.md` |
+| 8 | Radial Blur integer-percent centres; fractional/pixel and on-canvas centres | P2 | C (queued) | `blur-effects-contract.md` |
+| 9 | Reference/guide image with eyedropper, outside export and the layer budget | P2 | G | `layer-pixel-budget-contract.md`, `export-contract.md` |
+| 10 | Pen lift at pressure 0; sparse stamping (spacing/scatter > 100%, count/jitter) | P2 | F | `brush-dynamics-contract.md`, `brush-pressure-contract.md` |
+| 11 | "Mask from selection" consumes the selection | P3 | D | `layer-mask-contract.md` |
+| 12 | Second gradient composites over existing pixels; Replace mode | P3 | F | `gradient-mode-contract.md` |
+| 13 | History panel shows in-memory and persisted depth | P3 | **Shipped in #189** | `history-timeline-contract.md` |
+| 14 | PNG export wrote no file in the Claude desktop built-in browser | P3 | G | `export-contract.md` |
+| 15 | Gaussian Blur radius 24 timed out the render worker at 10.8 MP | P1 | C | `blur-effects-contract.md`, `worker-render-contract.md` |
+| 16 | Alt-click clone source dropped while the previous stroke commits | P2 | D | `brush-tool-contract.md` |
+| 17 | Project limits force flattening on large posters (layers, stored pixels, asset/draft caps) | P1 | A | `layer-pixel-budget-contract.md`, `draft-storage-contract.md` |
+
+### Fix wave 2 polish — retouch/brush (branch `feat/retouch-brush-polish`)
+
+Follow-ups of limitations left by #194 and #196; implemented locally, not
+merged. Companion of the effects polish on `feat/effects-retouch-polish`.
+
+| Item | Change | Contract / evidence |
+| --- | --- | --- |
+| Spot Healing / Patch ignore vector selections (#196) | The active selection of any shape is captured at pointer-down as a layer-space alpha asset referenced by the stroke (`selectionMask`); replay is confined and feathered; legacy strokes unchanged | `spot-healing-contract.md`, `patch-tool-contract.md`; `tests/retouch-selection-snapshot.test.mjs`, `tests/browser/retouch-brush-polish.spec.ts` |
+| No live gradient preview (#194) | Dragging renders the gradient live through the #190 preview scheduler; release commits one undo step | `gradient-mode-contract.md`; `tests/browser/retouch-brush-polish.spec.ts` |
+| Count jitter only lowers the count (#194) | Symmetric ±Count × jitter, clamped 1–16, deterministic | `brush-dynamics-contract.md`; `tests/brush-spacing-count.test.mjs`, browser spec |
+| First dab with Scatter both axes off used both axes (#194) | The first dab waits for the next point and scatters perpendicular to it | `brush-dynamics-contract.md`; same tests |
+| Gradient preview re-rendered the whole large layer per frame (#201 limitation) | Preview renders only the selection box or layer at ≤ 1.5 MP per frame and upscales it; commit stays full resolution | `gradient-mode-contract.md`; `tests/retouch-preview-cache.test.mjs`, browser spec (2400×1000) |
+| Selection snapshot re-encoded on every selection change (#201 limitation) | Cache by selection value + placement, then by 64-bit mask digest; ids only, bounded to 16 | `spot-healing-contract.md`, `patch-tool-contract.md`; same tests |
+
+Remaining: a reduced gradient preview can differ from the commit by a few
+levels and previews Noise/Dither at that scale; the full-document composite
+per preview frame is unchanged; a never-seen selection still costs one
+rasterization and PNG encode.
+
+### Fix wave 2 polish — effects (branch `feat/effects-retouch-polish`)
+
+Follow-ups of limitations documented by #197 and #199. Merged as #204
+(`4552ed6`); deployment not recorded here. The companion retouch/brush
+items (Spot Healing/Patch selections, live gradient preview, Count jitter) are
+on `feat/retouch-brush-polish` (#201).
+
+| Item | Change | Contract | Remaining limitations |
+| --- | --- | --- | --- |
+| Glow/shadow blend modes blended only against the layer's own pixels (#197) | A non-Normal Outer Glow or Drop Shadow composites onto the pixels beneath the layer in its own pass; Drop Shadow gains a blend mode (default Normal); same `renderFrame` path for viewport, worker, export and merge/flatten | `layer-styles-contract.md` | Folder members see only the folder's lower members; clipped layers' outer effects see no backdrop; no Knockout/Fill opacity |
+| Drop/Inner shadow falloff linear at large radii (#197) | **Falloff: Gaussian / Linear (legacy)**; Gaussian (three matched box passes from #191, up to 250 px) is the default for new layers; stored shadows without the field keep the box pass and identical pixels | `layer-styles-contract.md` | ≈20% slower than the box pass at large radii (local measurement) |
+| Stacked filters could not be edited in place (#199) | **Edit stacked filter** points the Filter effects controls at a stack entry; one undo step per change; position and hidden state kept; #185 key follows the normalised stack | `smart-filters-contract.md` | Per-filter blend modes and masks still staged |
+
+Evidence: `tests/effects-polish.test.mjs` and
+`tests/browser/effects-polish.spec.ts` (desktop and mobile). Local results
+and CI are reported on the PR; nothing here is CI-verified, deployed or live
+accepted until recorded separately.
 
 ## Latest protected release evidence
 

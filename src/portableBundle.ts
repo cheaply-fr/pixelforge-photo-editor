@@ -8,6 +8,7 @@
  */
 import { validateDraft, type Draft } from './drafts.ts';
 import type { Asset, Assets } from './document.ts';
+import { MAX_PROJECT_ASSETS, PROJECT_ASSET_BYTES_CEILING } from './projectLimits.ts';
 
 export const PORTABLE_BUNDLE_KIND = 'pixelforge-project' as const;
 export const PORTABLE_BUNDLE_VERSION = 3 as const;
@@ -15,11 +16,16 @@ export const PORTABLE_MANIFEST_PATH = 'manifest.json' as const;
 export const PORTABLE_DOCUMENT_PATH = 'document.json' as const;
 export const PORTABLE_ASSET_PREFIX = 'assets/' as const;
 
-/** These limits are deliberately no larger than the editor's v2 limits. */
-export const PORTABLE_MAX_BYTES = 64 * 1024 * 1024;
-export const PORTABLE_MAX_ENTRIES = 770; // manifest + document + 768 assets
-export const PORTABLE_MAX_JSON_BYTES = 8 * 1024 * 1024;
-export const PORTABLE_MAX_ASSET_BYTES = 16 * 1024 * 1024;
+/**
+ * These limits follow the editor's device-independent project ceilings. Store
+ * ZIP with 32-bit offsets allows up to 4 GiB, so no ZIP64 is needed. One
+ * asset may be a 16 MP PNG of incompressible pixels (64 MiB of RGBA plus PNG
+ * framing), so the per-asset bound sits above that.
+ */
+export const PORTABLE_MAX_BYTES = PROJECT_ASSET_BYTES_CEILING;
+export const PORTABLE_MAX_ENTRIES = MAX_PROJECT_ASSETS + 2; // manifest + document + assets
+export const PORTABLE_MAX_JSON_BYTES = 64 * 1024 * 1024;
+export const PORTABLE_MAX_ASSET_BYTES = 80 * 1024 * 1024;
 export const PORTABLE_MAX_ASSETS = PORTABLE_MAX_ENTRIES - 2;
 
 const ZIP_LOCAL_SIGNATURE = 0x04034b50;
@@ -56,16 +62,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder('utf-8', { fatal: true });
 
-function copyBytes(value: Uint8Array): Uint8Array {
-  const result = new Uint8Array(value.byteLength);
-  result.set(value);
-  return result;
-}
-
 async function sha256(bytes: Uint8Array): Promise<string> {
   if (!globalThis.crypto?.subtle) throw new Error('Portable bundle integrity is unavailable');
-  const copy = copyBytes(bytes);
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', copy.buffer as ArrayBuffer);
+  // Digest the view directly: copying every asset doubled peak memory for
+  // large projects. Callers never mutate the bytes while hashing.
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -78,7 +79,7 @@ function jsonBytes(value: unknown): Uint8Array {
   }
   if (typeof encoded !== 'string') throw new Error('Portable document is not serializable');
   const bytes = textEncoder.encode(encoded);
-  if (bytes.byteLength > PORTABLE_MAX_JSON_BYTES) throw new Error('Portable JSON exceeds 8 MiB');
+  if (bytes.byteLength > PORTABLE_MAX_JSON_BYTES) throw new Error('Portable JSON exceeds 64 MiB');
   return bytes;
 }
 
@@ -94,6 +95,26 @@ function decodeBase64(value: string): Uint8Array {
   } catch {
     throw new Error('Portable asset is not a base64 PNG');
   }
+}
+
+/**
+ * PNG bytes as a base64 data URL. Uses the native `Uint8Array#toBase64` or,
+ * in browsers without it, FileReader (both native); the JavaScript fallback
+ * took about a second per 10 MP layer when opening large projects.
+ */
+export async function pngDataUrl(bytes: Uint8Array): Promise<string> {
+  const native = (bytes as Uint8Array & { toBase64?: () => string }).toBase64;
+  if (typeof native === 'function') return `data:image/png;base64,${native.call(bytes)}`;
+  if (typeof FileReader === 'function') {
+    const url = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(reader.error ?? new Error('Portable asset could not be read'));
+      reader.readAsDataURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/png' }));
+    });
+    if (url.startsWith('data:image/png;base64,')) return url;
+  }
+  return `data:image/png;base64,${encodeBase64(bytes)}`;
 }
 
 function encodeBase64(bytes: Uint8Array): string {
@@ -127,12 +148,20 @@ function safePath(name: string): boolean {
     !/\p{Cc}/u.test(name);
 }
 
-function crc32(data: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const value of data) {
-    crc ^= value;
-    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let bit = 0; bit < 8; bit += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
   }
+  return table;
+})();
+/** Table-driven CRC-32 (IEEE); the bitwise form was too slow for large projects. */
+export function crc32(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let index = 0; index < data.length; index += 1)
+    crc = CRC_TABLE[(crc ^ data[index]) & 0xff] ^ (crc >>> 8);
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -144,7 +173,14 @@ function u32(value: number): Uint8Array {
 }
 function put(view: Uint8Array, at: number, value: Uint8Array): void { view.set(value, at); }
 
-function makeZip(entries: readonly { name: string; data: Uint8Array }[]): Uint8Array {
+type ZipInput = { name: string; data: Uint8Array; crc?: number };
+type ZipParts = { parts: Uint8Array[]; byteLength: number };
+
+/**
+ * Build a store-only ZIP as a list of parts. Large projects are never copied
+ * into one contiguous buffer; the caller wraps the parts in a Blob.
+ */
+function makeZip(entries: readonly ZipInput[]): ZipParts {
   if (!entries.length || entries.length > PORTABLE_MAX_ENTRIES) throw new Error('Portable bundle has too many entries');
   const names = new Set<string>();
   const local: Uint8Array[] = [];
@@ -157,7 +193,7 @@ function makeZip(entries: readonly { name: string; data: Uint8Array }[]): Uint8A
     const name = textEncoder.encode(entry.name);
     if (name.byteLength > 0xffff || entry.data.byteLength > 0xffffffff || offset > 0xffffffff)
       throw new Error('Portable bundle entry exceeds ZIP limits');
-    const crc = crc32(entry.data);
+    const crc = entry.crc ?? crc32(entry.data);
     const header = new Uint8Array(30 + name.byteLength);
     put(header, 0, u32(ZIP_LOCAL_SIGNATURE)); put(header, 4, u16(20)); put(header, 6, u16(0x0800));
     put(header, 8, u16(0)); put(header, 10, u16(0)); put(header, 12, u16(0)); put(header, 14, u32(crc));
@@ -173,10 +209,9 @@ function makeZip(entries: readonly { name: string; data: Uint8Array }[]): Uint8A
   const end = new Uint8Array(22);
   put(end, 0, u32(ZIP_END_SIGNATURE)); put(end, 4, u16(0)); put(end, 6, u16(0)); put(end, 8, u16(entries.length)); put(end, 10, u16(entries.length));
   put(end, 12, u32(centralBytes)); put(end, 16, u32(offset)); put(end, 20, u16(0));
-  const result = new Uint8Array(offset + centralBytes + end.byteLength); let at = 0;
-  for (const part of [...local, ...central, end]) { result.set(part, at); at += part.byteLength; }
-  if (result.byteLength > PORTABLE_MAX_BYTES) throw new Error('Portable bundle exceeds 64 MiB');
-  return result;
+  const byteLength = offset + centralBytes + end.byteLength;
+  if (byteLength > PORTABLE_MAX_BYTES) throw new Error(`Portable bundle exceeds ${PORTABLE_MAX_BYTES / 1024 / 1024} MiB`);
+  return { parts: [...local, ...central, end], byteLength };
 }
 
 function asBytes(input: Uint8Array | ArrayBuffer | Blob): Promise<Uint8Array> | Uint8Array {
@@ -215,7 +250,8 @@ function parseZip(input: Uint8Array): ZipEntry[] {
     const dataStart = localNameStart + localNameLength + localExtraLength;
     if (localNameLength !== nameLength || !input.subarray(localNameStart, localNameStart + localNameLength).every((byte, nameIndex) => byte === input[nameStart + nameIndex]) || view.getUint32(localOffset + 14, true) !== view.getUint32(cursor + 16, true) || view.getUint32(localOffset + 18, true) !== compressed || view.getUint32(localOffset + 22, true) !== uncompressed || dataStart + uncompressed > input.byteLength || view.getUint16(localOffset + 6, true) !== flags || view.getUint16(localOffset + 8, true) !== method)
       throw new Error('Portable ZIP local entry is invalid');
-    const data = copyBytes(input.subarray(dataStart, dataStart + uncompressed));
+    // A view, not a copy: entries are only read (hashed, decoded) afterwards.
+    const data = input.subarray(dataStart, dataStart + uncompressed);
     if (crc32(data) !== view.getUint32(cursor + 16, true)) throw new Error('Portable ZIP checksum mismatch');
     names.add(name); entries.push({ name, data, method, flags }); cursor = next;
   }
@@ -246,32 +282,32 @@ export async function writePortableBundle(input: unknown): Promise<Blob> {
   const document = portableDocument(draft);
   const documentBytes = jsonBytes(document);
   const assets: PortableAssetManifest[] = [];
-  const files: { name: string; data: Uint8Array }[] = [];
+  const files: ZipInput[] = [];
   for (const id of Object.keys(draft.assets).sort()) {
     const asset = draft.assets[id];
     const bytes = decodeBase64(asset.url);
-    if (bytes.byteLength > PORTABLE_MAX_ASSET_BYTES) throw new Error('Portable asset exceeds 16 MiB');
+    if (bytes.byteLength > PORTABLE_MAX_ASSET_BYTES) throw new Error('Portable asset exceeds 80 MiB');
     const dimensions = readPngDimensions(bytes);
     if (dimensions.w !== asset.w || dimensions.h !== asset.h) throw new Error('Portable asset dimensions do not match the document');
     const path = `${PORTABLE_ASSET_PREFIX}${id}.png`;
     assets.push({ id, path, sha256: await sha256(bytes), byteLength: bytes.byteLength, w: asset.w, h: asset.h });
-    files.push({ name: path, data: bytes });
+    files.push({ name: path, data: bytes, crc: crc32(bytes) });
   }
   if (assets.length > PORTABLE_MAX_ASSETS) throw new Error('Portable bundle has too many assets');
   const manifestWithoutSize = { kind: PORTABLE_BUNDLE_KIND, version: PORTABLE_BUNDLE_VERSION, document: PORTABLE_DOCUMENT_PATH, assets, documentSha256: await sha256(documentBytes), documentByteLength: documentBytes.byteLength };
   // The manifest carries the archive length. Its decimal digits affect the
   // archive length, so converge the small fixed point before returning bytes.
   let archiveByteLength = 0;
-  let finalArchive: Uint8Array<ArrayBufferLike> = new Uint8Array();
+  let finalArchive: ZipParts = { parts: [], byteLength: 0 };
+  const documentEntry: ZipInput = { name: PORTABLE_DOCUMENT_PATH, data: documentBytes, crc: crc32(documentBytes) };
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const manifest = jsonBytes({ ...manifestWithoutSize, archiveByteLength });
-    finalArchive = makeZip([{ name: PORTABLE_MANIFEST_PATH, data: manifest }, { name: PORTABLE_DOCUMENT_PATH, data: documentBytes }, ...files]);
+    finalArchive = makeZip([{ name: PORTABLE_MANIFEST_PATH, data: manifest }, documentEntry, ...files]);
     if (finalArchive.byteLength === archiveByteLength) break;
     archiveByteLength = finalArchive.byteLength;
   }
   if (finalArchive.byteLength !== archiveByteLength) throw new Error('Portable archive length could not be stabilized');
-  if (finalArchive.byteLength > PORTABLE_MAX_BYTES) throw new Error('Portable bundle exceeds 64 MiB');
-  return new Blob([finalArchive.slice().buffer as ArrayBuffer], { type: 'application/zip' });
+  return new Blob(finalArchive.parts as Uint8Array<ArrayBuffer>[], { type: 'application/zip' });
 }
 
 /** Alias used by callers that prefer the project terminology. */
@@ -290,7 +326,7 @@ export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob 
   if (byName.size !== entries.length || !byName.has(PORTABLE_MANIFEST_PATH) || !byName.has(PORTABLE_DOCUMENT_PATH)) throw new Error('Portable bundle is missing manifest or document');
   const manifestBytes = byName.get(PORTABLE_MANIFEST_PATH)!.data;
   const documentBytes = byName.get(PORTABLE_DOCUMENT_PATH)!.data;
-  if (manifestBytes.byteLength > PORTABLE_MAX_JSON_BYTES || documentBytes.byteLength > PORTABLE_MAX_JSON_BYTES) throw new Error('Portable JSON exceeds 8 MiB');
+  if (manifestBytes.byteLength > PORTABLE_MAX_JSON_BYTES || documentBytes.byteLength > PORTABLE_MAX_JSON_BYTES) throw new Error('Portable JSON exceeds 64 MiB');
   let manifest: unknown, document: unknown;
   try { manifest = JSON.parse(textDecoder.decode(manifestBytes)); document = JSON.parse(textDecoder.decode(documentBytes)); } catch { throw new Error('Portable JSON is invalid'); }
   if (!isPortableBundleManifest(manifest) || manifest.archiveByteLength !== bytes.byteLength || manifest.documentByteLength !== documentBytes.byteLength || manifest.documentSha256 !== await sha256(documentBytes)) throw new Error('Portable manifest integrity check failed');
@@ -303,7 +339,7 @@ export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob 
     if (entry.data.byteLength !== item.byteLength || await sha256(entry.data) !== item.sha256) throw new Error('Portable asset checksum mismatch');
     const dimensions = readPngDimensions(entry.data);
     if (dimensions.w !== item.w || dimensions.h !== item.h) throw new Error('Portable asset dimensions do not match the manifest');
-    assets[item.id] = { url: `data:image/png;base64,${encodeBase64(entry.data)}`, w: item.w, h: item.h } satisfies Asset;
+    assets[item.id] = { url: await pngDataUrl(entry.data), w: item.w, h: item.h } satisfies Asset;
   }
   if (!isRecord(document)) throw new Error('Portable document is invalid');
   return validateDraft({ ...document, version: 2, assets });

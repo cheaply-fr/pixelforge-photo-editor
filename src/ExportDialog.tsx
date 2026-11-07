@@ -14,6 +14,12 @@ import {
   validExportTargetBytes,
   type ExportFormat,
 } from './export';
+import {
+  downloadBlob,
+  pickSaveFile,
+  supportsSaveFilePicker,
+  writeToFileHandle,
+} from './download';
 import { beginPerformanceSpan, type PerformanceSpan } from './performanceMarks';
 
 type Props = {
@@ -79,6 +85,8 @@ export default function ExportDialog({
   );
   const [targetError, setTargetError] = useState('');
   const exportSpan = useRef<PerformanceSpan | null>(null);
+  const [pickerAvailable] = useState(() => supportsSaveFilePicker(window));
+  const [savingWithPicker, setSavingWithPicker] = useState(false);
 
   useEffect(() => {
     if (!dialog.current?.open) dialog.current?.showModal();
@@ -189,10 +197,9 @@ export default function ExportDialog({
         onSubmit={(event) => {
           event.preventDefault();
           if (!current) return;
-          const anchor = document.createElement('a');
-          anchor.download = filename;
-          anchor.href = current.url;
-          anchor.click();
+          // A dedicated object URL per download, revoked after a delay, so a
+          // host that fetches the blob asynchronously still finds it.
+          downloadBlob(current.blob, filename);
           downloaded(
             `${exportLabels[format]} export downloaded (${current.blob.size.toLocaleString()} bytes)`,
           );
@@ -352,10 +359,51 @@ export default function ExportDialog({
           title, description and author stay in the local draft and editable
           .pixelforge project only. File size depends on image content and browser encoding.
         </p>
+        {pickerAvailable && (
+          <p className="export-format-note" data-testid="export-picker-note">
+            If a download does not appear (some embedded browsers ignore
+            downloads), use Save with file picker to choose where the file is
+            written.
+          </p>
+        )}
         <div className="dialog-actions">
           <button type="button" onClick={close}>
             Close
           </button>
+          {pickerAvailable && (
+            <button
+              type="button"
+              disabled={!current || savingWithPicker}
+              onClick={() => {
+                if (!current) return;
+                const saved = current;
+                setSavingWithPicker(true);
+                void (async () => {
+                  try {
+                    const picked = await pickSaveFile(filename, window);
+                    if (picked.status === 'cancelled') return;
+                    if (picked.status === 'unavailable') {
+                      downloadBlob(saved.blob, filename);
+                      downloaded(
+                        `${picked.reason} ${exportLabels[saved.format]} export downloaded instead (${saved.blob.size.toLocaleString()} bytes)`,
+                      );
+                      return;
+                    }
+                    await writeToFileHandle(picked.handle, saved.blob);
+                    downloaded(
+                      `${exportLabels[saved.format]} export saved with the file picker (${saved.blob.size.toLocaleString()} bytes)`,
+                    );
+                  } catch {
+                    setError('The file could not be written. Try Download image instead.');
+                  } finally {
+                    setSavingWithPicker(false);
+                  }
+                })();
+              }}
+            >
+              Save with file picker…
+            </button>
+          )}
           <button type="submit" disabled={!current}>
             Download image
           </button>
