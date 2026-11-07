@@ -58,7 +58,9 @@ while keeping implementation claims limited to features covered by tests.
 
 A live 2646×4096 painting session exercised the layer, selection, painting, filter and export
 workflows (2, 4, 6, 8, 9) at 10.8 MP and
-produced #181–#185 (merged, deployed in `cba6253`), open #186/#187, and a
+produced #181–#187 (merged; deploy status per PR in the rubric), open #189
+(larger undo/redo), in-development huge-project limits and coalesced stroke
+previews, and a
 prioritized backlog led by large-document responsiveness (stroke-start
 decode, per-stroke PNG commits, per-event stroke previews, undo depth). The
 list is recorded in

@@ -216,7 +216,12 @@ measurements; these are local/live observations, not CI budgets.
   stroke took ~5 min); per-animation-frame coalescing is in development on
   `perf/coalesce-stroke-previews`.
 - Undo history is bounded to 24 steps / 32 MB of data-URL text, which leaves
-  one undo step at this size; a device-aware 240-step / ~320 MB desktop budget
-  for undo and redo is in development on `feat/larger-undo-history`.
-- Autosave re-serialises tens of MB per edit; content-addressed IndexedDB
-  asset storage is in review as #186.
+  one undo step at this size; a device-aware 240-step undo and redo budget
+  (320 MiB desktop, 128 MiB mobile, 96 MiB low-memory) is in review as #189.
+- Autosave re-serialised tens of MB per edit and failed once the payload
+  crossed 64 MB; #186 (merged `f95ec93`, deployed) stores content-addressed
+  assets so each save writes only new assets (local benchmark: ~1.8 s vs
+  ~0.1 s per save at 30 MB).
+- Project limits (64 MP stored layer pixels, 64 MB asset/draft caps) force
+  flattening on large posters; ~10× limits (320+ layers, 640 MP, ~640 MB) are
+  in development on `feat/huge-projects`.

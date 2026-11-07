@@ -141,10 +141,13 @@ and priorities are in
   shipped (#183, merged `8a82ad6`, deployed in `f5e4135`/`cba6253`). No
   automatic trim yet.
 - **Edit → Undo/Redo depth:** user request for 10× undo and redo depth
-  (240 steps / ~320 MB on desktop, device-aware; today 24 steps / 32 MB,
-  which is one step on a 2646×4096 document) is in development on
-  `feat/larger-undo-history`. **Window → History** should then show in-memory
-  and persisted depth (P3).
+  (240 steps, device-aware 320/128/96 MiB budgets; today 24 steps / 32 MB,
+  which is one step on a 2646×4096 document) is in review as #189
+  (`feat/larger-undo-history`), which also makes **Window → History** show
+  capacity and mark memory-only states.
+- **Huge projects (user request "don't flatten"):** ~10× project limits —
+  320+ layers, 640 MP stored layer pixels, ~640 MB asset/draft/project caps —
+  in development on `feat/huge-projects`.
 - **Edit → Paste (P1):** an OS clipboard image did not reach the paste
   handler via Ctrl+V when the editor's shortcut was active and no internal
   clipboard existed; reproduce and fix.

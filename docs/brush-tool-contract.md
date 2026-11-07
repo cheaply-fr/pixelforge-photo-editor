@@ -179,6 +179,6 @@ no-selection stroke, Mask Eraser).
 Open follow-ups recorded 2026-11-07 (see the large-document findings in
 `roadmap-progress-rubric.md`): Clone Stamp and Healing Brush stamping does not
 yet honour the selection (P1), and "Mask from selection" should consume the
-selection as Photoshop does (P3). Painting Size up to 5000 px is in review as
-#187; near-zero pressure as a pen lift, a dab-only stamp mode and scatter or
+selection as Photoshop does (P3). Painting Size up to 5000 px shipped in
+#187 (`6a42943`); near-zero pressure as a pen lift, a dab-only stamp mode and scatter or
 spacing above 100% of size are not started.

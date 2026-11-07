@@ -87,13 +87,13 @@ re-audit reconciles them. Nothing here claims Photoshop parity.
 
 ### Shipped
 
-All five PRs are merged to `main`. Protected `CI and deploy` run
+#181–#185 are merged to `main`. Protected `CI and deploy` run
 **42326133241** succeeded for `f5e4135` (it contains #181–#183 and #185; the
 run for `fab25db` was cancelled as superseded) and run **42330980594**
 succeeded for `cba6253` (#184). On 2026-11-07 `/release.json` and
 `/api/readyz.json` at `https://photoeditor.cheaply.fr` reported
 `cba6253bc8763f05064c4a16a55ac31f2af2e7e4` (built 2026-11-07T02:48:42Z,
-`ready: true`), which contains all five merges. That is release-identity
+`ready: true`), which contains #181–#185. That is release-identity
 evidence; per-feature live acceptance of each fix has not been independently
 re-run for this record.
 
@@ -104,14 +104,34 @@ re-run for this record.
 | #183 | Layer pixel budget (64 MP total) explained with a specific message and a Layers-panel readout; Layer → Trim Layer to Content; paint tools grow trimmed layers on demand | `8a82ad6` | `f5e4135`, `cba6253` | No automatic trim; Spot Healing, Patch, Red Eye, History and Art History brushes do not grow trimmed layers; painting a trimmed layer costs two undo steps (expansion + stroke) |
 | #185 | Per-layer filter-result cache and decoded-asset cache (≈2.5–3× faster unrelated edits on large documents, local measurement) | `f5e4135` | `f5e4135`, `cba6253` | Tiled blur path not cached; ~2 s compositing remains at 10.8 MP; pointer-down decode wait unchanged |
 | #184 | Brush, Pencil, Eraser, Mask Brush/Eraser and Adjustment Brush confined to the active selection with feathered edges | `cba6253` | `cba6253` | Clone/Heal stamping still ignores the selection; "Mask from selection" leaves the selection active (Photoshop consumes it) |
+| #186 | Incremental local draft saves: content-addressed IndexedDB asset records (`asset:<draftId>:<sha256>`) so autosave writes only new assets instead of re-serialising tens of MB per edit; one read-write transaction per save, fail-closed reads | `f95ec93` | `f95ec93` | Assets remain base64 PNG data URLs; benchmark is local only |
+| #187 | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps, fast large dabs | `6a42943` | Pending — run 42332588876 in progress at record time | — |
+
+Later releases: `CI and deploy` run **42331771754** succeeded for `f95ec93`
+(#186) and `/release.json` reported
+`f95ec93e3fdc5039df972e1e37b06231509a426d` (built 2026-11-07T02:59:08Z).
+At record time `CI and deploy` run **42332588876** for `6a42943` (#187) was
+still in progress and `/release.json` still reported `f95ec93`; #187 is
+merged but not yet verified as deployed.
+
+**"This draft changed in another tab" root cause (fixed in #186).** The
+spurious conflict seen with a single visible tab was cross-tab, not an
+in-tab race: New document writes `localStorage['pixelforge:last-draft']`,
+and any `/editor` tab opened without a `#draft=` hash in the same browser
+profile attached to that draft and saved on load, bumping its revision, so
+the original tab's next save reported a conflict. Each editor tab now holds a
+shared Web Lock `pixelforge:draft-open:<id>`; a hashless open that would fall
+back to `last-draft` checks `navigator.locks.query()` and starts a new draft
+(with a notice) if that draft is open elsewhere. Explicit `#draft=` bookmarks
+keep the conflict flow. Locks are advisory; browsers without Web Locks behave
+as before.
 
 ### In progress (not merged; status as of this record)
 
 | Branch | PR | Scope | Status |
 | --- | --- | --- | --- |
-| `feat/large-brush-sizes` | #187 (open) | Painting Size 1–5000 px (was 1–100), perceptual slider, proportional `[` / `]` steps | Under review; not on `main` |
-| `perf/incremental-draft-saves` | #186 (open) | Content-addressed IndexedDB asset storage so autosave stops re-serialising tens of MB per edit; audit of a spurious "This draft changed in another tab" conflict seen once with a single tab | Under review; not on `main` |
-| `feat/larger-undo-history` | not yet opened | User request: 10× undo **and** redo depth (240 steps / ~320 MB on desktop, device-aware). Today 24 steps / 32 MB of data-URL text leaves one undo step on a 2646×4096 document | In development; no remote branch yet |
+| `feat/larger-undo-history` | #189 (open) | User request: 10× undo **and** redo depth — 240 steps, device-aware image budget (320 MiB desktop, 128 MiB mobile/≤4 GB, 96 MiB ≤2 GB) instead of 24 steps / 32 MB, which left one undo step on a 2646×4096 document; History panel states capacity and marks memory-only states; persisted window stays ≤24 states / ~48 MiB | Under review; not on `main` |
+| `feat/huge-projects` | not yet opened | User request "don't flatten — handle huge projects": raise the project limits ~10× — 320+ layers (was 32), 640 MP of stored layer pixels (was 64 MP), ~640 MB asset/draft/project caps (was 64 MB) | In development; no remote branch yet |
 | `perf/coalesce-stroke-previews` | not yet opened | Coalesce live stroke previews to one per animation frame; every `pointermove` currently triggers a full-canvas preview render (a 12k-point stroke took ~5 min) | In development; no remote branch yet |
 
 ### Requested or found, not started
@@ -134,7 +154,7 @@ investigation.
 | 10 | Brush: treat near-zero pressure as a supported pen lift; dab-only / stamp mode for star fields; scatter/spacing above 100% of size for sparse stamping | P2 | `brush-dynamics-contract.md`, `brush-pressure-contract.md` |
 | 11 | "Mask from selection" should consume (deselect) the selection as Photoshop does | P3 | `layer-mask-contract.md` |
 | 12 | Gradient: a second gradient on the same layer composites over existing pixels; document this or offer a replace mode | P3 | `gradient-mode-contract.md` |
-| 13 | History panel should show in-memory and persisted undo depth (ties to `feat/larger-undo-history`) | P3 | `history-timeline-contract.md` |
+| 13 | History panel should show in-memory and persisted undo depth — covered by open #189 (capacity note, memory-only markers); close when it merges | P3 | `history-timeline-contract.md` |
 | 14 | Export downloads: in the Claude desktop built-in browser a PNG export reported "downloaded" but no file was written, while `.pixelforge` ZIP downloads worked (files landed as GUID `.tmp`). Determine whether the host browser or the app (object-URL revoke timing, MIME type, user activation) is responsible; document a workaround such as a File System Access "Save to file" path where available | P3 | `export-contract.md` |
 
 ## Latest protected release evidence
