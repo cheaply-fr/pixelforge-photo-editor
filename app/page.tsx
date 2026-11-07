@@ -368,6 +368,19 @@ import {
   type BrushMode,
 } from '../src/brush';
 import {
+  BRUSH_SIZE_MAX,
+  BRUSH_SIZE_MIN,
+  BRUSH_SIZE_SLIDER_STEPS,
+  brushSizeToSliderPosition,
+  brushSizeValueText,
+  clampBrushSize,
+  sliderPositionToBrushSize,
+  brushSegmentDue,
+  spacedDabPositions,
+  stepBrushSize,
+  type BrushSpacingState,
+} from '../src/brushSize';
+import {
   BRUSH_PRESSURE_CURVES,
   normalizeBrushPressureCurve,
   type BrushPressureCurve,
@@ -1521,6 +1534,8 @@ type Gesture = {
     pointerType?: string;
   }>;
   smoothedLast?: { x: number; y: number };
+  /** Dab spacing carried across pointer segments of one stroke. */
+  spacingState?: BrushSpacingState;
   points?: PathNode[];
   lastPressure?: number;
   pointerType?: string;
@@ -1686,6 +1701,21 @@ const stampCanvas = (
   return changed;
 };
 
+/**
+ * Dab positions along one segment. With a stroke's spacing state, dabs follow
+ * the configured spacing across pointer events (so a 5,000 px brush does not
+ * re-dab every pointermove); without one, both endpoints are stamped.
+ */
+const brushSegmentPositions = (
+  distance: number,
+  interval: number,
+  spacingState?: BrushSpacingState,
+) => {
+  if (spacingState) return spacedDabPositions(distance, interval, spacingState);
+  const steps = Math.max(1, Math.ceil(distance / interval));
+  return Array.from({ length: steps + 1 }, (_, step) => step / steps);
+};
+
 /** Stamp a line at bounded intervals so fast pointer moves remain continuous. */
 const stampCanvasSegment = (
   target: HTMLCanvasElement,
@@ -1694,6 +1724,7 @@ const stampCanvasSegment = (
   options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY'> & {
     sourceAnchor?: { x: number; y: number };
     destinationAnchor?: { x: number; y: number };
+    spacingState?: BrushSpacingState;
   },
 ) => {
   const resolved = resolveBrushStamp({
@@ -1712,14 +1743,11 @@ const stampCanvasSegment = (
       flipY: options.flipY,
     }),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    steps = Math.max(
-      1,
-      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
-    );
+    interval = Math.max(1, resolved.size * resolved.spacing / 100),
+    positions = brushSegmentPositions(distance, interval, options.spacingState);
   let changed = false;
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps,
-      x = from.x + (to.x - from.x) * t,
+  for (const t of positions) {
+    const x = from.x + (to.x - from.x) * t,
       y = from.y + (to.y - from.y) * t,
       scattered = scatterBrushPoint({ x, y }, resolved.size, options.scatter ?? 0),
       sourceX = options.sourceAnchor
@@ -1810,17 +1838,16 @@ const patternCanvasSegment = (
   target: HTMLCanvasElement,
   from: { x: number; y: number },
   to: { x: number; y: number },
-  options: Omit<Parameters<typeof patternCanvas>[1], 'x' | 'y'>,
+  options: Omit<Parameters<typeof patternCanvas>[1], 'x' | 'y'> & {
+    spacingState?: BrushSpacingState;
+  },
 ) => {
   const resolved = resolveBrushStamp(options),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    steps = Math.max(
-      1,
-      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
-    );
+    interval = Math.max(1, resolved.size * resolved.spacing / 100),
+    positions = brushSegmentPositions(distance, interval, options.spacingState);
   let changed = false;
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps;
+  for (const t of positions) {
     changed =
       patternCanvas(target, {
         ...options,
@@ -2840,7 +2867,7 @@ export default function Home() {
     setViewRotation(normalizeViewRotation(s.viewRotation ?? 0));
     setColor(s.color);
     setBackgroundColor(s.backgroundColor || '#ffffff');
-    setSize(s.size);
+    setSize(clampBrushSize(s.size));
     setBrushOpacity(s.brushOpacity ?? 100);
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
@@ -2972,7 +2999,7 @@ export default function Home() {
     const preset = brushPresetById(id);
     if (!preset) return;
     setBrushPreset(id);
-    setSize(preset.size);
+    setSize(clampBrushSize(preset.size));
     setHardness(preset.hardness);
     setBrushSpacing(preset.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushAngle(preset.angle ?? BRUSH_DEFAULT_ANGLE);
@@ -2985,7 +3012,7 @@ export default function Home() {
     setNotice(`Brush preset “${preset.label}” applied`);
   };
   const applyCustomBrushPreset = (preset: CustomBrushPreset) => {
-    setSize(preset.size);
+    setSize(clampBrushSize(preset.size));
     setHardness(preset.hardness);
     setBrushSpacing(preset.spacing);
     setBrushAngle(preset.angle);
@@ -10345,6 +10372,7 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
+        spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
         ],
@@ -10364,6 +10392,7 @@ export default function Home() {
           { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
         ]) {
           stampCanvasSegment(g.buffer, from, point, {
+            spacingState: g.spacingState,
             size: localSize(layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
@@ -10412,6 +10441,7 @@ export default function Home() {
         patternId,
         patternTileSize,
         moved: false,
+        spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
         ],
@@ -10437,6 +10467,7 @@ export default function Home() {
           ]) {
             g.changed =
               patternCanvasSegment(g.buffer, from, point, {
+                spacingState: g.spacingState,
                 size: localSize(layer.matrix, size),
                 hardness,
                 opacity: brushOpacity / 100,
@@ -10808,6 +10839,7 @@ export default function Home() {
       lastPressure: pressure(e),
       pointerType: e.pointerType,
       moved: false,
+      spacingState: { started: false, carry: 0 },
       queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
     } as Gesture;
     gesture.current = g;
@@ -10832,6 +10864,7 @@ export default function Home() {
           ]) {
             const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
             stampGestureSegment(g, from, destination, {
+              spacingState: g.spacingState,
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -10873,6 +10906,7 @@ export default function Home() {
     if (quickMaskGesture.current && quickMaskRef.current) {
       const p = point(e),
         g = quickMaskGesture.current;
+      if (!brushSegmentDue(Math.hypot(p.x - g.last.x, p.y - g.last.y), size)) return;
       updateQuickMaskAt(quickMaskRef.current, p.x, p.y, g.selected);
       g.last = p;
       return;
@@ -11074,6 +11108,7 @@ export default function Home() {
       cloneSource
     ) {
       stampCanvasSegment(g.buffer, g.last, local, {
+        spacingState: g.spacingState,
         size: localSize(g.layer!.matrix, size),
         hardness,
         opacity: brushOpacity / 100,
@@ -11099,6 +11134,7 @@ export default function Home() {
     if (g.tool === 'pattern-stamp' && g.buffer) {
       g.changed =
         patternCanvasSegment(g.buffer, g.last, local, {
+          spacingState: g.spacingState,
           size: localSize(g.layer!.matrix, size),
           hardness,
           opacity: brushOpacity / 100,
@@ -11221,6 +11257,7 @@ export default function Home() {
       });
     }
     if (g.tool === 'smudge' && g.buffer && g.source) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer!.matrix, size))) return;
       const changed = smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
         size: localSize(g.layer!.matrix, size),
         hardness,
@@ -11233,6 +11270,7 @@ export default function Home() {
       return;
     }
     if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.source && g.layer) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer.matrix, size))) return;
       const sourceContext = g.source.getContext('2d')!,
         bufferContext = g.buffer.getContext('2d')!,
         result = applyRetouchStroke(
@@ -11323,6 +11361,7 @@ export default function Home() {
       g.buffer &&
       g.source
     ) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer!.matrix, size))) return;
       const changed = tonalCanvasSegment(g.source, g.buffer, g.last, local, {
         size: localSize(g.layer!.matrix, size),
         hardness,
@@ -11402,6 +11441,7 @@ export default function Home() {
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
       stampGestureSegment(g, from, destination, {
+        spacingState: g.spacingState,
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -12006,6 +12046,7 @@ export default function Home() {
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
       if (g.moved && (from.x !== destination.x || from.y !== destination.y))
         stampGestureSegment(g, from, destination, {
+          spacingState: g.spacingState,
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -12343,6 +12384,7 @@ export default function Home() {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
         g.changed =
           patternCanvasSegment(g.buffer, g.last, local, {
+            spacingState: g.spacingState,
             size: localSize(g.layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
@@ -13025,9 +13067,8 @@ export default function Home() {
       }
       if (e.key === '[' || e.key === ']') {
         e.preventDefault();
-        setSize((value) =>
-          Math.max(2, Math.min(100, value + (e.key === ']' ? 2 : -2))),
-        );
+        const direction = e.key === ']' ? 1 : -1;
+        setSize((value) => stepBrushSize(value, direction));
         return;
       }
       if (e.altKey) return;
@@ -16405,14 +16446,7 @@ export default function Home() {
                 />
               )}
               {tool !== 'magic-eraser' && (
-                <Slider
-                  label="Size"
-                  value={size}
-                  min={2}
-                  max={100}
-                  set={setSize}
-                  suffix="px"
-                />
+                <BrushSizeControl value={size} set={setSize} />
               )}
               {(tool === 'brush' ||
                 tool === 'pencil' ||
@@ -18211,5 +18245,90 @@ function Slider({
         onChange={(e) => set(+e.target.value)}
       />
     </label>
+  );
+}
+
+/**
+ * Shared painting-tool Size: an exact numeric field (labelled "Size") plus a
+ * perceptual logarithmic slider so 1–5,000 px stays usable on one track.
+ * Arrow/Page keys on the slider use the same proportional steps as `[`/`]`.
+ */
+function BrushSizeControl({
+  value,
+  set,
+}: {
+  value: number;
+  set: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commitDraft = (text: string) => {
+    const parsed = Number(text);
+    if (text.trim() !== '' && Number.isFinite(parsed)) set(clampBrushSize(parsed, value));
+    setDraft(null);
+  };
+  return (
+    <div className="slider brush-size-control">
+      <span>
+        <b>Size</b>
+        <span className="brush-size-value">
+          <input
+            aria-label="Size"
+            className="text-input brush-size-input"
+            type="number"
+            inputMode="numeric"
+            min={BRUSH_SIZE_MIN}
+            max={BRUSH_SIZE_MAX}
+            step={1}
+            value={draft ?? String(value)}
+            onChange={(e) => {
+              const text = e.target.value,
+                parsed = Number(text);
+              // Commit in-range values immediately so typing "800" paints
+              // at 800 px; keep partial/out-of-range text until blur/Enter.
+              if (text.trim() !== '' && Number.isFinite(parsed) && parsed >= BRUSH_SIZE_MIN && parsed <= BRUSH_SIZE_MAX) {
+                set(clampBrushSize(parsed, value));
+                setDraft(Number.isInteger(parsed) ? null : text);
+              } else setDraft(text);
+            }}
+            onBlur={(e) => commitDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitDraft(e.currentTarget.value);
+              else if (e.key === 'Escape') setDraft(null);
+            }}
+          />
+          <output aria-hidden="true">px</output>
+        </span>
+      </span>
+      <input
+        aria-label="Size slider"
+        aria-valuetext={brushSizeValueText(value)}
+        className="brush-size-range"
+        type="range"
+        min={0}
+        max={BRUSH_SIZE_SLIDER_STEPS}
+        step={1}
+        value={brushSizeToSliderPosition(value)}
+        onChange={(e) => set(sliderPositionToBrushSize(+e.target.value))}
+        onKeyDown={(e) => {
+          const direction =
+            e.key === 'ArrowUp' || e.key === 'ArrowRight' || e.key === 'PageUp'
+              ? 1
+              : e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'PageDown'
+                ? -1
+                : 0;
+          if (e.key === 'Home' || e.key === 'End') {
+            e.preventDefault();
+            set(e.key === 'Home' ? BRUSH_SIZE_MIN : BRUSH_SIZE_MAX);
+            return;
+          }
+          if (!direction) return;
+          e.preventDefault();
+          let next = stepBrushSize(value, direction as 1 | -1);
+          if (e.key === 'PageUp' || e.key === 'PageDown')
+            for (let i = 0; i < 4; i += 1) next = stepBrushSize(next, direction as 1 | -1);
+          set(next);
+        }}
+      />
+    </div>
   );
 }

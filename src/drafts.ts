@@ -81,6 +81,7 @@ import {
 } from './metadata.ts';
 import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
 import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts';
+import { BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from './brushSize.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -438,7 +439,8 @@ function validSettings(settings: unknown): settings is Settings {
     [candidate.zoom as number, 20, 140],
     [candidate.viewZoom === undefined ? 100 : (candidate.viewZoom as number), 1, 3200],
     [candidate.viewRotation ?? 0, -180, 180],
-    [candidate.size as number, 2, 100],
+    // Painting Size widened from 2–100 to 1–5,000 px; older drafts stay valid.
+    [candidate.size as number, BRUSH_SIZE_MIN, BRUSH_SIZE_MAX],
     [candidate.fontSize as number, 16, 160],
   ];
   const brushRanges: [number, number, number][] = [
