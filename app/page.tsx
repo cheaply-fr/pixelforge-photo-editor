@@ -51,8 +51,10 @@ import {
   CloudConflictError,
   type CloudLink,
 } from '../src/cloud';
+import { primeWorkerDecodedAsset } from '../src/workerRender';
 import {
   addAsset,
+  primeDecodedAsset,
   formatMegapixels,
   LAYER_PIXEL_BUDGET,
   layerPixelUsage,
@@ -2828,6 +2830,19 @@ export default function Home() {
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
+  /**
+   * Encode a committed paint buffer as an asset and keep its decoded pixels
+   * warm: the next stroke on this layer copies them instead of decoding the
+   * PNG it was just encoded from, and the render worker receives the pixels
+   * with the commit render instead of decoding the data URL again.
+   */
+  const addPaintedAsset = (buffer: HTMLCanvasElement) => {
+    const id = addAsset(assets.current, buffer);
+    const asset = assets.current[id];
+    primeDecodedAsset(asset, buffer);
+    primeWorkerDecodedAsset(asset, buffer);
+    return id;
+  };
   /**
    * Coalesce the live preview of a painting gesture. Stamping into
    * `g.buffer` stays synchronous per pointer event; only the full-document
@@ -12277,7 +12292,7 @@ export default function Home() {
           color: g.tool === 'eraser' ? undefined : brushColor(color),
         });
       g.smoothedLast = destination;
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
@@ -12568,7 +12583,7 @@ export default function Home() {
         setNotice('No Art History Brush change');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (commit({
         ...f,
         layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item),
@@ -12584,7 +12599,7 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12624,7 +12639,7 @@ export default function Home() {
         setNotice('No Pattern Stamp change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12693,7 +12708,7 @@ export default function Home() {
           threshold: g.redEyeThreshold ?? 36,
           amount: (g.redEyeAmount ?? 100) / 100,
         });
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12716,7 +12731,7 @@ export default function Home() {
           tolerance: colorTolerance,
           opacity: brushOpacity / 100,
         });
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12741,7 +12756,7 @@ export default function Home() {
         setNotice('No Smudge change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12781,7 +12796,7 @@ export default function Home() {
         setNotice(`No ${g.tool === 'blur' ? 'Blur' : 'Sharpen'} change applied`);
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
         setNotice(`${g.tool === 'blur' ? 'Blur' : 'Sharpen'} stroke applied`);
     } else if (
@@ -12808,7 +12823,7 @@ export default function Home() {
         setNotice('No tonal change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12821,7 +12836,7 @@ export default function Home() {
           `${g.tool === 'sponge' ? 'Sponge' : g.tool === 'dodge' ? 'Dodge' : 'Burn'} stroke applied`,
         );
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
