@@ -885,8 +885,22 @@ export function localSize(matrix: Matrix, diameter: number): number {
   // down-scaled layer cannot exceed engine validation and abort the stroke.
   return Math.min(LOCAL_BRUSH_MAX_DIAMETER, Math.max(0.25, diameter / Math.max(0.0001, Math.sqrt(determinant))));
 }
-export const filterCSS = (a: Adjustments) =>
-  `${a.filter === 'none' ? '' : a.filter} brightness(${a.brightness}%) contrast(${a.contrast}%) saturate(${a.saturation}%) blur(${a.blur}px)`;
+/**
+ * Canvas filter for the CSS-backed basic adjustments. Neutral values return
+ * `'none'`: an identity filter chain such as `brightness(100%) blur(0px)` still
+ * routes every draw through the browser's filter pipeline, which made each
+ * full-document composite (and every live brush preview) of a large raster
+ * layer cost hundreds of milliseconds for no visible change.
+ */
+export const filterCSS = (a: Adjustments) => {
+  const parts: string[] = [];
+  if (a.filter && a.filter !== 'none') parts.push(a.filter);
+  if (a.brightness !== 100) parts.push(`brightness(${a.brightness}%)`);
+  if (a.contrast !== 100) parts.push(`contrast(${a.contrast}%)`);
+  if (a.saturation !== 100) parts.push(`saturate(${a.saturation}%)`);
+  if (a.blur !== 0) parts.push(`blur(${a.blur}px)`);
+  return parts.length ? parts.join(' ') : 'none';
+};
 
 /** Fill in adjustment fields introduced after the v2 document format.
  *

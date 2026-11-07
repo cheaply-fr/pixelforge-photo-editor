@@ -10,6 +10,11 @@ import { sanitizeClippingRelations } from './layerClipping';
 import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
+import {
+  createPreviewScheduler,
+  type PreviewRequest,
+  type PreviewScheduler,
+} from './previewScheduler';
 import type {
   TiledNeighborhoodProgress,
   TiledRenderTelemetry,
@@ -31,6 +36,12 @@ import { detectTileCacheBudget } from './tileCachePolicy';
 export type RenderProgress = {
   completed: number;
   total: number;
+};
+
+/** Arguments for one coalesced live-gesture preview render. */
+export type GesturePreview = {
+  frame: Frame;
+  overrides?: Record<string, HTMLCanvasElement>;
 };
 
 export type LayerSelectionIntent = {
@@ -66,8 +77,15 @@ export function useDocument(onError: (message: string) => void) {
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };
-  useEffect(() => () => renderAbort.current?.abort(), []);
-  const paint = useCallback(
+  const previewScheduler = useRef<PreviewScheduler<GesturePreview> | null>(null);
+  useEffect(
+    () => () => {
+      previewScheduler.current?.cancel();
+      renderAbort.current?.abort();
+    },
+    [],
+  );
+  const renderNow = useCallback(
     async (value: Frame, overrides?: Record<string, HTMLCanvasElement>) => {
       const sequence = ++renderSequence.current;
       renderAbort.current?.abort();
@@ -130,6 +148,35 @@ export function useDocument(onError: (message: string) => void) {
     },
     [onError],
   );
+  const renderNowRef = useRef(renderNow);
+  useEffect(() => {
+    renderNowRef.current = renderNow;
+  }, [renderNow]);
+  /**
+   * Render immediately. Any explicit render (commit, undo, cancel, document
+   * install) supersedes a scheduled live preview, so a gesture preview can
+   * never paint over a newer document state.
+   */
+  const paint = useCallback(
+    (value: Frame, overrides?: Record<string, HTMLCanvasElement>) => {
+      previewScheduler.current?.cancel();
+      return renderNow(value, overrides);
+    },
+    [renderNow],
+  );
+  /**
+   * Schedule a coalesced live preview: at most one render in flight and one
+   * started per animation frame. The request is evaluated when the frame
+   * runs, so it renders the latest gesture buffer; return null when the
+   * gesture has ended.
+   */
+  const schedulePaint = useCallback((request: PreviewRequest<GesturePreview>) => {
+    previewScheduler.current ??= createPreviewScheduler<GesturePreview>({
+      render: ({ frame: value, overrides }) => renderNowRef.current(value, overrides),
+    });
+    previewScheduler.current.request(request);
+  }, []);
+  const cancelScheduledPaint = useCallback(() => previewScheduler.current?.cancel(), []);
   const publish = useCallback(
     (value: Frame) => {
       documentRevision.current += 1;
@@ -188,6 +235,7 @@ export function useDocument(onError: (message: string) => void) {
   );
   const install = useCallback(async (draft: Draft) => {
     const expected = history.current[index.current];
+    previewScheduler.current?.cancel();
     renderAbort.current?.abort();
     const installController = new AbortController();
     renderAbort.current = installController;
@@ -325,6 +373,8 @@ export function useDocument(onError: (message: string) => void) {
     tiledCacheBudget,
     historyBudget,
     paint,
+    schedulePaint,
+    cancelScheduledPaint,
     commit,
     install,
     select,
