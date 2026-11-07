@@ -224,6 +224,46 @@ for local diagnostics and acceptance tests. A cancelled or failed render does
 not publish telemetry as a completed frame, and unsupported/global effects keep
 the full-frame fallback with `data-tiled-effect="none"`.
 
+## Filter worker pool (parallel bands and tiles)
+
+Heavy neighbourhood filters on layers of at least 0.5 MP run in a separate
+pool of filter workers (`src/filterWorkerPool.ts`, `src/filter-band.worker.ts`).
+The pool belongs to whichever context renders: inside the render worker it is
+a set of nested module workers, and on the main-thread fallback path it is a
+set of ordinary module workers. It is never the render worker itself and
+shares no asset-transfer protocol with it: a filter worker receives only the
+pixel rows it must filter, as a transferred `ArrayBuffer`, and returns its
+output rows the same way.
+
+* **Size:** `navigator.hardwareConcurrency − 1`, capped at 8 on desktop and
+  2 on phones or devices reporting `deviceMemory ≤ 4`. With fewer than two
+  workers, filters stay serial. `globalThis.__PIXELFORGE_FILTER_WORKERS__`
+  (forwarded by the page to the render worker as `filterWorkers`) overrides
+  the size for tests; 0 disables the pool.
+* **Full-frame path:** Smart Blur, Smart Sharpen, Surface Blur, Reduce
+  Noise, Shape Blur, Lens Blur and legacy Path Blur split into row bands of
+  about 0.5 MP (at least three per worker). Each band carries a halo of
+  rows equal to the kernel's vertical reach (≤ 8 for the bilateral family,
+  ≤ 12 for Shape, ≤ radius for Lens, ⌈1.85·radius⌉ + 2 for legacy Path
+  Blur, which renders in full-image coordinates). Assembled bands are
+  byte-identical to the serial kernel (`tests/parallel-filters.test.mjs`).
+* **Tiled path:** the tile runner keeps up to `pool.size` tiles in flight,
+  limited so in-flight tile bytes stay inside `maxWorkingBytes`. Completion
+  order never changes the result, because each tile writes only its own
+  inner rectangle.
+* **Memory:** only bands being rendered are copied (at most `pool.size`
+  inputs in flight) plus one full-size output buffer, the same as the
+  serial path.
+* **Progress:** each completed band posts
+  `{ kind: 'filter-progress', id, progress: { kind: 'filter-band-progress',
+  effect, layerId?, completed, total } }`. The client validates it
+  (`validFilterBandProgress`: known band-safe effect, 1 ≤ completed ≤ total
+  ≤ 4096, no other fields) and restarts the no-progress watchdog.
+* **Cancellation and failure:** cancellation stops dispatch and terminates
+  busy filter workers, which are recreated on demand. A worker that fails to
+  load or crashes marks the pool broken, and the serial kernels produce the
+  same bytes. Idle filter workers are terminated after 20 s.
+
 ## Fallback and interactive edits
 
 The renderer uses the existing main-thread `renderFrame` path when worker

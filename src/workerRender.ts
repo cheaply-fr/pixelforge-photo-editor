@@ -26,6 +26,17 @@ import {
   type TiledNeighborhoodProgress,
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
+import { validFilterBandProgress, type FilterBandProgress } from './filterBands.ts';
+
+/**
+ * Test/diagnostic override for the filter worker pool size, forwarded to the
+ * render worker (whose globals are separate from the page's).
+ */
+function filterWorkerOverride(): number | undefined {
+  const value = (globalThis as typeof globalThis & { __PIXELFORGE_FILTER_WORKERS__?: unknown })
+    .__PIXELFORGE_FILTER_WORKERS__;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
 
 export type WorkerRenderOptions = {
   signal?: AbortSignal;
@@ -44,6 +55,8 @@ export type WorkerRenderOptions = {
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
   /** Monotonic progress for the latest eligible tiled effect. */
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
+  /** Completed row bands of a parallel full-frame filter. */
+  onFilterProgress?: (progress: FilterBandProgress) => void;
 };
 
 /** Minimum watchdog window, kept for small frames and as the stall floor. */
@@ -280,6 +293,11 @@ export async function renderFrameWithWorker(
           throw new Error('Invalid tiled progress from the fallback renderer.');
         options.onTiledProgress?.(progress);
       },
+      onFilterProgress: (progress) => {
+        if (!validFilterBandProgress(progress))
+          throw new Error('Invalid filter band progress from the fallback renderer.');
+        options.onFilterProgress?.(progress);
+      },
     });
     if (isCancelled()) throw abortError();
     markLayerFilterCacheStats(layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()));
@@ -403,6 +421,18 @@ export async function renderFrameWithWorker(
         } catch (error) {
           finish(() => reject(error));
         }
+      } else if (value.kind === 'filter-progress') {
+        // Each completed filter band restarts the no-progress window.
+        if (!validFilterBandProgress(value.progress)) {
+          finish(() => reject(new Error('Worker returned invalid filter progress.')));
+          return;
+        }
+        watchdog.touch();
+        try {
+          options.onFilterProgress?.(value.progress);
+        } catch (error) {
+          finish(() => reject(error));
+        }
       } else if (
         value.kind === 'result' &&
         value.width === frame.w &&
@@ -478,6 +508,7 @@ export async function renderFrameWithWorker(
         assetKeys,
         decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
+        filterWorkers: filterWorkerOverride(),
       }, primes.transfer);
     } catch (error) {
       finish(() => reject(error));
@@ -603,6 +634,7 @@ class PersistentWorkerSession {
         assetKeys,
         decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
+        filterWorkers: filterWorkerOverride(),
       }, primes.transfer);
       this.workerAssetKeys = new Set(Object.values(assetKeys));
     } catch {
@@ -730,6 +762,19 @@ class PersistentWorkerSession {
       task.watchdog?.touch();
       try {
         task.options.onTiledProgress?.(value.progress);
+      } catch (error) {
+        this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
+      }
+      return;
+    }
+    if (value.kind === 'filter-progress') {
+      if (!validFilterBandProgress(value.progress)) {
+        this.onWorkerFailure(new Error('Worker returned invalid filter progress.'));
+        return;
+      }
+      task.watchdog?.touch();
+      try {
+        task.options.onFilterProgress?.(value.progress);
       } catch (error) {
         this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
       }

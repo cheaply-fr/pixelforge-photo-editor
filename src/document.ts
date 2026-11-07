@@ -84,6 +84,15 @@ import {
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
 import type { TileCache } from './tilePlan.ts';
+import type { FilterBandProgress } from './filterBands.ts';
+import {
+  applyFilterEffectsParallel,
+  FILTER_PARALLEL_MIN_PIXELS,
+  isParallelFilterEffect,
+  pooledTileRenderer,
+  sharedFilterWorkerPool,
+  type FilterWorkerPool,
+} from './filterWorkerPool.ts';
 import {
   assetFingerprint,
   detectLayerFilterCacheBudget,
@@ -2346,6 +2355,14 @@ export type RenderOptions = {
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
   /** Report bounded tile completion before the final telemetry envelope. */
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
+  /** Report completed row bands of a parallel full-frame filter. */
+  onFilterProgress?: (progress: FilterBandProgress) => void;
+  /**
+   * Filter worker pool for heavy neighbourhood filters. Omit for this
+   * context's shared pool (when the device has spare cores); pass null to
+   * keep every filter on the calling thread.
+   */
+  filterPool?: FilterWorkerPool | null;
   /** Internal recursion guard for editable nested Smart Object contents. */
   nestedDepth?: number;
   /**
@@ -2359,6 +2376,46 @@ export type RenderOptions = {
    */
   compositeCache?: CompositeCache<HTMLCanvasElement>;
 };
+
+function renderFilterPool(options: RenderOptions | undefined): FilterWorkerPool | undefined {
+  return options?.filterPool === null ? undefined : (options?.filterPool ?? sharedFilterWorkerPool());
+}
+
+/**
+ * Apply a filter effect to a surface in place. Band-safe heavy filters on
+ * large surfaces run as parallel row bands in the filter worker pool, with
+ * per-band progress and cancellation; the bytes equal the serial path.
+ */
+async function applyFilterEffectsToSurface(
+  target: HTMLCanvasElement,
+  effect: Partial<FilterEffects> | undefined,
+  options: RenderOptions | undefined,
+  layerId: string,
+): Promise<void> {
+  const pool = renderFilterPool(options);
+  if (
+    !pool ||
+    pool.broken ||
+    !isParallelFilterEffect(effect) ||
+    target.width * target.height < FILTER_PARALLEL_MIN_PIXELS
+  ) {
+    applyFilterEffects(target, effect);
+    return;
+  }
+  const context = target.getContext('2d');
+  if (!context) return;
+  const image = context.getImageData(0, 0, target.width, target.height);
+  const type = effectiveFilterEffects(effect).type;
+  const result = await applyFilterEffectsParallel(image.data, target.width, target.height, effect, {
+    pool,
+    signal: options?.signal,
+    isCancelled: options?.isCancelled,
+    onProgress: (completed, total) =>
+      options?.onFilterProgress?.({ kind: 'filter-band-progress', effect: type, layerId, completed, total }),
+  });
+  image.data.set(result);
+  context.putImageData(image, 0, 0);
+}
 
 /** Render a raster layer's bounded style stack in local coordinates. */
 function applyRasterLayerStyles(
@@ -2984,7 +3041,7 @@ export async function renderFrame(
         stackedContext = stacked.getContext('2d')!;
       stackedContext.drawImage(rasterSource, 0, 0);
       for (const effect of effectiveSmartFilters(layer.smartFilters))
-        applyFilterEffects(stacked, effect);
+        await applyFilterEffectsToSurface(stacked, effect, options, layer.id);
       rasterSource = stacked;
     }
     if (computeLocal && isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
@@ -3023,6 +3080,13 @@ export async function renderFrame(
               maxWorkingBytes: options.tiledMaxWorkingBytes,
               signal: options.signal,
               isCancelled: options.isCancelled,
+              ...(() => {
+                // Heavy tiles run in the filter worker pool, several at once.
+                const pool = renderFilterPool(options);
+                return pool && !pool.broken
+                  ? { renderTile: pooledTileRenderer(pool), concurrency: pool.size }
+                  : {};
+              })(),
               onTelemetry: (telemetry) =>
                 options.onTiledTelemetry?.({ ...telemetry, layerId: layer.id }),
               onProgress: (completed, total, meta) =>
@@ -3050,13 +3114,13 @@ export async function renderFrame(
           // draft. Fall back to the existing full-frame path for this render.
           const fallback = surface(filteredWidth, filteredHeight);
           fallback.getContext('2d')!.drawImage(rasterSource, 0, 0);
-          applyFilterEffects(fallback, filterEffect);
+          await applyFilterEffectsToSurface(fallback, filterEffect, options, layer.id);
           rasterSource = fallback;
         }
       } else {
         const filtered = surface(filteredWidth, filteredHeight);
         filtered.getContext('2d')!.drawImage(rasterSource, 0, 0);
-        applyFilterEffects(filtered, filterEffect);
+        await applyFilterEffectsToSurface(filtered, filterEffect, options, layer.id);
         rasterSource = filtered;
       }
     }

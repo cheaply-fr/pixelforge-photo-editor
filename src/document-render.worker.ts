@@ -11,6 +11,7 @@ import type {
   TiledNeighborhoodProgress,
   TiledRenderTelemetry,
 } from './tiledDocument.ts';
+import type { FilterBandProgress } from './filterBands.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
 import { CompositeCache } from './compositeCache.ts';
 import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
@@ -31,6 +32,8 @@ type RenderRequest = {
   tiledMaxWorkingBytes?: number;
   /** Main-thread content fingerprints, so the worker need not rehash data URLs. */
   assetKeys?: Record<string, string>;
+  /** Test/diagnostic filter worker pool size forwarded from the page. */
+  filterWorkers?: number;
   /** Pixels the main thread already holds for a just-committed asset. */
   decodedPixels?: Array<{ id: string; key: string; pixels: ArrayBuffer }>;
 };
@@ -41,6 +44,7 @@ type Request = RenderRequest | CancelRequest | ClearCacheRequest;
 type Response =
   | { kind: 'progress'; id: number; completed: number; total: number }
   | { kind: 'tiled-progress'; id: number; progress: TiledNeighborhoodProgress }
+  | { kind: 'filter-progress'; id: number; progress: FilterBandProgress }
   | { kind: 'tiled-telemetry'; id: number; telemetry: TiledRenderTelemetry }
   | { kind: 'cancelled'; id: number }
   | {
@@ -180,6 +184,10 @@ scope.onmessage = (event: MessageEvent<Request>) => {
             primeDecodedAssetPixels(asset, prime.key, new Uint8ClampedArray(prime.pixels));
         }
       const tiledMaxWorkingBytes = validateTiledBudget(request.tiledMaxWorkingBytes);
+      const filterScope = globalThis as typeof globalThis & { __PIXELFORGE_FILTER_WORKERS__?: number };
+      if (Number.isSafeInteger(request.filterWorkers) && (request.filterWorkers as number) >= 0)
+        filterScope.__PIXELFORGE_FILTER_WORKERS__ = request.filterWorkers;
+      else delete filterScope.__PIXELFORGE_FILTER_WORKERS__;
       output = (await renderFrame(
         request.frame,
         request.assets,
@@ -205,6 +213,10 @@ scope.onmessage = (event: MessageEvent<Request>) => {
           onTiledProgress: (progress) => {
             if (!cancelled.has(request.id))
               scope.postMessage({ kind: 'tiled-progress', id: request.id, progress });
+          },
+          onFilterProgress: (progress) => {
+            if (!cancelled.has(request.id))
+              scope.postMessage({ kind: 'filter-progress', id: request.id, progress });
           },
         },
       )) as unknown as OffscreenCanvas;
