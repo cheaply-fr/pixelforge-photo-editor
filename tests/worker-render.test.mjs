@@ -729,3 +729,53 @@ test('worker rejects forged tiled telemetry before accepting a result', async ()
     assert.equal(worker.terminated, true);
   } finally { restoreGlobals(); }
 });
+
+test('persistent worker sends asset fingerprints, publishes cache counters and forwards cache clears', async () => {
+  const { assetFingerprint } = await import('../src/layerFilterCache.ts');
+  const { clearLayerFilterCaches } = await import('../src/workerRender.ts');
+  const posted = [];
+  class FakeCanvas {
+    getContext() { return {}; }
+    transferToImageBitmap() { return {}; }
+  }
+  const stats = { hits: 2, misses: 0, stores: 0, evictions: 0, rejected: 0, entries: 2, bytes: 8, maxBytes: 64 };
+  class FakeWorker {
+    postMessage(message) {
+      posted.push(message);
+      if (message.kind !== 'render') return;
+      queueMicrotask(() => this.onmessage?.({ data: {
+        kind: 'result', id: message.id, width: 1, height: 1, layerCache: stats,
+        image: { width: 1, height: 1, close() {} },
+      } }));
+    }
+    terminate() {}
+  }
+  setGlobal('Worker', FakeWorker);
+  setGlobal('OffscreenCanvas', FakeCanvas);
+  setGlobal('createImageBitmap', async () => ({}));
+  performance.clearMarks('pixelforge.layer-filter-cache');
+  try {
+    const frame = rectangleFrame();
+    const header = Buffer.alloc(33);
+    header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]);
+    header.writeUInt32BE(1, 16);
+    header.writeUInt32BE(1, 20);
+    const assetId = '00000000-0000-4000-8000-000000000009';
+    const assets = { [assetId]: { url: `data:image/png;base64,${header.toString('base64')}`, w: 1, h: 1 } };
+    const { width: _w, height: _h, color: _c, stroke: _s, fill: _f, ...common } = frame.layers[0];
+    frame.layers[0] = { ...common, kind: 'raster', asset: assetId };
+    const image = await renderFrameWithWorker(frame, assets, undefined, { forceWorker: true, reuseWorker: true });
+    assert.equal(image.width, 1);
+    const request = posted.find((message) => message.kind === 'render');
+    assert.deepEqual(Object.keys(request.assetKeys), [assetId]);
+    for (const [id, asset] of Object.entries(request.assets))
+      assert.equal(request.assetKeys[id], assetFingerprint(asset));
+    const marks = performance.getEntriesByName('pixelforge.layer-filter-cache', 'mark');
+    assert.deepEqual(marks.at(-1).detail, stats);
+    clearLayerFilterCaches();
+    assert.deepEqual(posted.at(-1), { kind: 'clear-layer-cache' });
+  } finally {
+    resetPersistentWorkerForTests();
+    restoreGlobals();
+  }
+});
