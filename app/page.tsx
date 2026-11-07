@@ -521,6 +521,17 @@ import {
   type BrushDynamics,
 } from '../src/brushDynamics';
 import {
+  DEFAULT_PAINT_SYMMETRY,
+  affineMaxScale,
+  applyAffine,
+  normalizePaintSymmetry,
+  paintSymmetryForLayer,
+  symmetryDabCopies,
+  type PaintSymmetrySettings,
+  type SymmetryAffine,
+} from '../src/paintSymmetry';
+import { PaintSymmetryControls, PaintSymmetryOverlay } from '../src/PaintSymmetryControls';
+import {
   BRUSH_TEXTURE_DEFAULT,
   brushTextureOpacity,
 } from '../src/brushTexture';
@@ -1616,6 +1627,8 @@ type Gesture = {
   selectionMask?: Uint8ClampedArray;
   /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
   selectionStroke?: SelectionStroke;
+  /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
+  paintSymmetry?: readonly SymmetryAffine[];
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
   cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -1880,6 +1893,8 @@ const stampCanvasSegment = (
     spacingState?: BrushSpacingState;
     /** Stamp a deferred first dab even without a direction (stroke end). */
     flushDeferred?: boolean;
+    /** Paint Symmetry transforms (identity first); omitted paints one copy. */
+    symmetry?: readonly SymmetryAffine[];
   },
 ) => {
   const resolved = resolveBrushStamp({
@@ -1910,6 +1925,22 @@ const stampCanvasSegment = (
     positions = brushSegmentPositions(distance, interval, state);
   const stampDabs = (x: number, y: number, dabDirection: { x: number; y: number }, sourceX?: number, sourceY?: number) => {
     for (const dab of brushDabsAt({ x, y }, resolved.size, options.scatter ?? 0, dynamics, dabDirection)) {
+      if (options.symmetry && options.symmetry.length > 1) {
+        // Each copy is the geometric image of the already-jittered dab.
+        const size = dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
+          opacity = options.opacity * dab.opacityScale,
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          // Colour dynamics are resolved once per source dab and shared.
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
+        for (const copy of symmetryDabCopies(options.symmetry, {
+          x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
+        }))
+          changed = stampCanvas(target, {
+            ...options, size, opacity, color, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
+            x: copy.x, y: copy.y, sourceX, sourceY,
+          }) || changed;
+        continue;
+      }
       changed =
         stampCanvas(target, {
           ...options,
@@ -2392,9 +2423,27 @@ const stampGestureSegment = (
   from: { x: number; y: number },
   to: { x: number; y: number },
   options: Parameters<typeof stampCanvasSegment>[3],
-) =>
-  confinedGestureEdit(g, from, to, brushStampReach(options.size, options.scatter), (target) =>
-    stampCanvasSegment(target, from, to, options));
+) => {
+  const reach = brushStampReach(options.size, options.scatter),
+    symmetry = g.paintSymmetry;
+  if (!symmetry || symmetry.length < 2)
+    return confinedGestureEdit(g, from, to, reach, (target) =>
+      stampCanvasSegment(target, from, to, options));
+  // Paint Symmetry: every copy lands on the same buffer (or raw selection
+  // stroke); the confined region is each copy's transformed segment.
+  const draw = (target: HTMLCanvasElement) =>
+      stampCanvasSegment(target, from, to, { ...options, symmetry }),
+    buffer = g.buffer!,
+    stroke = g.selectionStroke;
+  if (!stroke) return draw(buffer);
+  const changed = draw(stroke.raw);
+  if (changed)
+    for (const transform of symmetry)
+      confineStrokeRect(stroke, buffer, brushSegmentRect(
+        applyAffine(transform, from), applyAffine(transform, to),
+        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height));
+  return changed;
+};
 /** Pattern Stamp counterpart of `stampGestureSegment`. */
 const patternGestureSegment = (
   g: Gesture,
@@ -2664,6 +2713,7 @@ export default function Home() {
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushDynamics, setBrushDynamics] = useState<BrushDynamics>(() => ({ ...DEFAULT_BRUSH_DYNAMICS })),
+    [paintSymmetry, setPaintSymmetry] = useState<PaintSymmetrySettings>(() => ({ ...DEFAULT_PAINT_SYMMETRY })),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
     [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
@@ -3387,6 +3437,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    paintSymmetry,
     brushTexture,
     brushDual,
     brushBristle,
@@ -3476,6 +3527,7 @@ export default function Home() {
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
     setBrushDynamics(normalizeBrushDynamics(s.brushDynamics));
+    setPaintSymmetry(normalizePaintSymmetry(s.paintSymmetry));
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
     setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
@@ -7148,6 +7200,7 @@ export default function Home() {
         brushSmoothing,
         brushScatter,
         brushDynamics,
+        paintSymmetry,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -7269,6 +7322,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    paintSymmetry,
     brushTexture,
     brushDual,
     brushBristle,
@@ -12086,6 +12140,8 @@ export default function Home() {
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
+      // Paint Symmetry is fixed for the stroke at pointer-down.
+      g.paintSymmetry = paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix);
       g.pending = (async () => {
         try {
           const image = await decodeAsset(assets.current[rasterAsset!]),
@@ -16650,6 +16706,15 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
+            {frame && (tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+              <PaintSymmetryOverlay
+                value={paintSymmetry}
+                onChange={setPaintSymmetry}
+                canvasWidth={frame.w}
+                canvasHeight={frame.h}
+                toCanvas={point}
+              />
+            )}
             {(() => {
               // On-canvas centre handle for centred filters. Dragging previews
               // locally and commits one undoable edit on release; arrow keys
@@ -17892,6 +17957,14 @@ export default function Home() {
                         ))}
                       </select>
                     </label>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && frame && (
+                    <PaintSymmetryControls
+                      value={paintSymmetry}
+                      onChange={setPaintSymmetry}
+                      canvasWidth={frame.w}
+                      canvasHeight={frame.h}
+                    />
                   )}
                   {tool !== 'pencil' &&
                     tool !== 'color-replace' &&

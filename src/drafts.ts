@@ -90,6 +90,7 @@ import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts
 import { BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from './brushSize.ts';
 import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
 import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
+import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 export type Tool =
   | 'move'
@@ -230,6 +231,8 @@ export type Settings = {
   brushBuildUp?: number;
   /** Brush-family flow amount, from 1 to 100 percent. */
   brushFlow?: number;
+  /** Paint Symmetry for Brush, Pencil and Eraser (off when omitted). */
+  paintSymmetry?: PaintSymmetrySettings;
   /** Brush tip rotation in degrees. */
   angle?: number;
   /** Brush tip roundness (100 is circular). */
@@ -502,6 +505,7 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.gradientBlend !== undefined && !validGradientBlendMode(candidate.gradientBlend)) return false;
   if (candidate.gradientOpacity !== undefined && !validGradientOpacity(candidate.gradientOpacity)) return false;
   if (candidate.brushDynamics !== undefined && !validBrushDynamics(candidate.brushDynamics)) return false;
+  if (candidate.paintSymmetry !== undefined && !validPaintSymmetry(candidate.paintSymmetry)) return false;
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
