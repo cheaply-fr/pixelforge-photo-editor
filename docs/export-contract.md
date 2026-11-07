@@ -93,3 +93,10 @@ activation) is responsible. Next steps: reproduce in standard Chromium and the
 embedded browser, compare the PNG and ZIP download paths, and document a
 workaround such as a File System Access "Save to file" path where available.
 This is not a regression claim for standard browsers.
+
+In development (2026-11-07): `feat/reference-layer-paste-export` hardens
+downloads (anchor attached to the DOM, deferred object-URL revoke, explicit
+MIME type, File System Access save picker where available) and adds a
+reference/guide layer that is excluded from export. Not merged. ZIP downloads
+landing as GUID `.tmp` files and popups closing the pane are host behaviours
+of the Claude desktop built-in browser, not app defects.

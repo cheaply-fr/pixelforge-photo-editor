@@ -54,5 +54,6 @@ merged `8def856`; `src/gradientStops.ts` with
 `tests/browser/gradient-transparent-end.spec.ts`).
 
 Open roadmap item (P3): a second gradient on the same layer composites over
-the existing pixels rather than replacing them. Either document this as the
-intended normal-mode behaviour or offer an explicit replace mode.
+the existing pixels rather than replacing them. A Replace mode, gradient
+blend modes and opacity are in development on `feat/brush-gradient-options`
+(not merged).

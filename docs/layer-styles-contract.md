@@ -73,3 +73,8 @@ Inner Glow decorations are missing (users approximate glow with a zero-offset
 drop shadow). Additional layer blend modes (colour dodge, linear dodge/add,
 soft light, hard light, colour, luminosity and others) are tracked alongside
 in `roadmap-progress-rubric.md`.
+
+In development (2026-11-07): `feat/glow-styles-and-blend-modes` adds Outer
+Glow and Inner Glow, larger shadow ranges, and the colour dodge/burn, linear
+dodge/burn, soft/hard light, exclusion, hue, saturation, colour and
+luminosity blend modes. Not merged; bounds in this contract still apply.

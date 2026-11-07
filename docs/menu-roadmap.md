@@ -138,35 +138,43 @@ and priorities are in
 [`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07).
 
 - **Layer → Trim Layer to Content** and the layer pixel budget notice are
-  shipped (#183, merged `8a82ad6`, deployed in `f5e4135`/`cba6253`). No
-  automatic trim yet.
+  shipped (#183, merged `8a82ad6`, deployed in `f5e4135`/`cba6253`).
+  Automatic trim, lazy empty layers and trimmed-bounds-preserving Rasterize
+  and Merge are in development on `feat/huge-projects` (A).
 - **Edit → Undo/Redo depth:** user request for 10× undo and redo depth
   (240 steps, device-aware 320/128/96 MiB budgets; today 24 steps / 32 MB,
-  which is one step on a 2646×4096 document) is in review as #189
-  (`feat/larger-undo-history`), which also makes **Window → History** show
-  capacity and mark memory-only states.
+  which is one step on a 2646×4096 document) shipped in #189 (merged and
+  deployed `1c40122`), which also makes **Window → History** show capacity
+  and mark memory-only states.
 - **Huge projects (user request "don't flatten"):** ~10× project limits —
   320+ layers, 640 MP stored layer pixels, ~640 MB asset/draft/project caps —
-  in development on `feat/huge-projects`.
-- **Edit → Paste (P1):** an OS clipboard image did not reach the paste
-  handler via Ctrl+V when the editor's shortcut was active and no internal
-  clipboard existed; reproduce and fix.
-- **Layer → Layer Style (P2):** Drop Shadow blur max 64 px is too small for
-  large documents; add Outer Glow and Inner Glow.
-- **Layer blend modes (P2):** add colour dodge, linear dodge (add), soft
-  light, hard light, colour, luminosity and the remaining modes beyond
-  normal/multiply/screen/overlay/darken/lighten/difference.
-- **Filter → Convert for Smart Filters / filter stacking (P2):** one live
-  filter per raster layer; stacking needs Layer → Rasterize between filters.
-- **Filter → Blur → Radial Blur (P2):** centre X/Y are integer percentages
+  in development on `feat/huge-projects` (A), with render scaling.
+- **Edit → Paste (P1, in development G):** an OS clipboard image did not
+  reach the paste handler via Ctrl+V when the editor's shortcut was active
+  and no internal clipboard existed; OS image paste via Ctrl+V and
+  Edit → Paste is in development on `feat/reference-layer-paste-export`.
+- **Layer → Layer Style (P2, in development E):** larger shadow ranges plus
+  Outer Glow and Inner Glow on `feat/glow-styles-and-blend-modes`.
+- **Layer blend modes (P2, in development E):** colour dodge/burn, linear
+  dodge/burn, soft/hard light, exclusion, hue, saturation, colour and
+  luminosity on `feat/glow-styles-and-blend-modes`.
+- **Filter → Blur → Gaussian Blur (P1, in development C):** radius 24 timed
+  out the render worker at 10.8 MP; radius-independent blurs and a
+  work-scaled watchdog are in PR #191 (`perf/fast-large-radius-filters`).
+- **Filter → Convert for Smart Filters / filter stacking (P2, queued after
+  C):** one live filter per raster layer; stacking needs Layer → Rasterize
+  between filters.
+- **Filter → Blur → Radial Blur (P2, queued after C):** centre X/Y are integer percentages
   (1% ≈ 41 px at 4096 px); allow fractional or pixel centres and on-canvas
   placement.
-- **"Mask from selection" (P3):**
-  should deselect afterwards as Photoshop does.
-- **Reference image (proposed File/View command, P2):** non-exported, non-printing
+- **"Mask from selection" (P3, in development D):** consumes (deselects)
+  the selection on `fix/retouch-selection-and-clone-source`.
+- **Reference image (proposed File/View command, P2, in development G):** non-exported, non-printing
   reference layer or panel with eyedropper sampling, outside the layer
   budget.
-- **File → Export (P3):** in the Claude desktop built-in browser a PNG export
-  reported "downloaded" but wrote no file while `.pixelforge` ZIPs worked;
-  determine host vs. app cause and document a workaround (for example a File
-  System Access "Save to file" path).
+- **File → Export (P3, in development G):** in the Claude desktop built-in
+  browser a PNG export reported "downloaded" but wrote no file while
+  `.pixelforge` ZIPs worked; hardened downloads (anchor in the DOM, deferred
+  revoke, explicit MIME, File System Access save picker where available).
+- **Gradient options (P3, in development F):** Replace mode, blend modes and
+  opacity on `feat/brush-gradient-options`.

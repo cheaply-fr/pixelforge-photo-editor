@@ -161,15 +161,24 @@ Known remaining families and release work:
    consent, limits and recovery. Search online or manufacture safe fixtures
    when needed; do not block unrelated local-first work waiting for a vendor.
 7. **Large-document painting (added 2026-11-07):** a live 2646×4096 painting
-   session produced #181–#187 (merged and deployed; `/release.json` reported `6a42943`;
-   includes incremental draft saves and 1–5000 px brush sizes) plus open or
-   in-development work on larger undo/redo history (#189), ~10× huge-project
-   limits (`feat/huge-projects`) and per-frame stroke previews, and a prioritized
-   backlog (stroke-start decode, per-stroke PNG commits, Clone/Heal selection
-   confinement, OS-clipboard paste, extra blend modes, glow styles, filter
-   stacks, reference images, export downloads in embedded browsers). See
-   "Large-document painting findings (2026-11-07)" in
-   `docs/roadmap-progress-rubric.md`.
+   session produced #181–#187 and #189 (merged and deployed; `/release.json`
+   reported `1c40122` after #189), and every remaining finding now has a
+   fix-wave-2 workstream: huge projects (`feat/huge-projects`), coalesced
+   stroke previews (#190), fast large-radius filters (#191), retouch
+   selection and clone source (`fix/retouch-selection-and-clone-source`),
+   glow styles and blend modes (`feat/glow-styles-and-blend-modes`), brush
+   and gradient options (`feat/brush-gradient-options`), and reference layer,
+   OS paste and hardened downloads (`feat/reference-layer-paste-export`).
+   Stroke-start decode, per-stroke PNG commits, Radial Blur centres and
+   raster filter stacks are queued follow-ups. See "Large-document painting
+   findings (2026-11-07)" in `docs/roadmap-progress-rubric.md`.
+8. **Host-environment notes (not app bugs):** in the Claude desktop app's
+   built-in browser, `window.open` popups close the browser pane, ZIP
+   downloads are saved as GUID-named `.tmp` files, and a PNG export once
+   reported success without writing a file (being hardened in workstream G).
+   The site's CSP blocks `eval` and `fetch` to `localhost` from the deployed
+   origin; that is expected and should not be loosened for testing. Prefer
+   local dev servers or Playwright for automation that needs either.
 
 The user specifically asked to keep developing until all unblocked features
 are complete and to log remaining blockers in the roadmap. Choose the next
