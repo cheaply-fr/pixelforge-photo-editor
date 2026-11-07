@@ -279,7 +279,14 @@ import { decodePdfComposite } from '../src/pdf';
 import { decodeTiffComposite } from '../src/tiff';
 import { prepareSvgBytes } from '../src/svg';
 import { renderSelection } from '../src/selections';
-import { maskCoverageAt, mixByMask } from '../src/selectionClip';
+import {
+  brushSegmentRect,
+  brushStampReach,
+  maskCoverageAt,
+  mixByMask,
+  mixRectByMask,
+  type PixelRect,
+} from '../src/selectionClip';
 import {
   refineSelectionAlpha,
   type SelectionRefineMode,
@@ -1451,6 +1458,8 @@ type Gesture = {
   maskRefinementStroke?: MaskRefinementStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
+  /** Unconfined Brush/Pencil/Eraser/mask stroke, present only while a selection confines it. */
+  selectionStroke?: SelectionStroke;
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
   selectionBase?: Uint8ClampedArray;
   /** Existing resolved alpha is retained for replace no-op detection. */
@@ -1994,6 +2003,92 @@ const confineToSelection = (
   const image = editedContext.createImageData(width, height);
   image.data.set(mixed);
   editedContext.putImageData(image, 0, 0);
+};
+/**
+ * A brush-family stroke confined by the active selection. Dabs land on `raw`
+ * exactly as they would without a selection; each touched rectangle is then
+ * blended over the stroke-start pixels by the selection coverage into the
+ * visible buffer, so the preview and the committed asset are identical and a
+ * feathered edge receives proportional paint however often it is overpainted.
+ */
+type SelectionStroke = {
+  raw: HTMLCanvasElement;
+  original: Uint8ClampedArray;
+  mask: Uint8ClampedArray;
+};
+const beginSelectionStroke = (
+  buffer: HTMLCanvasElement,
+  mask: Uint8ClampedArray | undefined,
+): SelectionStroke | undefined => {
+  if (!mask) return undefined;
+  if (mask.length !== buffer.width * buffer.height)
+    throw new Error('Selection mask does not match the paint buffer');
+  const raw = surface(buffer.width, buffer.height);
+  raw.getContext('2d')!.drawImage(buffer, 0, 0);
+  return {
+    raw,
+    original: buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+    mask,
+  };
+};
+/**
+ * Copy one confined rectangle of the raw stroke into the visible buffer and
+ * report whether the visible pixels changed.
+ */
+const confineStrokeRect = (
+  stroke: SelectionStroke,
+  target: HTMLCanvasElement,
+  rect: PixelRect | null,
+) => {
+  if (!rect) return false;
+  const image = stroke.raw
+      .getContext('2d')!
+      .getImageData(rect.x, rect.y, rect.width, rect.height),
+    targetContext = target.getContext('2d')!,
+    before = targetContext.getImageData(rect.x, rect.y, rect.width, rect.height).data,
+    mixed = mixRectByMask(stroke.original, image.data, stroke.mask, target.width, rect);
+  let changed = false;
+  for (let index = 0; index < mixed.length && !changed; index += 1)
+    changed = mixed[index] !== before[index];
+  if (!changed) return false;
+  image.data.set(mixed);
+  targetContext.putImageData(image, rect.x, rect.y);
+  return true;
+};
+/** Frame-space selection coverage (alpha) for edits stored at canvas size. */
+const frameSelectionMask = async (
+  selection: Frame['selection'],
+  frame: Frame,
+  assets: Assets,
+): Promise<Uint8ClampedArray | undefined> => {
+  if (!selection) return undefined;
+  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
+    data = rendered.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
+    mask = new Uint8ClampedArray(frame.w * frame.h);
+  for (let pixel = 0; pixel < mask.length; pixel += 1) mask[pixel] = data[pixel * 4 + 3];
+  return mask;
+};
+/**
+ * Stamp a Brush/Pencil/Eraser segment into the gesture buffer, confined to the
+ * selection when one was active at pointer-down. Without a selection this is
+ * exactly `stampCanvasSegment` on the buffer.
+ */
+const stampGestureSegment = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof stampCanvasSegment>[3],
+) => {
+  const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (!stroke) return stampCanvasSegment(buffer, from, to, options);
+  const changed = stampCanvasSegment(stroke.raw, from, to, options);
+  if (changed)
+    confineStrokeRect(
+      stroke,
+      buffer,
+      brushSegmentRect(from, to, brushStampReach(options.size, options.scatter), buffer.width, buffer.height),
+    );
+  return changed;
 };
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
@@ -8625,6 +8720,29 @@ export default function Home() {
     context.putImageData(image, 0, 0);
     return result.changed;
   };
+  /**
+   * Apply a mask refinement segment to the gesture's mask buffer, confined to
+   * the selection that was active at pointer-down (Photoshop also confines
+   * layer-mask painting to the selection).
+   */
+  const refineGestureMask = (g: Gesture, stroke: MaskRefinementStroke) => {
+    const target = g.maskBuffer!, confined = g.selectionStroke;
+    if (!confined) return refineMaskCanvas(target, stroke);
+    if (!refineMaskCanvas(confined.raw, stroke)) return false;
+    const xs = stroke.points.map((item) => item.x),
+      ys = stroke.points.map((item) => item.y);
+    return confineStrokeRect(
+      confined,
+      target,
+      brushSegmentRect(
+        { x: Math.min(...xs), y: Math.min(...ys) },
+        { x: Math.max(...xs), y: Math.max(...ys) },
+        brushStampReach(stroke.size),
+        target.width,
+        target.height,
+      ),
+    );
+  };
   const drawPathOverlay = (
     path: PathModel,
     matrix: Matrix = [1, 0, 0, 1, 0, 0],
@@ -9267,8 +9385,10 @@ export default function Home() {
           if (!context) throw new Error('Mask refinement canvas is unavailable');
           context.imageSmoothingEnabled = false;
           context.drawImage(image, 0, 0);
+          const selectionMask = await frameSelectionMask(f.selection, f, assets.current);
           if (gesture.current !== g) return;
           g.maskBuffer = buffer;
+          g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
           const queued = (g.queued || [initialPoint]).slice(
             0,
             MASK_REFINEMENT_MAX_POINTS,
@@ -9281,7 +9401,7 @@ export default function Home() {
               pressure: item.pressure,
             })),
           };
-          g.changed = refineMaskCanvas(buffer, g.maskRefinementStroke);
+          g.changed = refineGestureMask(g, g.maskRefinementStroke);
           g.last = queued[queued.length - 1] || p;
           g.queued = undefined;
           g.maskPreviewAsset = crypto.randomUUID();
@@ -10490,15 +10610,21 @@ export default function Home() {
           const image = await decodeAsset(assets.current[rasterAsset!]),
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
+          // Photoshop confines painting and erasing to the active selection.
+          const selectionMask = f.selection && layer.kind === 'raster'
+            ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
+            : undefined;
           if (gesture.current !== g) return;
           g.buffer = buffer;
+          g.selectionMask = selectionMask;
+          g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
           let from = local;
           let stabilized = local;
           for (const point of g.queued || [
             { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
           ]) {
             const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
-            stampCanvasSegment(buffer, from, destination, {
+            stampGestureSegment(g, from, destination, {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -10572,7 +10698,7 @@ export default function Home() {
           g.maskRefinementStroke.points.length - 1
         ];
         g.maskRefinementStroke.points.push(point);
-        g.changed = refineMaskCanvas(g.maskBuffer, {
+        g.changed = refineGestureMask(g, {
           ...g.maskRefinementStroke,
           points: [from, point],
         }) || Boolean(g.changed);
@@ -11068,7 +11194,7 @@ export default function Home() {
     ) {
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
-      stampCanvasSegment(g.buffer, from, destination, {
+      stampGestureSegment(g, from, destination, {
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -11538,7 +11664,7 @@ export default function Home() {
             g.maskRefinementStroke.points.length - 1
           ];
           g.maskRefinementStroke.points.push(finalPoint);
-          g.changed = refineMaskCanvas(g.maskBuffer, {
+          g.changed = refineGestureMask(g, {
             ...g.maskRefinementStroke,
             points: [from, finalPoint],
           }) || Boolean(g.changed);
@@ -11668,7 +11794,7 @@ export default function Home() {
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
       if (g.moved && (from.x !== destination.x || from.y !== destination.y))
-        stampCanvasSegment(g.buffer, from, destination, {
+        stampGestureSegment(g, from, destination, {
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),

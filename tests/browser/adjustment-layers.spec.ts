@@ -143,6 +143,10 @@ test('Adjustment Brush paints a nondestructive adjustment mask and survives relo
   expect(masked.history[masked.index].layers.at(-2)?.asset).toBe(sourceAsset);
   expect(masked.assets[sourceAsset]).toEqual(sourceProject.assets[sourceAsset]);
 
+  // Mask painting is confined to an active selection, so drop it before
+  // revealing the unselected half (Photoshop consumes it into the mask).
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Deselect Ctrl\+D$/ }).click();
   await selectTool(page, 'Adjustment Brush');
   await page.getByLabel('Size', { exact: true }).fill('16');
   await canvas.click({ position: { x: box.width * 0.86, y: box.height * 0.5 } });
