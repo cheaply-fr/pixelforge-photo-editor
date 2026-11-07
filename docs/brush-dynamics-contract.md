@@ -58,5 +58,6 @@ with both ends reached, mean close to Count, clamping at 1 and 16,
 determinism, first-dab offset perpendicular to the next direction) and
 `tests/browser/retouch-brush-polish.spec.ts` on desktop and mobile (Count 1
 with 100% jitter paints a strict superset of Count 1 and a strict subset of
-Count 2 along the same pointer path; with both axes off, five strokes never
-place their first dab before the stroke start).
+Count 2 along the same pointer path; ten strokes that, with both axes on,
+deterministically move a first dab before the stroke start never do so with
+both axes off).

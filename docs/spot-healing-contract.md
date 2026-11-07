@@ -43,8 +43,17 @@ layers stay aligned) and stored as a white alpha PNG asset; the stroke records
 the asset id as an optional `selectionMask`. Replay multiplies each write by
 the coverage (0 skips the pixel, partial coverage blends proportionally);
 context samples may still come from outside the selection. The live preview
-waits for the snapshot, so preview and commit match. Consecutive strokes with
-the same selection and layer geometry reuse one snapshot asset.
+waits for the snapshot, so preview and commit match. Snapshots are reused
+rather than re-encoded (`src/selectionSnapshotCache.ts`, shared with Patch):
+a key of the selection's stored value plus the layer id, placement and size
+finds a stored asset without rasterizing again (later strokes, undo/redo,
+Reselect, switching back to an earlier selection), and a 64-bit digest of the
+rasterized coverage finds an identical mask made from a new selection value
+(the same marquee drawn again). The cache keeps at most 16 ids and digests,
+never mask pixels, and ignores assets no longer in the document. Evidence:
+`tests/retouch-preview-cache.test.mjs` and the "reuses one stored selection
+mask" browser case (four strokes across Deselect/Reselect and a redrawn
+marquee reference one mask asset).
 
 `selectionMask` is optional: strokes recorded before it existed have none and
 replay byte-for-byte as before. A present id must name an asset of the

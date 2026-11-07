@@ -93,5 +93,24 @@ committed pixels. Evidence: `tests/browser/retouch-brush-polish.spec.ts` on
 desktop and mobile (mid-drag pixels follow the pointer and update as it moves,
 nothing is committed before release, the committed row equals the last
 preview, one Undo restores the layer, a touch pointercancel leaves no
-preview). On very large layers each preview frame still re-renders the whole
-layer, so the preview frame rate drops with layer size.
+preview).
+
+**Large layers.** The preview renders only the region the gradient can change
+— the selection's bounding box, or the whole layer — and, when that region
+exceeds 1.5 MP, at a uniform reduced scale within that budget
+(`src/gradientPreview.ts`). The layer region and selection coverage are
+downscaled once at pointer-down; each frame renders the gradient there,
+upscales it into one of two full-size override surfaces that already hold the
+untouched pixels outside the region, and hands that to the scheduler. A
+10.8 MP layer therefore processes about 1.5 MP per preview frame. Small
+layers (≤ 1.5 MP) and selections whose box fits the budget keep the exact
+full-resolution preview. Pointer-up always renders and commits at full
+resolution, so the committed pixels may differ slightly from a reduced preview
+(within a few levels in the browser test) and keep the exact selection edge.
+Noise and Dither are previewed at the reduced scale. The full-document
+composite of each preview frame is unchanged. Evidence:
+`tests/retouch-preview-cache.test.mjs` (budget, scale, aspect, selection
+regions, point and mask mapping) and the 2400×1000 case in
+`tests/browser/retouch-brush-polish.spec.ts` (the preview stays inside a
+rectangular selection, matches the commit within 8 levels, commit keeps the
+selection edge, one Undo).

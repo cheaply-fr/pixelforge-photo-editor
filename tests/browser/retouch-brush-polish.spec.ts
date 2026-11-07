@@ -216,17 +216,62 @@ test('Spot Healing inside a freehand lasso stays inside the lasso', async ({ pag
   expect(strokes[1].selectionMask).toBeUndefined();
 });
 
-/** 400×200 document with a paint layer. */
-async function smallDocument(page: Page, background: 'white' | 'black') {
+test('Spot Healing reuses one stored selection mask for equal selections instead of re-encoding it', async ({ page }) => {
+  test.setTimeout(120_000);
+  await blueLayerWithRedBand(page, 30);
+  const select = async () => {
+    await selectTool(page, 'Select');
+    await drag(page, [[300, 150], [900, 250]], 5);
+    await expect(footer(page)).toContainText(/selection/i);
+  };
+  const deselect = async () => {
+    await page.getByRole('button', { name: 'Select', exact: true }).click();
+    await page.getByRole('menuitem', { name: /^Deselect Ctrl\+D$/ }).click();
+    await settled(page);
+  };
+  const heal = async (x: number) => {
+    await retouchTool(page, 'Spot Healing', 60);
+    await drag(page, [[x, 200], [x + 60, 200]], 6);
+    await expect(footer(page)).toContainText('Spot Healing applied nondestructively');
+    await settled(page);
+  };
+  await select();
+  await heal(350);
+  await heal(500);
+  // Deselect and Reselect restore an equal selection object.
+  await deselect();
+  await page.getByRole('button', { name: 'Select', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Reselect', exact: true }).click();
+  await settled(page);
+  await heal(650);
+  // The same marquee drawn again is a new selection value with identical coverage.
+  await deselect();
+  await select();
+  await heal(780);
+  const file = await project(page);
+  const strokes = file.history[file.index].layers.at(-1)!.spotHealing!;
+  expect(strokes).toHaveLength(4);
+  const ids = new Set(strokes.map((stroke) => stroke.selectionMask));
+  expect(ids.size).toBe(1);
+  expect([...ids][0]).toEqual(expect.any(String));
+  // Only one mask asset of the layer's size exists for the four strokes.
+  const masks = Object.entries(file.assets).filter(([id]) => ids.has(id));
+  expect(masks).toHaveLength(1);
+  for (const x of [380, 530, 680, 800]) expect(healed(await pixel(page, x, 200)), `${x}`).toBe(true);
+  expect(await pixel(page, 250, 200)).toEqual(RED);
+});
+
+/** Document with a paint layer (400×200 by default). */
+async function smallDocument(page: Page, background: 'white' | 'black', width = 400, height = 200) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New…', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New document' });
-  await dialog.getByLabel('New document width (px)').fill('400');
-  await dialog.getByLabel('New document height (px)').fill('200');
+  await dialog.getByLabel('New document width (px)').fill(String(width));
+  await dialog.getByLabel('New document height (px)').fill(String(height));
   await dialog.getByLabel('Background contents').selectOption(background);
   await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(canvas(page)).toHaveJSProperty('width', 400);
+  await expect(canvas(page)).toHaveJSProperty('width', width);
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await settled(page);
 }
@@ -286,6 +331,46 @@ test('a touch gradient drag cancelled by pointercancel leaves no preview behind'
   expect(await pixel(page, 10, 100)).toEqual([255, 255, 255, 255]);
 });
 
+test('a large layer previews the gradient at reduced resolution, confined to the selection, and commits full resolution', async ({ page }) => {
+  test.setTimeout(120_000);
+  // 2400×1000 = 2.4 MP: above the 1.5 MP preview budget.
+  await smallDocument(page, 'white', 2400, 1000);
+  await selectTool(page, 'Select');
+  await drag(page, [[200, 100], [2200, 900]], 5);
+  await expect(footer(page)).toContainText(/selection/i);
+  await settled(page);
+  await selectTool(page, 'Gradient');
+  await page.getByLabel('Gradient end', { exact: true }).selectOption('transparent');
+  await setColor(page, 'Drawing color', '#000000');
+  const start = await at(page, 200, 500), end = await at(page, 2200, 500);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 8 });
+  await expect.poll(async () => (await pixel(page, 260, 500))[0]).toBeLessThan(60);
+  await settled(page);
+  const row = async () => area(page, 0, 500, 2400, 1);
+  const preview = await row();
+  // Outside the selection the preview never touches the layer.
+  for (const x of [20, 150, 2250, 2390]) expect(preview.slice(x * 4, x * 4 + 4), `x ${x}`).toEqual([255, 255, 255, 255]);
+  expect(await pixel(page, 1200, 50)).toEqual([255, 255, 255, 255]);
+  await expect(footer(page)).not.toContainText('Gradient applied');
+  await page.mouse.up();
+  await expect(footer(page)).toContainText('Gradient applied');
+  await settled(page);
+  const committed = await row();
+  // The reduced preview matches the full-resolution commit closely, and the
+  // commit keeps the exact selection edge.
+  let worst = 0;
+  for (let x = 210; x < 2190; x += 1) worst = Math.max(worst, Math.abs(committed[x * 4] - preview[x * 4]));
+  expect(worst).toBeLessThanOrEqual(8);
+  expect(committed.slice(199 * 4, 199 * 4 + 4)).toEqual([255, 255, 255, 255]);
+  expect(committed[201 * 4]).toBeLessThan(10);
+  expect(committed[1200 * 4]).toBeGreaterThan(100);
+  expect(committed[1200 * 4]).toBeLessThan(160);
+  await editMenu(page, /^Undo/);
+  expect(await pixel(page, 1200, 500)).toEqual([255, 255, 255, 255]);
+});
+
 async function brushSetup(page: Page, size: string) {
   await selectTool(page, 'Brush');
   await setColor(page, 'Drawing color', '#000000');
@@ -337,14 +422,24 @@ test('Count jitter adds as well as removes dabs, bounded by the jittered count r
 });
 
 test('with Scatter both axes off the first dab scatters across the stroke, not along it', async ({ page }) => {
-  await smallDocument(page, 'white');
-  await brushSetup(page, '4');
-  await page.getByLabel('Spacing', { exact: true }).fill('1000');
-  await page.getByLabel('Scatter', { exact: true }).fill('400');
-  await page.getByLabel('Scatter both axes', { exact: true }).uncheck();
-  const rows = [20, 55, 90, 125, 160];
-  for (const y of rows) await brushStroke(page, [60, y], [340, y]);
-  const painted = await dark(page);
+  test.setTimeout(120_000);
+  // Ten horizontal strokes, each starting at x = 60. Scatter is a hash of the
+  // stroke point, so the same pointer path gives the same dabs every run.
+  const rows = Array.from({ length: 10 }, (_, index) => 20 + index * 18);
+  const strokes = async (bothAxes: boolean) => {
+    await smallDocument(page, 'white');
+    await brushSetup(page, '4');
+    await page.getByLabel('Spacing', { exact: true }).fill('1000');
+    await page.getByLabel('Scatter', { exact: true }).fill('400');
+    await page.getByLabel('Scatter both axes', { exact: true }).setChecked(bothAxes);
+    for (const y of rows) await brushStroke(page, [60, y], [340, y]);
+    return dark(page);
+  };
+  // Control: with both axes, scatter also moves first dabs along the stroke,
+  // so this path is able to detect a first dab that ignores the direction.
+  const both = await strokes(true);
+  expect(Math.min(...[...both].map((index) => index % 400))).toBeLessThan(60 - 4);
+  const painted = await strokes(false);
   for (const y of rows) {
     const inRow = [...painted].filter((index) => Math.abs(Math.floor(index / 400) - y) <= 15);
     const xs = inRow.map((index) => index % 400);

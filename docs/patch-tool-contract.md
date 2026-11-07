@@ -68,6 +68,8 @@ Writes are scaled by the coverage, so feathered selections blend
 proportionally (masks with only 0/255 coverage, including every earlier
 binding, render as before). Snapshot ids are retained by history, drafts and
 project files after Deselect and are part of the layer-filter cache key.
-Evidence: `tests/retouch-selection-snapshot.test.mjs` and
+Snapshots are reused instead of re-encoded through the cache shared with Spot
+Healing (by selection value and placement, then by mask digest; see
+`spot-healing-contract.md`). Evidence: `tests/retouch-selection-snapshot.test.mjs` and
 `tests/browser/retouch-brush-polish.spec.ts` (an elliptical selection keeps a
 patch drag inside the ellipse; undo/redo) on desktop and mobile.
