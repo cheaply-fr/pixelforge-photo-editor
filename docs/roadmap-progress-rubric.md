@@ -176,6 +176,18 @@ not yet in its branch.
 | 16 | Alt-click clone source dropped while the previous stroke commits | P2 | D | `brush-tool-contract.md` |
 | 17 | Project limits force flattening on large posters (layers, stored pixels, asset/draft caps) | P1 | A | `layer-pixel-budget-contract.md`, `draft-storage-contract.md` |
 
+### Fix wave 2 polish — retouch/brush (branch `feat/retouch-brush-polish`)
+
+Follow-ups of limitations left by #194 and #196; implemented locally, not
+merged. Companion of the effects polish on `feat/effects-retouch-polish`.
+
+| Item | Change | Contract / evidence |
+| --- | --- | --- |
+| Spot Healing / Patch ignore vector selections (#196) | The active selection of any shape is captured at pointer-down as a layer-space alpha asset referenced by the stroke (`selectionMask`); replay is confined and feathered; legacy strokes unchanged | `spot-healing-contract.md`, `patch-tool-contract.md`; `tests/retouch-selection-snapshot.test.mjs`, `tests/browser/retouch-brush-polish.spec.ts` |
+| No live gradient preview (#194) | Dragging renders the gradient live through the #190 preview scheduler; release commits one undo step | `gradient-mode-contract.md`; `tests/browser/retouch-brush-polish.spec.ts` |
+| Count jitter only lowers the count (#194) | Symmetric ±Count × jitter, clamped 1–16, deterministic | `brush-dynamics-contract.md`; `tests/brush-spacing-count.test.mjs`, browser spec |
+| First dab with Scatter both axes off used both axes (#194) | The first dab waits for the next point and scatters perpendicular to it | `brush-dynamics-contract.md`; same tests |
+
 ## Latest protected release evidence
 
 The protected workflow run for the current merged release completed

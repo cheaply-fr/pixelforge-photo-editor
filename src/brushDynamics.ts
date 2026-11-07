@@ -153,12 +153,36 @@ export function scatterBrushPoint(
   return { x: point.x + xUnit * radius, y: point.y + yUnit * radius };
 }
 
-/** Number of dabs for one spacing step after Count jitter (always ≥ 1). */
+/**
+ * Number of dabs for one spacing step after Count jitter. Jitter varies the
+ * count symmetrically around Count, by up to ±Count × jitter (so 100% spans
+ * 0…2 × Count), and the result is clamped to 1–16 dabs. The choice is a hash
+ * of the stroke point, so a replayed stroke gets the same counts.
+ */
 export function brushDabCount(point: BrushPoint, dynamics: BrushDynamics): number {
   const count = Math.max(BRUSH_COUNT_MIN, Math.min(BRUSH_COUNT_MAX, Math.round(dynamics.count)));
-  if (dynamics.countJitter <= 0) return count;
-  const reduction = (dynamics.countJitter / 100) * brushDabRandom(point, 0, 1);
-  return Math.max(1, Math.round(count * (1 - reduction)));
+  if (!(dynamics.countJitter > 0)) return count;
+  const jitter = Math.min(BRUSH_JITTER_MAX, dynamics.countJitter) / 100,
+    variation = (brushDabRandom(point, 0, 1) * 2 - 1) * jitter;
+  return Math.max(BRUSH_COUNT_MIN, Math.min(BRUSH_COUNT_MAX, Math.round(count * (1 + variation))));
+}
+
+/**
+ * With "Scatter both axes" off, scatter runs perpendicular to the stroke, but
+ * the first dab of a stroke has no direction yet. Such a dab is deferred until
+ * the next point arrives and then uses that segment's direction (or both axes
+ * if the stroke ends without moving).
+ */
+export function deferFirstBrushDab(
+  dynamics: Pick<BrushDynamics, 'scatterBothAxes'>,
+  scatter: number,
+  direction: BrushPoint,
+): boolean {
+  return (
+    dynamics.scatterBothAxes === false &&
+    normalizeBrushScatter(scatter) > 0 &&
+    !(finite(direction.x) && finite(direction.y) && Math.hypot(direction.x, direction.y) > 0)
+  );
 }
 
 /** Wrap degrees into the -180…180 range accepted by brush tips. */

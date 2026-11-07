@@ -77,3 +77,21 @@ and 100% for older drafts, and reject invalid values. Evidence:
 layer, Screen at 50% brightening existing paint, reload persistence) on
 desktop and mobile. The modes are local approximations, not Photoshop's
 algorithms.
+
+## Live preview while dragging (fix wave 2 polish, 2026-11-07)
+
+Pointer-down decodes the layer and samples the selection once, in the
+background. While dragging, the gradient for the latest pointer position is
+rendered over the layer (Mode, Opacity, Noise, Dither and selection
+confinement included) and shown through the shared preview scheduler from
+#190: at most one composite per animation frame with one in flight, so fast
+drags never queue renders. Pointer-up renders the same function for the
+release point and commits one undo step; pointer cancel or a document change
+restores the unchanged frame without a history entry. The preview and the
+commit share `renderGradientBuffer`, so the last preview frame equals the
+committed pixels. Evidence: `tests/browser/retouch-brush-polish.spec.ts` on
+desktop and mobile (mid-drag pixels follow the pointer and update as it moves,
+nothing is committed before release, the committed row equals the last
+preview, one Undo restores the layer, a touch pointercancel leaves no
+preview). On very large layers each preview frame still re-renders the whole
+layer, so the preview frame rate drops with layer size.

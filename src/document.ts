@@ -1524,7 +1524,7 @@ export function validateFrame(
       )
         return fail();
       if (
-        layer.patchStrokes?.some(
+        [...(layer.kind === 'raster' ? layer.spotHealing ?? [] : []), ...(layer.patchStrokes ?? [])].some(
           (stroke) =>
             stroke.selectionMask !== undefined &&
             (!Object.hasOwn(assets, stroke.selectionMask) ||
@@ -1798,6 +1798,11 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
         used[layer.asset] = assets[layer.asset];
         if (layer.kind === 'smart-object' && layer.contents)
           Object.assign(used, referencedAssets([layer.contents], assets));
+        // Selection snapshots of Spot Healing and Patch strokes must survive
+        // history trimming and drafts even after the selection is dropped.
+        for (const stroke of layer.kind === 'raster' ? [...(layer.spotHealing || []), ...(layer.patchStrokes || [])] : [])
+          if (stroke.selectionMask && assets[stroke.selectionMask])
+            used[stroke.selectionMask] = assets[stroke.selectionMask];
         for (const fill of layer.kind === 'raster' ? layer.contentAwareFills || [] : [])
           if (assets[fill.mask]) used[fill.mask] = assets[fill.mask];
         for (const move of layer.kind === 'raster' ? layer.contentAwareMoves || [] : [])
@@ -2209,6 +2214,22 @@ export type RenderOptions = {
   layerFilterCache?: ByteLruCache<CanvasImageSource> | null;
 };
 
+/**
+ * Decode a stored selection snapshot (Patch / Spot Healing) to one coverage
+ * byte per pixel: alpha, or the red channel for legacy opaque grey masks.
+ */
+async function decodeSelectionAlpha(asset: Assets[string]): Promise<Uint8ClampedArray> {
+  const maskImage = await decodeAsset(asset);
+  const maskSurface = surface(maskImage.naturalWidth, maskImage.naturalHeight);
+  const maskContext = maskSurface.getContext('2d')!;
+  maskContext.drawImage(maskImage, 0, 0);
+  const rgba = maskContext.getImageData(0, 0, maskSurface.width, maskSurface.height).data;
+  const alpha = new Uint8ClampedArray(maskSurface.width * maskSurface.height);
+  for (let pixel = 0; pixel < alpha.length; pixel += 1)
+    alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
+  return alpha;
+}
+
 /** Render a raster layer's bounded style stack in local coordinates. */
 function applyRasterLayerStyles(
   source: CanvasImageSource,
@@ -2544,8 +2565,14 @@ export async function renderFrame(
         cleanedContext = cleaned.getContext('2d')!;
       cleanedContext.drawImage(rasterSource, 0, 0);
       const imageData = cleanedContext.getImageData(0, 0, cleaned.width, cleaned.height);
+      // Strokes made inside a selection carry a layer-space alpha snapshot.
+      const healingMasks: Record<string, Uint8ClampedArray> = {};
+      for (const stroke of layer.spotHealing) {
+        if (!stroke.selectionMask || healingMasks[stroke.selectionMask]) continue;
+        healingMasks[stroke.selectionMask] = await decodeSelectionAlpha(assets[stroke.selectionMask]);
+      }
       imageData.data.set(
-        applySpotHealingStrokes(imageData.data, cleaned.width, cleaned.height, layer.spotHealing),
+        applySpotHealingStrokes(imageData.data, cleaned.width, cleaned.height, layer.spotHealing, healingMasks),
       );
       cleanedContext.putImageData(imageData, 0, 0);
       rasterSource = cleaned;
@@ -2562,20 +2589,7 @@ export async function renderFrame(
       const patchMasks: Record<string, Uint8ClampedArray> = {};
       for (const stroke of layer.patchStrokes) {
         if (!stroke.selectionMask || patchMasks[stroke.selectionMask]) continue;
-        const maskImage = await decodeAsset(assets[stroke.selectionMask]);
-        const maskSurface = surface(maskImage.naturalWidth, maskImage.naturalHeight);
-        const maskContext = maskSurface.getContext('2d')!;
-        maskContext.drawImage(maskImage, 0, 0);
-        const rgba = maskContext.getImageData(
-          0,
-          0,
-          maskSurface.width,
-          maskSurface.height,
-        ).data;
-        const alpha = new Uint8ClampedArray(maskSurface.width * maskSurface.height);
-        for (let pixel = 0; pixel < alpha.length; pixel += 1)
-          alpha[pixel] = rgba[pixel * 4 + 3] || rgba[pixel * 4] || 0;
-        patchMasks[stroke.selectionMask] = alpha;
+        patchMasks[stroke.selectionMask] = await decodeSelectionAlpha(assets[stroke.selectionMask]);
       }
       imageData.data.set(
         applyPatchStrokes(

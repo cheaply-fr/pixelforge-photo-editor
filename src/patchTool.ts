@@ -159,14 +159,15 @@ function applyStroke(
           stroke.hardness,
         );
         if (coverage <= 0) continue;
-        if (selectionMask && selectionMask[y * width + x] <= 0) continue;
+        const selected = selectionMask ? selectionMask[y * width + x] / 255 : 1;
+        if (selected <= 0) continue;
         const sourceX = Math.round(x + stroke.sourceOffset.x);
         const sourceY = Math.round(y + stroke.sourceOffset.y);
         if (sourceX < 0 || sourceY < 0 || sourceX >= width || sourceY >= height)
           continue;
         const destinationOffset = pixelOffset(width, x, y);
         const sourceOffset = pixelOffset(width, sourceX, sourceY);
-        const amount = clamp(coverage * stroke.opacity, 0, 1);
+        const amount = clamp(coverage * stroke.opacity * selected, 0, 1);
         // Patch is an RGB retouch. Alpha remains owned by the layer mask and
         // is preserved byte-for-byte, including partially transparent pixels.
         for (let channel = 0; channel < 3; channel += 1)
