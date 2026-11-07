@@ -22,6 +22,12 @@ import {
   fastZoomRadialBlur,
   type RowRange,
 } from './fastNeighborhoodFilters.ts';
+import {
+  normalizeLightRaysSettings,
+  renderLightRays,
+  validLightRaysSettings,
+  type LightRaysSettings,
+} from './lightRays.ts';
 
 export const FILTER_EFFECT_TYPES = [
   'none',
@@ -72,6 +78,7 @@ export const FILTER_EFFECT_TYPES = [
   'shear',
   'zigzag',
   'lens-flare',
+  'light-rays',
   'flame',
   'find-edges',
   'emboss',
@@ -283,6 +290,8 @@ export type FilterEffects = {
    * Omitted on legacy records, which keep the grayscale overlay.
    */
   cloudRender?: CloudRenderSettings;
+  /** Render → Light Rays geometry, colour and blend (light-rays only). */
+  lightRays?: LightRaysSettings;
 };
 
 export type CloudRenderSettings = {
@@ -386,6 +395,7 @@ export function effectiveFilterEffects(
   if (type === 'lens-correction') {
     normalized.lensDirection = source.lensDirection === 'outward' ? 'outward' : 'inward';
   }
+  if (type === 'light-rays') normalized.lightRays = normalizeLightRaysSettings(source.lightRays);
   if (type === 'clouds' && validCloudRenderSettings(source.cloudRender)) {
     normalized.cloudRender = { ...source.cloudRender };
   }
@@ -610,6 +620,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     (effect.cloudRender === undefined || (effect.type === 'clouds' && validCloudRenderSettings(effect.cloudRender))) &&
+    (effect.lightRays === undefined || (effect.type === 'light-rays' && validLightRaysSettings(effect.lightRays))) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -645,7 +656,7 @@ export function isNeutralFilterEffects(
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
     (effect.type === 'deinterlace' && effect.radius === 0) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.type !== 'add-noise' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.type !== 'add-noise' && effect.type !== 'light-rays' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -3890,6 +3901,14 @@ export function applyFilterEffectsPixels(
     );
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
+  } else if (effect.type === 'light-rays') {
+    renderLightRays(data, output, width, height, {
+      settings: effect.lightRays,
+      centerX: effect.centerX,
+      centerY: effect.centerY,
+      seed: effect.seed,
+      strength,
+    });
 
   } else {
     applyDistort(data, width, height, effect, output);

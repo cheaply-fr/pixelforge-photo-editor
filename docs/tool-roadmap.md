@@ -255,6 +255,14 @@ Action replay. See [`lens-flare-effect-contract.md`](./lens-flare-effect-contrac
 camera-specific optical profiles, highlight reconstruction and depth-aware
 occlusion remain staged.
 
+**Filter → Render → Light Rays…** adds a bounded seeded local approximation
+of radial rays, Starburst glints and bright-pixel streaks (god rays) around an
+editable on-canvas centre, with ray count, length, width/taper, randomness,
+rotation, inner radius, falloff, colour, intensity and Screen/Add/transparent
+blending. Generated rays render in parallel filter bands. See
+[`light-rays-filter-contract.md`](./light-rays-filter-contract.md); physical
+light transport, occlusion and Photoshop parity are not claimed.
+
 The compositing increment adds **Layer → Matting…** for visible raster and
 smart-object layers. White/black edge decontamination is stored as editable
 metadata and replayed before masks, styles and filters while preserving alpha,
