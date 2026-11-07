@@ -25,9 +25,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 
 import {
   LOCAL_CONFLICT,
+  LOCAL_STORAGE_FULL,
   createDraftId,
   discardDraft,
-  initialDraftId,
+  draftOpenElsewhere,
+  holdDraftOpen,
+  resolveInitialDraft,
   isNewerDraftRevision,
   readDraft,
   saveDraft,
@@ -2528,7 +2531,8 @@ export default function Home() {
       setActiveMenu(null);
     }
   };
-  const [draftId, setDraftId] = useState(initialDraftId),
+  const [initialDraft] = useState(resolveInitialDraft),
+    [draftId, setDraftId] = useState(initialDraft.id),
     openingDraftId = useRef(draftId),
     [saveStatus, setSaveStatus] = useState('Opening saved document…');
   const localVersions = useRef(new Map<string, number>());
@@ -6156,8 +6160,25 @@ export default function Home() {
     let cancelled = false;
     void (async () => {
       try {
-        const saved = await readDraft(openingDraftId.current);
+        // `/editor` without a bookmark falls back to the browser-wide last
+        // draft. If another tab already has that draft open, attaching here
+        // would make both tabs save the same revision chain and the other tab
+        // would report a conflict; start a new draft instead. The other tab
+        // and its bookmark keep the original draft.
+        const elsewhere =
+          initialDraft.source === 'last-draft' &&
+          (await draftOpenElsewhere(openingDraftId.current));
         if (cancelled) return;
+        const saved = elsewhere
+          ? undefined
+          : await readDraft(openingDraftId.current);
+        if (cancelled) return;
+        if (elsewhere) {
+          setDraftId(createDraftId());
+          setNotice(
+            'Your last draft is open in another tab, so this tab started a new draft.',
+          );
+        }
         if (saved) {
           await install(saved);
           if (cancelled) return;
@@ -6245,7 +6266,13 @@ export default function Home() {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, install, paint, restoreSettings]);
+  }, [assets, commit, initialDraft, install, paint, restoreSettings]);
+  // Advertise which draft this tab has open so a bookmark-less `/editor` tab
+  // does not silently attach to it (see the opening effect above).
+  useEffect(() => {
+    if (!ready) return;
+    return holdDraftOpen(draftId);
+  }, [ready, draftId]);
   useLayoutEffect(() => {
     if (!ready || index.current < 0 || discarding.current) return;
     const sequence = ++saveSequence.current;
@@ -6354,7 +6381,9 @@ export default function Home() {
           setSaveStatus(
             error instanceof Error && error.message === LOCAL_CONFLICT
               ? LOCAL_CONFLICT
-              : 'Local save failed — export a copy',
+              : error instanceof Error && error.message === LOCAL_STORAGE_FULL
+                ? LOCAL_STORAGE_FULL
+                : 'Local save failed — export a copy',
           );
         }
       });
