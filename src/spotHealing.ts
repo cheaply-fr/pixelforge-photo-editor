@@ -23,7 +23,17 @@ export type SpotHealingStroke = {
   hardness: number;
   /** Blend strength from 0 to 1. */
   opacity: number;
+  /**
+   * Optional layer-sized alpha asset captured from the active selection at
+   * pointer-down (rectangle, ellipse, lasso or pixel selections alike). Replay
+   * scales each write by its coverage, so the cleanup stays inside the
+   * selection, with feathered edges, after undo, reload and project import.
+   */
+  selectionMask?: string;
 };
+
+/** Asset ids accepted for a stroke's selection mask snapshot. */
+export const SPOT_HEALING_MASK_ID = /^[a-z\d-]{1,160}$/i;
 
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -51,6 +61,11 @@ export function validSpotHealingStroke(
     !finite(candidate.opacity) ||
     candidate.opacity < 0 ||
     candidate.opacity > 1
+  )
+    return false;
+  if (
+    candidate.selectionMask !== undefined &&
+    (typeof candidate.selectionMask !== 'string' || !SPOT_HEALING_MASK_ID.test(candidate.selectionMask))
   )
     return false;
   return candidate.points.every((point) => {
@@ -140,6 +155,7 @@ function applyStroke(
   width: number,
   height: number,
   stroke: SpotHealingStroke,
+  selectionMask?: ArrayLike<number>,
 ): boolean {
   const radius = stroke.size / 2,
     // A multi-point stroke is one immutable operation. When the caller uses
@@ -160,11 +176,15 @@ function applyStroke(
           radius,
           stroke.hardness,
         );
-        if (coverage <= 0) continue;
+        // A selection snapshot confines the write; partial (feathered)
+        // coverage blends proportionally. Context may still be sampled from
+        // outside the selection, which is where clean surroundings usually are.
+        const selected = selectionMask ? selectionMask[y * width + x] / 255 : 1;
+        if (coverage <= 0 || selected <= 0) continue;
         const context = contextSample(samplingSource, width, height, x, y, radius);
         if (!context) continue;
         const offset = pixelOffset(width, x, y),
-          amount = clamp(coverage * stroke.opacity, 0, 1),
+          amount = clamp(coverage * stroke.opacity * selected, 0, 1),
           beforeAlpha = before[offset + 3],
           // Spot cleanup is an RGB retouch. Alpha belongs to the layer's
           // masking model and is preserved byte-for-byte, including on
@@ -194,14 +214,17 @@ export function applySpotHealingStroke(
   width: number,
   height: number,
   stroke: SpotHealingStroke,
+  selectionMask?: ArrayLike<number>,
 ): boolean {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1)
     throw new Error('Spot Healing canvas dimensions are invalid');
   if (destination.length !== width * height * 4 || source.length !== width * height * 4)
     throw new Error('Spot Healing source and destination must contain RGBA data');
+  if (selectionMask && selectionMask.length !== width * height)
+    throw new Error('Spot Healing selection mask has the wrong size');
   if (!validSpotHealingStroke(stroke, width, height))
     throw new Error('Spot Healing stroke is invalid');
-  return applyStroke(destination, source, width, height, stroke);
+  return applyStroke(destination, source, width, height, stroke, selectionMask);
 }
 
 /** Render all nondestructive cleanup metadata over an immutable RGBA source. */
@@ -210,6 +233,7 @@ export function applySpotHealingStrokes(
   width: number,
   height: number,
   strokes: readonly SpotHealingStroke[] | undefined,
+  selectionMasks?: Readonly<Record<string, ArrayLike<number>>>,
 ): Uint8ClampedArray {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1)
     throw new Error('Spot Healing canvas dimensions are invalid');
@@ -218,7 +242,14 @@ export function applySpotHealingStrokes(
   if (!validSpotHealingStrokes(strokes ?? [], width, height))
     throw new Error('Spot Healing strokes are invalid');
   const output = new Uint8ClampedArray(source);
-  for (const stroke of strokes ?? []) applyStroke(output, output, width, height, stroke);
+  for (const stroke of strokes ?? []) {
+    // Strokes recorded before selection snapshots existed have no mask and
+    // replay exactly as before.
+    const selectionMask = stroke.selectionMask ? selectionMasks?.[stroke.selectionMask] : undefined;
+    if (stroke.selectionMask && (!selectionMask || selectionMask.length !== width * height))
+      throw new Error('Spot Healing selection mask is unavailable');
+    applyStroke(output, output, width, height, stroke, selectionMask);
+  }
   // Hidden RGB data is never exposed by a cleanup render. Keeping it neutral
   // avoids colour fringes if the alpha is later revealed by a mask or export.
   for (let offset = 0; offset < output.length; offset += 4)

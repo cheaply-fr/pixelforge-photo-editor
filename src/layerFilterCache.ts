@@ -225,7 +225,7 @@ export type LayerFilterCacheLayer = {
   asset?: string;
   fillColor?: string;
   contents?: unknown;
-  spotHealing?: unknown[];
+  spotHealing?: Array<{ selectionMask?: string }>;
   patchStrokes?: Array<{ selectionMask?: string }>;
   contentAwareFills?: Array<{ mask?: string }>;
   contentAwareMoves?: Array<{ mask?: string }>;
@@ -275,7 +275,7 @@ export function layerFilterCacheKey(
       }
     : {};
   if (raster) {
-    for (const stroke of layer.patchStrokes || [])
+    for (const stroke of [...(layer.spotHealing || []), ...(layer.patchStrokes || [])])
       if (stroke?.selectionMask) maskIds.add(stroke.selectionMask);
     for (const item of [
       ...(layer.contentAwareFills || []),

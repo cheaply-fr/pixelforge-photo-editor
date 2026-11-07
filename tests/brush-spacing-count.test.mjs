@@ -8,6 +8,7 @@ import {
   brushDabRandom,
   brushDabsAt,
   brushScatterRadius,
+  deferFirstBrushDab,
   normalizeBrushDynamics,
   scatterBrushPoint,
   validBrushDynamics,
@@ -101,14 +102,53 @@ test('count places several deterministic dabs per spacing step within scatter bo
   assert.deepEqual(brushDabsAt(point, size, 0), [{ ...point, sizeScale: 1, angleOffset: 0, opacityScale: 1 }]);
 });
 
-test('count jitter only reduces the count and never below one dab', () => {
-  const counts = [];
-  for (let index = 0; index < 200; index += 1)
-    counts.push(brushDabCount({ x: index * 13.7, y: index * 5.1 }, dynamics({ count: 10, countJitter: 100 })));
-  assert.ok(counts.every((count) => count >= 1 && count <= 10));
-  assert.ok(new Set(counts).size > 4);
+test('count jitter varies the count symmetrically around Count within 1–16', () => {
+  const sample = (count, countJitter, n = 2000) => {
+    const counts = [];
+    for (let index = 0; index < n; index += 1)
+      counts.push(brushDabCount({ x: index * 13.7, y: index * 5.1 }, dynamics({ count, countJitter })));
+    return counts;
+  };
+  // 50% jitter on Count 8 spans 4…12 and goes both below and above Count.
+  const half = sample(8, 50);
+  assert.ok(half.every((count) => count >= 4 && count <= 12), `${Math.min(...half)}…${Math.max(...half)}`);
+  assert.ok(half.some((count) => count < 8) && half.some((count) => count > 8));
+  assert.equal(Math.min(...half), 4);
+  assert.equal(Math.max(...half), 12);
+  // Symmetric: the mean stays close to Count.
+  const mean = half.reduce((sum, count) => sum + count, 0) / half.length;
+  assert.ok(Math.abs(mean - 8) < 0.25, `mean ${mean}`);
+  // 100% jitter is clamped to the 1–16 dab bounds.
+  const full = sample(10, 100);
+  assert.ok(full.every((count) => count >= 1 && count <= 16));
+  assert.ok(full.includes(1) && full.includes(16));
+  assert.ok(new Set(full).size > 10);
+  // Count 1 can only grow, Count 16 can only shrink.
+  assert.ok(sample(1, 100).every((count) => count === 1 || count === 2));
+  assert.ok(sample(1, 100).includes(2));
+  assert.ok(sample(16, 100).every((count) => count >= 1 && count <= 16));
+  // Deterministic per stroke point; no jitter keeps Count exactly.
+  assert.deepEqual(sample(6, 70, 50), sample(6, 70, 50));
   assert.equal(brushDabCount({ x: 1, y: 1 }, dynamics({ count: 10, countJitter: 0 })), 10);
   assert.equal(brushDabCount({ x: 1, y: 1 }, dynamics({ count: 99 })), BRUSH_COUNT_MAX);
+});
+
+test('the first dab defers to the next point when scatter is perpendicular only', () => {
+  const still = { x: 0, y: 0 };
+  assert.equal(deferFirstBrushDab(dynamics({ scatterBothAxes: false }), 300, still), true);
+  // Both axes, no scatter or a known direction never defer.
+  assert.equal(deferFirstBrushDab(dynamics({ scatterBothAxes: true }), 300, still), false);
+  assert.equal(deferFirstBrushDab(dynamics({ scatterBothAxes: false }), 0, still), false);
+  assert.equal(deferFirstBrushDab(dynamics({ scatterBothAxes: false }), 300, { x: 3, y: 0 }), false);
+  assert.equal(deferFirstBrushDab(dynamics({ scatterBothAxes: false }), 300, { x: Number.NaN, y: 0 }), true);
+  // With the next point's direction the deferred first dab scatters only
+  // perpendicular to it, like every later dab.
+  const point = { x: 40, y: 40 };
+  for (const direction of [{ x: 1, y: 0 }, { x: 0, y: -5 }, { x: 3, y: 4 }]) {
+    const [dab] = brushDabsAt(point, 30, 600, dynamics({ scatterBothAxes: false }), direction);
+    const along = (dab.x - point.x) * direction.x + (dab.y - point.y) * direction.y;
+    assert.ok(Math.abs(along) < 1e-9, `along-stroke offset ${along}`);
+  }
 });
 
 test('size, angle and opacity jitter stay within their ranges', () => {

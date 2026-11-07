@@ -38,11 +38,10 @@ and edit metadata therefore remain available to Undo, local reload and
 The user workflow is intentionally explicit: select Patch (or cycle the J
 tools), click once to set a source, then drag over the destination. A locked,
 hidden or non-raster active layer rejects the gesture. Escape or touch
-cancellation restores the prior frame without a history entry. When the active
-selection already has a layer-sized alpha asset, the stroke captures that
-asset id at pointer-down; replay resolves the immutable mask and clips writes
-to the same selection after reload. A selection with a different canvas or
-transformed geometry remains unbound rather than being silently misaligned.
+cancellation restores the prior frame without a history entry. With an active
+selection of any shape the stroke captures a layer-space snapshot of it at
+pointer-down (see "Any selection shape" below); replay resolves the immutable
+mask and clips writes to the same selection after reload.
 
 This contract is local and deterministic. Patch is not Photoshop-compatible
 content-aware fill and does not claim broad perspective reconstruction. Future
@@ -58,3 +57,19 @@ and mobile browser acceptance covers source selection, destination drag,
 source-asset retention, undo, Escape/touch cancellation, locked-layer
 rejection and local reload/project round trips. The protected CI build and live
 revision verification remain required before release claims.
+
+## Any selection shape (fix wave 2 polish, 2026-11-07)
+
+Patch no longer binds only a pixel-mask selection of matching size. Any
+active selection — rectangle, ellipse, lasso, polygon or pixel mask, on a
+moved or scaled layer too — is captured at pointer-down in layer space as a
+white alpha asset and stored in `selectionMask`, exactly as Spot Healing does.
+Writes are scaled by the coverage, so feathered selections blend
+proportionally (masks with only 0/255 coverage, including every earlier
+binding, render as before). Snapshot ids are retained by history, drafts and
+project files after Deselect and are part of the layer-filter cache key.
+Snapshots are reused instead of re-encoded through the cache shared with Spot
+Healing (by selection value and placement, then by mask digest; see
+`spot-healing-contract.md`). Evidence: `tests/retouch-selection-snapshot.test.mjs` and
+`tests/browser/retouch-brush-polish.spec.ts` (an elliptical selection keeps a
+patch drag inside the ellipse; undo/redo) on desktop and mobile.
