@@ -878,9 +878,12 @@ export function inversePoint(
 }
 
 /** Convert a display-space diameter to a conservative local-space diameter. */
+export const LOCAL_BRUSH_MAX_DIAMETER = 10000;
 export function localSize(matrix: Matrix, diameter: number): number {
   const determinant = Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]);
-  return Math.max(0.25, diameter / Math.max(0.0001, Math.sqrt(determinant)));
+  // Cap at the 10,000 px every paint engine accepts so a 5,000 px brush on a
+  // down-scaled layer cannot exceed engine validation and abort the stroke.
+  return Math.min(LOCAL_BRUSH_MAX_DIAMETER, Math.max(0.25, diameter / Math.max(0.0001, Math.sqrt(determinant))));
 }
 export const filterCSS = (a: Adjustments) =>
   `${a.filter === 'none' ? '' : a.filter} brightness(${a.brightness}%) contrast(${a.contrast}%) saturate(${a.saturation}%) blur(${a.blur}px)`;

@@ -36,7 +36,7 @@ export function validCustomBrushPreset(value: unknown): value is CustomBrushPres
   return (
     typeof candidate.id === 'string' && /^[a-f0-9-]{36}$/i.test(candidate.id) &&
     typeof candidate.label === 'string' && candidate.label.trim().length >= 1 && candidate.label.length <= 80 &&
-    finite(candidate.size, 2, 10000) && finite(candidate.hardness, 0, 100) &&
+    finite(candidate.size, 1, 10000) && finite(candidate.hardness, 0, 100) &&
     finite(candidate.spacing, 1, 100) && finite(candidate.angle, -180, 180) &&
     finite(candidate.roundness, 1, 100) &&
     typeof candidate.flipX === 'boolean' && typeof candidate.flipY === 'boolean' &&
