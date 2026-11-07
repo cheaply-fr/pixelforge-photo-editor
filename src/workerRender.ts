@@ -6,6 +6,10 @@ import {
   type Frame,
 } from './document.ts';
 import type { TileCache } from './tilePlan.ts';
+import { CompositeCache } from './compositeCache.ts';
+
+/** Main-thread prefix composite (used by stroke previews and the fallback). */
+const mainThreadCompositeCache = new CompositeCache<HTMLCanvasElement>();
 import {
   assetFingerprint,
   assetFingerprints,
@@ -256,6 +260,7 @@ export async function renderFrameWithWorker(
   const fallback = async () => {
     const cacheBefore = sharedLayerFilterCache().stats();
     const image = await renderFrame(frame, assets, overrides, {
+      compositeCache: mainThreadCompositeCache,
       signal: options.signal,
       isCancelled,
       onProgress: options.onProgress,
@@ -857,6 +862,7 @@ const persistentSession = new PersistentWorkerSession();
  */
 export function clearLayerFilterCaches(): void {
   clearLayerFilterCache();
+  mainThreadCompositeCache.clear();
   persistentSession.clearLayerCache();
 }
 

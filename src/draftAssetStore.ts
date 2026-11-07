@@ -16,6 +16,7 @@
  * The module is pure (no IndexedDB access) so integrity and planning rules are
  * covered by Node tests; `src/drafts.ts` owns the transactions.
  */
+import { MAX_PROJECT_ASSETS } from './projectLimits.ts';
 import type { Draft } from './drafts.ts';
 
 export const DRAFT_MANIFEST_KIND = 'pixelforge-draft-manifest' as const;
@@ -47,7 +48,7 @@ export type DraftAssetRecord = {
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ID_PATTERN = /^[a-f0-9-]{36}$/;
-const MAX_ASSET_REFS = 768;
+const MAX_ASSET_REFS = MAX_PROJECT_ASSETS;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);

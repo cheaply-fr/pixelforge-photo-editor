@@ -24,15 +24,15 @@ const footer = (page: Page) => page.locator('footer');
 const budget = (page: Page) => page.getByTestId('layer-pixel-budget');
 const settled = (page: Page) => expect(canvas(page)).toHaveAttribute('data-rendering', 'false');
 const layerCount = (page: Page, count: number) =>
-  expect(page.getByRole('heading', { name: new RegExp(`^Layers ${count} / 32$`) })).toBeVisible();
+  expect(page.getByRole('heading', { name: new RegExp(`^Layers ${count} / 512$`) })).toBeVisible();
 
-async function newDocument(page: Page, width: number, height: number) {
+async function newDocument(page: Page, width: number, height: number, background = 'transparent') {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New…', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New document' });
   await dialog.getByLabel('New document width (px)').fill(String(width));
   await dialog.getByLabel('New document height (px)').fill(String(height));
-  await dialog.getByLabel('Background contents').selectOption('transparent');
+  await dialog.getByLabel('Background contents').selectOption(background);
   await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(canvas(page)).toHaveJSProperty('width', width);
@@ -76,13 +76,14 @@ async function clientPoint(page: Page, x: number, y: number) {
 /** A short brush stroke between two document pixels. */
 async function stroke(page: Page, pointerId: number, from: [number, number], to: [number, number]) {
   const start = await clientPoint(page, ...from);
-  const end = await clientPoint(page, ...to);
   await canvas(page).evaluate((element) => {
     element.setPointerCapture = () => undefined;
   });
   const common = { pointerId, pointerType: 'mouse', pressure: 1, isPrimary: true };
   await canvas(page).dispatchEvent('pointerdown', { ...common, ...start, buttons: 1 });
   await page.waitForTimeout(150);
+  // Measured after the press: a layer expansion can reflow a phone layout.
+  const end = await clientPoint(page, ...to);
   await canvas(page).dispatchEvent('pointermove', { ...common, ...end, buttons: 1 });
   await canvas(page).dispatchEvent('pointerup', { ...common, ...end, buttons: 0 });
   await settled(page);
@@ -96,55 +97,71 @@ const composite = (page: Page, points: Array<[number, number]>) =>
     points,
   );
 
-test('the layer pixel budget is explained, shown in the Layers panel and freed by Trim Layer to Content', async ({ page }) => {
+/** Wait until the automatic storage pass has stored the active layer below the given size. */
+async function storedWithin(page: Page, maxWidth: number, maxHeight: number) {
+  let latest = await activeLayer(page);
+  await expect
+    .poll(
+      async () => {
+        latest = await activeLayer(page);
+        return latest.asset.w <= maxWidth && latest.asset.h <= maxHeight;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
+  return latest;
+}
+
+test('the device budget is explained, shown in the Layers panel and empty paint layers cost nothing', async ({ page }) => {
   test.setTimeout(180_000);
-  // 3999 × 4000 is 16.0 MP, so the background plus three paint layers fill the 64 MP budget.
-  await newDocument(page, 3999, 4000);
-  await expect(budget(page)).toHaveText('Pixel budget 16 / 64 MP');
+  // A low-memory device (deviceMemory 2) gets the 128 MP tier on desktop and mobile.
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, 'deviceMemory', { get: () => 2 }));
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  // 3999 × 4000 is 16.0 MP; an opaque background fits its content and stays full size.
+  await newDocument(page, 3999, 4000, 'white');
+  await expect(budget(page)).toHaveText('Pixel budget 16 / 128 MP');
   await expect(budget(page)).toHaveAttribute('title', /Trim Layer to Content/);
+
+  // New paint layers store one transparent pixel until they are painted.
   for (const count of [2, 3, 4]) {
     await addPaintLayer(page);
     await layerCount(page, count);
     await settled(page);
   }
-  await expect(budget(page)).toHaveText('Pixel budget 64 / 64 MP');
+  await expect(budget(page)).toHaveText('Pixel budget 16 / 128 MP');
+  const empty = await activeLayer(page);
+  expect([empty.asset.w, empty.asset.h]).toEqual([1, 1]);
+
+  // Opaque duplicates of the background fill the budget exactly.
+  await page.getByRole('button', { name: /^Select layer Background/ }).click();
+  for (let copy = 1; copy <= 7; copy += 1) {
+    await menu(page, 'Layer', /^Duplicate Layer/);
+    await layerCount(page, 4 + copy);
+    await settled(page);
+  }
+  await expect(budget(page)).toHaveText('Pixel budget 128 / 128 MP');
   await expect(budget(page)).toHaveAttribute('data-state', 'near');
 
-  await addPaintLayer(page);
+  await menu(page, 'Layer', /^Duplicate Layer/);
   await expect(footer(page)).toContainText(
-    'Layer pixel budget reached: layers may store 64 MP in total and this edit needs 80 MP.',
+    'Layer pixel budget reached: layers may store 128 MP in total on this device and this edit needs 144 MP.',
   );
   await expect(footer(page)).not.toContainText('Invalid layer document');
-  await layerCount(page, 4);
+  await layerCount(page, 11);
 
-  // Duplicating is bounded by the same explanation.
-  await menu(page, 'Layer', /^Duplicate Layer/);
-  await expect(footer(page)).toContainText('Layer pixel budget reached');
-  await layerCount(page, 4);
-
-  // The active (top) paint layer is empty: trimming it frees its 16 MP.
-  await menu(page, 'Layer', 'Trim Layer to Content');
-  await expect(footer(page)).toContainText('Empty layer trimmed; 16 MP of the layer pixel budget freed');
-  await expect(budget(page)).toHaveText('Pixel budget 48 / 64 MP');
-  const trimmed = await activeLayer(page);
-  expect([trimmed.asset.w, trimmed.asset.h]).toEqual([1, 1]);
-
-  await addPaintLayer(page);
-  await layerCount(page, 5);
-  await expect(budget(page)).toHaveText('Pixel budget 64 / 64 MP');
-
-  // With the budget full again, painting on the trimmed layer cannot grow it:
-  // the editor says so instead of silently dropping the stroke.
+  // With the budget full, painting on an empty layer cannot grow it: the
+  // editor says so instead of silently dropping the stroke.
   await page.getByRole('button', { name: /^Select layer Paint 3/ }).click();
   await selectTool(page, 'Brush');
   await stroke(page, 80, [2000, 2000], [2010, 2000]);
   await expect(footer(page)).toContainText('Layer pixel budget reached: this layer stays 1 × 1 px');
   const refused = await activeLayer(page);
   expect([refused.asset.w, refused.asset.h]).toEqual([1, 1]);
-  await layerCount(page, 5);
+  await layerCount(page, 11);
 });
 
-test('a trimmed paint layer expands when painted outside its bounds, with undo and project roundtrip', async ({ page }) => {
+test('paint layers are stored at their content bounds, grow anywhere, and keep one undo step per stroke', async ({ page }) => {
   test.setTimeout(120_000);
   await newDocument(page, 400, 300);
   await addPaintLayer(page);
@@ -154,25 +171,31 @@ test('a trimmed paint layer expands when painted outside its bounds, with undo a
   await page.getByLabel('Size', { exact: true }).fill('20');
   await stroke(page, 81, [100, 150], [110, 150]);
 
-  await menu(page, 'Layer', 'Trim Layer to Content');
-  await expect(footer(page)).toContainText(/Layer trimmed to \d+ × \d+ px/);
-  await expect(budget(page)).not.toHaveText('Pixel budget 0.2 / 64 MP');
-  const trimmed = await activeLayer(page);
-  expect(trimmed.asset.w).toBeLessThan(60);
-  expect(trimmed.asset.h).toBeLessThan(60);
+  // The stroke is stored at its bounding box plus a 64 px margin, in place.
+  const trimmed = await storedWithin(page, 60 + 128, 60 + 128);
+  await settled(page);
   expect(trimmed.layer.matrix.slice(0, 4)).toEqual([1, 0, 0, 1]);
-  expect(trimmed.layer.matrix[4]).toBeGreaterThan(70);
-  expect(trimmed.layer.matrix[5]).toBeGreaterThan(110);
-  // Trimming keeps every visible pixel in place.
+  expect(trimmed.layer.matrix[4]).toBeGreaterThan(70 - 64);
+  expect(trimmed.layer.matrix[5]).toBeGreaterThan(110 - 64);
   const [kept] = await composite(page, [[105, 150]]);
   expect(kept[0]).toBeGreaterThan(200);
   expect(kept[3]).toBeGreaterThan(200);
+  // One stroke is one history step: undo empties the layer, redo restores it.
+  await menu(page, 'Edit', /^Undo/);
+  await settled(page);
+  expect((await composite(page, [[105, 150]]))[0][3]).toBe(0);
+  const beforeStroke = await activeLayer(page);
+  expect([beforeStroke.asset.w, beforeStroke.asset.h]).toEqual([1, 1]);
+  await menu(page, 'Edit', /^Redo/);
+  await settled(page);
+  expect((await composite(page, [[105, 150]]))[0][3]).toBeGreaterThan(200);
 
-  // Paint far outside the stored bounds: the layer grows back and keeps both marks.
+  // Paint far outside the stored bounds: the layer grows and keeps both marks,
+  // then is stored at the union of both strokes.
   await stroke(page, 82, [300, 60], [310, 60]);
-  const painted = await activeLayer(page);
-  expect([painted.asset.w, painted.asset.h]).toEqual([400, 300]);
-  expect(painted.layer.matrix).toEqual([1, 0, 0, 1, 0, 0]);
+  const painted = await storedWithin(page, 260 + 128, 140 + 128);
+  await settled(page);
+  expect(painted.asset.w).toBeGreaterThan(200);
   const [first, second, empty] = await composite(page, [[105, 150], [305, 60], [200, 250]]);
   expect(first[0]).toBeGreaterThan(200);
   expect(first[3]).toBeGreaterThan(200);
@@ -181,23 +204,19 @@ test('a trimmed paint layer expands when painted outside its bounds, with undo a
   expect(empty[3]).toBe(0);
   const paintedPixels = await canvas(page).evaluate((element: HTMLCanvasElement) => element.toDataURL());
 
-  // Undo removes the stroke, then the expansion; redo restores both.
+  // A single undo removes the second stroke (the expansion is folded into it).
   await menu(page, 'Edit', /^Undo/);
   await settled(page);
   expect((await composite(page, [[305, 60]]))[0][3]).toBe(0);
-  await menu(page, 'Edit', /^Undo/);
-  await settled(page);
   const undone = await activeLayer(page);
   expect([undone.asset.w, undone.asset.h]).toEqual([trimmed.asset.w, trimmed.asset.h]);
   expect(undone.layer.matrix).toEqual(trimmed.layer.matrix);
   expect((await composite(page, [[105, 150]]))[0][3]).toBeGreaterThan(200);
   await menu(page, 'Edit', /^Redo/);
   await settled(page);
-  await menu(page, 'Edit', /^Redo/);
-  await settled(page);
   expect((await composite(page, [[305, 60]]))[0][0]).toBeGreaterThan(200);
 
-  // A portable project roundtrip keeps the expanded pixels and the trimmed history step.
+  // A portable project roundtrip keeps the pixels and the stored-bounds history.
   const exported = await project(page);
   await newDocument(page, 200, 200);
   await page.getByTestId('project-input').setInputFiles({
@@ -209,7 +228,6 @@ test('a trimmed paint layer expands when painted outside its bounds, with undo a
   await expect(canvas(page)).toHaveJSProperty('width', 400);
   await settled(page);
   expect(await canvas(page).evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(paintedPixels);
-  await menu(page, 'Edit', /^Undo/);
   await menu(page, 'Edit', /^Undo/);
   await settled(page);
   const restored = await activeLayer(page);
@@ -224,4 +242,29 @@ test('Trim Layer to Content is unavailable for non-pixel layers', async ({ page 
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Trim Layer to Content', exact: true })).toBeDisabled();
   await page.keyboard.press('Escape');
+});
+
+test('a blurred paint layer grows for the filter and Rasterize stores the baked result at its content bounds', async ({ page }) => {
+  test.setTimeout(120_000);
+  await newDocument(page, 400, 300);
+  await addPaintLayer(page);
+  await selectTool(page, 'Brush');
+  await page.getByLabel('Size', { exact: true }).fill('20');
+  await stroke(page, 90, [100, 150], [110, 150]);
+  const painted = await storedWithin(page, 60 + 128, 60 + 128);
+  // Choosing a live filter grows the layer to the canvas so the blur is not clipped.
+  await menu(page, 'Filter', 'Gaussian Blur…');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
+  await page.getByLabel('Effect amount', { exact: true }).fill('100');
+  await settled(page);
+  const blurred = await activeLayer(page);
+  expect([blurred.asset.w, blurred.asset.h]).toEqual([400, 300]);
+  const composite = await canvas(page).evaluate((element: HTMLCanvasElement) => element.toDataURL());
+  // Baking keeps the pixels and returns the layer to its content bounds.
+  await menu(page, 'Layer', 'Rasterize');
+  await settled(page);
+  const baked = await storedWithin(page, 300, 250);
+  expect(baked.asset.w * baked.asset.h).toBeLessThan(400 * 300);
+  expect(baked.asset.w).toBeGreaterThanOrEqual(painted.asset.w - 10);
+  expect(await canvas(page).evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(composite);
 });
