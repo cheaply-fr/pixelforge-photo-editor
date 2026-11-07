@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from 'react';
 import {
-  BLENDS,
   FONTS,
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
@@ -19,7 +18,16 @@ import {
   planLayerArrange,
   type LayerArrangeMode,
 } from './layerArrange';
-import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
+import {
+  effectiveLayerStyles,
+  GLOW_MAX_SIZE,
+  INNER_SHADOW_MAX_DISTANCE,
+  STYLE_MAX_BLUR,
+  STYLE_MAX_OFFSET,
+  type GlowSource,
+  type LayerStyles,
+} from './layerStyles';
+import { BLEND_MODE_GROUPS, type LayerBlendMode } from './blendModes';
 import { PATTERN_IDS, type PatternId } from './patternStamp';
 import { normalizeOpenType } from './openType';
 import { normalizeTextLanguage, TEXT_DIRECTIONS, TEXT_LANGUAGES } from './textLanguage';
@@ -160,6 +168,10 @@ export default function LayersPanel({
   const updateGradientOverlay = (
     patch: Partial<LayerStyles['gradientOverlay']>,
   ) => updateStyles({ gradientOverlay: { ...styles.gradientOverlay, ...patch } });
+  const updateOuterGlow = (patch: Partial<LayerStyles['outerGlow']>) =>
+    updateStyles({ outerGlow: { ...styles.outerGlow, ...patch } });
+  const updateInnerGlow = (patch: Partial<LayerStyles['innerGlow']>) =>
+    updateStyles({ innerGlow: { ...styles.innerGlow, ...patch } });
   const updatePatternOverlay = (
     patch: Partial<LayerStyles['patternOverlay']>,
   ) => updateStyles({ patternOverlay: { ...styles.patternOverlay, ...patch } });
@@ -622,13 +634,7 @@ export default function LayersPanel({
           disabled={layerLocked}
           onChange={(e) => edit({ blend: e.target.value as Layer['blend'] })}
         >
-          {BLENDS.map((blend) => (
-            <option key={blend} value={blend}>
-              {blend === 'source-over'
-                ? 'Normal'
-                : blend[0].toUpperCase() + blend.slice(1)}
-            </option>
-          ))}
+          <BlendModeOptions />
         </select>
       </label>
       <fieldset className="layer-alignment" disabled={layerLocked}>
@@ -670,16 +676,16 @@ export default function LayersPanel({
           <NumberField
             label="Shadow X"
             value={styles.dropShadow.offsetX}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateDropShadow({ offsetX: value })}
           />
           <NumberField
             label="Shadow Y"
             value={styles.dropShadow.offsetY}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateDropShadow({ offsetY: value })}
           />
@@ -690,13 +696,42 @@ export default function LayersPanel({
             aria-label="Drop shadow blur"
             type="range"
             min="0"
-            max="64"
+            max={STYLE_MAX_BLUR}
             value={Math.round(styles.dropShadow.blur)}
             onChange={(event) =>
               updateDropShadow({ blur: Number(event.target.value) })
             }
           />
         </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable outer glow"
+            checked={styles.outerGlow.enabled}
+            onChange={(event) => updateOuterGlow({ enabled: event.target.checked })}
+          />
+          Outer glow
+        </label>
+        {styles.outerGlow.enabled && (
+          <GlowControls
+            name="Outer glow"
+            color={styles.outerGlow.color}
+            opacity={styles.outerGlow.opacity}
+            size={styles.outerGlow.size}
+            amount={styles.outerGlow.spread}
+            amountLabel="spread"
+            blend={styles.outerGlow.blend}
+            update={(patch) =>
+              updateOuterGlow({
+                ...(patch.color !== undefined ? { color: patch.color } : {}),
+                ...(patch.opacity !== undefined ? { opacity: patch.opacity } : {}),
+                ...(patch.size !== undefined ? { size: patch.size } : {}),
+                ...(patch.amount !== undefined ? { spread: patch.amount } : {}),
+                ...(patch.blend !== undefined ? { blend: patch.blend } : {}),
+              })
+            }
+          />
+        )}
         <label>
           <input
             type="checkbox"
@@ -734,16 +769,16 @@ export default function LayersPanel({
           <NumberField
             label="Inner shadow X"
             value={styles.innerShadow.offsetX}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateInnerShadow({ offsetX: value })}
           />
           <NumberField
             label="Inner shadow Y"
             value={styles.innerShadow.offsetY}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateInnerShadow({ offsetY: value })}
           />
@@ -754,7 +789,7 @@ export default function LayersPanel({
             aria-label="Inner shadow blur"
             type="range"
             min="0"
-            max="64"
+            max={STYLE_MAX_BLUR}
             value={Math.round(styles.innerShadow.blur)}
             onChange={(event) =>
               updateInnerShadow({ blur: Number(event.target.value) })
@@ -767,13 +802,44 @@ export default function LayersPanel({
             aria-label="Inner shadow distance"
             type="range"
             min="1"
-            max="32"
+            max={INNER_SHADOW_MAX_DISTANCE}
             value={Math.round(styles.innerShadow.distance)}
             onChange={(event) =>
               updateInnerShadow({ distance: Number(event.target.value) })
             }
           />
         </label>
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable inner glow"
+            checked={styles.innerGlow.enabled}
+            onChange={(event) => updateInnerGlow({ enabled: event.target.checked })}
+          />
+          Inner glow
+        </label>
+        {styles.innerGlow.enabled && (
+          <GlowControls
+            name="Inner glow"
+            color={styles.innerGlow.color}
+            opacity={styles.innerGlow.opacity}
+            size={styles.innerGlow.size}
+            amount={styles.innerGlow.choke}
+            amountLabel="choke"
+            blend={styles.innerGlow.blend}
+            source={styles.innerGlow.source}
+            update={(patch) =>
+              updateInnerGlow({
+                ...(patch.color !== undefined ? { color: patch.color } : {}),
+                ...(patch.opacity !== undefined ? { opacity: patch.opacity } : {}),
+                ...(patch.size !== undefined ? { size: patch.size } : {}),
+                ...(patch.amount !== undefined ? { choke: patch.amount } : {}),
+                ...(patch.blend !== undefined ? { blend: patch.blend } : {}),
+                ...(patch.source !== undefined ? { source: patch.source } : {}),
+              })
+            }
+          />
+        )}
         <label>
           <input
             type="checkbox"
@@ -1647,13 +1713,7 @@ function GroupRow({
             editGroup(group.id, { blend: event.target.value as Group['blend'] })
           }
         >
-          {BLENDS.map((blend) => (
-            <option key={blend} value={blend}>
-              {blend === 'source-over'
-                ? 'Normal'
-                : blend[0].toUpperCase() + blend.slice(1)}
-            </option>
-          ))}
+          <BlendModeOptions />
         </select>
       </label>
     </div>
@@ -1698,5 +1758,132 @@ function NumberField({
         }}
       />
     </label>
+  );
+}
+
+/** Blend menu grouped like common editors; values stay stable document ids. */
+function BlendModeOptions() {
+  return (
+    <>
+      {BLEND_MODE_GROUPS.map((group) =>
+        group.modes.length === 1 ? (
+          <option key={group.modes[0].value} value={group.modes[0].value}>
+            {group.modes[0].label}
+          </option>
+        ) : (
+          <optgroup key={group.label} label={group.label}>
+            {group.modes.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </optgroup>
+        ),
+      )}
+    </>
+  );
+}
+
+type GlowPatch = {
+  color?: string;
+  opacity?: number;
+  size?: number;
+  amount?: number;
+  blend?: LayerBlendMode;
+  source?: GlowSource;
+};
+
+/** Compact shared controls for Outer Glow and Inner Glow. */
+function GlowControls({
+  name,
+  color,
+  opacity,
+  size,
+  amount,
+  amountLabel,
+  blend,
+  source,
+  update,
+}: {
+  name: string;
+  color: string;
+  opacity: number;
+  size: number;
+  amount: number;
+  amountLabel: 'spread' | 'choke';
+  blend: LayerBlendMode;
+  source?: GlowSource;
+  update: (patch: GlowPatch) => void;
+}) {
+  return (
+    <>
+      <div className="layer-position">
+        <label className="layer-field">
+          Color
+          <input
+            aria-label={`${name} color`}
+            type="color"
+            value={color}
+            onChange={(event) => update({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Mode
+          <select
+            aria-label={`${name} blend mode`}
+            value={blend}
+            onChange={(event) => update({ blend: event.target.value as LayerBlendMode })}
+          >
+            <BlendModeOptions />
+          </select>
+        </label>
+      </div>
+      <label className="layer-field">
+        {name} opacity {Math.round(opacity * 100)}%
+        <input
+          aria-label={`${name} opacity`}
+          type="range"
+          min="0"
+          max="100"
+          value={Math.round(opacity * 100)}
+          onChange={(event) => update({ opacity: Number(event.target.value) / 100 })}
+        />
+      </label>
+      <label className="layer-field">
+        {name} size {Math.round(size)} px
+        <input
+          aria-label={`${name} size`}
+          type="range"
+          min="0"
+          max={GLOW_MAX_SIZE}
+          value={Math.round(size)}
+          onChange={(event) => update({ size: Number(event.target.value) })}
+        />
+      </label>
+      <label className="layer-field">
+        {name} {amountLabel} {Math.round(amount)}%
+        <input
+          aria-label={`${name} ${amountLabel}`}
+          type="range"
+          min="0"
+          max="100"
+          value={Math.round(amount)}
+          onChange={(event) => update({ amount: Number(event.target.value) })}
+        />
+      </label>
+      {source !== undefined && (
+        <label className="layer-field">
+          Source
+          <select
+            aria-label={`${name} source`}
+            value={source}
+            onChange={(event) => update({ source: event.target.value as GlowSource })}
+          >
+            <option value="edge">Edge</option>
+            <option value="center">Center</option>
+          </select>
+        </label>
+      )}
+    </>
   );
 }
