@@ -21,6 +21,13 @@ source pixels. Locked, hidden, non-raster and maskless layers reject edits with
 an accessible notice. Every accepted command creates one undoable history
 state; no-op commands do not add history.
 
+Creating a mask from the selection consumes the selection, as Photoshop
+does: the same single history state adds the mask and deselects, keeping the
+selection as the Select > Reselect snapshot (`previousSelection`). Painting
+the new mask with Mask Brush, Mask Eraser or Adjustment Brush is therefore
+not confined by the old selection; undo restores both the maskless layer and
+the selection.
+
 Mask assets are validated during document import, migration, resize, crop,
 rotate, local draft save and private cloud save. A missing asset, mismatched
 dimensions, non-boolean control or control without a mask reference rejects

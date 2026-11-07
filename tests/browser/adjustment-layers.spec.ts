@@ -11,6 +11,8 @@ type Project = {
       maskEnabled?: boolean;
       adjustments?: { levelsBlack?: number; levelsWhite?: number };
     }>;
+    selection?: unknown;
+    previousSelection?: unknown;
   }>;
   index: number;
   assets: Record<string, { url: string; w: number; h: number }>;
@@ -143,10 +145,10 @@ test('Adjustment Brush paints a nondestructive adjustment mask and survives relo
   expect(masked.history[masked.index].layers.at(-2)?.asset).toBe(sourceAsset);
   expect(masked.assets[sourceAsset]).toEqual(sourceProject.assets[sourceAsset]);
 
-  // Mask painting is confined to an active selection, so drop it before
-  // revealing the unselected half (Photoshop consumes it into the mask).
-  await page.getByRole('button', { name: 'Select', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Deselect Ctrl\+D$/ }).click();
+  // Mask from selection consumes the selection (as in Photoshop), so the
+  // Adjustment Brush can reveal the unselected half without a manual Deselect.
+  expect(masked.history[masked.index].selection).toBeUndefined();
+  expect(masked.history[masked.index].previousSelection).toBeDefined();
   await selectTool(page, 'Adjustment Brush');
   await page.getByLabel('Size', { exact: true }).fill('16');
   await canvas.click({ position: { x: box.width * 0.86, y: box.height * 0.5 } });

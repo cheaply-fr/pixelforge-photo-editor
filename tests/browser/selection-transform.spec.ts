@@ -98,7 +98,8 @@ test('Transform Selection applies an affine matrix, clips masks, and survives pr
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   saved = await project(page);
-  expect(saved.history[saved.index].selection?.matrix).toEqual(frame.selection?.matrix);
+  expect(saved.history[saved.index].previousSelection?.matrix).toEqual(frame.previousSelection?.matrix);
+  expect(frame.previousSelection?.matrix?.[4]).toBeGreaterThan(0);
   expect(saved.history[saved.index].layers[0].mask).toBeTruthy();
 });
 
