@@ -412,6 +412,18 @@ import {
   type GradientBlendMode,
 } from '../src/gradientBlend';
 import {
+  SelectionSnapshotCache,
+  maskDigest,
+  selectionSnapshotKey,
+} from '../src/selectionSnapshotCache';
+import {
+  downscaleMask,
+  maskBounds,
+  planGradientPreview,
+  toPreviewPoint,
+  type GradientPreviewPlan,
+} from '../src/gradientPreview';
+import {
   BRUSH_SIZE_MAX,
   BRUSH_SIZE_MIN,
   BRUSH_SIZE_SLIDER_STEPS,
@@ -490,6 +502,7 @@ import {
   BRUSH_SCATTER_MAX,
   DEFAULT_BRUSH_DYNAMICS,
   brushDabsAt,
+  deferFirstBrushDab,
   normalizeBrushDynamics,
   wrapBrushAngle,
   type BrushDynamics,
@@ -1561,6 +1574,12 @@ type Gesture = {
   redEyeAmount?: number;
   /** Local-space nondestructive context-aware cleanup metadata. */
   spotHealingStroke?: SpotHealingStroke;
+  /** Gradient drag: decoded layer and selection, prepared at pointer-down. */
+  gradientBase?: GradientBase;
+  /** Gradient drag: latest layer-local end point for the live preview. */
+  gradientEnd?: { x: number; y: number };
+  /** Spot Healing / Patch: the selection snapshot is still being captured. */
+  selectionPending?: boolean;
   /** Local-space nondestructive source-offset patch metadata. */
   patchStroke?: PatchStroke;
   /** Canvas-space nondestructive mask repair metadata for one gesture. */
@@ -1621,6 +1640,25 @@ type Gesture = {
   lastPressure?: number;
   pointerType?: string;
   moved: boolean;
+};
+
+/** Layer pixels and selection coverage a gradient drag renders over. */
+type GradientBase = {
+  layerCanvas: HTMLCanvasElement;
+  selectionMask?: Uint8ClampedArray;
+  /**
+   * Reduced-resolution live preview for large layers (see
+   * `src/gradientPreview.ts`): the changeable region downscaled once, its
+   * selection coverage, and two full-size override surfaces used in turn
+   * (the preview scheduler keeps at most one render in flight).
+   */
+  preview?: {
+    plan: GradientPreviewPlan;
+    layerSmall: HTMLCanvasElement;
+    maskSmall?: Uint8ClampedArray;
+    buffers: HTMLCanvasElement[];
+    next: number;
+  };
 };
 
 type SlicePreview = SliceRect & { frame: Frame };
@@ -1810,6 +1848,8 @@ const stampCanvasSegment = (
     sourceAnchor?: { x: number; y: number };
     destinationAnchor?: { x: number; y: number };
     spacingState?: BrushSpacingState;
+    /** Stamp a deferred first dab even without a direction (stroke end). */
+    flushDeferred?: boolean;
   },
 ) => {
   const resolved = resolveBrushStamp({
@@ -1828,24 +1868,18 @@ const stampCanvasSegment = (
       flipY: options.flipY,
     }),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    interval = Math.max(1, resolved.size * resolved.spacing / 100),
-    positions = brushSegmentPositions(distance, interval, options.spacingState);
+    interval = Math.max(1, resolved.size * resolved.spacing / 100);
   let changed = false;
   const direction = { x: to.x - from.x, y: to.y - from.y },
-    dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS;
-  for (const t of positions) {
-    const x = from.x + (to.x - from.x) * t,
-      y = from.y + (to.y - from.y) * t,
-      sourceX = options.sourceAnchor
-        ? options.sourceAnchor.x +
-          (x - (options.destinationAnchor?.x ?? from.x))
-        : undefined,
-      sourceY = options.sourceAnchor
-        ? options.sourceAnchor.y +
-          (y - (options.destinationAnchor?.y ?? from.y))
-        : undefined;
-    // Count dabs per spacing step, each with deterministic scatter and jitter.
-    for (const dab of brushDabsAt({ x, y }, resolved.size, options.scatter ?? 0, dynamics, direction)) {
+    dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS,
+    state = options.spacingState,
+    // Perpendicular-only scatter has no direction for a stroke's first dab:
+    // hold it back and place it with the next segment's direction.
+    deferFirst = Boolean(state && !state.started && !options.sourceAnchor &&
+      deferFirstBrushDab(dynamics, options.scatter ?? 0, direction)),
+    positions = brushSegmentPositions(distance, interval, state);
+  const stampDabs = (x: number, y: number, dabDirection: { x: number; y: number }, sourceX?: number, sourceY?: number) => {
+    for (const dab of brushDabsAt({ x, y }, resolved.size, options.scatter ?? 0, dynamics, dabDirection)) {
       changed =
         stampCanvas(target, {
           ...options,
@@ -1858,6 +1892,29 @@ const stampCanvasSegment = (
           sourceY,
         }) || changed;
     }
+  };
+  if (state?.deferredFirst && (distance > 0 || options.flushDeferred)) {
+    const deferred = state.deferredFirst;
+    state.deferredFirst = undefined;
+    stampDabs(deferred.x, deferred.y, direction);
+  }
+  for (const [positionIndex, t] of positions.entries()) {
+    if (deferFirst && positionIndex === 0 && t === 0) {
+      state!.deferredFirst = { x: from.x, y: from.y };
+      continue;
+    }
+    const x = from.x + (to.x - from.x) * t,
+      y = from.y + (to.y - from.y) * t,
+      sourceX = options.sourceAnchor
+        ? options.sourceAnchor.x +
+          (x - (options.destinationAnchor?.x ?? from.x))
+        : undefined,
+      sourceY = options.sourceAnchor
+        ? options.sourceAnchor.y +
+          (y - (options.destinationAnchor?.y ?? from.y))
+        : undefined;
+    // Count dabs per spacing step, each with deterministic scatter and jitter.
+    stampDabs(x, y, direction, sourceX, sourceY);
   }
   return changed;
 };
@@ -2585,6 +2642,50 @@ export default function Home() {
   // even before React re-renders (an Alt-click right after a stroke on a
   // large document must not be lost or read stale).
   const cloneSourceRef = useRef<{ x: number; y: number; matrix: Matrix } | null>(null);
+  /** Stored selection snapshots, reused by selection value and by mask content. */
+  const selectionSnapshots = useRef(new SelectionSnapshotCache());
+  /**
+   * Spot Healing and Patch store strokes as metadata that is rendered later,
+   * so the active selection (rectangle, ellipse, lasso or pixel mask) is
+   * captured once at pointer-down as a layer-space alpha asset. The stroke
+   * records its id and replay confines writes to it, also after reload.
+   * Returns undefined without a selection.
+   */
+  const captureSelectionSnapshot = async (
+    frame: Frame,
+    layer: Extract<Layer, { kind: 'raster' }>,
+  ): Promise<string | undefined> => {
+    const selection = frame.selection;
+    if (!selection) return undefined;
+    const asset = assets.current[layer.asset],
+      cache = selectionSnapshots.current,
+      present = (id: string) => Boolean(assets.current[id]),
+      key = selectionSnapshotKey(selection, layer.id, layer.matrix, asset.w, asset.h);
+    // An equal selection on the same placement: no rasterizing or encoding.
+    const known = cache.lookup(key, present);
+    if (known) return known;
+    const mask = await selectionMaskForLayer(selection, frame, layer, assets.current, asset.w, asset.h);
+    if (!mask) return undefined;
+    // An identical mask from another selection value: reuse its asset.
+    const digest = maskDigest(mask, asset.w, asset.h),
+      same = cache.lookupDigest(digest, present);
+    if (same) {
+      cache.remember(key, digest, same);
+      return same;
+    }
+    const maskCanvas = surface(asset.w, asset.h),
+      context = maskCanvas.getContext('2d')!,
+      image = context.createImageData(asset.w, asset.h);
+    for (let pixel = 0; pixel < mask.length; pixel += 1) {
+      const offset = pixel * 4;
+      image.data[offset] = image.data[offset + 1] = image.data[offset + 2] = 255;
+      image.data[offset + 3] = mask[pixel];
+    }
+    context.putImageData(image, 0, 0);
+    const id = addAsset(assets.current, maskCanvas);
+    cache.remember(key, digest, id);
+    return id;
+  };
   const chooseCloneSource = (point: { x: number; y: number }, matrix: Matrix) => {
     const next = { x: point.x, y: point.y, matrix };
     cloneSourceRef.current = next;
@@ -2934,6 +3035,144 @@ export default function Home() {
         ? { frame: g.frame, overrides: { [g.layer.id]: g.buffer } }
         : null,
     );
+  /** Decoded layer pixels and selection coverage a gradient drag renders over. */
+  const prepareGradientBase = async (
+    frame: Frame,
+    layer: Extract<Layer, { kind: 'raster' }>,
+  ): Promise<GradientBase> => {
+    const image = await decodeAsset(assets.current[layer.asset]),
+      width = image.naturalWidth,
+      height = image.naturalHeight,
+      layerCanvas = surface(width, height);
+    layerCanvas.getContext('2d')!.drawImage(image, 0, 0);
+    // Photoshop confines a gradient to the active selection.
+    const selectionMask = await selectionMaskForLayer(
+      frame.selection, frame, layer, assets.current, width, height,
+    );
+    // Large layers preview only the region the gradient can change, at a
+    // bounded resolution; the commit still renders every layer pixel.
+    const plan = planGradientPreview(
+      width,
+      height,
+      selectionMask ? (maskBounds(selectionMask, width, height) ?? { x: 0, y: 0, width: 0, height: 0 }) : null,
+    );
+    if (!plan) return { layerCanvas, selectionMask };
+    const layerSmall = surface(Math.max(1, plan.width), Math.max(1, plan.height));
+    if (plan.width > 0) {
+      const smallContext = layerSmall.getContext('2d')!;
+      smallContext.imageSmoothingQuality = 'high';
+      smallContext.drawImage(
+        layerCanvas,
+        plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height,
+        0, 0, plan.width, plan.height,
+      );
+    }
+    return {
+      layerCanvas,
+      selectionMask,
+      preview: {
+        plan,
+        layerSmall,
+        maskSmall: selectionMask && plan.width > 0 ? downscaleMask(selectionMask, width, plan) : undefined,
+        buffers: [],
+        next: 0,
+      },
+    };
+  };
+  /**
+   * Render the gradient from `start` to `end` over the prepared layer with the
+   * current Mode, Opacity, Noise, Dither and selection. Shared by the live
+   * drag preview and the pointer-up commit, so both show the same pixels.
+   */
+  const renderGradientBuffer = (
+    base: GradientBase,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) => {
+    const { layerCanvas, selectionMask } = base,
+      buffer = surface(layerCanvas.width, layerCanvas.height);
+    buffer.getContext('2d')!.drawImage(layerCanvas, 0, 0);
+    // Render the gradient on its own surface, then composite it onto the
+    // layer with the chosen Mode and Opacity (Normal paints over).
+    const gradientSurface = surface(buffer.width, buffer.height),
+      context = gradientSurface.getContext('2d')!,
+      gradient = gradientMode === 'radial'
+        ? context.createRadialGradient(
+          start.x,
+          start.y,
+          0,
+          start.x,
+          start.y,
+          Math.max(1, Math.hypot(end.x - start.x, end.y - start.y)),
+        )
+        : context.createLinearGradient(start.x, start.y, end.x, end.y);
+    // A transparent end fades the adjacent colour's alpha (not toward
+    // transparent white, which leaves a pale fringe in canvas gradients).
+    for (const stop of buildGradientColorStops({
+      mode: gradientMode,
+      color,
+      backgroundColor,
+      end: gradientEnd,
+      reverse: gradientReverse,
+      midpoint: gradientMidpoint,
+      midpointPosition: gradientMidpointPosition,
+      stops: gradientStops,
+    })) gradient.addColorStop(stop.offset, stop.color);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, buffer.width, buffer.height);
+    let gradientPixels: Uint8ClampedArray = context.getImageData(0, 0, buffer.width, buffer.height).data;
+    if (gradientNoise > 0 || gradientDither > 0) {
+      gradientPixels = applyGradientNoise(gradientPixels, buffer.width, buffer.height, gradientNoise);
+      gradientPixels = applyGradientDither(gradientPixels, buffer.width, buffer.height, gradientDither);
+    }
+    const bufferContext = buffer.getContext('2d')!,
+      layerPixels = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+    layerPixels.data.set(compositeGradientPixels(
+      layerPixels.data,
+      gradientPixels,
+      gradientBlend,
+      normalizeGradientOpacity(gradientOpacity) / 100,
+    ));
+    bufferContext.putImageData(layerPixels, 0, 0);
+    if (selectionMask) confineToSelection(layerCanvas, buffer, selectionMask);
+    return buffer;
+  };
+  /**
+   * Live gradient while dragging: the latest end point is rendered at most
+   * once per animation frame (and one render in flight) through the shared
+   * preview scheduler; pointer-up commits one undo step.
+   */
+  const previewGradient = (g: Gesture) =>
+    schedulePaint(() => {
+      if (gesture.current !== g || !g.gradientBase || !g.layer || !g.moved) return null;
+      const end = g.gradientEnd ?? g.last;
+      const base = g.gradientBase, preview = base.preview;
+      if (!preview)
+        return { frame: g.frame, overrides: { [g.layer.id]: renderGradientBuffer(base, g.start, end) } };
+      // Reduced preview: only the changeable region is re-rendered, at the
+      // planned scale, and upscaled into one of two full-size surfaces that
+      // already hold the untouched layer pixels outside that region.
+      const { plan } = preview, index = preview.next;
+      preview.next = 1 - index;
+      let output = preview.buffers[index];
+      if (!output) {
+        output = surface(base.layerCanvas.width, base.layerCanvas.height);
+        output.getContext('2d')!.drawImage(base.layerCanvas, 0, 0);
+        preview.buffers[index] = output;
+      }
+      if (plan.width > 0) {
+        const small = renderGradientBuffer(
+          { layerCanvas: preview.layerSmall, selectionMask: preview.maskSmall },
+          toPreviewPoint(plan, g.start),
+          toPreviewPoint(plan, end),
+        );
+        const context = output.getContext('2d')!;
+        context.clearRect(plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height);
+        context.imageSmoothingEnabled = true;
+        context.drawImage(small, 0, 0, plan.width, plan.height, plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height);
+      }
+      return { frame: g.frame, overrides: { [g.layer.id]: output } };
+    });
   // Pointer whose paint gesture waits for a trimmed layer to expand.
   const expansionPointer = useRef<{
     pointerId: number;
@@ -10955,12 +11194,35 @@ export default function Home() {
           },
         };
       gesture.current = g;
-      void paint({
-        ...f,
-        layers: f.layers.map((item) => item.id === layer.id
-          ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
-          : item),
-      });
+      const previewSpotHealing = () => {
+        if (gesture.current !== g) return;
+        void paint({
+          ...f,
+          layers: f.layers.map((item) => item.id === layer.id
+            ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
+            : item),
+        });
+      };
+      if (f.selection) {
+        // Confine the stroke to the selection: capture it before the first
+        // preview so the preview and the committed stroke match.
+        g.selectionPending = true;
+        g.pending = (async () => {
+          try {
+            const selectionMask = await captureSelectionSnapshot(f, layer);
+            g.selectionPending = false;
+            if (selectionMask && g.spotHealingStroke) g.spotHealingStroke.selectionMask = selectionMask;
+          } catch {
+            if (gesture.current === g) gesture.current = null;
+            setNotice('Could not read the selection for Spot Healing');
+            return;
+          }
+          previewSpotHealing();
+        })();
+        await g.pending;
+        return;
+      }
+      previewSpotHealing();
       return;
     }
     if (tool === 'patch') {
@@ -10983,12 +11245,6 @@ export default function Home() {
       const asset = assets.current[layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
         y = Math.max(0, Math.min(asset.h - 1, local.y)),
-        selectionMask =
-          f.selection?.mask &&
-          assets.current[f.selection.mask]?.w === asset.w &&
-          assets.current[f.selection.mask]?.h === asset.h
-            ? f.selection.mask
-            : undefined,
         g: Gesture = {
           tool,
           start: { x, y },
@@ -11006,16 +11262,38 @@ export default function Home() {
               x: cloneSource.x - x,
               y: cloneSource.y - y,
             },
-            ...(selectionMask ? { selectionMask } : {}),
           },
         };
       gesture.current = g;
-      void paint({
-        ...f,
-        layers: f.layers.map((item) => item.id === layer.id
-          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), g.patchStroke!] }
-          : item),
-      });
+      const previewPatch = () => {
+        if (gesture.current !== g) return;
+        void paint({
+          ...f,
+          layers: f.layers.map((item) => item.id === layer.id
+            ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), g.patchStroke!] }
+            : item),
+        });
+      };
+      if (f.selection) {
+        // Any selection shape is captured in layer space (also for moved or
+        // scaled layers), so replay stays aligned after reload.
+        g.selectionPending = true;
+        g.pending = (async () => {
+          try {
+            const selectionMask = await captureSelectionSnapshot(f, layer);
+            g.selectionPending = false;
+            if (selectionMask && g.patchStroke) g.patchStroke.selectionMask = selectionMask;
+          } catch {
+            if (gesture.current === g) gesture.current = null;
+            setNotice('Could not read the selection for Patch');
+            return;
+          }
+          previewPatch();
+        })();
+        await g.pending;
+        return;
+      }
+      previewPatch();
       return;
     }
     if (tool === 'clone' || tool === 'heal') {
@@ -11311,7 +11589,7 @@ export default function Home() {
         );
         return;
       }
-      gesture.current = {
+      const g: Gesture = {
         tool,
         start: local,
         last: local,
@@ -11319,6 +11597,19 @@ export default function Home() {
         layer,
         moved: false,
       };
+      gesture.current = g;
+      // Decode the layer and sample the selection once, in the background, so
+      // the drag can show the gradient live; pointer-up waits for it.
+      g.pending = prepareGradientBase(f, layer).then(
+        (base) => {
+          if (gesture.current !== g) return;
+          g.gradientBase = base;
+          if (g.moved) previewGradient(g);
+        },
+        () => {
+          // The commit path retries the preparation and reports failures.
+        },
+      );
       return;
     }
     if (tool === 'magic-wand') {
@@ -11666,6 +11957,9 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
+      // Until the selection snapshot is ready, record points only; the
+      // capture paints the first preview with every point so far.
+      if (g.selectionPending) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
@@ -11687,12 +11981,19 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
+      if (g.selectionPending) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
           ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       });
+      return;
+    }
+    if (g.tool === 'gradient' && g.layer?.kind === 'raster') {
+      g.gradientEnd = local;
+      g.last = local;
+      if (g.gradientBase) previewGradient(g);
       return;
     }
     if (g.tool === 'freeform-pen') {
@@ -12723,8 +13024,11 @@ export default function Home() {
       g.pointerType = g.pointerType || e.pointerType;
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
-      if (g.moved && (from.x !== destination.x || from.y !== destination.y))
+      // A deferred first dab (perpendicular-only scatter) is placed now,
+      // using the last segment's direction or both axes for a click.
+      if ((g.moved && (from.x !== destination.x || from.y !== destination.y)) || g.spacingState?.deferredFirst)
         stampGestureSegment(g, from, destination, {
+          flushDeferred: true,
           spacingState: g.spacingState,
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
@@ -12964,61 +13268,10 @@ export default function Home() {
     } else if (g.tool === 'gradient' && g.moved && g.layer) {
       try {
         if (g.layer.kind !== 'raster') return;
-        const image = await decodeAsset(assets.current[g.layer.asset]),
-          buffer = surface(image.naturalWidth, image.naturalHeight);
-        buffer.getContext('2d')!.drawImage(image, 0, 0);
-        // Photoshop confines a gradient to the active selection.
-        const selectionMask = await selectionMaskForLayer(
-          f.selection, f, g.layer, assets.current, buffer.width, buffer.height,
-        );
-        // Render the gradient on its own surface, then composite it onto the
-        // layer with the chosen Mode and Opacity (Normal paints over).
-        const gradientSurface = surface(buffer.width, buffer.height),
-          context = gradientSurface.getContext('2d')!,
-          gradient = gradientMode === 'radial'
-            ? context.createRadialGradient(
-              g.start.x,
-              g.start.y,
-              0,
-              g.start.x,
-              g.start.y,
-              Math.max(1, Math.hypot(local.x - g.start.x, local.y - g.start.y)),
-            )
-            : context.createLinearGradient(
-              g.start.x,
-              g.start.y,
-              local.x,
-              local.y,
-            );
-        // A transparent end fades the adjacent colour's alpha (not toward
-        // transparent white, which leaves a pale fringe in canvas gradients).
-        for (const stop of buildGradientColorStops({
-          mode: gradientMode,
-          color,
-          backgroundColor,
-          end: gradientEnd,
-          reverse: gradientReverse,
-          midpoint: gradientMidpoint,
-          midpointPosition: gradientMidpointPosition,
-          stops: gradientStops,
-        })) gradient.addColorStop(stop.offset, stop.color);
-        context.fillStyle = gradient;
-        context.fillRect(0, 0, buffer.width, buffer.height);
-        let gradientPixels: Uint8ClampedArray = context.getImageData(0, 0, buffer.width, buffer.height).data;
-        if (gradientNoise > 0 || gradientDither > 0) {
-          gradientPixels = applyGradientNoise(gradientPixels, buffer.width, buffer.height, gradientNoise);
-          gradientPixels = applyGradientDither(gradientPixels, buffer.width, buffer.height, gradientDither);
-        }
-        const bufferContext = buffer.getContext('2d')!,
-          layerPixels = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
-        layerPixels.data.set(compositeGradientPixels(
-          layerPixels.data,
-          gradientPixels,
-          gradientBlend,
-          normalizeGradientOpacity(gradientOpacity) / 100,
-        ));
-        bufferContext.putImageData(layerPixels, 0, 0);
-        if (selectionMask) confineToSelection(image, buffer, selectionMask);
+        // The live preview prepared the decoded layer and selection at
+        // pointer-down; the commit renders the same pixels for the release point.
+        const base = g.gradientBase ?? await prepareGradientBase(f, g.layer);
+        const buffer = renderGradientBuffer(base, g.start, local);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({

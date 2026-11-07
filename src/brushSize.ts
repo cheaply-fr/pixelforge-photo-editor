@@ -91,7 +91,15 @@ export function brushSizeValueText(size: number): string {
  * their start point, so dab count scales with path length ÷ (size × spacing)
  * instead of pointer-event count. This keeps very large brushes responsive.
  */
-export type BrushSpacingState = { started: boolean; carry: number };
+export type BrushSpacingState = {
+  started: boolean;
+  carry: number;
+  /**
+   * First dab held back until the stroke has a direction (perpendicular-only
+   * scatter); see `deferFirstBrushDab` in `brushDynamics.ts`.
+   */
+  deferredFirst?: { x: number; y: number };
+};
 
 export function spacedDabPositions(
   distance: number,

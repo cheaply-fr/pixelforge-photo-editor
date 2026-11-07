@@ -179,8 +179,12 @@ Fill, ignores clicks outside the selection and blends its result by coverage.
 Smudge, Blur/Sharpen, Dodge/Burn/Sponge and Mixer/History/Art History brushes
 already applied the layer-space selection mask through their own pixel
 kernels. Spot Healing and Patch store nondestructive stroke metadata that is
-rendered later; they do not yet honour vector (rectangle/ellipse/lasso)
-selections — Patch only keeps a pixel-mask selection of matching size.
+rendered later, so at pointer-down they capture the active selection — any
+shape (rectangle, ellipse, lasso, polygon, pixel mask), feathered or
+inverted — as a layer-space alpha asset and store its id on the stroke
+(`selectionMask`). Replay scales every write by that coverage, so the stroke
+stays inside the selection after Deselect, undo/redo, reload and project
+import (see `spot-healing-contract.md` and `patch-tool-contract.md`).
 
 Option/Alt-click on Clone or Healing sets the source without touching pixels
 or history and is handled before the in-flight gesture guard, so a source
