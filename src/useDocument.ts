@@ -7,7 +7,7 @@ import {
   type Frame,
 } from './document';
 import { sanitizeClippingRelations } from './layerClipping';
-import { renderFrameWithWorker } from './workerRender';
+import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
 import type {
@@ -164,6 +164,9 @@ export function useDocument(onError: (message: string) => void) {
         history.current = next;
         index.current = next.length - 1;
         assets.current = used;
+        // A replacing commit starts a different document (or drops history);
+        // release retained filtered layers before rendering it.
+        if (replace) clearLayerFilterCaches();
         publish(sanitized);
         return true;
       } catch (error) {
@@ -202,6 +205,10 @@ export function useDocument(onError: (message: string) => void) {
         await decodeAsset(asset);
         assertCurrentInstall();
       }
+      // Release the previous document's retained filtered layers before the
+      // installed one fills the cache. Keys are content-based, so this bounds
+      // memory rather than preventing stale reuse.
+      clearLayerFilterCaches();
       // Decode and render before switching documents, preserving the current work on import failure.
       const image = await renderFrameWithWorker(
         draft.history[draft.index],
