@@ -1,12 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 
-// 1600×1600 (2.56 MP) crosses the worker threshold, so these renders go
+// 2000×2000 (4 MP) crosses the worker threshold, so these renders go
 // through the persistent render worker, its tiled blur adapter and the
-// render watchdog. The previous O(radius) Gaussian needed roughly 20–45 s
+// render watchdog. The previous O(radius) Gaussian needed roughly 30–60 s
 // for radius 64 at this size and would be stopped by the shortened budget
 // below; the radius-independent box cascade finishes in a few seconds.
-const SIZE = 1600;
-const WATCHDOG_MS = 12_000;
+const SIZE = 2000;
+const WATCHDOG_MS = 20_000;
 
 test.beforeEach(async ({ page }) => {
   await page.route(
