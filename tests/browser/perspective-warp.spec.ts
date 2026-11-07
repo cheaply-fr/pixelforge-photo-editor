@@ -1,3 +1,4 @@
+import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
 
@@ -129,4 +130,60 @@ test('Vanishing Point rejects invalid plans and disables itself for locked layer
   await expect(page.getByText('Selected layers locked', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Vanishing Point…', exact: true })).toBeDisabled();
+});
+
+test('Perspective Warp on a paint layer stored at its content bounds works in canvas space', async ({ page }) => {
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  const canvas = page.getByTestId('editor-canvas');
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  await selectTool(page, 'Brush');
+  await page.getByLabel('Size', { exact: true }).fill('40');
+  const box = (await canvas.boundingBox())!;
+  await canvas.evaluate((element) => {
+    element.setPointerCapture = () => undefined;
+  });
+  const at = (fx: number, fy: number) => ({ clientX: box.x + box.width * fx, clientY: box.y + box.height * fy });
+  const common = { pointerId: 31, pointerType: 'mouse', pressure: 1, isPrimary: true };
+  await canvas.dispatchEvent('pointerdown', { ...common, ...at(0.5, 0.5), buttons: 1 });
+  await page.waitForTimeout(150);
+  await canvas.dispatchEvent('pointermove', { ...common, ...at(0.55, 0.5), buttons: 1 });
+  await canvas.dispatchEvent('pointerup', { ...common, ...at(0.55, 0.5), buttons: 0 });
+  await expect(page.locator('footer')).toContainText('Paint layer updated');
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  const download = async () => {
+    const pending = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'File', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
+    const project = await downloadedProject((await (await pending).path())!);
+    const frame = project.history[project.index];
+    const layer = frame.layers.find((item: { id: string }) => item.id === frame.active);
+    return { project, frame, layer, asset: project.assets[layer.asset] };
+  };
+  const stored = await download();
+  expect(stored.asset.w).toBeLessThan(stored.frame.w);
+
+  // Cancelling the quad prompt leaves the layer at its stored bounds.
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Perspective Warp…', exact: true }).click();
+  const cancelled = await download();
+  expect([cancelled.asset.w, cancelled.asset.h]).toEqual([stored.asset.w, stored.asset.h]);
+  expect(cancelled.project.history.length).toBe(stored.project.history.length);
+
+  // The default quad spans the canvas: the warp is applied in canvas space as
+  // one undo step and the result is stored at its content bounds again.
+  const { w, h } = stored.frame;
+  page.once('dialog', (dialog) => dialog.accept(`10,10;${w - 10},10;${w - 10},${h - 10};10,${h - 10}`));
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Perspective Warp…', exact: true }).click();
+  await expect(page.getByText('Perspective Warp applied locally; undo restores the source asset', { exact: true })).toBeVisible();
+  const warped = await download();
+  expect(warped.project.history.length).toBe(stored.project.history.length + 1);
+  expect(warped.asset.w).toBeLessThan(warped.frame.w);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  const undone = await download();
+  expect([undone.asset.w, undone.asset.h]).toEqual([stored.asset.w, stored.asset.h]);
 });
