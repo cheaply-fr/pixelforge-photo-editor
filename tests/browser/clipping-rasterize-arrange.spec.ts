@@ -235,6 +235,26 @@ test('Send Backward / Bring Forward move an outside layer past the whole clippin
   expect(await clipped()).toBe(true);
 });
 
+test('Merge Layers of a base and its first clipped layer keeps the rest of the group clipped', async ({
+  page,
+}) => {
+  await clippingGroup(page);
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await rename(page, 'Highlight');
+  await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
+  await expect(page.getByText(/Clipping mask created/)).toBeVisible();
+  await row(page, 'Figure shade').click();
+  await menu(page, 'Layer', 'Merge Layers');
+  await expect(page.locator('footer')).toContainText('Layers merged');
+  const layers = (await project(page)).layers;
+  const merged = layers.at(-2)!, highlight = layers.at(-1)!;
+  expect(merged.name).toBe('Figure + Figure shade');
+  expect(highlight).toMatchObject({ name: 'Highlight', clippingTo: merged.id });
+  await expect(row(page, 'Highlight')).toHaveAccessibleDescription('Clipped to Figure + Figure shade');
+  await menu(page, 'Edit', /^Undo/);
+  await expect(row(page, 'Highlight')).toHaveAccessibleDescription('Clipped to Figure');
+});
+
 test('arranging a clipping base moves its clipped layers with it', async ({ page }) => {
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await rename(page, 'Y');

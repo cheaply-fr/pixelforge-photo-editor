@@ -82,15 +82,15 @@ test('rasterizedLayer keeps clippingTo, folder, name, visibility, lock, opacity,
 
 test('every rasterizable kind keeps its clipping link and stays a valid clipping source', () => {
   const kinds = [
-    ['raster', {}],
-    ['raster', { fillColor: '#ff0000' }],
-    ['raster', { smartFilters: [{ id: 'f', type: 'emboss' }] }],
-    ['smart-object', { sourceName: 'photo.png' }],
-    ['text', { text: 'Hi', color: '#fff', fontSize: 20 }],
-    ['rectangle', { width: 4, height: 4, color: '#fff', stroke: 0, fill: true }],
-    ['path', { path: { nodes: [], closed: true } }],
+    { kind: 'raster', patch: {} },
+    { kind: 'raster', patch: { fillColor: '#ff0000' } },
+    { kind: 'raster', patch: { smartFilters: [{ id: 'f', type: 'emboss' }] } },
+    { kind: 'smart-object', patch: { sourceName: 'photo.png' } },
+    { kind: 'text', patch: { text: 'Hi', color: '#fff', fontSize: 20 } },
+    { kind: 'rectangle', patch: { width: 4, height: 4, color: '#fff', stroke: 0, fill: true } },
+    { kind: 'path', patch: { path: { nodes: [], closed: true } } },
   ];
-  for (const [kind, patch] of kinds) {
+  for (const { kind, patch } of kinds) {
     // Only raster/smart-object sources can be clipped; other kinds may still
     // carry a link from imported data, which is kept and then validated.
     const source = layer(2, kind, { clippingTo: id(1), ...patch });
