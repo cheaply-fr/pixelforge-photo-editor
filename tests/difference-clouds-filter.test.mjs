@@ -21,8 +21,6 @@ const rgba = (width, height, fn) => {
       data.set(fn(x, y), (y * width + x) * 4);
   return data;
 };
-const pixel = (data, width, x, y) =>
-  Array.from(data.slice((y * width + x) * 4, (y * width + x + 1) * 4));
 const effect = (patch = {}) =>
   effectiveFilterEffects({
     type: 'difference-clouds',
@@ -68,14 +66,16 @@ test('Difference Clouds identities return detached buffers and preserve alpha pa
     assert.deepEqual(output, source);
     assert.notEqual(output, source);
   }
+  // Transparent counts as black: at full amount every pixel becomes opaque
+  // and the hidden RGB of the transparent pixel never shows through.
   const output = applyFilterEffectsPixels(source, 5, 3, effect());
-  assert.deepEqual(pixel(output, 5, 0, 0), [255, 0, 255, 0]);
-  for (let offset = 0; offset < source.length; offset += 4)
-    assert.equal(output[offset + 3], source[offset + 3]);
+  for (let offset = 0; offset < source.length; offset += 4) assert.equal(output[offset + 3], 255);
   const tiny = rgba(1, 1, () => [20, 50, 90, 85]);
   const tinyOutput = applyFilterEffectsPixels(tiny, 1, 1, effect({ radius: 64 }));
   assert.equal(tinyOutput.length, tiny.length);
-  assert.equal(tinyOutput[3], 85);
+  assert.equal(tinyOutput[3], 255);
+  const half = applyFilterEffectsPixels(tiny, 1, 1, effect({ radius: 64, amount: 50 }));
+  assert.equal(half[3], Math.round(85 + (255 - 85) * 0.5));
 });
 
 test('Difference Clouds metadata normalizes, validates and survives document round trip', () => {
