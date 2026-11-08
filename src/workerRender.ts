@@ -472,7 +472,6 @@ export async function renderFrameWithWorker(
         (value.image as ImageBitmap).height === frame.h
       ) {
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
-      if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         finish(() => resolve(value.image as ImageBitmap));
       } else if (
@@ -484,7 +483,6 @@ export async function renderFrameWithWorker(
         value.bytes.byteLength <= 64 * 1024 * 1024
       ) {
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
-      if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         void createImageBitmap(
           new Blob([value.bytes], { type: 'image/png' }),
