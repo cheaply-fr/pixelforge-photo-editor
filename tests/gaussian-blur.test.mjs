@@ -9,7 +9,10 @@ const clampByte = (value) => clamp(Math.round(value), 0, 255);
 
 /**
  * The historical per-pixel truncated Gaussian (sigma = radius / 3, support
- * ±radius, alpha-weighted, edge-renormalised) kept verbatim as the oracle.
+ * ±radius, alpha-weighted, edge-renormalised) kept as the oracle, with the
+ * alpha-spreading output: alpha is blurred too (weight / in-image kernel
+ * mass) and colour blends in premultiplied space; an opaque pixel in an
+ * opaque neighbourhood keeps the historical formula (see src/alphaSpread.ts).
  */
 function referenceGaussian(source, width, height, radius, strength) {
   const output = new Uint8ClampedArray(source);
@@ -24,6 +27,15 @@ function referenceGaussian(source, width, height, radius, strength) {
   }
   for (let index = 0; index < kernel.length; index += 1) kernel[index] /= kernelTotal;
   const count = width * height;
+  // In-image kernel mass per column and row (summed in tap order).
+  const mass = (index, length) => {
+    let total = 0;
+    for (let offset = -bounded; offset <= bounded; offset += 1)
+      if (index + offset >= 0 && index + offset < length) total += kernel[offset + bounded];
+    return total;
+  };
+  const coverageX = Array.from({ length: width }, (_, x) => mass(x, width));
+  const coverageY = Array.from({ length: height }, (_, y) => mass(y, height));
   const horizontal = new Float32Array(count);
   const horizontalWeight = new Float32Array(count);
   for (let channel = 0; channel < 3; channel += 1) {
@@ -56,9 +68,20 @@ function referenceGaussian(source, width, height, radius, strength) {
         }
         const outputOffset = (y * width + x) * 4;
         const mix = clamp(strength, 0, 1);
-        if (source[outputOffset + 3] && weight > 0)
+        const alpha = source[outputOffset + 3];
+        const coverage = coverageX[x] * coverageY[y];
+        if (alpha === 255 && weight >= coverage * (1 - 1e-9)) {
+          output[outputOffset + channel] = clampByte(source[outputOffset + channel] * (1 - mix) + (sum / weight) * mix);
+          continue;
+        }
+        const blurred = Math.min(1, Math.max(0, weight / coverage));
+        const alphaByte = clampByte(((alpha / 255) * (1 - mix) + blurred * mix) * 255);
+        if (channel === 0) output[outputOffset + 3] = alphaByte;
+        if (!alphaByte) continue;
+        const keep = (alpha / 255) * (1 - mix) * coverage;
+        if (keep + weight * mix > 0)
           output[outputOffset + channel] = clampByte(
-            source[outputOffset + channel] * (1 - mix) + (sum / weight) * mix,
+            (source[outputOffset + channel] * keep + sum * mix) / (keep + weight * mix),
           );
       }
   }
@@ -106,6 +129,21 @@ function alphaScene(width, height) {
   return data;
 }
 
+/**
+ * Visible (premultiplied) colour plus alpha: hidden RGB under near-zero alpha
+ * carries no visible difference, so tolerances compare what is composited.
+ */
+function premultiplied(data) {
+  const result = new Uint8ClampedArray(data.length);
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const alpha = data[offset + 3];
+    for (let channel = 0; channel < 3; channel += 1)
+      result[offset + channel] = Math.round((data[offset + channel] * alpha) / 255);
+    result[offset + 3] = alpha;
+  }
+  return result;
+}
+
 function difference(a, b, source) {
   let max = 0;
   let opaqueMax = 0;
@@ -136,27 +174,27 @@ test('Gaussian radius 1..8 is bit-identical to the historical exact kernel', () 
 });
 
 test('large-radius Gaussian stays within the documented tolerance of the exact kernel', () => {
-  // Documented in docs/performance-budgets.md: opaque pixels differ by at
-  // most 3 levels (mean ≤ 1.5; edge ramps under a radius near the image
-  // size dominate the mean). Isolated, partly transparent pixels inside
-  // transparency next to strong contrast can differ by up to ~10 % (measured
-  // 24 levels at radius 9), because the cascade's tail shape differs from
-  // the truncated Gaussian and their tiny alpha weight amplifies it.
+  // Documented in docs/performance-budgets.md: on opaque images every pixel
+  // differs by at most 3 levels (mean <= 1.5; edge ramps under a radius near
+  // the image size dominate the mean). Blur alpha is spread too, so the
+  // alpha scene is compared as composited (premultiplied colour + alpha):
+  // the cascade tail differs from the truncated Gaussian by at most 10
+  // levels there (measured 8 at radius 64) and 2.5 on average.
   const width = 96;
   const height = 80;
   const cases = [
-    ['noise', noise(width, height), 3, 1.5],
-    ['step', step(width, height), 3, 1.5],
-    ['alpha', alphaScene(width, height), 28, 0.4],
+    ['noise', noise(width, height), 3, 1.5, 3],
+    ['step', step(width, height), 3, 1.5, 3],
+    ['alpha', alphaScene(width, height), 10, 2.5, 10],
   ];
   for (const radius of [9, 12, 17, 24, 33, 48, 64])
-    for (const [name, image, maxTolerance, meanTolerance] of cases) {
+    for (const [name, image, maxTolerance, meanTolerance, opaqueTolerance] of cases) {
       const { max, opaqueMax, mean } = difference(
-        gaussian(image, width, height, radius),
-        referenceGaussian(image, width, height, radius, 1),
+        premultiplied(gaussian(image, width, height, radius)),
+        premultiplied(referenceGaussian(image, width, height, radius, 1)),
         image,
       );
-      assert.ok(opaqueMax <= 3, `${String(name)} radius ${radius}: opaque max ${opaqueMax}`);
+      assert.ok(opaqueMax <= opaqueTolerance, `${String(name)} radius ${radius}: opaque max ${opaqueMax}`);
       assert.ok(max <= maxTolerance, `${String(name)} radius ${radius}: max ${max}`);
       assert.ok(mean <= meanTolerance, `${String(name)} radius ${radius}: mean ${mean}`);
     }
@@ -183,7 +221,7 @@ test('box cascade matches the kernel variance and never reaches past the radius'
   }
 });
 
-test('Gaussian keeps alpha, hidden RGB and the source buffer byte-for-byte', () => {
+test('Gaussian spreads alpha, keeps hidden RGB where nothing lands and never mutates the source', () => {
   const width = 70;
   const height = 50;
   const source = alphaScene(width, height);
@@ -191,12 +229,24 @@ test('Gaussian keeps alpha, hidden RGB and the source buffer byte-for-byte', () 
   for (const radius of [3, 24, 64]) {
     const output = gaussian(source, width, height, radius);
     assert.deepEqual(source, original);
+    let spread = 0;
     for (let offset = 0; offset < source.length; offset += 4) {
-      assert.equal(output[offset + 3], source[offset + 3]);
-      if (!source[offset + 3])
-        assert.deepEqual(output.subarray(offset, offset + 4), source.subarray(offset, offset + 4));
+      if (!source[offset + 3] && output[offset + 3]) spread += 1;
+      if (!output[offset + 3])
+        assert.deepEqual(output.subarray(offset, offset + 3), source.subarray(offset, offset + 3));
     }
+    // Transparent pixels next to covered ones receive blurred coverage.
+    assert.ok(spread > 0, `radius ${radius}`);
   }
+  // A lone opaque pixel on transparency keeps its colour and loses alpha
+  // mass to its neighbours, symmetrically.
+  const lone = new Uint8ClampedArray(9 * 9 * 4);
+  lone.set([10, 200, 90, 255], (4 * 9 + 4) * 4);
+  const blurred = gaussian(lone, 9, 9, 2);
+  assert.ok(blurred[(4 * 9 + 4) * 4 + 3] < 255);
+  assert.equal(blurred[(4 * 9 + 3) * 4 + 3], blurred[(4 * 9 + 5) * 4 + 3]);
+  assert.equal(blurred[(3 * 9 + 4) * 4 + 3], blurred[(5 * 9 + 4) * 4 + 3]);
+  assert.deepEqual([...blurred.subarray((4 * 9 + 5) * 4, (4 * 9 + 5) * 4 + 3)], [10, 200, 90]);
 });
 
 test('flat colour stays exact and no dark halo comes from transparent padding', () => {

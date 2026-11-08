@@ -304,6 +304,7 @@ import {
   sanitizeClippingRelations,
   validClippingRelationship,
 } from '../src/layerClipping';
+import { insertCopiesAboveSources, insertLayerAboveActive } from '../src/layerInsertion';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -590,9 +591,12 @@ import {
   applyAffine,
   normalizePaintSymmetry,
   paintSymmetryForLayer,
+  paintSymmetryAppliesToTool,
+  symmetryCloneCopies,
   symmetryDabCopies,
   type PaintSymmetrySettings,
   type SymmetryAffine,
+  type SymmetryDab,
 } from '../src/paintSymmetry';
 import { PaintSymmetryControls, PaintSymmetryOverlay } from '../src/PaintSymmetryControls';
 import {
@@ -666,6 +670,7 @@ import {
   defaultStrokePathChoice,
   normalizeStrokePathSettings,
   planStrokePath,
+  strokePathMaxSamplesForCopies,
   strokePathSources,
   type StrokePathSample,
   type StrokePathSettings,
@@ -677,9 +682,10 @@ import {
   DEFAULT_ART_HISTORY_BRUSH,
   DEFAULT_MIXER_BRUSH,
   applyArtHistoryBrushPixels,
-  interpolateBrushStrokePoints,
   applyHistoryBrushPixels,
   applyMixerBrushPixels,
+  applySymmetricRetouchBrush,
+  interpolateBrushStrokePoints,
   type HistoryBrushSettings,
   type ArtHistoryBrushSettings,
   type MixerBrushSettings,
@@ -717,6 +723,7 @@ import {
   MAX_CLOUD_RENDER_SCALE,
   MIN_CLOUD_RENDER_SCALE,
   defaultCloudScale,
+  differenceCloudScale,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_NEURAL_ENHANCE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
@@ -2022,12 +2029,19 @@ const stampCanvasSegment = (
           angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
           // Colour dynamics are resolved once per source dab and shared.
           color = options.color && brushDabColor(options.color, options.colorBackground, dab);
-        for (const copy of symmetryDabCopies(options.symmetry, {
+        const sourceDab = {
           x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
-        }))
+        };
+        // Clone/Healing: the copy's transform also maps the source sample
+        // point, so the source offset turns or mirrors with the copy.
+        const copies: Array<SymmetryDab & { sourceX?: number; sourceY?: number }> =
+          sourceX !== undefined && sourceY !== undefined
+            ? symmetryCloneCopies(options.symmetry, sourceDab, { x: sourceX, y: sourceY })
+            : symmetryDabCopies(options.symmetry, sourceDab);
+        for (const copy of copies)
           changed = stampCanvas(target, {
             ...options, size, opacity, color, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
-            x: copy.x, y: copy.y, sourceX, sourceY,
+            x: copy.x, y: copy.y, sourceX: copy.sourceX, sourceY: copy.sourceY,
           }) || changed;
         continue;
       }
@@ -2081,17 +2095,44 @@ const stampCanvasSegment = (
 const stampStrokePathSamples = (
   target: HTMLCanvasElement,
   samples: readonly StrokePathSample[],
-  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'>,
+  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'> & {
+    /** Paint Symmetry transforms (identity first); omitted paints one copy. */
+    symmetry?: readonly SymmetryAffine[];
+  },
 ) => {
-  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS;
+  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS,
+    { symmetry, ...stampOptions } = options;
   let changed = false;
   for (const sample of samples) {
     const size = Math.max(1, options.size * sample.sizeScale),
       opacity = options.opacity * sample.opacityScale;
     if (opacity <= 0) continue;
-    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction))
+    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction)) {
+      if (symmetry && symmetry.length > 1) {
+        // Same rule as a pointer stroke: every copy is the geometric image of
+        // the already-jittered dab and shares its colour dynamics.
+        const dabSize = dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
+        for (const copy of symmetryDabCopies(symmetry, {
+          x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
+        }))
+          changed = stampCanvas(target, {
+            ...stampOptions,
+            pointerType: 'mouse',
+            size: dabSize,
+            opacity: opacity * dab.opacityScale,
+            color,
+            angle: copy.angle,
+            flipX: copy.flipX,
+            flipY: copy.flipY,
+            x: copy.x,
+            y: copy.y,
+          }) || changed;
+        continue;
+      }
       changed = stampCanvas(target, {
-        ...options,
+        ...stampOptions,
         pointerType: 'mouse',
         size: dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
         angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
@@ -2100,6 +2141,7 @@ const stampStrokePathSamples = (
         x: dab.x,
         y: dab.y,
       }) || changed;
+    }
   }
   return changed;
 };
@@ -7328,6 +7370,9 @@ export default function Home() {
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
+                ...(type === 'difference-clouds' ? {
+                  cloudScale: defaultCloudScale(frame?.w ?? 0, frame?.h ?? 0),
+                } : {}),
                 ...(type === 'clouds' ? {
                   cloudRender: {
                     foreground: color,
@@ -8376,11 +8421,23 @@ export default function Home() {
       setRecovering(false);
     }
   };
-  const addLayer = (layer: Layer) => {
+  const addLayer = (layer: Layer, placement: 'top' | 'above-active' = 'above-active') => {
     const f = current();
     if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
       setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       void paint(f);
+      return false;
+    }
+    if (placement === 'above-active' && !layer.groupId && !layer.clippingTo) {
+      // New layers go directly above the active layer, joining its folder
+      // and clipping group (see layerInsertion.ts). A caller that names its
+      // own folder or clipping base (Paste of a copied member) keeps the
+      // explicit path below.
+      const inserted = insertLayerAboveActive(f, layer);
+      if (commit(inserted.frame)) {
+        setNotice(inserted.clipped ? 'Layer added to the clipping group' : 'Layer added');
+        return true;
+      }
       return false;
     }
     let next: Frame = {
@@ -8735,26 +8792,9 @@ export default function Home() {
       name: (layer.name + ' copy').slice(0, 160),
       locked: false,
     }));
-    let next: Frame = {
-      ...f,
-      layers: [...f.layers, ...copies],
-      active: copies.at(-1)!.id,
-      selectedLayerIds: copies.map((layer) => layer.id),
-    };
-    // Copies of grouped layers inherit their folder, so normalize every
-    // affected folder after appending the copies instead of leaving a second
-    // block at the end of the flat stack.
-    for (const groupId of new Set(
-      copies.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
-    )) {
-      const memberIds = next.layers
-        .filter((layer) => layer.groupId === groupId)
-        .map((layer) => layer.id);
-      next = {
-        ...next,
-        layers: groupLayerMembers(next, memberIds, groupId).layers,
-      };
-    }
+    // Each copy goes directly above its source, in the source's folder and
+    // clipping group (src/layerInsertion.ts).
+    const next = insertCopiesAboveSources(f, layers, copies as Layer[]);
     if (
       commit(next)
     )
@@ -9401,10 +9441,18 @@ export default function Home() {
       }
       const tool = settings.tool,
         brushSize = localSize(layer.matrix, size),
+        // Paint Symmetry applies to Brush, Pencil and Eraser paths exactly as
+        // to a hand-drawn stroke of those tools (Smudge has no symmetry).
+        symmetry = tool === 'smudge' ? undefined : paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
         plan = planStrokePath(
           sources.map((item) => ({ path: item.path, matrix: item.matrix })),
           layer.matrix,
-          { ...settings, size: brushSize, spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing },
+          {
+            ...settings,
+            size: brushSize,
+            spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing,
+            ...(symmetry && symmetry.length > 1 ? { maxSamples: strokePathMaxSamplesForCopies(symmetry.length) } : {}),
+          },
         );
       let changed: boolean;
       if (tool === 'smudge') {
@@ -9438,6 +9486,7 @@ export default function Home() {
           mode: tool === 'eraser' ? 'destination-out' : 'source-over',
           color: tool === 'eraser' ? undefined : brushColor(color),
           colorBackground: brushColor(backgroundColor),
+          symmetry,
         });
         if (changed && blendMode) {
           const bufferContext = buffer.getContext('2d')!,
@@ -9450,7 +9499,8 @@ export default function Home() {
           ));
           bufferContext.putImageData(composed, 0, 0);
         }
-        // Photoshop confines painting to the active selection.
+        // Photoshop confines painting to the active selection (every
+        // symmetry copy is confined by the same layer-space mask).
         if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
       }
       if (!changed) {
@@ -9463,6 +9513,7 @@ export default function Home() {
       if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
         setNotice(
           `Path stroked with ${label}${settings.simulatePressure ? ' (simulated pressure)' : ''}` +
+          `${symmetry && symmetry.length > 1 ? ` (${symmetry.length} symmetry copies)` : ''}` +
           `${plan.limited ? '; spacing widened to stay within the dab limit' : ''}; undo restores the layer`,
         );
     } catch (error) {
@@ -11958,6 +12009,8 @@ export default function Home() {
         moved: false,
         brushPoints: [{ x: local.x, y: local.y, pressure: pressure(e) }],
         queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        // Paint Symmetry is fixed for the stroke at pointer-down.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
       };
       gesture.current = g;
       g.pending = (async () => {
@@ -12001,19 +12054,23 @@ export default function Home() {
           const points = (g.queued || []).map((item) => ({ x: item.x, y: item.y, pressure: item.pressure }));
           g.brushPoints = points;
           const brushSize = localSize(layer.matrix, size);
-          const changed = mixerHistoryCanvasDabs(
-            tool,
-            g.sourcePixels,
-            buffer,
-            points,
+          const retouchOptions =
             tool === 'mixer-brush'
               ? { ...mixerBrush, size: brushSize, hardness }
               : tool === 'history-brush'
               ? { ...historyBrush, size: brushSize, hardness }
-              : { ...artHistoryBrush, size: brushSize, hardness },
-            g.selectionMask,
-          );
-          if (tool === 'art-history-brush') g.changed = changed;
+              : { ...artHistoryBrush, size: brushSize, hardness };
+          if ((g.paintSymmetry?.length ?? 0) > 1) {
+            // Paint Symmetry copies are applied over the whole buffer (#220).
+            const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
+            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry);
+            if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
+            buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          } else {
+            // Without symmetry only the brush's reach is read and written.
+            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask);
+            if (tool === 'art-history-brush') g.changed = changed;
+          }
           g.last = points.at(-1) || g.last;
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
@@ -12261,6 +12318,9 @@ export default function Home() {
         pointerType: e.pointerType,
         moved: false,
         cloneAnchor: sourceAnchor,
+        // Paint Symmetry is fixed for the stroke at pointer-down; each copy
+        // maps its source point through the same transform.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
         spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
@@ -13267,17 +13327,31 @@ export default function Home() {
       const brushSize = localSize(g.layer.matrix, size);
       let changed: boolean;
       try {
-        changed = mixerHistoryCanvasDabs(
-          g.tool,
-          g.sourcePixels,
-          g.buffer,
-          g.tool === 'history-brush' ? [nextPoint] : segmentPoints,
+        const retouchOptions =
           g.tool === 'mixer-brush'
             ? { ...mixerBrush, size: brushSize, hardness }
             : g.tool === 'history-brush'
             ? { ...historyBrush, size: brushSize, hardness }
-            : { ...artHistoryBrush, size: brushSize, hardness },
-          g.selectionMask,
+            : { ...artHistoryBrush, size: brushSize, hardness };
+        const strokePoints = g.tool === 'history-brush' ? [nextPoint] : segmentPoints;
+        if ((g.paintSymmetry?.length ?? 0) > 1) {
+          // Paint Symmetry copies are applied over the whole buffer (#220).
+          const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
+          const next = applySymmetricRetouchBrush(
+            g.tool,
+            destination,
+            g.sourcePixels,
+            g.buffer.width,
+            g.buffer.height,
+            strokePoints,
+            retouchOptions,
+            g.selectionMask,
+            g.paintSymmetry,
+          );
+          changed = g.tool === 'art-history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
+          g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+        } else
+          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask
         );
       } catch (error) {
         if (g.tool !== 'art-history-brush') throw error;
@@ -17441,7 +17515,7 @@ export default function Home() {
                 style={{ mixBlendMode: strandPreviewBlend(brushBlendMode) }}
               />
             )}
-            {frame && (tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+            {frame && paintSymmetryAppliesToTool(tool) && (
               <PaintSymmetryOverlay
                 value={paintSymmetry}
                 onChange={setPaintSymmetry}
@@ -18103,20 +18177,17 @@ export default function Home() {
               label="Levels output black"
               value={levelsOutputBlack}
               min={0}
-              max={254}
-              set={(value) =>
-                setLevelsOutputBlack(Math.min(value, levelsOutputWhite - 1))
-              }
+              max={255}
+              // Output black above output white inverts the tones.
+              set={setLevelsOutputBlack}
               suffix=""
             />
             <Slider
               label="Levels output white"
               value={levelsOutputWhite}
-              min={1}
+              min={0}
               max={255}
-              set={(value) =>
-                setLevelsOutputWhite(Math.max(value, levelsOutputBlack + 1))
-              }
+              set={setLevelsOutputWhite}
               suffix=""
             />
             <div className="adjustment-subtitle">Curves (nondestructive)</div>
@@ -18690,7 +18761,7 @@ export default function Home() {
                       </select>
                     </label>
                   )}
-                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && frame && (
+                  {paintSymmetryAppliesToTool(tool) && frame && (
                     <PaintSymmetryControls
                       value={paintSymmetry}
                       onChange={setPaintSymmetry}
@@ -19771,7 +19842,7 @@ export default function Home() {
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
             {filterEffects.type === 'difference-clouds' && (
-              <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
+              <p>The same smooth multi-octave clouds as Render &gt; Clouds, in black to white, difference-blended with the layer; transparent pixels count as black, so an empty layer becomes the clouds. Cloud size, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
             )}
                 {filterEffects.type === 'neural-enhance' && (
                   <>
@@ -19796,7 +19867,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && filterEffects.type !== 'difference-clouds' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
@@ -19832,8 +19903,6 @@ export default function Home() {
                           ? 'Fragment offset'
                       : filterEffects.type === 'picture-frame'
                           ? 'Frame width'
-                      : filterEffects.type === 'difference-clouds'
-                          ? 'Cloud scale'
                       : filterEffects.type === 'flame'
                           ? 'Flame detail'
                       : filterEffects.type === 'radial-blur'
@@ -20382,6 +20451,16 @@ export default function Home() {
                       }}
                     />
                   </label>
+                )}
+                {filterEffects.type === 'difference-clouds' && (
+                  <Slider
+                    label="Cloud size"
+                    value={differenceCloudScale(filterEffects)}
+                    min={MIN_CLOUD_RENDER_SCALE}
+                    max={MAX_CLOUD_RENDER_SCALE}
+                    set={(value) => setFilterEffects({ cloudScale: Math.round(value) })}
+                    suffix="px"
+                  />
                 )}
                 {filterEffects.type === 'difference-clouds' && (
                   <label className="slider">
