@@ -149,14 +149,34 @@ test('Rasterize keeps the clipping mask of a clipped layer with a Clouds + Embos
   expect((await sample(page)).outside).toEqual(before.outside);
 });
 
+/** Clip the active layer to the layer below unless it was added clipped already. */
+async function clipIfNeeded(page: Page) {
+  const create = page.getByRole('button', { name: 'Create clipping mask', exact: true });
+  const release = page.getByRole('button', { name: 'Release clipping mask', exact: true });
+  await expect(release).toBeVisible();
+  if (await create.isEnabled()) {
+    await create.click();
+    await expect(page.getByText(/Clipping mask created/)).toBeVisible();
+  }
+  await expect(release).toBeEnabled();
+}
+
+/** Release the active layer's clipping if it was added inside a group. */
+async function unclipIfNeeded(page: Page) {
+  const create = page.getByRole('button', { name: 'Create clipping mask', exact: true });
+  const release = page.getByRole('button', { name: 'Release clipping mask', exact: true });
+  await expect(release).toBeVisible();
+  if (await release.isEnabled()) await release.click();
+  await expect(create).toBeEnabled();
+}
+
 test('Layers panel indents clipped rows with an accessible "Clipped to" description', async ({
   page,
 }) => {
   await clippingGroup(page);
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await rename(page, 'Highlight');
-  await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
-  await expect(page.getByText(/Clipping mask created/)).toBeVisible();
+  await clipIfNeeded(page);
 
   const shade = row(page, 'Figure shade'),
     highlight = row(page, 'Highlight'),
@@ -193,6 +213,9 @@ test('Send Backward / Bring Forward move an outside layer past the whole clippin
   await clippingGroup(page);
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await rename(page, 'X');
+  // X must sit outside the group. A new layer added above a clipped layer
+  // may join the group, so release X if it did.
+  await unclipIfNeeded(page);
   const names = async () => (await project(page)).layers.map((layer) => layer.name);
   const clipped = async () => {
     const layers = (await project(page)).layers;
@@ -241,8 +264,7 @@ test('Merge Layers of a base and its first clipped layer keeps the rest of the g
   await clippingGroup(page);
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await rename(page, 'Highlight');
-  await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
-  await expect(page.getByText(/Clipping mask created/)).toBeVisible();
+  await clipIfNeeded(page);
   await row(page, 'Figure shade').click();
   await menu(page, 'Layer', 'Merge Layers');
   await expect(page.locator('footer')).toContainText('Layers merged');
