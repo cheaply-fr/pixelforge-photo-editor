@@ -290,6 +290,11 @@ export type FilterEffects = {
    * Omitted on legacy records, which keep the grayscale overlay.
    */
   cloudRender?: CloudRenderSettings;
+  /**
+   * Difference Clouds cloud size: largest feature in source pixels, 2–2048
+   * (difference-clouds only). Legacy records omit it and use `radius` (2–64).
+   */
+  cloudScale?: number;
   /** Render → Light Rays geometry, colour and blend (light-rays only). */
   lightRays?: LightRaysSettings;
 };
@@ -307,6 +312,8 @@ export type CloudRenderSettings = {
 
 export const MIN_CLOUD_RENDER_SCALE = 2;
 export const MAX_CLOUD_RENDER_SCALE = 2048;
+/** Legacy Difference Clouds records used `radius` (capped at 64) as the cloud scale. */
+export const LEGACY_DIFFERENCE_CLOUD_SCALE_MAX = 64;
 
 export function validCloudRenderSettings(value: unknown): value is CloudRenderSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -398,6 +405,9 @@ export function effectiveFilterEffects(
   if (type === 'light-rays') normalized.lightRays = normalizeLightRaysSettings(source.lightRays);
   if (type === 'clouds' && validCloudRenderSettings(source.cloudRender)) {
     normalized.cloudRender = { ...source.cloudRender };
+  }
+  if (type === 'difference-clouds' && finite(source.cloudScale)) {
+    normalized.cloudScale = clamp(Math.round(source.cloudScale), MIN_CLOUD_RENDER_SCALE, MAX_CLOUD_RENDER_SCALE);
   }
   if (type === 'path-blur' && Array.isArray(source.path)) {
     const path = source.path.slice(0, 8).filter(
@@ -634,6 +644,10 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
     (effect.cloudRender === undefined || (effect.type === 'clouds' && validCloudRenderSettings(effect.cloudRender))) &&
+    (effect.cloudScale === undefined || (
+      effect.type === 'difference-clouds' && finite(effect.cloudScale) && Number.isInteger(effect.cloudScale) &&
+      effect.cloudScale >= MIN_CLOUD_RENDER_SCALE && effect.cloudScale <= MAX_CLOUD_RENDER_SCALE
+    )) &&
     (effect.lightRays === undefined || (effect.type === 'light-rays' && validLightRaysSettings(effect.lightRays))) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
@@ -1948,6 +1962,116 @@ function applyMezzotint(
   }
 }
 
+/** Octaves of the smooth cloud generator for a feature size: down to ~2 px. */
+export function cloudOctaves(scale: number): number {
+  return Math.max(4, Math.min(11, Math.ceil(Math.log2(scale))));
+}
+
+/**
+ * Shared smooth multi-octave value noise for Render → Clouds and Difference
+ * Clouds. Octave `k` samples a seeded lattice with cells of `scale / 2^k`
+ * pixels, interpolates it with smoothstep and contributes with amplitude
+ * `2^-k`. `row(y, sums)` receives the un-normalised octave sum for every
+ * pixel of row `y`; the caller owns normalisation.
+ *
+ * With `offsetOctaves` each octave's lattice is shifted by a seeded
+ * sub-cell offset. Without it every octave has a lattice line on the
+ * multiples of `scale`, where smoothstep flattens all of them at once and a
+ * faint grid shows; Difference Clouds uses the offsets. Clouds keeps the
+ * aligned lattice so its output stays bit-identical to earlier releases.
+ *
+ * Lattice values only change once per noise cell, so each octave caches its
+ * per-column cell index/weight and the two lattice rows around the current
+ * row. The coordinate expressions match the per-pixel form exactly, so the
+ * output is bit-identical while hashing drops from 4 per pixel per octave
+ * to about 2 per lattice cell.
+ */
+export function forEachCloudRow(
+  width: number,
+  height: number,
+  scale: number,
+  seedValue: number,
+  octaves: number,
+  row: (y: number, sums: Float64Array) => void,
+  offsetOctaves = false,
+): void {
+  const seed = seedValue >>> 0;
+  const hash = (x: number, y: number, salt: number): number => {
+    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(salt | 0, 1442695041) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const smooth = (value: number) => value * value * (3 - 2 * value);
+  const columns = Array.from({ length: octaves }, (_, octave) => {
+    const frequency = 2 ** octave;
+    // Seeded sub-cell shift (0.15–0.85 of a cell) so octave lattices never coincide.
+    const shiftX = offsetOctaves ? 0.15 + hash(octave, 7919, 104729) * 0.7 : 0;
+    const shiftY = offsetOctaves ? 0.15 + hash(7907, octave, 104723) * 0.7 : 0;
+    const left = new Int32Array(width);
+    const weight = new Float64Array(width);
+    for (let x = 0; x < width; x += 1) {
+      const fx = offsetOctaves ? (x / scale) * frequency + shiftX : (x / scale) * frequency;
+      left[x] = Math.floor(fx);
+      weight[x] = smooth(fx - left[x]);
+    }
+    const first = left[0];
+    const span = left[width - 1] - first + 2;
+    return { frequency, shiftY, left, weight, first, span, top: new Float64Array(span), bottom: new Float64Array(span), row: Number.NaN };
+  });
+  const sums = new Float64Array(width);
+  for (let y = 0; y < height; y += 1) {
+    sums.fill(0);
+    let amplitude = 1;
+    for (let octave = 0; octave < octaves; octave += 1) {
+      const column = columns[octave];
+      const fy = offsetOctaves ? (y / scale) * column.frequency + column.shiftY : (y / scale) * column.frequency;
+      const top = Math.floor(fy);
+      const ty = smooth(fy - top);
+      if (column.row !== top) {
+        for (let i = 0; i < column.span; i += 1) {
+          column.top[i] = hash(column.first + i, top, octave + 1);
+          column.bottom[i] = hash(column.first + i, top + 1, octave + 1);
+        }
+        column.row = top;
+      }
+      const { left, weight, first, top: upper, bottom: lower } = column;
+      for (let x = 0; x < width; x += 1) {
+        const i = left[x] - first;
+        const tx = weight[x];
+        const topMix = upper[i] + (upper[i + 1] - upper[i]) * tx;
+        const bottomMix = lower[i] + (lower[i + 1] - lower[i]) * tx;
+        sums[x] += (topMix + (bottomMix - topMix) * ty) * amplitude;
+      }
+      amplitude *= 0.5;
+    }
+    row(y, sums);
+  }
+}
+
+/**
+ * The shared cloud field for a layer, stretched to 0..1 over its own range
+ * (as colour Clouds does), so the result always spans black to white even
+ * when the cloud size approaches the layer size.
+ */
+export function cloudField(
+  width: number,
+  height: number,
+  scale: number,
+  seed: number,
+  offsetOctaves = false,
+): Float32Array {
+  const field = new Float32Array(width * height);
+  forEachCloudRow(width, height, scale, seed, cloudOctaves(scale), (y, sums) => field.set(sums, y * width), offsetOctaves);
+  let low = Infinity, high = -Infinity;
+  for (let i = 0; i < field.length; i += 1) {
+    if (field[i] < low) low = field[i];
+    if (field[i] > high) high = field[i];
+  }
+  const range = high - low > 1e-9 ? high - low : 1;
+  for (let i = 0; i < field.length; i += 1) field[i] = (field[i] - low) / range;
+  return field;
+}
+
 /**
  * Apply a bounded deterministic approximation of Photoshop Render → Clouds.
  *
@@ -1971,37 +2095,11 @@ function applyClouds(
   const scale = render
     ? render.scale
     : Math.max(2, Math.min(128, Math.round(effect.radius * 2)));
-  const seed = effect.seed >>> 0;
   // Legacy records keep four octaves. Colour clouds add octaves down to ~2 px
   // so large billows still carry fine detail.
-  const octaves = render ? Math.max(4, Math.min(11, Math.ceil(Math.log2(scale)))) : 4;
+  const octaves = render ? cloudOctaves(scale) : 4;
   const foreground = render ? hexRgb(render.foreground) : undefined;
   const background = render ? hexRgb(render.background) : undefined;
-  const hash = (x: number, y: number, salt: number): number => {
-    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(salt | 0, 1442695041) + seed) | 0;
-    value = Math.imul(value ^ (value >>> 13), 1274126177);
-    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
-  };
-  const smooth = (value: number) => value * value * (3 - 2 * value);
-  // Lattice values only change once per noise cell, so each octave caches its
-  // per-column cell index/weight and the two lattice rows around the current
-  // row. The coordinate expressions match the per-pixel form exactly, so the
-  // output is bit-identical while hashing drops from 4 per pixel per octave
-  // to about 2 per lattice cell.
-  const columns = Array.from({ length: octaves }, (_, octave) => {
-    const frequency = 2 ** octave;
-    const left = new Int32Array(width);
-    const weight = new Float64Array(width);
-    for (let x = 0; x < width; x += 1) {
-      const fx = (x / scale) * frequency;
-      left[x] = Math.floor(fx);
-      weight[x] = smooth(fx - left[x]);
-    }
-    const first = left[0];
-    const span = left[width - 1] - first + 2;
-    return { frequency, left, weight, first, span, top: new Float64Array(span), bottom: new Float64Array(span), row: Number.NaN };
-  });
-  const sums = new Float64Array(width);
   // Colour clouds are stretched to their own range so they always span the
   // background to foreground colours, even when the cloud size approaches
   // the image size and the raw noise sits in a narrow band.
@@ -2009,34 +2107,10 @@ function applyClouds(
   let amplitudeTotal = 0;
   for (let octave = 0, amplitude = 1; octave < octaves; octave += 1, amplitude *= 0.5)
     amplitudeTotal += amplitude;
-  for (let y = 0; y < height; y += 1) {
-    sums.fill(0);
-    let amplitude = 1;
-    for (let octave = 0; octave < octaves; octave += 1) {
-      const column = columns[octave];
-      const fy = (y / scale) * column.frequency;
-      const top = Math.floor(fy);
-      const ty = smooth(fy - top);
-      if (column.row !== top) {
-        for (let i = 0; i < column.span; i += 1) {
-          column.top[i] = hash(column.first + i, top, octave + 1);
-          column.bottom[i] = hash(column.first + i, top + 1, octave + 1);
-        }
-        column.row = top;
-      }
-      const { left, weight, first, top: upper, bottom: lower } = column;
-      for (let x = 0; x < width; x += 1) {
-        const i = left[x] - first;
-        const tx = weight[x];
-        const topMix = upper[i] + (upper[i + 1] - upper[i]) * tx;
-        const bottomMix = lower[i] + (lower[i + 1] - lower[i]) * tx;
-        sums[x] += (topMix + (bottomMix - topMix) * ty) * amplitude;
-      }
-      amplitude *= 0.5;
-    }
+  forEachCloudRow(width, height, scale, effect.seed, octaves, (y, sums) => {
     if (field) {
       field.set(sums, y * width);
-      continue;
+      return;
     }
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
@@ -2045,7 +2119,7 @@ function applyClouds(
       const cloud = (value / amplitudeTotal) * 255;
       blendPixel(output, offset, [cloud, cloud, cloud, source[offset + 3]], strength);
     }
-  }
+  });
   if (!field || !foreground || !background) return;
   let low = Infinity, high = -Infinity;
   for (let i = 0; i < field.length; i += 1) {
@@ -2079,16 +2153,24 @@ function applyClouds(
   }
 }
 
+/** Cloud size used by a Difference Clouds record: `cloudScale`, or the legacy `radius`. */
+export function differenceCloudScale(effect: Pick<FilterEffects, 'cloudScale' | 'radius'>): number {
+  if (effect.cloudScale !== undefined) return clamp(Math.round(effect.cloudScale), MIN_CLOUD_RENDER_SCALE, MAX_CLOUD_RENDER_SCALE);
+  return clamp(Math.round(effect.radius), MIN_CLOUD_RENDER_SCALE, LEGACY_DIFFERENCE_CLOUD_SCALE_MAX);
+}
+
 /**
- * Apply a bounded seeded Difference Clouds approximation.
+ * Apply Render → Difference Clouds.
  *
- * Photoshop's Difference Clouds starts from the current foreground/background
- * colours and repeatedly difference-blends a procedural cloud field. PixelForge
- * keeps this first local slice deterministic and source-safe: a monochrome,
- * multi-octave value-noise field is difference-blended against the immutable
- * source, while amount, cloud scale and seed remain editable metadata. It does
- * not claim Photoshop's colour-pair controls, wrap-around or exact noise
- * implementation.
+ * Photoshop's Difference Clouds difference-blends a cloud field with the
+ * layer. PixelForge uses the same smooth multi-octave value noise as Clouds
+ * (with per-octave lattice offsets so no grid shows), stretched to the full
+ * black-to-white range, and difference-blends it with the layer composited
+ * over black: a transparent pixel counts as black, so an empty layer becomes
+ * the clouds themselves. The clouds are opaque, so output alpha grows to
+ * `alpha + (255 - alpha) × amount`; an opaque layer keeps alpha 255 and gets
+ * `c·(1 - amount) + |c - cloud|·amount`. It is a local approximation with no
+ * colour-pair controls or wrap-around.
  */
 function applyDifferenceClouds(
   source: Uint8ClampedArray,
@@ -2098,53 +2180,20 @@ function applyDifferenceClouds(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const scale = Math.max(2, Math.min(64, Math.round(effect.radius)));
-  const seed = effect.seed >>> 0;
-  const hash = (x: number, y: number): number => {
-    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seed) | 0;
-    value = Math.imul(value ^ (value >>> 13), 1274126177);
-    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
-  };
-  const smooth = (value: number) => value * value * (3 - 2 * value);
-  const lattice = (x: number, y: number): number => {
-    const left = Math.floor(x);
-    const top = Math.floor(y);
-    const tx = smooth(x - left);
-    const ty = smooth(y - top);
-    const topLeft = hash(left, top);
-    const topRight = hash(left + 1, top);
-    const bottomLeft = hash(left, top + 1);
-    const bottomRight = hash(left + 1, top + 1);
-    const upper = topLeft + (topRight - topLeft) * tx;
-    const lower = bottomLeft + (bottomRight - bottomLeft) * tx;
-    return upper + (lower - upper) * ty;
-  };
-  const cloud = (x: number, y: number): number => {
-    let sampleX = x / scale;
-    let sampleY = y / scale;
-    let amplitude = 0.5;
-    let total = 0;
-    let value = 0;
-    for (let octave = 0; octave < 4; octave += 1) {
-      value += lattice(sampleX, sampleY) * amplitude;
-      total += amplitude;
-      sampleX *= 2;
-      sampleY *= 2;
-      amplitude *= 0.5;
+  const mix = clamp(strength, 0, 1);
+  if (!mix) return;
+  const field = cloudField(width, height, differenceCloudScale(effect), effect.seed, true);
+  for (let index = 0; index < field.length; index += 1) {
+    const offset = index * 4,
+      coverage = source[offset + 3] / 255,
+      alpha = coverage * (1 - mix) + mix,
+      cloud = field[index] * 255;
+    for (let channel = 0; channel < 3; channel += 1) {
+      // Premultiplied: the layer over black, difference-blended with the cloud.
+      const base = source[offset + channel] * coverage;
+      output[offset + channel] = clampByte((base * (1 - mix) + Math.abs(base - cloud) * mix) / alpha);
     }
-    return total ? value / total : 0.5;
-  };
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      const alpha = source[destination + 3];
-      if (!alpha) continue;
-      const generated = cloud(x, y) * 255;
-      output[destination] = clampByte(source[destination] * (1 - strength) + Math.abs(source[destination] - generated) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + Math.abs(source[destination + 1] - generated) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + Math.abs(source[destination + 2] - generated) * strength);
-      output[destination + 3] = alpha;
-    }
+    output[offset + 3] = clampByte(alpha * 255);
   }
 }
 

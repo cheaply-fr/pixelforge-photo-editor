@@ -219,9 +219,9 @@ export type Adjustments = {
   levelsWhite: number;
   /** Midtone gamma for a nondestructive levels correction (0.1-3). */
   levelsGamma: number;
-  /** Output black point for a nondestructive levels correction (0-254). */
+  /** Output black point for a nondestructive levels correction (0-255; above output white inverts). */
   levelsOutputBlack: number;
-  /** Output white point for a nondestructive levels correction (1-255). */
+  /** Output white point for a nondestructive levels correction (0-255). */
   levelsOutputWhite: number;
   /** Tonal color-balance channels, retained as editable metadata. */
   colorBalance: ColorBalance;
@@ -988,7 +988,9 @@ export function levelsChannel(
   const span = Math.max(1, white - black),
     normalized = Math.max(0, Math.min(1, (value - black) / span)),
     corrected = Math.pow(normalized, 1 / Math.max(0.1, gamma));
-  const outputSpan = Math.max(1, outputWhite - outputBlack);
+  // Output black above output white inverts the corrected range; equal
+  // endpoints produce a flat level. Ordered ranges map exactly as before.
+  const outputSpan = outputWhite - outputBlack;
   return Math.max(
     0,
     Math.min(255, Math.round(outputBlack + corrected * outputSpan)),
@@ -1006,8 +1008,8 @@ export function applyLevelsPixels(
     black = Math.max(0, Math.min(254, a.levelsBlack)),
     white = Math.max(black + 1, Math.min(255, a.levelsWhite)),
     gamma = Math.max(0.1, Math.min(3, a.levelsGamma)),
-    outputBlack = Math.max(0, Math.min(254, a.levelsOutputBlack)),
-    outputWhite = Math.max(outputBlack + 1, Math.min(255, a.levelsOutputWhite)),
+    outputBlack = Math.max(0, Math.min(255, a.levelsOutputBlack)),
+    outputWhite = Math.max(0, Math.min(255, a.levelsOutputWhite)),
     output = new Uint8ClampedArray(source);
   for (let offset = 0; offset < source.length; offset += 4) {
     // Preserve hidden RGB bytes exactly. They may be revealed by a later mask.
@@ -1049,8 +1051,8 @@ export function applyLevels(
     black = Math.max(0, Math.min(254, a.levelsBlack)),
     white = Math.max(black + 1, Math.min(255, a.levelsWhite)),
     gamma = Math.max(0.1, Math.min(3, a.levelsGamma)),
-    outputBlack = Math.max(0, Math.min(254, a.levelsOutputBlack)),
-    outputWhite = Math.max(outputBlack + 1, Math.min(255, a.levelsOutputWhite));
+    outputBlack = Math.max(0, Math.min(255, a.levelsOutputBlack)),
+    outputWhite = Math.max(0, Math.min(255, a.levelsOutputWhite));
   if (
     black === 0 &&
     white === 255 &&
@@ -1288,10 +1290,9 @@ export function validAdjustments(v: unknown): v is Adjustments {
     number(v.levelsGamma ?? neutral.levelsGamma, 0.1, 3) &&
     Number(v.levelsWhite ?? neutral.levelsWhite) >
       Number(v.levelsBlack ?? neutral.levelsBlack) &&
-    number(v.levelsOutputBlack ?? neutral.levelsOutputBlack, 0, 254) &&
-    number(v.levelsOutputWhite ?? neutral.levelsOutputWhite, 1, 255) &&
-    Number(v.levelsOutputWhite ?? neutral.levelsOutputWhite) >
-      Number(v.levelsOutputBlack ?? neutral.levelsOutputBlack) &&
+    // Output levels may be reversed (black > white inverts) or equal.
+    number(v.levelsOutputBlack ?? neutral.levelsOutputBlack, 0, 255) &&
+    number(v.levelsOutputWhite ?? neutral.levelsOutputWhite, 0, 255) &&
     validColorBalance(v.colorBalance ?? neutral.colorBalance) &&
     validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise) &&
     validCurves(v.curves ?? neutral.curves) &&
