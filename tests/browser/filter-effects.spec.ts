@@ -308,7 +308,7 @@ async function downloadProject(page: Page) {
   const path = await (await pending).path();
   return await downloadedProject(path!) as {
     assets: Record<string, unknown>;
-    history: Array<{ layers: Array<{ asset?: string; adjustments: { filterEffects?: Record<string, unknown> } }> }>;
+    history: Array<{ layers: Array<{ asset?: string; adjustments: { filterEffects?: Record<string, unknown> }; smartFilters?: Array<Record<string, unknown>> }> }>;
     index: number;
   };
 }
@@ -1338,7 +1338,8 @@ test('Path Blur and Spin Blur are bounded gallery effects with source-safe round
   const spinCommand = page.getByRole('menuitem', { name: 'Spin Blur…', exact: true });
   await expect(spinCommand).toBeEnabled();
   await spinCommand.click();
-  await expect(page.getByText('Spin Blur (local approximation) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
+  // Choosing another filter keeps the live Path Blur in the filter stack.
+  await expect(page.getByText('Path blur moved to the filter stack (1/8); Spin Blur (local approximation) applied on top and remains editable in Filter effects', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spin-blur');
   await expect(page.getByLabel('Angular sweep', { exact: true })).toHaveValue('18');
   await expect(page.getByLabel('Spin center X', { exact: true })).toHaveValue('51');
@@ -1349,6 +1350,7 @@ test('Path Blur and Spin Blur are bounded gallery effects with source-safe round
   expect(spinLayer.asset).toBe(sourceAsset);
   expect(spinProject.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
   expect(spinLayer.adjustments.filterEffects).toMatchObject({ type: 'spin-blur', radius: 19, centerX: 0.52 });
+  expect(spinLayer.smartFilters).toMatchObject([{ type: 'path-blur', radius: 7 }]);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spin-blur');

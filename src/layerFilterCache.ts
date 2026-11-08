@@ -19,8 +19,11 @@ import { isNeutralLayerStyles } from './layerStyles.ts';
  *
  * The document renderer builds every raster layer in local coordinates in a
  * fixed order: source asset (or solid fill) -> Spot Healing -> Patch ->
- * Content-Aware Fill/Move/Scale -> Matting -> Smart Filters -> Layer Styles ->
- * Filter Effect. Only after that local surface exists are the layer matrix,
+ * Content-Aware Fill/Move/Scale -> Matting -> Smart Filters -> Filter Effect
+ * -> Layer Styles (styles of a masked layer run in frame space after the
+ * mask instead). The renderer keys the styled result by this key plus the
+ * styles, and also caches the Smart Filter stage alone, so the keys it builds
+ * pass a layer without `styles`. Only after that local surface exists are the layer matrix,
  * CSS/tonal adjustments, masks, opacity, blend mode, visibility and grouping
  * applied in frame space. A key therefore describes exactly the inputs of the
  * local stage and deliberately omits the frame-space compositing metadata,

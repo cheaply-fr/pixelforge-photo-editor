@@ -1,4 +1,4 @@
-import { effectiveFilterEffects, validFilterEffects, type FilterEffects } from './filterEffects.ts';
+import { effectiveFilterEffects, isNeutralFilterEffects, validFilterEffects, type FilterEffects } from './filterEffects.ts';
 
 export const SMART_FILTER_MAX = 8;
 
@@ -134,4 +134,43 @@ export function removeSmartFilter(
   const current = normalizeSmartFilterStack(stack);
   checkedIndex(current, index);
   return current.filter((_, position) => position !== index);
+}
+
+/**
+ * What choosing a filter from the Filter menu does to a layer that already
+ * has a live (editable) filter effect.
+ *
+ * - `stack`: the current live effect moves to the end of the filter stack
+ *   (it keeps rendering, now before the live slot) and the chosen filter
+ *   becomes the new live effect, so Clouds followed by Motion Blur blurs the
+ *   clouds instead of discarding them.
+ * - `replace`: the chosen filter replaces the live effect. Used when there is
+ *   nothing worth keeping (no live effect, or the same filter chosen again),
+ *   when the user is switching the live effect's type in place, when the
+ *   layer cannot hold a filter stack, or when the stack is full.
+ */
+export type FilterChoicePlan =
+  | { kind: 'stack'; stack: SmartFilterEntry[]; moved: FilterEffects }
+  | { kind: 'replace'; reason: 'empty' | 'same-type' | 'switch' | 'unsupported' | 'stack-full'; replaced?: FilterEffects };
+
+export function planFilterChoice(options: {
+  /** The layer's current live filter effect (may be neutral). */
+  live: Partial<FilterEffects> | undefined;
+  /** The layer's current filter stack. */
+  stack: readonly SmartFilterEntry[] | undefined;
+  /** The filter being chosen. */
+  type: FilterEffects['type'];
+  /** False for layers that cannot carry a filter stack (text, shapes, adjustments). */
+  stackable: boolean;
+  /** True when the user is changing the live effect's type in place (the Filter effect list). */
+  switchInPlace?: boolean;
+}): FilterChoicePlan {
+  const live = effectiveFilterEffects(options.live);
+  if (options.type === 'none' || isNeutralFilterEffects(live)) return { kind: 'replace', reason: 'empty' };
+  if (options.switchInPlace) return { kind: 'replace', reason: 'switch', replaced: live };
+  if (live.type === options.type) return { kind: 'replace', reason: 'same-type', replaced: live };
+  if (!options.stackable) return { kind: 'replace', reason: 'unsupported', replaced: live };
+  const current = normalizeSmartFilterStack(options.stack);
+  if (current.length >= SMART_FILTER_MAX) return { kind: 'replace', reason: 'stack-full', replaced: live };
+  return { kind: 'stack', stack: appendSmartFilter(current, live), moved: live };
 }

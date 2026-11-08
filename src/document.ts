@@ -78,6 +78,7 @@ import { effectiveSmartFilters, validSmartFilters, type SmartFilterEntry } from 
 import {
   applyTiledNeighborhoodEffect,
   isTiledNeighborhoodBlur,
+  pooledTileWorkingBytes,
   TiledMemoryBudgetError,
   type TiledNeighborhoodEffectType,
   type TiledNeighborhoodProgress,
@@ -97,6 +98,7 @@ import {
   assetFingerprint,
   detectLayerFilterCacheBudget,
   layerFilterCacheKey,
+  stableSerialize,
   sharedLayerFilterCache,
   surfaceBytes,
   type ByteLruCache,
@@ -2528,6 +2530,23 @@ async function applyFilterEffectsToSurface(
   context.putImageData(image, 0, 0);
 }
 
+/**
+ * Whether a raster layer's styles render in frame space after its pixel mask
+ * (they then follow layer alpha x mask, so a full-canvas Clouds layer masked
+ * to a circle glows around the circle), rather than in layer-local space.
+ */
+export function layerStylesFollowMask(
+  layer: Pick<Layer, 'kind'> & { mask?: string; maskEnabled?: boolean; maskInverted?: boolean },
+  assets: Assets,
+): boolean {
+  return (
+    isRasterContentLayer(layer as Layer) &&
+    typeof layer.mask === 'string' &&
+    Object.hasOwn(assets, layer.mask) &&
+    effectiveLayerMask({ enabled: layer.maskEnabled, inverted: layer.maskInverted }).enabled
+  );
+}
+
 /** Render a raster layer's bounded style stack in local coordinates. */
 function applyRasterLayerStyles(
   source: CanvasImageSource,
@@ -2924,25 +2943,63 @@ export async function renderFrame(
     const groupOpacity = 1;
     const override = overrides?.[layer.id];
     // The local stage below (source -> healing/patch/content-aware -> matting
-    // -> Smart Filters -> styles -> Filter Effect) depends only on the layer's
+    // -> Smart Filters -> Filter Effect -> styles) depends only on the layer's
     // local metadata and immutable assets. Reuse a completed result when every
     // input matches; frame-space matrix/adjustments/masks/opacity/blend are
     // applied afterwards and are intentionally not part of the key.
+    //
+    // Three nested results are cached: the filter stack alone (so scrubbing
+    // the live filter never recomputes a stacked Clouds), the stack plus the
+    // live filter, and that plus layer styles. Styles follow the filtered
+    // pixels; on a masked layer they follow the masked shape instead and are
+    // applied in frame space after the mask (see `stylesInFrame`).
     const localFilterCache =
       !override && isRasterContentLayer(layer) && options?.layerFilterCache !== null
         ? (options?.layerFilterCache ?? sharedLayerFilterCache())
         : undefined;
-    const localFilterCacheKey = localFilterCache
-      ? layerFilterCacheKey(layer, assets, {
+    const stylesActive = isRasterContentLayer(layer) && !isNeutralLayerStyles(layer.styles);
+    const stylesInFrame = stylesActive && layerStylesFollowMask(layer, assets);
+    const liveFilterActive = !isNeutralFilterEffects(effectiveFilterEffects(layer.adjustments.filterEffects));
+    const unstyledLayer = { ...layer, styles: undefined };
+    const filteredKey = localFilterCache
+      ? layerFilterCacheKey(unstyledLayer, assets, {
           tiledFilter:
             options?.tiledRevision !== undefined &&
             isTiledNeighborhoodBlur(effectiveFilterEffects(layer.adjustments.filterEffects)),
         })
       : undefined;
+    const localFilterCacheKey =
+      filteredKey && stylesActive && !stylesInFrame
+        ? `${filteredKey}|styles:${stableSerialize(layer.styles)}`
+        : filteredKey;
     const cachedLocal = localFilterCacheKey
       ? localFilterCache!.get(localFilterCacheKey)
       : undefined;
-    const computeLocal = !cachedLocal;
+    const cachedFiltered =
+      !cachedLocal && filteredKey && filteredKey !== localFilterCacheKey
+        ? localFilterCache!.get(filteredKey)
+        : undefined;
+    const stackKey =
+      localFilterCache && !cachedLocal && !cachedFiltered && liveFilterActive && layer.smartFilters?.length
+        ? layerFilterCacheKey(
+            { ...unstyledLayer, adjustments: { ...layer.adjustments, filterEffects: { ...neutralFilterEffects } } },
+            assets,
+          )
+        : undefined;
+    const cachedStack = stackKey ? localFilterCache!.get(stackKey) : undefined;
+    // computeLocal: the stages before the live filter; computeFilter: the
+    // live filter; computeStyles: local-space layer styles.
+    const computeLocal = !cachedLocal && !cachedFiltered && !cachedStack;
+    const computeFilter = !cachedLocal && !cachedFiltered;
+    const computeStyles = !cachedLocal && stylesActive && !stylesInFrame;
+    const storeLocal = (key: string | undefined, value: CanvasImageSource | undefined) => {
+      if (!localFilterCache || !key || !value || value === image || value === override || !isRasterContentLayer(layer)) return;
+      // Only a fully completed stage reaches this point: cancellation and
+      // failures throw, so a partial surface is never retained. Stored
+      // surfaces are private to this render and later steps only read them.
+      const asset = assets[layer.asset];
+      localFilterCache.set(key, value, surfaceBytes(asset.w, asset.h));
+    };
     const image =
       computeLocal && isRasterContentLayer(layer) && !override
         ? layer.kind === 'raster' && layer.fillColor
@@ -2968,7 +3025,7 @@ export async function renderFrame(
     // exact same matrix, opacity, blend, adjustment and mask pipeline as the
     // immutable source asset; resetting the transform here would bake a
     // translated/scaled layer into the wrong frame coordinates.
-    let rasterSource: CanvasImageSource | undefined = cachedLocal || override || image;
+    let rasterSource: CanvasImageSource | undefined = cachedLocal || cachedFiltered || cachedStack || override || image;
     if (computeLocal && layer.kind === 'raster' && rasterSource && layer.spotHealing?.length) {
       // Spot Healing is metadata over the immutable source asset. Replay it in
       // local layer space before transforms, masks and adjustments so undo,
@@ -3148,20 +3205,12 @@ export async function renderFrame(
         await applyFilterEffectsToSurface(stacked, effect, options, layer.id);
       rasterSource = stacked;
     }
-    if (computeLocal && isRasterContentLayer(layer) && rasterSource && !isNeutralLayerStyles(layer.styles)) {
-      const asset = assets[layer.asset];
-      rasterSource = applyRasterLayerStyles(
-        rasterSource,
-        override?.width ?? asset.w,
-        override?.height ?? asset.h,
-        layer.styles,
-      );
-    }
+    if (computeLocal) storeLocal(stackKey, rasterSource);
     const filterEffect = effectiveFilterEffects(
       layer.adjustments.filterEffects,
     );
     if (
-      computeLocal &&
+      computeFilter &&
       isRasterContentLayer(layer) &&
       rasterSource &&
       !isNeutralFilterEffects(filterEffect)
@@ -3186,6 +3235,7 @@ export async function renderFrame(
               isCancelled: options.isCancelled,
               ...(() => {
                 // Heavy tiles run in the filter worker pool, several at once.
+                // Give the pool enough working bytes to keep every worker busy.
                 const pool = renderFilterPool(options);
                 return pool && !pool.broken
                   ? {
@@ -3194,6 +3244,7 @@ export async function renderFrame(
                         isCancelled: options.isCancelled,
                       }),
                       concurrency: pool.size,
+                      maxWorkingBytes: options.tiledMaxWorkingBytes ?? pooledTileWorkingBytes(pool.size),
                     }
                   : {};
               })(),
@@ -3234,20 +3285,19 @@ export async function renderFrame(
         rasterSource = filtered;
       }
     }
-    if (
-      computeLocal &&
-      localFilterCache &&
-      localFilterCacheKey &&
-      rasterSource &&
-      rasterSource !== image &&
-      isRasterContentLayer(layer)
-    ) {
-      // Only a fully completed local stage reaches this point: cancellation
-      // and failures throw above, so a partial surface is never retained. The
-      // surface is private to this render and later steps only read it.
+    if (computeFilter && filteredKey !== localFilterCacheKey) storeLocal(filteredKey, rasterSource);
+    if (computeStyles && isRasterContentLayer(layer) && rasterSource) {
+      // Styles decorate the filtered pixels, so a generated Clouds or Light
+      // Rays layer gets its glow/shadow from what the filter produced.
       const asset = assets[layer.asset];
-      localFilterCache.set(localFilterCacheKey, rasterSource, surfaceBytes(asset.w, asset.h));
+      rasterSource = applyRasterLayerStyles(
+        rasterSource,
+        override?.width ?? asset.w,
+        override?.height ?? asset.h,
+        layer.styles,
+      );
     }
+    if (!cachedLocal) storeLocal(localFilterCacheKey, rasterSource);
     if (
       !isRasterContentLayer(layer) &&
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||
@@ -3355,6 +3405,27 @@ export async function renderFrame(
       rasterSource &&
       maskSettings?.enabled
     ) {
+      // Styles on a masked layer follow layer alpha x mask, so they run on
+      // the masked frame-space surface. When the local stage is cached, the
+      // styled result is cached too, keyed by everything this branch reads.
+      const maskedStyleKey =
+        stylesInFrame && localFilterCache && filteredKey && assets[layer.mask]
+          ? `${filteredKey}|frame-styles:${stableSerialize({
+              w: frame.w,
+              h: frame.h,
+              matrix: layer.matrix,
+              mask: assetFingerprint(assets[layer.mask]),
+              inverted: maskSettings.inverted,
+              adjustments: layer.adjustments,
+              styles: layer.styles,
+            })}`
+          : undefined;
+      const cachedMaskedStyle = maskedStyleKey ? localFilterCache!.get(maskedStyleKey) : undefined;
+      if (cachedMaskedStyle) {
+        compositeFrameSurface(context, cachedMaskedStyle, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+        reportProgress(layerIndex);
+        continue;
+      }
       const masked = surface(frame.w, frame.h),
         maskContext = masked.getContext('2d')!;
       maskContext.save();
@@ -3401,7 +3472,11 @@ export async function renderFrame(
         );
         maskContext.putImageData(maskedImage, 0, 0);
       }
-      compositeFrameSurface(context, masked, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+      const styledMasked = stylesInFrame
+        ? applyRasterLayerStyles(masked, frame.w, frame.h, layer.styles)
+        : masked;
+      if (maskedStyleKey) localFilterCache!.set(maskedStyleKey, styledMasked, surfaceBytes(frame.w, frame.h));
+      compositeFrameSurface(context, styledMasked, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }

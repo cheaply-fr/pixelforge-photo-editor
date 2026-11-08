@@ -298,7 +298,7 @@ test('Inner Glow stays inside source alpha, follows edge/center source and its b
   assert.equal(edge[3], 255);
 });
 
-test('Large inner-shadow distance uses separable erosion identical to the square window', () => {
+test('Inner shadow choke is a Euclidean band (a circle chokes to a circle, not a square or diamond)', () => {
   const width = 40, height = 30;
   const source = square(width, height, 3, 2, 30, 25, [200, 200, 200, 255]);
   for (let i = 0; i < 6; i += 1) source[((2 + i) * width + 3 + i) * 4 + 3] = 40 * i;
@@ -306,21 +306,41 @@ test('Large inner-shadow distance uses separable erosion identical to the square
   const output = applyLayerStylesPixels(source, width, height, {
     innerShadow: { ...neutralLayerStyles.innerShadow, enabled: true, opacity: 1, offsetX: 0, offsetY: 0, blur: 0, distance },
   });
+  const alphaAt = (x, y) => (x >= 0 && x < width && y >= 0 && y < height ? source[(y * width + x) * 4 + 3] : 0);
   for (let y = 0; y < height; y += 1)
     for (let x = 0; x < width; x += 1) {
-      const own = source[(y * width + x) * 4 + 3];
+      const own = alphaAt(x, y);
       if (own === 0) continue;
-      let minimum = 255;
-      for (let oy = -distance; oy <= distance; oy += 1)
-        for (let ox = -distance; ox <= distance; ox += 1) {
-          const nx = x + ox, ny = y + oy;
-          minimum = Math.min(minimum, nx >= 0 && nx < width && ny >= 0 && ny < height ? source[(ny * width + nx) * 4 + 3] : 0);
-        }
-      const amount = (own - minimum) * (own / 255);
+      // Brute-force Euclidean distance to the nearest outside (alpha < 128) sample.
+      let nearest = Infinity;
+      for (let ny = y - distance - 2; ny <= y + distance + 2; ny += 1)
+        for (let nx = x - distance - 2; nx <= x + distance + 2; nx += 1)
+          if (alphaAt(nx, ny) < 128) nearest = Math.min(nearest, Math.hypot(nx - x, ny - y));
+      const band = own >= 128 ? Math.round(Math.max(0, Math.min(1, distance + 1 - nearest)) * 255) : 0;
+      const amount = Math.max(255 - own, band) * (own / 255);
       const actual = pixel(output, width, x, y);
       if (amount < 0.5) assert.deepEqual(actual.slice(0, 3), [200, 200, 200], `${x},${y}`);
       else assert.ok(actual[0] < 200, `${x},${y}`);
     }
+  // Distance 20 on a radius-50 disc: equal shading along an axis and a
+  // diagonal at the same Euclidean depth (the L1 metric made a diamond).
+  const disc = new Uint8ClampedArray(121 * 121 * 4);
+  for (let y = 0; y < 121; y += 1)
+    for (let x = 0; x < 121; x += 1)
+      if (Math.hypot(x - 60, y - 60) <= 50) disc.set([255, 255, 255, 255], (y * 121 + x) * 4);
+  const choked = applyLayerStylesPixels(disc, 121, 121, {
+    innerShadow: { ...neutralLayerStyles.innerShadow, enabled: true, color: '#000000', opacity: 1, offsetX: 0, offsetY: 0, blur: 0, distance: 20 },
+  });
+  const red = (x, y) => pixel(choked, 121, x, y)[0];
+  const diagonal = (depth) => Math.round(60 + ((50 - depth) / Math.SQRT2));
+  for (const depth of [3, 10, 17]) {
+    assert.equal(red(60, 10 + depth), 0, `axis depth ${depth} is shadowed`);
+    assert.equal(red(diagonal(depth), diagonal(depth)), 0, `diagonal depth ${depth} is shadowed`);
+  }
+  for (const depth of [24, 30, 40]) {
+    assert.equal(red(60, 10 + depth), 255, `axis depth ${depth} is clear`);
+    assert.equal(red(diagonal(depth), diagonal(depth)), 255, `diagonal depth ${depth} is clear`);
+  }
   const large = square(1200, 900, 100, 100, 1100, 800);
   const started = performance.now();
   applyLayerStylesPixels(large, 1200, 900, {

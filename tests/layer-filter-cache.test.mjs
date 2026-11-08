@@ -358,7 +358,10 @@ for (const [name, effect] of Object.entries(FILTERS)) {
       assert.notDeepEqual(fresh.pixels, unfiltered.pixels);
       const cache = new ByteLruCache(1024 * 1024);
       const first = await renderFrame(frame, assets, undefined, { layerFilterCache: cache });
-      assert.deepEqual(cache.stats().stores, 1);
+      // With a filter stack, the stack result is cached separately so that
+      // scrubbing the live filter never recomputes the stacked filters.
+      const stores = name === 'gaussian-blur' ? 2 : 1;
+      assert.deepEqual(cache.stats().stores, stores);
       assert.deepEqual(first.pixels, fresh.pixels);
       // An unrelated opacity edit and a move of the filtered layer reuse it.
       const edited = frameOf([
@@ -368,7 +371,7 @@ for (const [name, effect] of Object.entries(FILTERS)) {
       const cached = await renderFrame(edited, assets, undefined, { layerFilterCache: cache });
       const uncached = await renderFrame(edited, assets, undefined, { layerFilterCache: null });
       assert.equal(cache.stats().hits, 1);
-      assert.equal(cache.stats().stores, 1);
+      assert.equal(cache.stats().stores, stores);
       assert.deepEqual(cached.pixels, uncached.pixels);
       // Undo to the original frame also hits and matches the first render.
       const undone = await renderFrame(frame, assets, undefined, { layerFilterCache: cache });
@@ -489,4 +492,53 @@ test('decoded sources are shared by content, bounded, and closed after release',
     if (original === undefined) delete globalThis.createImageBitmap;
     else globalThis.createImageBitmap = original;
   }
+});
+
+test('scrubbing the live filter reuses the cached filter stack and matches an uncached render', async () => {
+  await withPixelSurfaces(async () => {
+    const assets = assetsFor();
+    const stacked = (radius) =>
+      frameOf([
+        withFilter(
+          { type: 'gaussian-blur', amount: 100, radius, angle: 0, centerX: 0.5, centerY: 0.5, seed: 0 },
+          { fillColor: '#c06030', smartFilters: [clouds()] },
+        ),
+      ]);
+    const cache = new ByteLruCache(4 * 1024 * 1024);
+    await renderFrame(stacked(3), assets, undefined, { layerFilterCache: cache });
+    assert.equal(cache.stats().stores, 2, 'stack result and stack+live result');
+    for (const radius of [2, 5, 1]) {
+      const before = cache.stats();
+      const cached = await renderFrame(stacked(radius), assets, undefined, { layerFilterCache: cache });
+      const fresh = await renderFrame(stacked(radius), assets, undefined, { layerFilterCache: null });
+      assert.deepEqual(cached.pixels, fresh.pixels, `radius ${radius}`);
+      const after = cache.stats();
+      // The stacked Clouds come from the cache; only the live blur is new.
+      assert.equal(after.hits - before.hits, 1, `radius ${radius} reuses the stack`);
+      assert.equal(after.stores - before.stores, 1, `radius ${radius} stores only the new live result`);
+    }
+  });
+});
+
+test('a style edit reuses the cached filter result and matches an uncached render', async () => {
+  await withPixelSurfaces(async () => {
+    const assets = assetsFor();
+    const glow = (opacity) => ({
+      outerGlow: { enabled: true, color: '#ffffff', opacity, size: 4, spread: 50, blend: 'source-over' },
+    });
+    const frame = (opacity) =>
+      frameOf([withFilter(clouds(), { styles: { ...glow(opacity), innerShadow: { enabled: true, color: '#000000', opacity: 1, offsetX: 2, offsetY: 2, blur: 0, distance: 1, falloff: 'gaussian' } } })]);
+    const cache = new ByteLruCache(4 * 1024 * 1024);
+    const first = await renderFrame(frame(0.5), assets, undefined, { layerFilterCache: cache });
+    const fresh = await renderFrame(frame(0.5), assets, undefined, { layerFilterCache: null });
+    assert.deepEqual(first.pixels, fresh.pixels);
+    assert.equal(cache.stats().stores, 2, 'filtered result and styled result');
+    const before = cache.stats();
+    const edited = await renderFrame(frame(0.9), assets, undefined, { layerFilterCache: cache });
+    const editedFresh = await renderFrame(frame(0.9), assets, undefined, { layerFilterCache: null });
+    assert.deepEqual(edited.pixels, editedFresh.pixels);
+    const after = cache.stats();
+    assert.equal(after.hits - before.hits, 1, 'the filtered clouds are reused');
+    assert.equal(after.stores - before.stores, 1, 'only the restyled result is new');
+  });
 });

@@ -88,8 +88,10 @@ function referenceMotion(source, width, height, radius, angle, strength) {
       const sums = [0, 0, 0];
       let weight = 0;
       for (let step = -bounded; step <= bounded; step += 1) {
-        const sx = clamp(Math.round(x + dx * step), 0, width - 1);
-        const sy = clamp(Math.round(y + dy * step), 0, height - 1);
+        // Offsets are rounded once per tap, so every pixel (and every tile or
+        // band of a larger image) samples the same pattern.
+        const sx = clamp(x + Math.round(dx * step), 0, width - 1);
+        const sy = clamp(y + Math.round(dy * step), 0, height - 1);
         const offset = (sy * width + sx) * 4;
         const alpha = source[offset + 3] / 255;
         if (!alpha) continue;
@@ -164,7 +166,10 @@ test('Motion Blur fast interior taps match clamped nearest sampling at every ang
   const width = 150;
   const height = 140;
   const source = fixture(width, height, 3);
-  for (let angle = -180; angle <= 180; angle += 9)
+  // Multiples of 9 plus the half-pixel tie angles (±30, ±60, ±150…) that used
+  // to drop to the slow per-pixel rounding path.
+  const angles = [...Array.from({ length: 41 }, (_, index) => -180 + index * 9), -150, -60, -30, 30, 60, 120, 150];
+  for (const angle of angles)
     for (const radius of [1, 6, 64]) {
       assert.deepEqual(
         applyFilterEffectsPixels(source, width, height, { type: 'motion-blur', amount: 100, radius, angle }),

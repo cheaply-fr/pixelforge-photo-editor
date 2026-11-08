@@ -44,6 +44,18 @@ export const TILED_NEIGHBORHOOD_EFFECT_TYPES = [
 export type TiledNeighborhoodEffectType =
   (typeof TILED_NEIGHBORHOOD_EFFECT_TYPES)[number];
 
+/**
+ * Working-byte budget for a tiled effect whose tiles render in a worker pool
+ * of `poolSize` workers. The serial default (16 MB) only fits about four
+ * 512 px tiles with a large radius in flight, which left half of a desktop
+ * pool idle; each further four workers get another default budget, up to the
+ * hard 64 MB ceiling. Small pools (phones) keep the default.
+ */
+export function pooledTileWorkingBytes(poolSize: number): number {
+  const size = Number.isFinite(poolSize) ? Math.max(1, Math.floor(poolSize)) : 1;
+  return Math.min(TILE_MAX_BATCH_BYTES, DEFAULT_TILE_BATCH_BYTES * Math.max(1, Math.ceil(size / 4)));
+}
+
 /** Return the source-pixel overlap needed by an eligible local effect. */
 export function tiledNeighborhoodRadius(
   value: Partial<FilterEffects> | undefined,

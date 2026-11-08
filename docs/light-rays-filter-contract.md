@@ -32,6 +32,16 @@ panel UI and `app/page.tsx` only wires the menu command and defaults.
 | `threshold` | 0–254 | Source mode: luminance at or below this level does not streak. |
 | `seed` | uint32 | Shared filter seed; output is deterministic per seed. |
 
+Lengths and the inner radius stay stored as percentages so saved documents
+keep their look; the Filter effects panel shows the resulting layer pixels
+next to each slider ("Ray length 40% · 529 px", "Inner radius 54% · 714 px"
+on a 2646 px wide layer) and a note: rays run from the inner radius to inner
+radius + length from the centre, measured in half the layer's shorter side,
+and with the current falloff they fade below 5% brightness at about N px
+(`lightRaysPixelExtent` in `src/lightRays.ts`; the renderer uses the same
+values). Randomness can shorten individual rays further. A layer mask is
+applied after the filter, so rays beyond a masked shape are hidden.
+
 Malformed or out-of-range values normalize at every persistence and render
 boundary; `validFilterEffects` only accepts the exact normalized record, and
 only on `light-rays` effects.
