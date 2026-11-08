@@ -49,6 +49,26 @@ export type LayerSelectionIntent = {
   range?: boolean;
 };
 
+/**
+ * Best-effort diagnostics for one displayed gesture preview: `path` is where
+ * it rendered and `firstCompleted` the first layer count it reported (with a
+ * prefix composite-cache hit, every layer below the stroke arrives at once).
+ */
+function markGesturePreview(
+  path: 'worker' | 'main' | undefined,
+  firstCompleted: number | undefined,
+  layers: number,
+): void {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
+      performance.mark('pixelforge.gesture-preview', {
+        detail: { path: path ?? 'unknown', firstCompleted: firstCompleted ?? 0, layers },
+      });
+  } catch {
+    // Diagnostics must never affect rendering.
+  }
+}
+
 export function useDocument(onError: (message: string) => void) {
   const canvas = useRef<HTMLCanvasElement>(null),
     assets = useRef<Assets>({}),
@@ -97,6 +117,10 @@ export function useDocument(onError: (message: string) => void) {
       });
       setTiledTelemetry(null);
       setTiledProgress(null);
+      // Gesture-preview diagnostics: where the preview rendered and the first
+      // layer count it reported (a composite-cache hit reports every layer
+      // below the stroke at once).
+      let renderPath: 'worker' | 'main' | undefined, firstCompleted: number | undefined;
       try {
         const image = await renderFrameWithWorker(
           value,
@@ -108,7 +132,12 @@ export function useDocument(onError: (message: string) => void) {
             tiledRevision: documentRevision.current,
             tiledCache: tiledCache.current,
             isCancelled: () => sequence !== renderSequence.current,
+            onRenderPath: (path) => {
+              renderPath = path;
+              firstCompleted = undefined;
+            },
             onProgress: (completed, total) => {
+              firstCompleted ??= completed;
               if (sequence === renderSequence.current)
                 setRenderProgress({ completed, total });
             },
@@ -122,6 +151,7 @@ export function useDocument(onError: (message: string) => void) {
         );
         try {
           if (sequence !== renderSequence.current) return;
+          if (overrides) markGesturePreview(renderPath, firstCompleted, value.layers.length);
           const target = canvas.current;
           if (target) {
             target.width = value.w;

@@ -162,6 +162,7 @@ import {
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
+import { strokeWindow, strokeWindowReach } from './strokeWindow.ts';
 import {
   COMPOSITE_CACHE_MIN_LAYERS,
   compositeCheckpoint,
@@ -2349,13 +2350,22 @@ export function replaceColorStroke(
   ];
   const width = source.width,
     height = source.height,
-    sourceData = source
-      .getContext('2d')!
-      .getImageData(0, 0, width, height).data,
-    context = output.getContext('2d')!,
-    image = context.getImageData(0, 0, width, height),
-    outputData = image.data,
     radius = Math.max(1, size / 2),
+    // Only the segment's window is read and written (a pointer move costs
+    // the brush area, not the whole layer). Loops keep layer coordinates.
+    window = strokeWindow(
+      [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+      strokeWindowReach.sampled(size),
+      width,
+      height,
+    );
+  if (!window) return false;
+  const sourceData = source
+      .getContext('2d')!
+      .getImageData(window.x, window.y, window.width, window.height).data,
+    context = output.getContext('2d')!,
+    image = context.getImageData(window.x, window.y, window.width, window.height),
+    outputData = image.data,
     distance = Math.hypot(x2 - x1, y2 - y1),
     steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5))),
     amount = Math.max(0, Math.min(1, opacity));
@@ -2378,7 +2388,7 @@ export function replaceColorStroke(
     for (let y = top; y <= bottom; y += 1) {
       for (let x = left; x <= right; x += 1) {
         if (Math.hypot(x - cx, y - cy) > radius) continue;
-        const offset = (y * width + x) * 4;
+        const offset = ((y - window.y) * window.width + x - window.x) * 4;
         if (!matches(offset)) continue;
         for (let channel = 0; channel < 3; channel += 1)
           outputData[offset + channel] = Math.round(
@@ -2390,7 +2400,7 @@ export function replaceColorStroke(
       }
     }
   }
-  if (changed) context.putImageData(image, 0, 0);
+  if (changed) context.putImageData(image, window.x, window.y);
   return changed;
 }
 

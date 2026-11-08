@@ -265,6 +265,36 @@ measurements; these are local/live observations, not CI budgets.
   Reflection Removal now use sliding histograms, and Motion Blur precomputes
   its taps; all four are byte-identical to before.
 
+- Dodge, Burn, Sponge, Smudge, Blur, Sharpen, Mixer/History brushes, Color
+  Replacement and Background Eraser strokes stayed slow after #217 although
+  their previews already went through the render worker: every pointer move
+  ran the tool kernel on the whole layer (full-layer `getImageData` of source
+  and buffer, per-byte validation, a full copy, a full-frame stamp mask and a
+  full `putImageData`). That blocked the main thread for 0.17–0.5 s per move,
+  and each blocked move was followed by its own preview, which looked like a
+  full-stack re-render per move ("Rendering… 0/51 → 50/51" every ~0.5 s).
+  `perf/retouch-tool-worker-previews` runs each segment on its brush window
+  only (`src/strokeWindow.ts`, byte-identical to the full-layer kernels in
+  `tests/stroke-window.test.mjs`). Local probe, release build, desktop Chrome,
+  2646×4096 photo, 47 layers (23 with live Clouds at 20 % opacity), the edited
+  photo copy at index 23, 25 moves paced at one per animation frame, size 80:
+
+  | Tool | Moves dispatched, before → after | Until settled, before → after |
+  | --- | --- | --- |
+  | Brush (reference) | 0.47 → 0.50 s | 1.6 → 1.5 s |
+  | Dodge / Burn / Sponge | 11.3 / 11.9 / 12.4 → 0.48 / 0.57 / 0.60 s | 12.2 / 13.0 / 13.4 → 1.5 / 1.7 / 1.8 s |
+  | Smudge | 8.8 → 0.52 s | 10.0 → 1.5 s |
+  | Blur / Sharpen | 5.9 / 6.4 → 1.2 / 0.85 s | 6.9 / 7.4 → 2.4 / 1.8 s |
+  | Mixer Brush / History Brush | 4.2 / 4.3 → 1.4 / 0.90 s | 5.2 / 5.5 → 2.2 / 1.8 s |
+
+  After the change every preview rendered in the worker and (after the first,
+  which builds the snapshot) started from the cached composite of the 23
+  layers below. Each preview still costs 0.4–0.9 s here because the 23 layers
+  above the edited one are composited per preview (their filter outputs come
+  from the cache); previews coalesce, so a 25-move stroke shows 2–4 of them. A
+  suffix cache or dirty-rect recompositing (roadmap W3-8/W4-8) is the next
+  step. One machine, one run each; live builds are not verified.
+
 ### Radius-heavy filter timings (local, Node 24, 1 MP unless noted)
 
 These are single-run local measurements on a shared development machine

@@ -65,6 +65,12 @@ export type WorkerRenderOptions = {
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
   /** Completed row bands of a parallel full-frame filter. */
   onFilterProgress?: (progress: FilterBandProgress) => void;
+  /**
+   * Diagnostics: where the render runs ('worker' once it is posted to the
+   * persistent worker, 'main' when the main-thread renderer starts). A
+   * worker request that falls back reports both, in that order.
+   */
+  onRenderPath?: (path: 'worker' | 'main') => void;
 };
 
 /** Minimum watchdog window, kept for small frames and as the stall floor. */
@@ -281,6 +287,7 @@ export async function renderFrameWithWorker(
   const isCancelled = () => Boolean(options.signal?.aborted || options.isCancelled?.());
   if (isCancelled()) throw abortError();
   const fallback = async () => {
+    options.onRenderPath?.('main');
     const cacheBefore = sharedLayerFilterCache().stats();
     const finalHitsBefore = mainThreadCompositeCache.finalHits;
     const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
@@ -698,6 +705,7 @@ class PersistentWorkerSession {
       }, [...primes.transfer, ...Object.values(task.overrides ?? {})]);
       if (task.overrides) task.overridesPosted = true;
       this.workerAssetKeys = new Set(Object.values(assetKeys));
+      task.options.onRenderPath?.('worker');
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
       // still busy. Retire it before falling back and servicing a queued
