@@ -1,6 +1,7 @@
 import { normalizeSecondaryBrushPreset, type SecondaryBrushPreset } from './brushSecondary.ts';
 import { BRUSH_SPACING_MAX } from './brush.ts';
 import { BRUSH_SCATTER_MAX, normalizeBrushDynamics, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
+import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
 
 export const CUSTOM_BRUSH_PRESET_LIMIT = 32;
 
@@ -31,6 +32,8 @@ export type CustomBrushPreset = {
   brushDynamics?: BrushDynamics;
   /** Optional brush opacity 1–100%; presets saved before it existed keep the current opacity. */
   brushOpacity?: number;
+  /** Optional Brush/Pencil blend mode (Canvas-native modes only); presets saved before it existed load as Normal. */
+  brushBlendMode?: BrushBlendMode;
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -52,7 +55,8 @@ export function validCustomBrushPreset(value: unknown): value is CustomBrushPres
     finite(candidate.brushTexture, 0, 100) && finite(candidate.brushDual, 0, 100) && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) === (candidate.secondaryBrushPreset ?? 'none') &&
     finite(candidate.brushBristle, 0, 100) && finite(candidate.brushWetEdges ?? 0, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100) &&
     (candidate.brushDynamics === undefined || validBrushDynamics(candidate.brushDynamics)) &&
-    (candidate.brushOpacity === undefined || finite(candidate.brushOpacity, 1, 100))
+    (candidate.brushOpacity === undefined || finite(candidate.brushOpacity, 1, 100)) &&
+    (candidate.brushBlendMode === undefined || validBrushBlendMode(candidate.brushBlendMode))
   );
 }
 
