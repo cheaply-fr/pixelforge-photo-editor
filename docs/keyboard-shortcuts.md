@@ -34,10 +34,12 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `X` | Swap foreground/background colors |
 | `[` / `]` | Decrease/increase brush size (1–5,000 px; proportional steps: 1 px below 10, 5 px below 100, 10/25/50/100/200/500 px for larger brushes) |
 
-`P` activates the straight-segment Pen and `A` activates Direct Selection. Pen
+`P` activates the straight-segment Pen and `A` cycles Path Selection then
+Direct Selection (Shift+A reverses). Add/Delete Anchor Point and Convert Point
+have no shortcut, as in Photoshop, and are chosen from the Pen flyout. Pen
 clicks place path nodes; click the first node after three or more points to
 close and commit the editable path layer. Escape cancels an open Pen gesture or
-a Direct Selection drag. Photoshop tools that PixelForge has not implemented
+a Path Selection, Convert Point or Direct Selection drag. Photoshop tools that PixelForge has not implemented
 yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View and Smudge, with Shift reversing the family; the menu and toolbar controls persist only the viewport angle. Escape cancels an in-progress Rotate View gesture.**
 
 ## Commands and view

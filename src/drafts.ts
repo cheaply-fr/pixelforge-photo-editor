@@ -148,6 +148,10 @@ export type Tool =
   | 'pen'
   | 'freeform-pen'
   | 'curvature-pen'
+  | 'add-anchor'
+  | 'delete-anchor'
+  | 'convert-point'
+  | 'path-select'
   | 'direct-select'
   | 'rectangle'
   | 'ellipse'
@@ -410,6 +414,10 @@ function validSettings(settings: unknown): settings is Settings {
       'pen',
       'freeform-pen',
       'curvature-pen',
+      'add-anchor',
+      'delete-anchor',
+      'convert-point',
+      'path-select',
       'direct-select',
       'rectangle',
       'ellipse',

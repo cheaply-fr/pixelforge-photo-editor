@@ -78,9 +78,9 @@ test('Toolbar settings persist individual tool ordering without duplicating slot
   const drawTools = dialog.locator('details.toolbar-tool-group').nth(9);
   await drawTools.locator('summary').click();
   const directSelect = drawTools.getByRole('button', { name: /Move Direct Select tool up/ });
-  await directSelect.click();
-  await directSelect.click();
-  await directSelect.click();
+  // Direct Select sits after the Pen flyout variants and Path Select; move it
+  // to the top so it becomes the first slot (and its family representative).
+  while (await directSelect.isEnabled()) await directSelect.click();
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   const draw = page.getByRole('region', { name: 'Draw & Type tools' });
   await expect(draw.locator('button').first()).toHaveAttribute('data-tool-id', 'direct-select');

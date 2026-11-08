@@ -13,7 +13,7 @@ export type PaletteToolId =
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'blur' | 'sharpen' | 'pen'
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
-  | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
+  | 'path-select' | 'direct-select' | 'add-anchor' | 'delete-anchor' | 'convert-point' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
   | 'magnetic-lasso' | 'selection-brush' | 'quick-selection' | 'magic-wand';
 
@@ -33,7 +33,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
-  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
+  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point', 'path-select', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
 ] as const;
 
 /** Photoshop's repeated-key families. Singletons are intentionally omitted. */
@@ -52,7 +52,10 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   y: ['history-brush', 'art-history-brush'],
   r: ['smudge', 'blur', 'sharpen'],
+  // Add/Delete Anchor Point and Convert Point have no Photoshop shortcut, so
+  // P keeps cycling only the three drawing pens.
   p: ['pen', 'freeform-pen', 'curvature-pen'],
+  a: ['path-select', 'direct-select'],
 };
 
 /** Pointer/touch flyouts use Photoshop's visible tool families. Selection
@@ -78,7 +81,9 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   // Pen variants share one Photoshop-style hold/keyboard flyout. The active
   // variant replaces the representative slot while the remaining variants
   // stay reachable from the flyout and P cycling.
-  pen: ['pen', 'freeform-pen', 'curvature-pen'],
+  pen: ['pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point'],
+  // Path Selection is the representative; Direct Selection is its variant.
+  'path-selection': ['path-select', 'direct-select'],
 };
 
 /**
@@ -142,6 +147,10 @@ export const TOOL_ICONS = {
   pen: 'PenTool',
   'freeform-pen': 'Signature',
   'curvature-pen': 'Spline',
+  'add-anchor': 'DiamondPlus',
+  'delete-anchor': 'DiamondMinus',
+  'convert-point': 'Diamond',
+  'path-select': 'MousePointer',
   'direct-select': 'SplinePointer',
   text: 'Type',
   rectangle: 'RectangleHorizontal',
