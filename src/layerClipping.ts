@@ -174,3 +174,52 @@ export function preserveClippingAfterReorder<T extends Frame>(
   }
   return { frame: changed ? ({ ...after, layers } as T) : after, released };
 }
+
+/**
+ * Keep clipping relationships across a command that replaces several layers
+ * with one new layer (Merge Down, Merge Layers, Nest as Smart Object).
+ *
+ * - Layers that were clipped to the top replaced layer are re-pointed to the
+ *   replacement when it sits directly below them, so a merged base keeps its
+ *   remaining clipped layers.
+ * - When every replaced layer was clipped (a run inside one clipping group),
+ *   the replacement is clipped to the layer now directly below it, which is
+ *   the layer the bottom replaced layer was clipped to.
+ *
+ * Links that end up invalid are dropped (as sanitizeClippingRelations would).
+ * The input frames are never mutated.
+ */
+export function preserveClippingAfterReplace<T extends Frame>(
+  before: Pick<Frame, 'layers'>,
+  replacedIds: readonly string[],
+  after: T,
+  replacementId: string,
+): T {
+  const replacedSet = new Set(replacedIds);
+  const replaced = before.layers.filter((layer) => replacedSet.has(layer.id));
+  if (!replaced.length) return after;
+  const top = replaced[replaced.length - 1],
+    bottom = replaced[0];
+  const allClipped = replaced.every((layer) => clippingBase(before, layer) !== undefined);
+  let changed = false;
+  let layers = after.layers.map((layer) => {
+    if (layer.clippingTo === undefined || !replacedSet.has(layer.clippingTo)) return layer;
+    changed = true;
+    if (layer.clippingTo === top.id) return { ...layer, clippingTo: replacementId } as Layer;
+    const { clippingTo: _clippingTo, ...withoutClipping } = layer;
+    return withoutClipping as Layer;
+  });
+  const index = layers.findIndex((layer) => layer.id === replacementId);
+  if (
+    allClipped &&
+    bottom.clippingTo !== undefined &&
+    index > 0 &&
+    layers[index - 1].id === bottom.clippingTo
+  ) {
+    layers = layers.map((layer, position) =>
+      position === index ? ({ ...layer, clippingTo: bottom.clippingTo } as Layer) : layer,
+    );
+    changed = true;
+  }
+  return changed ? sanitizeClippingRelations({ ...after, layers } as T) : after;
+}
