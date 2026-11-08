@@ -25,6 +25,10 @@ line and unions repeated stamp coverage once per pixel.
 `eraseMagicRegion` and `eraseBackgroundStroke` are Canvas adapters for callers
 that commit an already-tested operation to a surface. They write only when a
 pixel changes and return a boolean suitable for one undo history command.
+`eraseBackgroundStroke` reads and writes only the segment's window (the stamp
+reach around its two points, `src/strokeWindow.ts`), so a pointer move costs
+the brush area rather than the whole layer; `tests/stroke-window.test.mjs`
+checks it against the full-layer kernel byte for byte.
 
 Focused pure coverage lives in `tests/erasers.test.mjs`: transparent and opaque
 edges, tolerance boundaries, contiguous/disconnected regions, partial opacity,

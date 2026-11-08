@@ -1140,7 +1140,7 @@ test('Field Blur is a nondestructive menu effect with source-safe persistence', 
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
 });
 
-test('Box Blur and Gaussian Blur are editable, source-safe and alpha-preserving on desktop and mobile', async ({ page }) => {
+test('Box Blur and Gaussian Blur are editable, source-safe and spread alpha on desktop and mobile', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
   const sourceLayer = before.history[before.index].layers.at(-1)!;
@@ -1161,7 +1161,9 @@ test('Box Blur and Gaussian Blur are editable, source-safe and alpha-preserving 
     await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
     await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('7');
     await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
-    expect((await pixel(page, 0, 0))[3]).toBe(0);
+    // Alpha spreads: the transparent corner receives blurred coverage from its neighbours.
+    await expect.poll(async () => (await pixel(page, 0, 0))[3]).toBeGreaterThan(0);
+    expect((await pixel(page, 0, 0))[3]).toBeLessThan(255);
 
     const adjusted = await downloadProject(page);
     const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
@@ -1621,7 +1623,7 @@ test('Spherize is enabled as a nondestructive Distort effect with centred contro
   await expect.poll(() => pixel(page, 1, 2)).toEqual(sourcePixel);
 });
 
-test('Lens Blur is editable, local, source-safe and alpha-preserving', async ({ page }) => {
+test('Lens Blur is editable, local, source-safe and spreads alpha', async ({ page }) => {
   await importPixels(page);
   const before = await downloadProject(page);
   const sourceLayer = before.history[before.index].layers.at(-1)!;
@@ -1635,7 +1637,8 @@ test('Lens Blur is editable, local, source-safe and alpha-preserving', async ({ 
   await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('6');
   await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
   await expect.poll(() => pixel(page, 1, 0)).not.toEqual(sourcePixel);
-  expect((await pixel(page, 0, 0))[3]).toBe(0);
+  // Alpha spreads: the transparent corner receives blurred coverage from its neighbours.
+  await expect.poll(async () => (await pixel(page, 0, 0))[3]).toBeGreaterThan(0);
   const adjusted = await downloadProject(page);
   const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(adjustedLayer.asset).toBe(sourceAsset);
@@ -1935,25 +1938,28 @@ test('Difference Clouds exposes seeded render controls and round-trips nondestru
   await expect(command).toBeEnabled();
   await command.click();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
-  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue('18');
+  // New records store a cloud size like Clouds: a quarter of the shorter side (min 2).
+  await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('0');
   await expect.poll(() => pixels(page)).not.toEqual(original);
   await page.getByLabel('Random seed', { exact: true }).fill('17');
-  await page.getByLabel('Cloud scale', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Cloud size', { exact: true }).press('ArrowRight');
   const adjusted = await downloadProject(page);
   const adjustedLayer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(adjustedLayer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
   expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
-    type: 'difference-clouds', amount: 85, radius: 19, seed: 17,
+    type: 'difference-clouds', amount: 85, cloudScale: 3, seed: 17,
   });
+  // Transparent counts as black: the clouds fill it with 85 % coverage.
   expect((await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
-    canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data[3]))).toBe(0);
+    canvas.getContext('2d')!.getImageData(0, 0, 1, 1).data[3]))).toBe(217);
   const changed = await pixels(page);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
-  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue('19');
+  await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('3');
   await expect(page.getByLabel('Random seed', { exact: true })).toHaveValue('17');
   await expect.poll(() => pixels(page)).toEqual(changed);
   await openProject(page, adjusted);

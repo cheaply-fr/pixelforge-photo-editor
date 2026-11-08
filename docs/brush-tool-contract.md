@@ -219,6 +219,12 @@ colour jitter and a brush preset library with four space-art built-ins (#209,
 Paint Symmetry for Brush, Pencil and Eraser (#210, `0ad0e69`;
 [`paint-symmetry-contract.md`](./paint-symmetry-contract.md)) and Layer →
 Stroke Path with Brush with simulated-pressure tapers for Brush, Pencil,
-Eraser and Smudge (#212, `513779d`). Open (fix wave 4 in the rubric): symmetry
-is not applied to Stroke Path with Brush or to Mixer, History, Clone and
-healing tools; there are no custom brush tip shapes and no brush blend mode.
+Eraser and Smudge (#212, `513779d`). Paint Symmetry now also applies to
+Stroke Path with Brush (Brush, Pencil, Eraser; the 20,000-dab budget covers
+all copies), Mixer Brush, History and Art History Brush, Clone Stamp and
+Healing Brush (each copy samples a source point mapped by the same
+transform); Spot Healing, Patch and Smudge stay single-copy (see
+[`paint-symmetry-contract.md`](./paint-symmetry-contract.md)). Brush and Pencil have a **Mode** (blend mode) option (W4-3); see
+"Brush and Pencil Mode" in
+[`brush-dynamics-contract.md`](./brush-dynamics-contract.md). Open (fix wave
+4 in the rubric): there are no custom brush tip shapes.

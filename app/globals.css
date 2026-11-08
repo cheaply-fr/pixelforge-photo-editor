@@ -88,6 +88,9 @@
 .layer-row.selected { border-color:#8b5cf6; background:#342c4b; }
 .layer-row.multi-selected { border-color:#4a6285; background:#202d3f; }
 .layer-row.multi-selected:hover { border-color:#6d8eb8; }
+.layer-row.clipped { position:relative; margin-left:16px; width:calc(100% - 16px); min-width:0; gap:6px; box-shadow:inset 2px 0 0 #6d8eb8; }
+.layer-row.clipped > span:last-child { min-width:0; }
+.layer-clip-glyph { flex:none; color:#9fb6d6; font-size:14px; line-height:1; }
 .layer-selection-toolbar { display:grid; gap:6px; padding:7px 0; color:#969ba6; font-size:9px; }
 .layer-search-field { margin:8px 0; }
 .layer-search-field input[type=search] { font-size:11px; }

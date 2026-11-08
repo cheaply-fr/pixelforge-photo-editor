@@ -1,4 +1,5 @@
 import { brushCoverage, effectiveBrushTipSettings, resolveBrushStamp, validBrushTipSettings, type BrushTipSettings } from './brush.ts';
+import { symmetryStrokePointCopies, symmetryTipForTransform, type SymmetryAffine } from './paintSymmetry.ts';
 
 /**
  * Bounded, deterministic controls for the Mixer Brush.  PixelForge keeps the
@@ -196,15 +197,18 @@ function coverageAt(x: number, y: number, point: BrushStrokePoint, settings: Mix
 }
 
 function alphaMix(destination: Uint8ClampedArray, source: ArrayLike<number>, offset: number, amount: number, preserveSourceTransparency: boolean, sampledSource?: ArrayLike<number>) {
+  // A sampled colour is one RGBA pixel; otherwise paint the source pixel at
+  // this offset (not the source's first pixel).
   const paint = sampledSource ?? source;
-  const sa = paint[3] / 255;
+  const base = sampledSource ? 0 : offset;
+  const sa = paint[base + 3] / 255;
   if (preserveSourceTransparency && sa <= 0) return false;
   const da = destination[offset + 3] / 255;
   const outputAlpha = clamp(da + (sa - da) * amount, 0, 1);
   let changed = false;
   for (let channel = 0; channel < 3; channel += 1) {
     const before = destination[offset + channel];
-    const sourceColour = paint[channel];
+    const sourceColour = paint[base + channel];
     destination[offset + channel] = Math.round(before + (sourceColour - before) * amount);
     changed = changed || before !== destination[offset + channel];
   }
@@ -271,6 +275,24 @@ export function applyHistoryBrushPixels(destination: Uint8ClampedArray, source: 
   return applyStroke(destination, source, width, height, points, settings.size, settings.hardness, (coverage) => coverage * (settings.opacity / 100) * (settings.flow / 100), selectionMask);
 }
 
+function artHistoryDabBounds(points: readonly BrushStrokePoint[], size: number, width: number, height: number) {
+  return points.map((point) => {
+    const left = Math.max(0, Math.floor(point.x - size / 2));
+    const top = Math.max(0, Math.floor(point.y - size / 2));
+    const right = Math.min(width, Math.floor(point.x + size / 2) + 1);
+    const bottom = Math.min(height, Math.floor(point.y + size / 2) + 1);
+    return { left, top, right, bottom };
+  });
+}
+
+const artHistoryWorkOf = (bounds: readonly { left: number; top: number; right: number; bottom: number }[]) =>
+  bounds.reduce((total, box) => total + Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top), 0);
+
+/** Candidate pixels an Art History request touches (its local work budget). */
+export function artHistoryBrushWork(points: readonly BrushStrokePoint[], size: number, width: number, height: number): number {
+  return artHistoryWorkOf(artHistoryDabBounds(points, size, width, height));
+}
+
 /** Apply deterministic painterly dabs from an immutable historical source. */
 export function applyArtHistoryBrushPixels(destination: Uint8ClampedArray, source: ArrayLike<number>, width: number, height: number, points: readonly BrushStrokePoint[], settings: ArtHistoryBrushSettings, selectionMask?: ArrayLike<number>): Uint8ClampedArray {
   assertInput(destination, source, width, height, points);
@@ -285,14 +307,8 @@ export function applyArtHistoryBrushPixels(destination: Uint8ClampedArray, sourc
   if (!points.length || settings.opacity === 0) return new Uint8ClampedArray(destination);
   // Preflight before the detached output allocation. Never silently shrink the
   // requested footprint or skip grid cells to satisfy the local work budget.
-  const bounds = points.map((point) => {
-    const left = Math.max(0, Math.floor(point.x - settings.size / 2));
-    const top = Math.max(0, Math.floor(point.y - settings.size / 2));
-    const right = Math.min(width, Math.floor(point.x + settings.size / 2) + 1);
-    const bottom = Math.min(height, Math.floor(point.y + settings.size / 2) + 1);
-    return { left, top, right, bottom };
-  });
-  const work = bounds.reduce((total, box) => total + Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top), 0);
+  const bounds = artHistoryDabBounds(points, settings.size, width, height);
+  const work = artHistoryWorkOf(bounds);
   if (work > MAX_ART_HISTORY_BRUSH_WORK)
     throw new Error('Art History Brush stroke exceeds local work limit; reduce Size or use a shorter stroke');
   const output = new Uint8ClampedArray(destination);
@@ -336,6 +352,68 @@ export function applyArtHistoryBrushPixels(destination: Uint8ClampedArray, sourc
         output[offset + channel] = Math.round(output[offset + channel] + (colour - output[offset + channel]) * amount);
       }
     }
+  }
+  return output;
+}
+
+export type RetouchBrushKind = 'mixer-brush' | 'history-brush' | 'art-history-brush';
+type RetouchBrushSettings = MixerBrushSettings | HistoryBrushSettings | ArtHistoryBrushSettings;
+
+const applyRetouchBrush = (
+  kind: RetouchBrushKind,
+  destination: Uint8ClampedArray,
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  points: readonly BrushStrokePoint[],
+  settings: RetouchBrushSettings,
+  selectionMask?: ArrayLike<number>,
+) =>
+  kind === 'mixer-brush'
+    ? applyMixerBrushPixels(destination, source, width, height, points, settings as MixerBrushSettings, selectionMask)
+    : kind === 'history-brush'
+    ? applyHistoryBrushPixels(destination, source, width, height, points, settings as HistoryBrushSettings, selectionMask)
+    : applyArtHistoryBrushPixels(destination, source, width, height, points, settings as ArtHistoryBrushSettings, selectionMask);
+
+/**
+ * Mixer / History / Art History stroke with optional Paint Symmetry.
+ *
+ * Without transforms (or with only the identity) this is exactly the single
+ * brush call, so legacy strokes stay byte-identical. With symmetry each copy's
+ * point list (`symmetryStrokePointCopies`) is applied in transform order onto
+ * the same output, so later copies see earlier copies' paint exactly as later
+ * points of one stroke do. Each copy samples its own position: Mixer picks up
+ * the canvas there and History / Art History read the snapshot there. Art
+ * History's tip orientation is mirrored per copy, and its local work budget
+ * covers all copies together (the stroke is refused rather than shrunk).
+ */
+export function applySymmetricRetouchBrush(
+  kind: RetouchBrushKind,
+  destination: Uint8ClampedArray,
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  points: readonly BrushStrokePoint[],
+  settings: RetouchBrushSettings,
+  selectionMask?: ArrayLike<number>,
+  transforms?: readonly SymmetryAffine[],
+): Uint8ClampedArray {
+  if (!transforms || transforms.length < 2)
+    return applyRetouchBrush(kind, destination, source, width, height, points, settings, selectionMask);
+  const copies = symmetryStrokePointCopies(transforms, points);
+  if (kind === 'art-history-brush') {
+    const work = copies.reduce((total, list) => total + artHistoryBrushWork(list, settings.size, width, height), 0);
+    if (work > MAX_ART_HISTORY_BRUSH_WORK)
+      throw new Error('Art History Brush stroke exceeds local work limit; reduce Size, symmetry copies or stroke length');
+  }
+  let output = destination;
+  for (const [index, list] of copies.entries()) {
+    const tip = kind === 'art-history-brush'
+      ? symmetryTipForTransform(transforms[index], {
+        angle: settings.angle ?? 0, flipX: settings.flipX ?? false, flipY: settings.flipY ?? false,
+      })
+      : undefined;
+    output = applyRetouchBrush(kind, output, source, width, height, list, tip ? { ...settings, ...tip } : settings, selectionMask);
   }
   return output;
 }

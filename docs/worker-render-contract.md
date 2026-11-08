@@ -284,7 +284,31 @@ filtered layers instead of recomputing every filtered layer on the main
 thread. The worker accepts bitmaps only for layers of the requested frame (at
 most 16,000 px per side) and closes them after the render; if bitmaps cannot be
 created, or a request has to be resent, the preview falls back to the main
-thread. The fallback keeps local editing functional on
+thread.
+
+Every pointer-driven paint and retouch tool (Brush, Pencil, Eraser, Clone,
+Healing, Pattern Stamp, Red Eye, Color Replacement, Background Eraser, Dodge,
+Burn, Sponge, Smudge, Blur, Sharpen, Mixer Brush, History and Art History
+Brush) previews through the same coalesced gesture preview: at most one render
+in flight and one started per animation frame, each sending the gesture buffer
+as a transferred bitmap. The per-move pixel work of those tools is bounded by
+the brush window of the segment (`src/strokeWindow.ts`); before this, Dodge,
+Burn, Sponge, Smudge, Blur, Sharpen, the Mixer/History brushes, Color
+Replacement and the Background Eraser read, validated, copied and wrote back
+the whole layer on every move (0.17–0.5 s per move on a 2646×4096 layer, measured locally),
+which blocked the main thread and looked like a full re-render per move.
+
+Each displayed gesture preview records a best-effort
+`pixelforge.gesture-preview` performance mark with `{ path, firstCompleted,
+layers }`: `path` is `worker` or `main` (from the `onRenderPath` render
+option), and `firstCompleted` is the first layer count the render reported,
+which equals the edited layer's index when it started from the cached
+composite below that layer. Each windowed retouch segment records a
+`pixelforge.stroke-window` mark with `{ tool, pixels, layerPixels }` (the
+timeline keeps at most the latest 512). `tests/browser/retouch-tool-worker-previews.spec.ts`
+asserts both on a 1500×1500, 10-layer document.
+
+The fallback keeps local editing functional on
 browsers without OffscreenCanvas and preserves the previous canvas on a failed
 or cancelled render. Main-thread rendering yields between layers and observes
 the same cancellation predicate, so fallback work is bounded even though it is
@@ -308,7 +332,12 @@ rendering:
   percentage and does not imply that the worker is streaming a partial canvas.
 * Interactive overrides travel as whole-layer bitmaps per preview; there is
   no dirty-rectangle protocol yet, and a full worker-aware brush/adjustment
-  command model is still planned.
+  command model is still planned. Each preview still composites every layer
+  from the edited one upward: filtered layers above come from the layer cache,
+  but their masks, styles, blend modes and the frame-space copies are redone
+  per preview (a suffix cache or dirty-rect recompositing, roadmap W3-8/W4-8).
+  The first preview after choosing a different layer rebuilds the composite
+  snapshot below it.
 * Canvas font availability, CSS filter implementations and browser colour
   management can differ between the worker and the visible document canvas.
   PixelForge must keep representative pixel/alpha fixtures and disclose any

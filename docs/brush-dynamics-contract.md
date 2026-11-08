@@ -88,3 +88,48 @@ and mobile (Hue jitter paints at least four hue families from a red
 foreground while the plain stroke stays exactly red; Foreground/background
 jitter stays between red and blue). This is a bounded deterministic
 approximation of common brush-engine colour dynamics, not Photoshop parity.
+
+## Brush and Pencil Mode (2026-11-08)
+
+Branch `feat/brush-blend-mode` (roadmap W4-3). Brush and Pencil options show a
+compact **Mode** select (accessible name "Brush mode") above Opacity: Normal
+(default) plus the blend modes Canvas 2D implements natively, grouped as in
+Edit → Fill and the layer blend menu: Darken, Multiply, Color Burn, Lighten,
+Screen, Color Dodge, Overlay, Soft Light, Hard Light, Difference, Exclusion,
+Hue, Saturation, Color and Luminosity (`src/brushBlend.ts`). Behind and Clear
+are not offered. The Eraser and retouch tools ignore the mode.
+
+**Where the mode is applied.** Normal keeps the legacy path: each dab is
+stamped straight onto the gesture buffer, so Normal strokes are byte-identical
+to strokes painted before the option existed. Any other mode paints the stroke
+on its own transparent stroke buffer with the unchanged dab arithmetic
+(opacity × flow per dab, scatter, Count, colour dynamics, texture, dual tip,
+wet edges, build-up, symmetry copies, all source-over against that buffer), so
+overlapping dabs only build coverage, exactly as a Normal stroke would on an
+empty layer. Every rectangle a segment touches is then recomposited from the
+stroke-start layer pixels as `original ⊕mode stroke` with the shared W3C
+reference in `blendModes.ts`, and the active selection is applied to that
+composite with the same coverage mix as Normal strokes. Dabs within one stroke
+therefore never blend against each other in the chosen mode (a Multiply stroke
+does not darken itself where its dabs overlap), and repainting a rectangle is
+idempotent. The live preview and the commit both read the same gesture
+buffer, so they match. Layer → Stroke Path with Brush honours the mode for
+Brush and Pencil by stamping the whole path onto a transparent buffer and
+compositing it once. Over transparent layer pixels a blend-mode stroke paints
+as Normal (W3C behaviour), so the mode is most useful on opaque pixels.
+
+The mode is a saved tool option (`settings.brushBlendMode`, drafts and
+`.pixelforge` projects; older settings omit it and paint Normal; unknown
+values fail draft validation) and is stored in brush presets (see
+[`custom-brush-presets-contract.md`](./custom-brush-presets-contract.md)).
+Evidence: `tests/brush-blend-mode.test.mjs` (mode list and validation,
+no self-compounding of overlapping Multiply dabs, flow coverage, W3C
+arithmetic, rectangle/layer equivalence and idempotence, selection mixing,
+preset/library/draft validation) and `tests/browser/brush-blend-mode.spec.ts`
+plus a Stroke Path case in `tests/browser/stroke-path-brush.spec.ts` on
+desktop and mobile (Multiply stroke exactly one coat over white and red,
+Normal still compounds, Pencil Darken and Brush Screen, preview equals commit,
+selection confinement and Paint Symmetry, preset round-trip, reload and
+project export). This is a bounded local approximation of brush blend modes,
+not Photoshop parity: there is no Behind/Clear mode, no per-stroke opacity
+ceiling separate from flow, and no mode for Mixer, History or retouch brushes.

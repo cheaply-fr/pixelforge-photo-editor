@@ -8,7 +8,7 @@ import {
 } from './document.ts';
 import { isAssetShape, markDecodedTileCacheStats, validDecodedTileCacheStats } from './tiledAssets.ts';
 import type { TileCache } from './tilePlan.ts';
-import { CompositeCache } from './compositeCache.ts';
+import { CompositeCache, markCompositeReuse, validCompositeReuse } from './compositeCache.ts';
 import { assetsToSend } from './workerAssets.ts';
 
 /** Main-thread prefix composite (used by stroke previews and the fallback). */
@@ -19,6 +19,7 @@ import {
   clearLayerFilterCache,
   layerFilterCacheDelta,
   markLayerFilterCacheStats,
+  sharedClippedLayerCache,
   sharedLayerFilterCache,
   validLayerFilterCacheStats,
 } from './layerFilterCache.ts';
@@ -64,6 +65,12 @@ export type WorkerRenderOptions = {
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
   /** Completed row bands of a parallel full-frame filter. */
   onFilterProgress?: (progress: FilterBandProgress) => void;
+  /**
+   * Diagnostics: where the render runs ('worker' once it is posted to the
+   * persistent worker, 'main' when the main-thread renderer starts). A
+   * worker request that falls back reports both, in that order.
+   */
+  onRenderPath?: (path: 'worker' | 'main') => void;
 };
 
 /** Minimum watchdog window, kept for small frames and as the stall floor. */
@@ -280,7 +287,10 @@ export async function renderFrameWithWorker(
   const isCancelled = () => Boolean(options.signal?.aborted || options.isCancelled?.());
   if (isCancelled()) throw abortError();
   const fallback = async () => {
+    options.onRenderPath?.('main');
     const cacheBefore = sharedLayerFilterCache().stats();
+    const finalHitsBefore = mainThreadCompositeCache.finalHits;
+    const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
     const image = await renderFrame(frame, assets, overrides, {
       compositeCache: mainThreadCompositeCache,
       signal: options.signal,
@@ -308,6 +318,11 @@ export async function renderFrameWithWorker(
     });
     if (isCancelled()) throw abortError();
     markLayerFilterCacheStats(layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()));
+    if (!overrides || !Object.keys(overrides).length)
+      markCompositeReuse({
+        final: mainThreadCompositeCache.finalHits > finalHitsBefore,
+        clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
+      });
     return image;
   };
   const globalScope = globalThis as typeof globalThis & {
@@ -465,6 +480,7 @@ export async function renderFrameWithWorker(
       ) {
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
         if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+        if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         finish(() => resolve(value.image as ImageBitmap));
       } else if (
         value.kind === 'result-bytes' &&
@@ -476,6 +492,7 @@ export async function renderFrameWithWorker(
       ) {
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
         if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+        if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         void createImageBitmap(
           new Blob([value.bytes], { type: 'image/png' }),
         ).then(
@@ -690,6 +707,7 @@ class PersistentWorkerSession {
       }, [...primes.transfer, ...Object.values(task.overrides ?? {})]);
       if (task.overrides) task.overridesPosted = true;
       this.workerAssetKeys = new Set(Object.values(assetKeys));
+      task.options.onRenderPath?.('worker');
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
       // still busy. Retire it before falling back and servicing a queued
@@ -844,6 +862,7 @@ class PersistentWorkerSession {
     ) {
       if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
       if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+      if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
       this.finish(task, () => task.resolve(value.image as ImageBitmap));
       void this.startNext();
       return;
@@ -858,6 +877,7 @@ class PersistentWorkerSession {
     ) {
       if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
       if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+      if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
       void createImageBitmap(new Blob([value.bytes], { type: 'image/png' })).then(
         (image) => {
           if (this.active !== task || task.cancelRequested || task.options.signal?.aborted || task.options.isCancelled?.()) {

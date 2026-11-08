@@ -41,6 +41,7 @@ export function filterActionParameters(
       ...(effect.deinterlace ? { deinterlace: effect.deinterlace } : {}),
       ...(effect.neuralEnhance ? { neuralEnhance: effect.neuralEnhance } : {}),
       ...(effect.cloudRender ? { cloudRender: effect.cloudRender } : {}),
+      ...(effect.cloudScale !== undefined ? { cloudScale: effect.cloudScale } : {}),
     }),
   };
 }

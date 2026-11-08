@@ -100,6 +100,7 @@ import {
   layerFilterCacheKey,
   stableSerialize,
   sharedLayerFilterCache,
+  sharedClippedLayerCache,
   surfaceBytes,
   type ByteLruCache,
 } from './layerFilterCache.ts';
@@ -161,9 +162,13 @@ import {
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
+import { strokeWindow, strokeWindowReach } from './strokeWindow.ts';
 import {
   COMPOSITE_CACHE_MIN_LAYERS,
   compositeCheckpoint,
+  compositeEquivalenceKey,
+  clippedLayerCacheKey,
+  alphaBounds,
   compositeLayerKeys,
   type CompositeCache,
 } from './compositeCache.ts';
@@ -226,9 +231,9 @@ export type Adjustments = {
   levelsWhite: number;
   /** Midtone gamma for a nondestructive levels correction (0.1-3). */
   levelsGamma: number;
-  /** Output black point for a nondestructive levels correction (0-254). */
+  /** Output black point for a nondestructive levels correction (0-255; above output white inverts). */
   levelsOutputBlack: number;
-  /** Output white point for a nondestructive levels correction (1-255). */
+  /** Output white point for a nondestructive levels correction (0-255). */
   levelsOutputWhite: number;
   /** Tonal color-balance channels, retained as editable metadata. */
   colorBalance: ColorBalance;
@@ -995,7 +1000,9 @@ export function levelsChannel(
   const span = Math.max(1, white - black),
     normalized = Math.max(0, Math.min(1, (value - black) / span)),
     corrected = Math.pow(normalized, 1 / Math.max(0.1, gamma));
-  const outputSpan = Math.max(1, outputWhite - outputBlack);
+  // Output black above output white inverts the corrected range; equal
+  // endpoints produce a flat level. Ordered ranges map exactly as before.
+  const outputSpan = outputWhite - outputBlack;
   return Math.max(
     0,
     Math.min(255, Math.round(outputBlack + corrected * outputSpan)),
@@ -1013,8 +1020,8 @@ export function applyLevelsPixels(
     black = Math.max(0, Math.min(254, a.levelsBlack)),
     white = Math.max(black + 1, Math.min(255, a.levelsWhite)),
     gamma = Math.max(0.1, Math.min(3, a.levelsGamma)),
-    outputBlack = Math.max(0, Math.min(254, a.levelsOutputBlack)),
-    outputWhite = Math.max(outputBlack + 1, Math.min(255, a.levelsOutputWhite)),
+    outputBlack = Math.max(0, Math.min(255, a.levelsOutputBlack)),
+    outputWhite = Math.max(0, Math.min(255, a.levelsOutputWhite)),
     output = new Uint8ClampedArray(source);
   for (let offset = 0; offset < source.length; offset += 4) {
     // Preserve hidden RGB bytes exactly. They may be revealed by a later mask.
@@ -1056,8 +1063,8 @@ export function applyLevels(
     black = Math.max(0, Math.min(254, a.levelsBlack)),
     white = Math.max(black + 1, Math.min(255, a.levelsWhite)),
     gamma = Math.max(0.1, Math.min(3, a.levelsGamma)),
-    outputBlack = Math.max(0, Math.min(254, a.levelsOutputBlack)),
-    outputWhite = Math.max(outputBlack + 1, Math.min(255, a.levelsOutputWhite));
+    outputBlack = Math.max(0, Math.min(255, a.levelsOutputBlack)),
+    outputWhite = Math.max(0, Math.min(255, a.levelsOutputWhite));
   if (
     black === 0 &&
     white === 255 &&
@@ -1295,10 +1302,9 @@ export function validAdjustments(v: unknown): v is Adjustments {
     number(v.levelsGamma ?? neutral.levelsGamma, 0.1, 3) &&
     Number(v.levelsWhite ?? neutral.levelsWhite) >
       Number(v.levelsBlack ?? neutral.levelsBlack) &&
-    number(v.levelsOutputBlack ?? neutral.levelsOutputBlack, 0, 254) &&
-    number(v.levelsOutputWhite ?? neutral.levelsOutputWhite, 1, 255) &&
-    Number(v.levelsOutputWhite ?? neutral.levelsOutputWhite) >
-      Number(v.levelsOutputBlack ?? neutral.levelsOutputBlack) &&
+    // Output levels may be reversed (black > white inverts) or equal.
+    number(v.levelsOutputBlack ?? neutral.levelsOutputBlack, 0, 255) &&
+    number(v.levelsOutputWhite ?? neutral.levelsOutputWhite, 0, 255) &&
     validColorBalance(v.colorBalance ?? neutral.colorBalance) &&
     validSharpenNoise(v.sharpenNoise ?? neutral.sharpenNoise) &&
     validCurves(v.curves ?? neutral.curves) &&
@@ -2401,13 +2407,22 @@ export function replaceColorStroke(
   ];
   const width = source.width,
     height = source.height,
-    sourceData = source
-      .getContext('2d')!
-      .getImageData(0, 0, width, height).data,
-    context = output.getContext('2d')!,
-    image = context.getImageData(0, 0, width, height),
-    outputData = image.data,
     radius = Math.max(1, size / 2),
+    // Only the segment's window is read and written (a pointer move costs
+    // the brush area, not the whole layer). Loops keep layer coordinates.
+    window = strokeWindow(
+      [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+      strokeWindowReach.sampled(size),
+      width,
+      height,
+    );
+  if (!window) return false;
+  const sourceData = source
+      .getContext('2d')!
+      .getImageData(window.x, window.y, window.width, window.height).data,
+    context = output.getContext('2d')!,
+    image = context.getImageData(window.x, window.y, window.width, window.height),
+    outputData = image.data,
     distance = Math.hypot(x2 - x1, y2 - y1),
     steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5))),
     amount = Math.max(0, Math.min(1, opacity));
@@ -2430,7 +2445,7 @@ export function replaceColorStroke(
     for (let y = top; y <= bottom; y += 1) {
       for (let x = left; x <= right; x += 1) {
         if (Math.hypot(x - cx, y - cy) > radius) continue;
-        const offset = (y * width + x) * 4;
+        const offset = ((y - window.y) * window.width + x - window.x) * 4;
         if (!matches(offset)) continue;
         for (let channel = 0; channel < 3; channel += 1)
           outputData[offset + channel] = Math.round(
@@ -2442,7 +2457,7 @@ export function replaceColorStroke(
       }
     }
   }
-  if (changed) context.putImageData(image, 0, 0);
+  if (changed) context.putImageData(image, window.x, window.y);
   return changed;
 }
 
@@ -2693,6 +2708,96 @@ export function layerRenderSkippable(
     return false;
   return e >= frame.w || f >= frame.h || e + asset.w <= 0 || f + asset.h <= 0;
 }
+/** Largest PNG asset probed for full transparency (new paint layers are 1x1). */
+export const TRANSPARENT_PROBE_MAX_PIXELS = 64 * 64;
+const transparentAssetMemo = new Map<string, boolean>();
+const TRANSPARENT_MEMO_LIMIT = 256;
+
+/**
+ * Whether an asset is known to hold no visible pixel: a tiled asset whose
+ * tiles are all empty, or a small PNG (at most TRANSPARENT_PROBE_MAX_PIXELS)
+ * whose decoded alpha is zero everywhere. Larger PNGs are never probed and
+ * report false, so this stays cheap on large documents.
+ */
+export async function assetIsKnownTransparent(asset: Asset | undefined): Promise<boolean> {
+  if (!asset) return false;
+  if (isTiledAsset(asset)) return asset.tiles.every((tile) => tile === null);
+  if (asset.w * asset.h > TRANSPARENT_PROBE_MAX_PIXELS) return false;
+  const key = assetFingerprint(asset);
+  const memo = transparentAssetMemo.get(key);
+  if (memo !== undefined) return memo;
+  const image = await decodeAsset(asset);
+  const probe = surface(asset.w, asset.h),
+    probeContext = probe.getContext('2d')!;
+  probeContext.drawImage(image, 0, 0);
+  const pixels = probeContext.getImageData(0, 0, asset.w, asset.h).data;
+  let transparent = true;
+  for (let offset = 3; offset < pixels.length; offset += 4)
+    if (pixels[offset] !== 0) {
+      transparent = false;
+      break;
+    }
+  if (transparentAssetMemo.size >= TRANSPARENT_MEMO_LIMIT)
+    transparentAssetMemo.delete(transparentAssetMemo.keys().next().value!);
+  transparentAssetMemo.set(key, transparent);
+  return transparent;
+}
+
+/** Asset ids of the frame's visible plain raster layers that hold no visible pixel. */
+export async function transparentLayerAssets(
+  frame: Pick<Frame, 'layers'>,
+  assets: Assets,
+): Promise<Set<string>> {
+  const candidates = new Set<string>();
+  for (const layer of frame.layers)
+    if (layer.kind === 'raster' && layer.fillColor === undefined && layer.visible && layer.opacity !== 0)
+      candidates.add(layer.asset);
+  const transparent = new Set<string>();
+  for (const id of candidates) if (await assetIsKnownTransparent(assets[id])) transparent.add(id);
+  return transparent;
+}
+
+/**
+ * True when a layer draws nothing in the composite and changes nothing
+ * below it: hidden, 0% opacity, or a plain raster layer whose asset is known
+ * to be transparent and that has no decoration able to paint outside its
+ * pixels (styles, filters, healing or content-aware metadata, matting,
+ * vector masks or non-neutral adjustments). A new empty paint layer is
+ * inert. Layers clipped to an inert base carry the base in their own key.
+ */
+export function layerCompositeInert(layer: Layer, transparentAssets: ReadonlySet<string>): boolean {
+  if (!layer.visible || layer.opacity === 0) return true;
+  if (layer.kind !== 'raster' || layer.fillColor !== undefined) return false;
+  if (!transparentAssets.has(layer.asset)) return false;
+  return (
+    isNeutralLayerStyles(layer.styles) &&
+    !layer.smartFilters?.length &&
+    !layer.vectorMask &&
+    !layer.spotHealing?.length &&
+    !layer.patchStrokes?.length &&
+    !layer.contentAwareFills?.length &&
+    !layer.contentAwareMoves?.length &&
+    !layer.contentAwareScales?.length &&
+    layer.matting === undefined &&
+    stableSerialize(layer.adjustments) === stableSerialize(neutral)
+  );
+}
+
+/**
+ * The finished-composite equivalence key of a frame (see compositeCache.ts):
+ * equal keys mean identical pixels, so a structural edit such as adding or
+ * deleting an empty layer, renaming or reselecting reuses the last result.
+ */
+export async function frameCompositeKey(frame: Frame, assets: Assets): Promise<string> {
+  const transparent = await transparentLayerAssets(frame, assets);
+  return compositeEquivalenceKey(
+    frame as unknown as Parameters<typeof compositeEquivalenceKey>[0],
+    assets,
+    (layer) => layerCompositeInert(layer as unknown as Layer, transparent),
+    (layer) => clippingGroupBase(frame, layer as unknown as Layer) as never,
+  );
+}
+
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
@@ -2712,7 +2817,10 @@ export async function renderFrame(
   if (!options?.layerFilterPass) {
     // One pass per top-level render, so the layer cache keeps a stable set of
     // layers instead of cycling through more layers than fit its budget.
-    if (options?.layerFilterCache !== null) (options?.layerFilterCache ?? sharedLayerFilterCache()).beginPass();
+    if (options?.layerFilterCache !== null) {
+      (options?.layerFilterCache ?? sharedLayerFilterCache()).beginPass();
+      sharedClippedLayerCache().beginPass();
+    }
     options = { ...options, layerFilterPass: true };
   }
   const out = surface(frame.w, frame.h),
@@ -2724,6 +2832,19 @@ export async function renderFrame(
   let startIndex = 0,
     checkpoint = -1,
     keys: string[] | undefined;
+  // Without live overrides, the finished composite of the previous render is
+  // reused when nothing that affects pixels changed (adding or deleting an
+  // empty layer, renaming, reselecting). Otherwise it is refreshed below.
+  let finalKey: string | undefined;
+  if (compositeCache && !(overrides && Object.keys(overrides).length)) {
+    finalKey = await frameCompositeKey(frame, assets);
+    const final = compositeCache.matchFinal(frame.w, frame.h, finalKey);
+    if (final) {
+      context.drawImage(final, 0, 0);
+      reportProgress(frame.layers.length - 1);
+      return out;
+    }
+  }
   if (compositeCache) {
     keys = compositeLayerKeys(frame, assets, overrides);
     checkpoint = compositeCheckpoint(frame, overrides);
@@ -2801,6 +2922,27 @@ export async function renderFrame(
       continue;
     }
     const clippedBase = clippingGroupBase(frame, layer);
+    const clippedKey =
+      clippedBase && options?.layerFilterCache !== null
+        ? clippedLayerCacheKey(
+            frame as unknown as Parameters<typeof clippedLayerCacheKey>[0],
+            layer as unknown as Parameters<typeof clippedLayerCacheKey>[1],
+            clippedBase as unknown as Parameters<typeof clippedLayerCacheKey>[2],
+            assets,
+            overrides,
+          )
+        : undefined;
+    const clippedCached = clippedKey ? sharedClippedLayerCache().get(clippedKey) : undefined;
+    if (clippedBase && clippedCached) {
+      // Same source, base and assets as an earlier render: reuse the result.
+      if (clippedCached.surface) {
+        const placed = surface(frame.w, frame.h);
+        placed.getContext('2d')!.drawImage(clippedCached.surface, clippedCached.x, clippedCached.y);
+        compositeFrameSurface(context, placed, frame.w, frame.h, layer.opacity, layer.blend);
+      }
+      reportProgress(layerIndex);
+      continue;
+    }
     if (clippedBase) {
       // Render the source and base independently. Applying destination-in to
       // `out` would clip every lower layer, including unrelated artwork.
@@ -2856,6 +2998,22 @@ export async function renderFrame(
         clippedPixels = applyClippingAlpha(sourcePixels.data, basePixels.data);
       sourcePixels.data.set(clippedPixels);
       sourceContext.putImageData(sourcePixels, 0, 0);
+      if (clippedKey && !options?.isCancelled?.()) {
+        // Keep the result cropped to its visible pixels for later renders.
+        const bounds = alphaBounds(clippedPixels, frame.w, frame.h);
+        let cropped: HTMLCanvasElement | undefined;
+        if (bounds) {
+          cropped = surface(bounds.w, bounds.h);
+          cropped
+            .getContext('2d')!
+            .drawImage(sourceSurface, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+        }
+        sharedClippedLayerCache().set(
+          clippedKey,
+          { surface: cropped, x: bounds?.x ?? 0, y: bounds?.y ?? 0 },
+          bounds ? surfaceBytes(bounds.w, bounds.h) : 64,
+        );
+      }
       compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
@@ -3735,6 +3893,14 @@ export async function renderFrame(
     const image = context.getImageData(0, 0, frame.w, frame.h);
     image.data.set(applyColorModePixels(image.data, frame.colorMode));
     context.putImageData(image, 0, 0);
+  }
+  if (compositeCache && finalKey !== undefined && !options?.isCancelled?.()) {
+    // Keep a copy of the finished composite for the next equivalent render.
+    const final = compositeCache.reusableFinal(frame.w, frame.h) ?? surface(frame.w, frame.h),
+      finalContext = final.getContext('2d')!;
+    finalContext.clearRect(0, 0, frame.w, frame.h);
+    finalContext.drawImage(out, 0, 0);
+    compositeCache.storeFinal({ key: finalKey, w: frame.w, h: frame.h, surface: final });
   }
   return out;
 }

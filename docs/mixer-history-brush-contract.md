@@ -24,6 +24,13 @@ stroke is committed as one undo step and is safe to cancel by switching tools.
 
 ## Determinism and limits
 
+Each pointer move applies its dabs to the window of the gesture buffer that
+they can reach (plus the Art History dab-colour sampling radius), reading the
+stroke source only there (`src/strokeWindow.ts`, `tests/stroke-window.test.mjs`).
+History Brush and Mixer Brush (without a wet sample) restore or mix the source
+pixel at the same position; before this contract revision the kernel read the
+source's first pixel for every dab.
+
 `src/mixerHistoryBrush.ts` exposes pure byte-array helpers with strict canvas,
 point and setting bounds. The implementation intentionally does not claim
 Photoshop's bristle simulation, full wet-media buildup across dabs, Art History

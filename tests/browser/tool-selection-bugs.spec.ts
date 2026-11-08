@@ -223,28 +223,32 @@ test('every consecutive clipped layer uses the group base, and arranging keeps c
   await expect(footer(page)).toContainText('Selection filled');
   await menu(page, 'Select', /^Deselect Ctrl\+D$/);
   await settled(page);
-  // Two full-canvas layers above, both clipped.
+  // Two full-canvas layers above, both clipped. Red is clipped explicitly;
+  // Blue is added above the clipped Red, so it joins the group on creation.
   for (const [label, colorValue] of [['Red', '#ff0000'], ['Blue', '#0000ff']] as const) {
     await addPaintLayer(page);
+    if (label === 'Blue') await expect(footer(page)).toContainText('Layer added to the clipping group');
     await name(label);
     await setColor(page, 'Drawing color', colorValue);
     await menu(page, 'Edit', /^Fill…/);
     await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
     await expect(footer(page)).toContainText('Layer filled');
-    await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
-    await expect(footer(page)).toContainText('Clipping mask created from Base');
+    if (label === 'Red') {
+      await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
+      await expect(footer(page)).toContainText('Clipping mask created from Base');
+    }
     await settled(page);
   }
   // The second clipped layer shows only inside the base, not over the
   // full-canvas Red layer it sits on.
-  await expect(page.getByText('Clipped to Base', { exact: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
   expect(await pixels(page, [[150, 100], [20, 20], [250, 180]])).toEqual([[0, 0, 255, 255], WHITE, WHITE]);
 
   // Send Backward inside the group keeps both layers clipped.
   await menu(page, 'Layer', /^Send Backward/);
   await expect(footer(page)).toContainText('Send Backward applied; undo restores the previous order');
   await settled(page);
-  await expect(page.getByText('Clipped to Base', { exact: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
   expect(await pixels(page, [[150, 100], [20, 20]])).toEqual([[255, 0, 0, 255], WHITE]);
 
   // Bring Forward restores the order; still clipped.

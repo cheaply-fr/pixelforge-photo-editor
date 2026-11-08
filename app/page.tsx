@@ -285,19 +285,26 @@ import {
 } from '../src/layerMergeVisible';
 import {
   applyLayerArrange,
+  clippingGroupKeys,
+  expandClippingGroupSelection,
   layerArrangeReason,
   planLayerArrange,
+  stepLayerRuns,
   type LayerArrangeMode,
 } from '../src/layerArrange';
 import { combineSelectionBounds } from '../src/layerSelection';
+import { rasterizedLayer, rasterizeRenderSource } from '../src/layerRasterize';
 import { applyLayerLock, layerLockReason, planLayerLock } from '../src/layerLock';
 import {
   clippingCandidateBase,
   clippingGroupBase,
   isClippingSourceLayer,
   preserveClippingAfterReorder,
+  preserveClippingAfterReplace,
+  sanitizeClippingRelations,
   validClippingRelationship,
 } from '../src/layerClipping';
+import { insertCopiesAboveSources, insertLayerAboveActive } from '../src/layerInsertion';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -443,6 +450,15 @@ import {
   type BrushMode,
 } from '../src/brush';
 import {
+  BRUSH_BLEND_DEFAULT,
+  BRUSH_BLEND_MODE_GROUPS,
+  compositeBrushBlendLayer,
+  compositeBrushBlendRect,
+  normalizeBrushBlendMode,
+  usesBrushBlendStroke,
+  type BrushBlendMode,
+} from '../src/brushBlend';
+import {
   GRADIENT_BLEND_DEFAULT,
   GRADIENT_BLEND_LABELS,
   GRADIENT_BLEND_MODES,
@@ -555,9 +571,12 @@ import {
   applyAffine,
   normalizePaintSymmetry,
   paintSymmetryForLayer,
+  paintSymmetryAppliesToTool,
+  symmetryCloneCopies,
   symmetryDabCopies,
   type PaintSymmetrySettings,
   type SymmetryAffine,
+  type SymmetryDab,
 } from '../src/paintSymmetry';
 import { PaintSymmetryControls, PaintSymmetryOverlay } from '../src/PaintSymmetryControls';
 import {
@@ -631,19 +650,22 @@ import {
   defaultStrokePathChoice,
   normalizeStrokePathSettings,
   planStrokePath,
+  strokePathMaxSamplesForCopies,
   strokePathSources,
   type StrokePathSample,
   type StrokePathSettings,
 } from '../src/strokePath';
 import { applyRetouchStroke } from '../src/retouch';
+import { strokeWindow, strokeWindowReach, windowPoint, windowedCanvasStroke } from '../src/strokeWindow';
 import {
   DEFAULT_HISTORY_BRUSH,
   DEFAULT_ART_HISTORY_BRUSH,
   DEFAULT_MIXER_BRUSH,
   applyArtHistoryBrushPixels,
-  interpolateBrushStrokePoints,
   applyHistoryBrushPixels,
   applyMixerBrushPixels,
+  applySymmetricRetouchBrush,
+  interpolateBrushStrokePoints,
   type HistoryBrushSettings,
   type ArtHistoryBrushSettings,
   type MixerBrushSettings,
@@ -681,6 +703,7 @@ import {
   MAX_CLOUD_RENDER_SCALE,
   MIN_CLOUD_RENDER_SCALE,
   defaultCloudScale,
+  differenceCloudScale,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_NEURAL_ENHANCE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
@@ -1669,6 +1692,8 @@ type Gesture = {
   selectionMask?: Uint8ClampedArray;
   /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
   selectionStroke?: SelectionStroke;
+  /** Separate stroke buffer for a Brush/Pencil stroke in a non-Normal blend mode. */
+  blendStroke?: BrushBlendStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
   /**
@@ -1982,12 +2007,19 @@ const stampCanvasSegment = (
           angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
           // Colour dynamics are resolved once per source dab and shared.
           color = options.color && brushDabColor(options.color, options.colorBackground, dab);
-        for (const copy of symmetryDabCopies(options.symmetry, {
+        const sourceDab = {
           x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
-        }))
+        };
+        // Clone/Healing: the copy's transform also maps the source sample
+        // point, so the source offset turns or mirrors with the copy.
+        const copies: Array<SymmetryDab & { sourceX?: number; sourceY?: number }> =
+          sourceX !== undefined && sourceY !== undefined
+            ? symmetryCloneCopies(options.symmetry, sourceDab, { x: sourceX, y: sourceY })
+            : symmetryDabCopies(options.symmetry, sourceDab);
+        for (const copy of copies)
           changed = stampCanvas(target, {
             ...options, size, opacity, color, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
-            x: copy.x, y: copy.y, sourceX, sourceY,
+            x: copy.x, y: copy.y, sourceX: copy.sourceX, sourceY: copy.sourceY,
           }) || changed;
         continue;
       }
@@ -2041,17 +2073,44 @@ const stampCanvasSegment = (
 const stampStrokePathSamples = (
   target: HTMLCanvasElement,
   samples: readonly StrokePathSample[],
-  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'>,
+  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'> & {
+    /** Paint Symmetry transforms (identity first); omitted paints one copy. */
+    symmetry?: readonly SymmetryAffine[];
+  },
 ) => {
-  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS;
+  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS,
+    { symmetry, ...stampOptions } = options;
   let changed = false;
   for (const sample of samples) {
     const size = Math.max(1, options.size * sample.sizeScale),
       opacity = options.opacity * sample.opacityScale;
     if (opacity <= 0) continue;
-    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction))
+    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction)) {
+      if (symmetry && symmetry.length > 1) {
+        // Same rule as a pointer stroke: every copy is the geometric image of
+        // the already-jittered dab and shares its colour dynamics.
+        const dabSize = dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
+        for (const copy of symmetryDabCopies(symmetry, {
+          x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
+        }))
+          changed = stampCanvas(target, {
+            ...stampOptions,
+            pointerType: 'mouse',
+            size: dabSize,
+            opacity: opacity * dab.opacityScale,
+            color,
+            angle: copy.angle,
+            flipX: copy.flipX,
+            flipY: copy.flipY,
+            x: copy.x,
+            y: copy.y,
+          }) || changed;
+        continue;
+      }
       changed = stampCanvas(target, {
-        ...options,
+        ...stampOptions,
         pointerType: 'mouse',
         size: dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
         angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
@@ -2060,6 +2119,7 @@ const stampStrokePathSamples = (
         x: dab.x,
         y: dab.y,
       }) || changed;
+    }
   }
   return changed;
 };
@@ -2205,7 +2265,11 @@ const redEyeCanvasStroke = (
   return changed;
 };
 
-/** Apply one immutable tonal stroke to a canvas pair and publish the new pixels. */
+/**
+ * Apply one immutable tonal stroke to a canvas pair and publish the new
+ * pixels. Only the segment's window (its brush reach) is read and written, so
+ * a pointer move costs the brush area, not the whole layer.
+ */
 const tonalCanvasSegment = (
   source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
@@ -2222,58 +2286,47 @@ const tonalCanvasSegment = (
     spongeVibrance: number;
     selectionMask?: Uint8ClampedArray;
   },
-) => {
-  const sourceContext = source.getContext('2d')!,
-    destinationContext = destination.getContext('2d')!,
-    sourcePixels = sourceContext.getImageData(
-      0,
-      0,
-      source.width,
-      source.height,
-    ),
-    destinationPixels = destinationContext.getImageData(
-      0,
-      0,
-      destination.width,
-      destination.height,
-    );
-  const result =
-    options.mode === 'sponge'
-      ? applySpongeStroke(sourcePixels.data, destinationPixels.data, {
-          width: destination.width,
-          height: destination.height,
-          x1: from.x,
-          y1: from.y,
-          x2: to.x,
-          y2: to.y,
-          size: options.size,
-          hardness: options.hardness,
-          amount: options.spongeVibrance / 100,
-          flow: options.flow,
-          mode: options.spongeMode,
-          selectionMask: options.selectionMask,
-        })
-      : applyDodgeBurnStroke(sourcePixels.data, destinationPixels.data, {
-          width: destination.width,
-          height: destination.height,
-          x1: from.x,
-          y1: from.y,
-          x2: to.x,
-          y2: to.y,
-          size: options.size,
-          hardness: options.hardness,
-          exposure: options.exposure / 100,
-          flow: options.flow,
-          range: options.range,
-          mode: options.mode,
-          selectionMask: options.selectionMask,
-        });
-  destinationPixels.data.set(result.pixels);
-  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
-  return result.changed;
-};
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.tonal(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return options.mode === 'sponge'
+        ? applySpongeStroke(sourcePixels!, destinationPixels, {
+            width,
+            height,
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            size: options.size,
+            hardness: options.hardness,
+            amount: options.spongeVibrance / 100,
+            flow: options.flow,
+            mode: options.spongeMode,
+            selectionMask,
+          })
+        : applyDodgeBurnStroke(sourcePixels!, destinationPixels, {
+            width,
+            height,
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            size: options.size,
+            hardness: options.hardness,
+            exposure: options.exposure / 100,
+            flow: options.flow,
+            range: options.range,
+            mode: options.mode,
+            selectionMask,
+          });
+    },
+    { source, selectionMask: options.selectionMask, tool: options.mode },
+  );
 
-/** Apply one immutable Smudge segment and publish the preview pixels. */
+/** Apply one immutable Smudge segment and publish the preview pixels (windowed like the tonal tools). */
 const smudgeCanvasSegment = (
   source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
@@ -2285,37 +2338,99 @@ const smudgeCanvasSegment = (
     flow: number;
     selectionMask?: Uint8ClampedArray;
   },
-) => {
-  const sourceContext = source.getContext('2d')!,
-    destinationContext = destination.getContext('2d')!,
-    sourcePixels = sourceContext.getImageData(
-      0,
-      0,
-      source.width,
-      source.height,
-    ),
-    destinationPixels = destinationContext.getImageData(
-      0,
-      0,
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.smudge(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return applySmudgeStroke(sourcePixels!, destinationPixels, {
+        width,
+        height,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        size: options.size,
+        hardness: options.hardness,
+        flow: options.flow,
+        selectionMask,
+      });
+    },
+    { source, selectionMask: options.selectionMask, tool: 'smudge' },
+  );
+
+/** Apply one immutable Blur or Sharpen segment to the gesture buffer (windowed). */
+const retouchCanvasSegment = (
+  source: HTMLCanvasElement,
+  destination: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: {
+    size: number;
+    hardness: number;
+    flow: number;
+    mode: 'blur' | 'sharpen';
+    selectionMask?: Uint8ClampedArray;
+  },
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.retouch(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return applyRetouchStroke(sourcePixels!, destinationPixels, {
+        width,
+        height,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        size: options.size,
+        hardness: options.hardness,
+        flow: options.flow,
+        mode: options.mode,
+        selectionMask,
+      });
+    },
+    { source, selectionMask: options.selectionMask, tool: options.mode },
+  );
+
+/**
+ * Apply Mixer Brush, History Brush or Art History Brush dabs at `points` to
+ * the gesture buffer, reading the stroke-source pixels only inside the dabs'
+ * window. Returns whether the buffer changed.
+ */
+const mixerHistoryCanvasDabs = (
+  tool: 'mixer-brush' | 'history-brush' | 'art-history-brush',
+  sourcePixels: Uint8ClampedArray,
+  destination: HTMLCanvasElement,
+  points: readonly BrushStrokePoint[],
+  settings: MixerBrushSettings | HistoryBrushSettings | ArtHistoryBrushSettings,
+  selectionMask?: Uint8ClampedArray,
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow(
+      points,
+      tool === 'art-history-brush'
+        ? strokeWindowReach.artHistory(settings.size, (settings as ArtHistoryBrushSettings).style)
+        : strokeWindowReach.mixer(settings.size),
       destination.width,
       destination.height,
     ),
-    result = applySmudgeStroke(sourcePixels.data, destinationPixels.data, {
-      width: destination.width,
-      height: destination.height,
-      x1: from.x,
-      y1: from.y,
-      x2: to.x,
-      y2: to.y,
-      size: options.size,
-      hardness: options.hardness,
-      flow: options.flow,
-      selectionMask: options.selectionMask,
-    });
-  destinationPixels.data.set(result.pixels);
-  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
-  return result.changed;
-};
+    ({ source, destination: pixels, selectionMask: mask, rect, width, height }) => {
+      const local = points.map((point) => windowPoint(point, rect));
+      return {
+        pixels: tool === 'mixer-brush'
+          ? applyMixerBrushPixels(pixels, source!, width, height, local, settings as MixerBrushSettings, mask)
+          : tool === 'history-brush'
+          ? applyHistoryBrushPixels(pixels, source!, width, height, local, settings as HistoryBrushSettings, mask)
+          : applyArtHistoryBrushPixels(pixels, source!, width, height, local, settings as ArtHistoryBrushSettings, mask),
+      };
+    },
+    { source: sourcePixels, selectionMask, tool },
+  );
 
 /**
  * Smudge counterpart of `stampStrokePathSamples`: smear between consecutive
@@ -2458,11 +2573,69 @@ const confinedGestureEdit = (
   draw: (target: HTMLCanvasElement) => boolean,
 ) => {
   const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (g.blendStroke) {
+    const changed = draw(g.blendStroke.paint);
+    if (changed)
+      blendStrokeRect(g.blendStroke, buffer, stroke?.mask, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
+    return changed;
+  }
   if (!stroke) return draw(buffer);
   const changed = draw(stroke.raw);
   if (changed)
     confineStrokeRect(stroke, buffer, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
   return changed;
+};
+/**
+ * Brush/Pencil stroke in a non-Normal blend mode (see `src/brushBlend.ts`).
+ * Dabs land on the transparent `paint` canvas with the ordinary source-over
+ * dab arithmetic, so they build coverage like Normal and never blend against
+ * each other; each touched rectangle of the visible buffer is recomposited as
+ * `original ⊕mode paint` (then confined by the selection, if any). The preview
+ * and the commit both read that buffer, so they are identical. Normal strokes
+ * never create one and keep stamping straight onto the buffer.
+ */
+type BrushBlendStroke = {
+  paint: HTMLCanvasElement;
+  original: Uint8ClampedArray;
+  mode: BrushBlendMode;
+};
+const beginBrushBlendStroke = (
+  buffer: HTMLCanvasElement,
+  tool: string,
+  mode: BrushBlendMode,
+  selection: SelectionStroke | undefined,
+): BrushBlendStroke | undefined => {
+  if (!usesBrushBlendStroke(tool, mode)) return undefined;
+  return {
+    paint: surface(buffer.width, buffer.height),
+    original: selection?.original ??
+      buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+    mode,
+  };
+};
+/** Recomposite one rectangle of a blend-mode stroke into the visible buffer. */
+const blendStrokeRect = (
+  stroke: BrushBlendStroke,
+  target: HTMLCanvasElement,
+  mask: Uint8ClampedArray | undefined,
+  rect: PixelRect | null,
+) => {
+  if (!rect) return false;
+  const image = stroke.paint
+      .getContext('2d')!
+      .getImageData(rect.x, rect.y, rect.width, rect.height),
+    targetContext = target.getContext('2d')!,
+    before = targetContext.getImageData(rect.x, rect.y, rect.width, rect.height).data,
+    composed = compositeBrushBlendRect(stroke.original, image.data, target.width, rect, stroke.mode, mask);
+  let changed = false;
+  for (let index = 0; index < composed.length && !changed; index += 1)
+    changed = composed[index] !== before[index];
+  if (!changed) return false;
+  image.data.set(composed);
+  targetContext.putImageData(image, rect.x, rect.y);
+  // Report the write so a tracked gesture buffer commits these tiles.
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
+  return true;
 };
 /**
  * Stamp a Brush/Pencil/Eraser/Clone/Healing segment into the gesture buffer,
@@ -2485,14 +2658,18 @@ const stampGestureSegment = (
   const draw = (target: HTMLCanvasElement) =>
       stampCanvasSegment(target, from, to, { ...options, symmetry }),
     buffer = g.buffer!,
-    stroke = g.selectionStroke;
-  if (!stroke) return draw(buffer);
-  const changed = draw(stroke.raw);
+    stroke = g.selectionStroke,
+    blend = g.blendStroke;
+  if (!stroke && !blend) return draw(buffer);
+  const changed = draw(blend ? blend.paint : stroke!.raw);
   if (changed)
-    for (const transform of symmetry)
-      confineStrokeRect(stroke, buffer, brushSegmentRect(
+    for (const transform of symmetry) {
+      const rect = brushSegmentRect(
         applyAffine(transform, from), applyAffine(transform, to),
-        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height));
+        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height);
+      if (blend) blendStrokeRect(blend, buffer, stroke?.mask, rect);
+      else confineStrokeRect(stroke!, buffer, rect);
+    }
   return changed;
 };
 /** Pattern Stamp counterpart of `stampGestureSegment`. */
@@ -2744,6 +2921,7 @@ export default function Home() {
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
     [brushOpacity, setBrushOpacity] = useState(100),
+    [brushBlendMode, setBrushBlendMode] = useState<BrushBlendMode>(BRUSH_BLEND_DEFAULT),
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
@@ -3571,6 +3749,7 @@ export default function Home() {
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -3679,6 +3858,7 @@ export default function Home() {
     setBackgroundColor(s.backgroundColor || '#ffffff');
     setSize(clampBrushSize(s.size));
     setBrushOpacity(s.brushOpacity ?? 100);
+    setBrushBlendMode(normalizeBrushBlendMode(s.brushBlendMode));
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
@@ -3747,6 +3927,7 @@ export default function Home() {
     setBackgroundColor,
     setSize,
     setBrushOpacity,
+    setBrushBlendMode,
     setHardness,
     setPressureSize,
     setPressureOpacity,
@@ -3851,6 +4032,8 @@ export default function Home() {
     setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
     if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
+    // Presets saved before the blend mode existed paint Normal.
+    setBrushBlendMode(normalizeBrushBlendMode(preset.brushBlendMode));
     setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
   };
@@ -3909,6 +4092,7 @@ export default function Home() {
         brushBuildUp,
         brushFlow,
         brushOpacity,
+        brushBlendMode,
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -7023,6 +7207,9 @@ export default function Home() {
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
                 } : {}),
+                ...(type === 'difference-clouds' ? {
+                  cloudScale: defaultCloudScale(frame?.w ?? 0, frame?.h ?? 0),
+                } : {}),
                 ...(type === 'clouds' ? {
                   cloudRender: {
                     foreground: color,
@@ -7425,6 +7612,7 @@ export default function Home() {
         backgroundColor,
         size,
         brushOpacity,
+        brushBlendMode,
         hardness,
         pressureSize,
         pressureOpacity,
@@ -7547,6 +7735,7 @@ export default function Home() {
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -8067,11 +8256,23 @@ export default function Home() {
       setRecovering(false);
     }
   };
-  const addLayer = (layer: Layer) => {
+  const addLayer = (layer: Layer, placement: 'top' | 'above-active' = 'above-active') => {
     const f = current();
     if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
       setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       void paint(f);
+      return false;
+    }
+    if (placement === 'above-active' && !layer.groupId && !layer.clippingTo) {
+      // New layers go directly above the active layer, joining its folder
+      // and clipping group (see layerInsertion.ts). A caller that names its
+      // own folder or clipping base (Paste of a copied member) keeps the
+      // explicit path below.
+      const inserted = insertLayerAboveActive(f, layer);
+      if (commit(inserted.frame)) {
+        setNotice(inserted.clipped ? 'Layer added to the clipping group' : 'Layer added');
+        return true;
+      }
       return false;
     }
     let next: Frame = {
@@ -8426,26 +8627,9 @@ export default function Home() {
       name: (layer.name + ' copy').slice(0, 160),
       locked: false,
     }));
-    let next: Frame = {
-      ...f,
-      layers: [...f.layers, ...copies],
-      active: copies.at(-1)!.id,
-      selectedLayerIds: copies.map((layer) => layer.id),
-    };
-    // Copies of grouped layers inherit their folder, so normalize every
-    // affected folder after appending the copies instead of leaving a second
-    // block at the end of the flat stack.
-    for (const groupId of new Set(
-      copies.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
-    )) {
-      const memberIds = next.layers
-        .filter((layer) => layer.groupId === groupId)
-        .map((layer) => layer.id);
-      next = {
-        ...next,
-        layers: groupLayerMembers(next, memberIds, groupId).layers,
-      };
-    }
+    // Each copy goes directly above its source, in the source's folder and
+    // clipping group (src/layerInsertion.ts).
+    const next = insertCopiesAboveSources(f, layers, copies as Layer[]);
     if (
       commit(next)
     )
@@ -9092,10 +9276,18 @@ export default function Home() {
       }
       const tool = settings.tool,
         brushSize = localSize(layer.matrix, size),
+        // Paint Symmetry applies to Brush, Pencil and Eraser paths exactly as
+        // to a hand-drawn stroke of those tools (Smudge has no symmetry).
+        symmetry = tool === 'smudge' ? undefined : paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
         plan = planStrokePath(
           sources.map((item) => ({ path: item.path, matrix: item.matrix })),
           layer.matrix,
-          { ...settings, size: brushSize, spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing },
+          {
+            ...settings,
+            size: brushSize,
+            spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing,
+            ...(symmetry && symmetry.length > 1 ? { maxSamples: strokePathMaxSamplesForCopies(symmetry.length) } : {}),
+          },
         );
       let changed: boolean;
       if (tool === 'smudge') {
@@ -9105,10 +9297,15 @@ export default function Home() {
           size: brushSize, hardness, flow: brushOpacity / 100, selectionMask,
         });
       } else {
-        // Without a selection every write is a tracked stamp, so the commit
-        // hashes only the tiles the path touched.
-        if (!selectionMask) trackCanvasWrites(buffer);
-        changed = stampStrokePathSamples(buffer, plan.samples, {
+        // Brush/Pencil in a non-Normal mode stroke the path on a transparent
+        // buffer, then composite it once over the layer (src/brushBlend.ts).
+        const blendMode = usesBrushBlendStroke(tool, brushBlendMode) ? brushBlendMode : undefined,
+          target = blendMode ? surface(buffer.width, buffer.height) : buffer;
+        // Without a selection or blend mode every write is a tracked stamp, so
+        // the commit hashes only the tiles the path touched. A blend-mode
+        // path rewrites the whole buffer at once and is scanned in full.
+        if (!selectionMask && !blendMode) trackCanvasWrites(buffer);
+        changed = stampStrokePathSamples(target, plan.samples, {
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -9128,8 +9325,21 @@ export default function Home() {
           mode: tool === 'eraser' ? 'destination-out' : 'source-over',
           color: tool === 'eraser' ? undefined : brushColor(color),
           colorBackground: brushColor(backgroundColor),
+          symmetry,
         });
-        // Photoshop confines painting to the active selection.
+        if (changed && blendMode) {
+          const bufferContext = buffer.getContext('2d')!,
+            composed = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+          composed.data.set(compositeBrushBlendLayer(
+            composed.data,
+            target.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+            buffer.width,
+            blendMode,
+          ));
+          bufferContext.putImageData(composed, 0, 0);
+        }
+        // Photoshop confines painting to the active selection (every
+        // symmetry copy is confined by the same layer-space mask).
         if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
       }
       if (!changed) {
@@ -9142,6 +9352,7 @@ export default function Home() {
       if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
         setNotice(
           `Path stroked with ${label}${settings.simulatePressure ? ' (simulated pressure)' : ''}` +
+          `${symmetry && symmetry.length > 1 ? ` (${symmetry.length} symmetry copies)` : ''}` +
           `${plan.limited ? '; spacing widened to stay within the dab limit' : ''}; undo restores the layer`,
         );
     } catch (error) {
@@ -9285,7 +9496,7 @@ export default function Home() {
         locked: false,
         ...(mergeGroupIds.size === 1 ? { groupId: [...mergeGroupIds][0] } : {}),
       };
-      const next = selectedPlan?.ok
+      const replaced = selectedPlan?.ok
         ? applySelectedLayerMerge(f, selectedPlan, merged)
         : (() => {
             const layers = f.layers.slice();
@@ -9305,6 +9516,14 @@ export default function Home() {
               selectedLayerIds: [merged.id],
             };
           })();
+      // A merged base keeps its remaining clipped layers, and a merge inside
+      // one clipping group stays clipped.
+      const next = preserveClippingAfterReplace(
+        f,
+        selectedLayers.map((layer) => layer.id),
+        replaced,
+        merged.id,
+      );
       if (
         commit(next)
       )
@@ -9392,11 +9611,19 @@ export default function Home() {
   };
   const reorder = (direction: number) => {
     const f = current(),
-      layers = f.layers.slice(),
-      from = layers.findIndex((l) => l.id === f.active),
+      from = f.layers.findIndex((l) => l.id === f.active),
       to = from + direction;
-    if (to < 0 || to >= layers.length || layerIsLocked(f, layers[from])) return;
-    [layers[from], layers[to]] = [layers[to], layers[from]];
+    if (to < 0 || to >= f.layers.length || layerIsLocked(f, f.layers[from])) return;
+    // A clipping group base moves with its clipped layers, and a step past
+    // another clipping group jumps the whole group instead of landing inside it.
+    const keys = clippingGroupKeys(f),
+      moving = expandClippingGroupSelection(f, [f.active], keys);
+    if (f.layers.some((layer) => moving.has(layer.id) && layerIsLocked(f, layer))) {
+      setNotice('Unlock the clipped layers before moving their base');
+      return;
+    }
+    const layers = stepLayerRuns(f.layers, moving, direction > 0 ? 1 : -1, keys);
+    if (layers.every((layer, index) => layer === f.layers[index])) return;
     const { frame: next, released } = preserveClippingAfterReorder(f, { ...f, layers });
     if (commit(next) && released.length)
       setNotice(`Clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`);
@@ -9435,39 +9662,21 @@ export default function Home() {
     // Layer styles stay live on the rasterized layer instead of being baked:
     // the pixels are rendered without them and the same styles are kept, so
     // a glow or shadow remains editable (and follows the new pixels' alpha).
+    // The clipping relationship, folder, link and other layer properties are
+    // kept on the new pixels too (see rasterizedLayer).
     const keptStyles = isNeutralLayerStyles(layer.styles) ? undefined : layer.styles;
     try {
       const image = await renderFrame(
         {
           ...f,
-          layers: [
-            {
-              ...layer,
-              visible: true,
-              opacity: 1,
-              blend: 'source-over',
-              // Bake live filter effects and adjustments into the new pixels,
-              // as Photoshop bakes Smart Filters when rasterizing.
-              adjustments: layer.adjustments,
-              styles: undefined,
-            },
-          ],
+          // Bake live filter effects, smart filters and adjustments into the
+          // new pixels, as Photoshop bakes Smart Filters when rasterizing.
+          layers: [rasterizeRenderSource(layer)],
         },
         assets.current,
       );
       if (current() !== f) return;
-      const rasterLayer: Layer = {
-        ...commonLayer(layer.name),
-        id: layer.id,
-        kind: 'raster',
-        asset: addAsset(assets.current, image),
-        opacity: layer.opacity,
-        blend: layer.blend,
-        visible: layer.visible,
-        adjustments: { ...neutral },
-        groupId: layer.groupId,
-        ...(keptStyles ? { styles: keptStyles } : {}),
-      };
+      const rasterLayer = rasterizedLayer(layer, addAsset(assets.current, image));
       const changed = commit({
         ...f,
         layers: f.layers.map((item) => (item.id === layer.id ? rasterLayer : item)),
@@ -10206,7 +10415,9 @@ export default function Home() {
       setNotice('Unlock every selected layer before nesting them');
       return;
     }
-    const nested: Frame = {
+    // Links to bases left outside the nested contents are dropped there; a
+    // nested run of clipped layers is clipped outside instead (below).
+    const nested: Frame = sanitizeClippingRelations({
       w: original.w,
       h: original.h,
       ...(original.colorMode ? { colorMode: original.colorMode } : {}),
@@ -10217,7 +10428,7 @@ export default function Home() {
         ? original.active
         : selected[0].id,
       selectedLayerIds: selected.map((layer) => layer.id),
-    };
+    });
     try {
       const rendered = await renderFrame(nested, assets.current);
       if (current() !== original) {
@@ -10240,13 +10451,13 @@ export default function Home() {
         groups = (original.groups || []).filter((group) =>
           original.layers.some((layer) => !selectedIds.has(layer.id) && layer.groupId === group.id),
         );
-      if (commit({
+      if (commit(preserveClippingAfterReplace(original, [...selectedIds], {
         ...original,
         layers: [...layersBefore, nestedLayer, ...layersAfter],
         groups: groups.length ? groups : undefined,
         active: nestedLayer.id,
         selectedLayerIds: [nestedLayer.id],
-      }))
+      }, nestedLayer.id)))
         setNotice('Selected layers nested into an editable Smart Object');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not nest the selected layers');
@@ -11616,25 +11827,14 @@ export default function Home() {
           if (gesture.current !== g) return;
           let from = g.start;
           for (const queued of g.queued || []) {
-            const result = applyRetouchStroke(
-              new Uint8ClampedArray(sourceContext.getImageData(0, 0, source.width, source.height).data),
-              new Uint8ClampedArray(bufferContext.getImageData(0, 0, buffer.width, buffer.height).data),
-              {
-                width: buffer.width,
-                height: buffer.height,
-                x1: from.x,
-                y1: from.y,
-                x2: queued.x,
-                y2: queued.y,
-                size: localSize(layer.matrix, size),
-                hardness,
-                flow: brushOpacity / 100,
-                mode: tool,
-                selectionMask: g.selectionMask,
-              },
-            );
-            bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
-            g.changed = Boolean(g.changed || result.changed);
+            const changed = retouchCanvasSegment(source, buffer, from, queued, {
+              size: localSize(layer.matrix, size),
+              hardness,
+              flow: brushOpacity / 100,
+              mode: tool,
+              selectionMask: g.selectionMask,
+            });
+            g.changed = Boolean(g.changed || changed);
             from = queued;
           }
           g.queued = undefined;
@@ -11664,6 +11864,8 @@ export default function Home() {
         moved: false,
         brushPoints: [{ x: local.x, y: local.y, pressure: pressure(e) }],
         queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        // Paint Symmetry is fixed for the stroke at pointer-down.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
       };
       gesture.current = g;
       g.pending = (async () => {
@@ -11706,26 +11908,24 @@ export default function Home() {
           if (gesture.current !== g) return;
           const points = (g.queued || []).map((item) => ({ x: item.x, y: item.y, pressure: item.pressure }));
           g.brushPoints = points;
-          const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
-          const next = tool === 'mixer-brush'
-            ? applyMixerBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
-                ...mixerBrush,
-                size: localSize(layer.matrix, size),
-                hardness,
-              }, g.selectionMask)
-            : tool === 'history-brush'
-            ? applyHistoryBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
-                ...historyBrush,
-                size: localSize(layer.matrix, size),
-                hardness,
-              }, g.selectionMask)
-            : applyArtHistoryBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
-                ...artHistoryBrush,
-                size: localSize(layer.matrix, size),
-                hardness,
-              }, g.selectionMask);
-          if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
-          buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          const brushSize = localSize(layer.matrix, size);
+          const retouchOptions =
+            tool === 'mixer-brush'
+              ? { ...mixerBrush, size: brushSize, hardness }
+              : tool === 'history-brush'
+              ? { ...historyBrush, size: brushSize, hardness }
+              : { ...artHistoryBrush, size: brushSize, hardness };
+          if ((g.paintSymmetry?.length ?? 0) > 1) {
+            // Paint Symmetry copies are applied over the whole buffer (#220).
+            const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
+            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry);
+            if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
+            buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          } else {
+            // Without symmetry only the brush's reach is read and written.
+            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask);
+            if (tool === 'art-history-brush') g.changed = changed;
+          }
           g.last = points.at(-1) || g.last;
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
@@ -11973,6 +12173,9 @@ export default function Home() {
         pointerType: e.pointerType,
         moved: false,
         cloneAnchor: sourceAnchor,
+        // Paint Symmetry is fixed for the stroke at pointer-down; each copy
+        // maps its source point through the same transform.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
         spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
@@ -12492,6 +12695,8 @@ export default function Home() {
           g.buffer = buffer;
           g.selectionMask = selectionMask;
           g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
+          // Brush/Pencil in a non-Normal mode paint on their own stroke buffer.
+          g.blendStroke = beginBrushBlendStroke(buffer, tool, brushBlendMode, g.selectionStroke);
           let from = local;
           let stabilized = local;
           for (const point of g.queued || [
@@ -12943,27 +13148,14 @@ export default function Home() {
     }
     if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.source && g.layer) {
       if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer.matrix, size))) return;
-      const sourceContext = g.source.getContext('2d')!,
-        bufferContext = g.buffer.getContext('2d')!,
-        result = applyRetouchStroke(
-          new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
-          new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
-          {
-            width: g.buffer.width,
-            height: g.buffer.height,
-            x1: g.last.x,
-            y1: g.last.y,
-            x2: local.x,
-            y2: local.y,
-            size: localSize(g.layer.matrix, size),
-            hardness,
-            flow: brushOpacity / 100,
-            mode: g.tool,
-            selectionMask: g.selectionMask,
-          },
-        );
-      bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
-      g.changed = Boolean(g.changed || result.changed);
+      const changed = retouchCanvasSegment(g.source, g.buffer, g.last, local, {
+        size: localSize(g.layer.matrix, size),
+        hardness,
+        flow: brushOpacity / 100,
+        mode: g.tool,
+        selectionMask: g.selectionMask,
+      });
+      g.changed = Boolean(g.changed || changed);
       previewGesture(g);
       g.last = local;
       return;
@@ -12976,26 +13168,35 @@ export default function Home() {
       const nextPoint = { x: local.x, y: local.y, pressure: pressure(e) };
       const spacing = Math.max(1, localSize(g.layer.matrix, size) * 0.35);
       const segmentPoints = interpolateBrushStrokePoints(g.last, nextPoint, spacing);
-      const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
-      let next: Uint8ClampedArray;
+      const brushSize = localSize(g.layer.matrix, size);
+      let changed: boolean;
       try {
-        next = g.tool === 'mixer-brush'
-          ? applyMixerBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, segmentPoints, {
-              ...mixerBrush,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-            }, g.selectionMask)
-          : g.tool === 'history-brush'
-          ? applyHistoryBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, [nextPoint], {
-              ...historyBrush,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-            }, g.selectionMask)
-          : applyArtHistoryBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, segmentPoints, {
-              ...artHistoryBrush,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-            }, g.selectionMask);
+        const retouchOptions =
+          g.tool === 'mixer-brush'
+            ? { ...mixerBrush, size: brushSize, hardness }
+            : g.tool === 'history-brush'
+            ? { ...historyBrush, size: brushSize, hardness }
+            : { ...artHistoryBrush, size: brushSize, hardness };
+        const strokePoints = g.tool === 'history-brush' ? [nextPoint] : segmentPoints;
+        if ((g.paintSymmetry?.length ?? 0) > 1) {
+          // Paint Symmetry copies are applied over the whole buffer (#220).
+          const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
+          const next = applySymmetricRetouchBrush(
+            g.tool,
+            destination,
+            g.sourcePixels,
+            g.buffer.width,
+            g.buffer.height,
+            strokePoints,
+            retouchOptions,
+            g.selectionMask,
+            g.paintSymmetry,
+          );
+          changed = g.tool === 'art-history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
+          g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+        } else
+          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask
+        );
       } catch (error) {
         if (g.tool !== 'art-history-brush') throw error;
         gesture.current = null;
@@ -13003,8 +13204,7 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Art History Brush stroke cancelled');
         return;
       }
-      if (g.tool === 'art-history-brush') g.changed = Boolean(g.changed || next.some((value, pixel) => value !== destination[pixel]));
-      g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+      if (g.tool === 'art-history-brush') g.changed = Boolean(g.changed || changed);
       g.brushPoints = [...(g.brushPoints || []), ...segmentPoints];
       g.moved = true;
       g.last = local;
@@ -14182,29 +14382,14 @@ export default function Home() {
         setNotice('Smudge stroke applied');
     } else if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.layer && g.source) {
       let changed = Boolean(g.changed);
-      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y)) {
-        const sourceContext = g.source.getContext('2d')!,
-          bufferContext = g.buffer.getContext('2d')!,
-          result = applyRetouchStroke(
-            new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
-            new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
-            {
-              width: g.buffer.width,
-              height: g.buffer.height,
-              x1: g.last.x,
-              y1: g.last.y,
-              x2: local.x,
-              y2: local.y,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-              flow: brushOpacity / 100,
-              mode: g.tool,
-              selectionMask: g.selectionMask,
-            },
-          );
-        bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
-        changed = result.changed || changed;
-      }
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
+        changed = retouchCanvasSegment(g.source, g.buffer, g.last, local, {
+          size: localSize(g.layer.matrix, size),
+          hardness,
+          flow: brushOpacity / 100,
+          mode: g.tool,
+          selectionMask: g.selectionMask,
+        }) || changed;
       if (!changed) {
         void paint(f);
         setNotice(`No ${g.tool === 'blur' ? 'Blur' : 'Sharpen'} change applied`);
@@ -17140,7 +17325,7 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
-            {frame && (tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+            {frame && paintSymmetryAppliesToTool(tool) && (
               <PaintSymmetryOverlay
                 value={paintSymmetry}
                 onChange={setPaintSymmetry}
@@ -17802,20 +17987,17 @@ export default function Home() {
               label="Levels output black"
               value={levelsOutputBlack}
               min={0}
-              max={254}
-              set={(value) =>
-                setLevelsOutputBlack(Math.min(value, levelsOutputWhite - 1))
-              }
+              max={255}
+              // Output black above output white inverts the tones.
+              set={setLevelsOutputBlack}
               suffix=""
             />
             <Slider
               label="Levels output white"
               value={levelsOutputWhite}
-              min={1}
+              min={0}
               max={255}
-              set={(value) =>
-                setLevelsOutputWhite(Math.max(value, levelsOutputBlack + 1))
-              }
+              set={setLevelsOutputWhite}
               suffix=""
             />
             <div className="adjustment-subtitle">Curves (nondestructive)</div>
@@ -18389,7 +18571,7 @@ export default function Home() {
                       </select>
                     </label>
                   )}
-                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && frame && (
+                  {paintSymmetryAppliesToTool(tool) && frame && (
                     <PaintSymmetryControls
                       value={paintSymmetry}
                       onChange={setPaintSymmetry}
@@ -18440,6 +18622,25 @@ export default function Home() {
                         ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable.'
                         : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
                     </p>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil') && (
+                    <label className="select-row">
+                      <span>Mode</span>
+                      <select
+                        aria-label="Brush mode"
+                        title="Blend mode for each stroke; dabs within one stroke never blend with each other"
+                        value={brushBlendMode}
+                        onChange={(event) => setBrushBlendMode(normalizeBrushBlendMode(event.target.value))}
+                      >
+                        {BRUSH_BLEND_MODE_GROUPS.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.modes.map((item) => (
+                              <option key={item.value} value={item.value}>{item.label}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
                   )}
                   {tool !== 'magic-eraser' && tool !== 'red-eye' && (
                     <Slider
@@ -19354,7 +19555,7 @@ export default function Home() {
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
             {filterEffects.type === 'difference-clouds' && (
-              <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
+              <p>The same smooth multi-octave clouds as Render &gt; Clouds, in black to white, difference-blended with the layer; transparent pixels count as black, so an empty layer becomes the clouds. Cloud size, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
             )}
                 {filterEffects.type === 'neural-enhance' && (
                   <>
@@ -19379,7 +19580,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && filterEffects.type !== 'difference-clouds' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
@@ -19415,8 +19616,6 @@ export default function Home() {
                           ? 'Fragment offset'
                       : filterEffects.type === 'picture-frame'
                           ? 'Frame width'
-                      : filterEffects.type === 'difference-clouds'
-                          ? 'Cloud scale'
                       : filterEffects.type === 'flame'
                           ? 'Flame detail'
                       : filterEffects.type === 'radial-blur'
@@ -19965,6 +20164,16 @@ export default function Home() {
                       }}
                     />
                   </label>
+                )}
+                {filterEffects.type === 'difference-clouds' && (
+                  <Slider
+                    label="Cloud size"
+                    value={differenceCloudScale(filterEffects)}
+                    min={MIN_CLOUD_RENDER_SCALE}
+                    max={MAX_CLOUD_RENDER_SCALE}
+                    set={(value) => setFilterEffects({ cloudScale: Math.round(value) })}
+                    suffix="px"
+                  />
                 )}
                 {filterEffects.type === 'difference-clouds' && (
                   <label className="slider">
