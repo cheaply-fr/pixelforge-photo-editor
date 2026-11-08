@@ -271,7 +271,7 @@ export default function LayersPanel({
     );
   }
   return (
-    <section className="panel layers-panel" aria-label="Layers">
+    <section className="panel layers-panel" aria-label="Layers" data-sidebar-section="layers">
       <h3>
         Layers <small>{frame.layers.length} / {MAX_DOCUMENT_LAYERS}</small>
       </h3>
@@ -382,7 +382,7 @@ export default function LayersPanel({
           ))}
         </select>
       </label>
-      <fieldset className="layer-alignment" disabled={layerLocked}>
+      <fieldset className="layer-alignment" disabled={layerLocked} data-sidebar-section="layer-alignment">
         <legend>Align to canvas</legend>
         <div className="layer-actions">
           <button onClick={() => align('left')}>Align left</button>
@@ -437,7 +437,7 @@ export default function LayersPanel({
           Lock layer
         </label>
       </div>
-      <div className="layer-actions">
+      <div className="layer-actions" data-sidebar-section="selection-options">
         <label className="layer-field">
           Selection mode
           <select
@@ -592,6 +592,7 @@ export default function LayersPanel({
           Embedded source · {layer.sourceName || 'untitled image'} · replaceable without changing transforms
         </p>
       )}
+      <div className="layer-properties" data-sidebar-section="layer-properties">
       <label className="layer-field">
         Layer name
         <input
@@ -638,8 +639,10 @@ export default function LayersPanel({
           <BlendModeOptions />
         </select>
       </label>
-      <fieldset className="layer-alignment" disabled={layerLocked}>
+      </div>
+      <fieldset className="layer-alignment" disabled={layerLocked} data-sidebar-section="layer-styles">
         <legend>Layer styles</legend>
+        <div className="layer-style-block" data-sidebar-section="layer-style-drop-shadow">
         <label>
           <input
             type="checkbox"
@@ -721,6 +724,8 @@ export default function LayersPanel({
             update={(falloff) => updateDropShadow({ falloff })}
           />
         </div>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-outer-glow">
         <label>
           <input
             type="checkbox"
@@ -750,6 +755,8 @@ export default function LayersPanel({
             }
           />
         )}
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-inner-shadow">
         <label>
           <input
             type="checkbox"
@@ -832,6 +839,8 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-inner-glow">
         <label>
           <input
             type="checkbox"
@@ -863,6 +872,8 @@ export default function LayersPanel({
             }
           />
         )}
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-bevel-emboss">
         <label>
           <input
             type="checkbox"
@@ -942,6 +953,8 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-outline">
         <label>
           <input
             type="checkbox"
@@ -988,6 +1001,8 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-color-overlay">
         <label>
           <input
             type="checkbox"
@@ -1021,6 +1036,8 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-gradient-overlay">
         <label>
           <input
             type="checkbox"
@@ -1090,6 +1107,8 @@ export default function LayersPanel({
             Reverse
           </label>
         </div>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-pattern-overlay">
         <label>
           <input
             type="checkbox"
@@ -1167,6 +1186,7 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
       </fieldset>
       <div className="layer-position">
         <NumberField
