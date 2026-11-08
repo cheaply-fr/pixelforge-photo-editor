@@ -17,6 +17,11 @@ import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
 import { CompositeCache } from './compositeCache.ts';
 import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
 import {
+  decodedTileCacheDelta,
+  sharedDecodedTileCache,
+  type DecodedTileCacheStats,
+} from './tiledAssets.ts';
+import {
   clearLayerFilterCache,
   layerFilterCacheDelta,
   primeAssetFingerprints,
@@ -87,6 +92,7 @@ type Response =
       width: number;
       height: number;
       layerCache?: LayerFilterCacheStats;
+      tileCache?: DecodedTileCacheStats;
     }
   | {
       kind: 'result-bytes';
@@ -95,6 +101,7 @@ type Response =
       width: number;
       height: number;
       layerCache?: LayerFilterCacheStats;
+      tileCache?: DecodedTileCacheStats;
     }
   | { kind: 'error'; id: number; name: string; message: string };
 
@@ -160,15 +167,16 @@ async function encodeResult(
   width: number,
   height: number,
   layerCache: LayerFilterCacheStats,
+  tileCache: DecodedTileCacheStats,
 ): Promise<void> {
   if (typeof canvas.transferToImageBitmap === 'function') {
     const image = canvas.transferToImageBitmap();
-    scope.postMessage({ kind: 'result', id, image, width, height, layerCache }, [image]);
+    scope.postMessage({ kind: 'result', id, image, width, height, layerCache, tileCache }, [image]);
     return;
   }
   const blob = await canvas.convertToBlob({ type: 'image/png' });
   const bytes = await blob.arrayBuffer();
-  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache }, [
+  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache, tileCache }, [
     bytes,
   ]);
 }
@@ -212,6 +220,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
   void (async () => {
     let output: OffscreenCanvas | undefined;
     const cacheBefore = sharedLayerFilterCache().stats();
+    const tilesBefore = sharedDecodedTileCache().stats();
     try {
       const resolved = resolveRequestAssets(request.assets, request.assetKeys, assetStore);
       if (resolved.missing.length) {
@@ -271,6 +280,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         request.frame.w,
         request.frame.h,
         layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()),
+        decodedTileCacheDelta(tilesBefore, sharedDecodedTileCache().stats()),
       );
     } catch (error) {
       if (cancelled.has(request.id))

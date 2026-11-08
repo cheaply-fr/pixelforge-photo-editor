@@ -350,6 +350,8 @@ import {
   mixRectByMask,
   type PixelRect,
 } from '../src/selectionClip';
+import { canvasDirtyBox, noteCanvasWrite, trackCanvasWrites, untrackCanvasWrites } from '../src/canvasDirty';
+import { emptyTiledAsset, isTiledAsset, tiledContentRegion } from '../src/tiledAssets';
 import {
   refineSelectionAlpha,
   type SelectionRefineMode,
@@ -1646,6 +1648,11 @@ type Gesture = {
   selectionStroke?: SelectionStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
+  /**
+   * Asset id `buffer` was drawn from when its writes are tracked
+   * (`src/canvasDirty.ts`), so the commit hashes only the touched tiles.
+   */
+  tileBase?: string;
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
   cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -1880,7 +1887,10 @@ const stampCanvas = (
     });
     changed = secondaryResult.changed || changed;
   }
-  if (changed) context.putImageData(image, left, top);
+  if (changed) {
+    context.putImageData(image, left, top);
+    noteCanvasWrite(target, left, top, width, height);
+  }
   return changed;
 };
 
@@ -2395,6 +2405,7 @@ const confineStrokeRect = (
   if (!changed) return false;
   image.data.set(mixed);
   targetContext.putImageData(image, rect.x, rect.y);
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
   return true;
 };
 /** Frame-space selection coverage (alpha) for edits stored at canvas size. */
@@ -3199,8 +3210,16 @@ export default function Home() {
    * PNG it was just encoded from, and the render worker receives the pixels
    * with the commit render instead of decoding the data URL again.
    */
-  const addPaintedAsset = (buffer: HTMLCanvasElement) => {
-    const id = addAsset(assets.current, buffer);
+  const addPaintedAsset = (buffer: HTMLCanvasElement, base?: string) => {
+    // Dirty-rectangle hint: every write since the buffer was drawn from
+    // `base` was tracked, so unchanged tiles keep `base`'s tiles unread.
+    const dirty = base ? canvasDirtyBox(buffer) : undefined;
+    untrackCanvasWrites(buffer);
+    const id = addAsset(
+      assets.current,
+      buffer,
+      dirty !== undefined ? { hint: { base: assets.current[base!], dirty } } : undefined,
+    );
     const asset = assets.current[id];
     primeDecodedAsset(asset, buffer);
     primeWorkerDecodedAsset(asset, buffer);
@@ -8949,6 +8968,9 @@ export default function Home() {
           size: brushSize, hardness, flow: brushOpacity / 100, selectionMask,
         });
       } else {
+        // Without a selection every write is a tracked stamp, so the commit
+        // hashes only the tiles the path touched.
+        if (!selectionMask) trackCanvasWrites(buffer);
         changed = stampStrokePathSamples(buffer, plan.samples, {
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
@@ -8978,7 +9000,7 @@ export default function Home() {
         setNotice('Stroke Path painted nothing: the path lies outside this layer or selection');
         return;
       }
-      const asset = addPaintedAsset(buffer);
+      const asset = addPaintedAsset(buffer, tool !== 'smudge' && !selectionMask ? layer.asset : undefined);
       const label = STROKE_PATH_TOOL_LABELS[tool];
       if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
         setNotice(
@@ -9427,7 +9449,14 @@ export default function Home() {
       if (current() !== f) return true;
       const buffer = surface(plan.w, plan.h);
       buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
-      const asset = addAsset(assets.current, buffer);
+      // Outside the drawn layer the new canvas is transparent: only the
+      // tiles under it are read back and hashed.
+      const asset = addAsset(assets.current, buffer, {
+        hint: {
+          base: emptyTiledAsset(plan.w, plan.h),
+          dirty: { x: plan.offsetX, y: plan.offsetY, w: source.w, h: source.h },
+        },
+      });
       // The expansion is pixel-identical, so it replaces the current history
       // entry instead of adding one: undo is unaffected and the page does not
       // reflow (e.g. a growing History list on phones) under the pointer.
@@ -9462,7 +9491,7 @@ export default function Home() {
     /** Source canvases of the most recently created assets. */
     recent: new Map<string, HTMLCanvasElement>(),
   });
-  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: { tiled?: boolean }): string => {
+  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: Parameters<typeof addDocumentAsset>[2]): string => {
     const id = addDocumentAsset(target, source, options);
     const recent = autoTrim.current.recent;
     recent.delete(id);
@@ -9484,12 +9513,21 @@ export default function Home() {
       try {
         const context = source.getContext('2d');
         if (!context) continue;
+        // A tiled asset is transparent outside its non-empty tiles, so only
+        // their bounding rectangle is read back (a stroke on a new layer
+        // reads a few tiles instead of the whole canvas).
+        const region = isTiledAsset(stored) ? tiledContentRegion(stored) : undefined;
         const plan = planLayerTrim(
-          context.getImageData(0, 0, stored.w, stored.h).data,
+          region === undefined
+            ? context.getImageData(0, 0, stored.w, stored.h).data
+            : region
+              ? context.getImageData(region.x, region.y, region.width, region.height).data
+              : [],
           stored.w,
           stored.h,
           layer.matrix,
           AUTO_TRIM_MARGIN,
+          region,
         );
         if (!plan) {
           state.known.add(layer.asset);
@@ -12305,6 +12343,10 @@ export default function Home() {
           const image = await decodeAsset(assets.current[rasterAsset!]),
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
+          // Every later write goes through stampCanvas / confineStrokeRect,
+          // which report their rectangles for the commit's tile hint.
+          trackCanvasWrites(buffer);
+          g.tileBase = rasterAsset!;
           // Photoshop confines painting and erasing to the active selection.
           const selectionMask = f.selection && layer.kind === 'raster'
             ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
@@ -13569,7 +13611,7 @@ export default function Home() {
           colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
-      const asset = addPaintedAsset(g.buffer);
+      const asset = addPaintedAsset(g.buffer, g.tileBase);
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
