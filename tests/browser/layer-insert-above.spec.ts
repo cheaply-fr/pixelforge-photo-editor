@@ -110,29 +110,29 @@ test('a new layer above a clipping base or clipped layer joins the clipping grou
   await addPaintLayer(page);
   await expect(footer(page)).toContainText('Layer added to the clipping group');
   expect(await order(page)).toEqual(['Clip', 'Paint 3', 'Base', 'Background']);
-  await expect(page.getByText('Clipped to Base', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
   // The layer that was clipped above stays clipped to the same base.
   await selectLayer(page, 'Clip');
-  await expect(page.getByText('Clipped to Base', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
 
   // Adding above the top clipped layer extends the group.
   await addPaintLayer(page);
   await expect(footer(page)).toContainText('Layer added to the clipping group');
   expect(await order(page)).toEqual(['Paint 4', 'Clip', 'Paint 3', 'Base', 'Background']);
-  await expect(page.getByText('Clipped to Base', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
 
   // Undo removes it without unclipping the rest.
   await undo(page);
   expect(await order(page)).toEqual(['Clip', 'Paint 3', 'Base', 'Background']);
   await selectLayer(page, 'Clip');
-  await expect(page.getByText('Clipped to Base', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
 
   // A free layer above an unclipped one is not clipped.
   await selectLayer(page, 'Background');
   await addPaintLayer(page);
   await expect(footer(page)).toContainText('Layer added');
   await expect(footer(page)).not.toContainText('clipping group');
-  await expect(page.getByText(/^Clipped to /).filter({ visible: true })).toHaveCount(0);
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to / })).toHaveCount(0);
 });
 
 test('adding and deleting an empty layer reuses the finished composite on a large stack', async ({ page }) => {
@@ -210,11 +210,11 @@ test('Duplicate Layer puts the copy directly above its source, inside its clippi
   await menu(page, 'Layer', /^Duplicate Layer/);
   await settled(page);
   expect(await order(page)).toEqual(['Paint 3', 'Paint 2 copy', 'Paint 2', 'Paint 1 copy', 'Paint 1', 'Background']);
-  await expect(page.getByText('Clipped to Paint 1 copy', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Paint 1 copy$/ })).toBeVisible();
   await selectLayer(page, 'Paint 2');
-  await expect(page.getByText('Clipped to Paint 1 copy', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Paint 1 copy$/ })).toBeVisible();
   await selectLayer(page, 'Paint 3');
-  await expect(page.getByText(/^Clipped to /).filter({ visible: true })).toHaveCount(0);
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to / })).toHaveCount(0);
 });
 
 test('reordering a layer under a clipping group reuses the clipped results and matches a cold render', async ({ page }) => {

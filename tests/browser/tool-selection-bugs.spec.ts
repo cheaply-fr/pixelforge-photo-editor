@@ -241,14 +241,14 @@ test('every consecutive clipped layer uses the group base, and arranging keeps c
   }
   // The second clipped layer shows only inside the base, not over the
   // full-canvas Red layer it sits on.
-  await expect(page.getByText('Clipped to Base', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
   expect(await pixels(page, [[150, 100], [20, 20], [250, 180]])).toEqual([[0, 0, 255, 255], WHITE, WHITE]);
 
   // Send Backward inside the group keeps both layers clipped.
   await menu(page, 'Layer', /^Send Backward/);
   await expect(footer(page)).toContainText('Send Backward applied; undo restores the previous order');
   await settled(page);
-  await expect(page.getByText('Clipped to Base', { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.locator('p.mask-status').filter({ hasText: /^Clipped to Base$/ })).toBeVisible();
   expect(await pixels(page, [[150, 100], [20, 20]])).toEqual([[255, 0, 0, 255], WHITE]);
 
   // Bring Forward restores the order; still clipped.
