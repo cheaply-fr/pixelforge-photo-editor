@@ -187,9 +187,10 @@ Known remaining families and release work:
    symmetry for Stroke Path and for Mixer/History/Clone/Heal, custom brush
    tips (no Glint tip), brush blend mode, tiled follow-ups (dirty-rect hints,
    `.pixelforge` v4 tiles, decoded-tile cache, dirty-region previews,
-   off-main-thread encoding), and a local e2e hazard: Playwright reuses any
-   server on port 4173 (possibly another worktree's), and concurrent runs in
-   one worktree wipe `test-results`.
+   off-main-thread encoding). Local e2e isolation (W4-10): Playwright no
+   longer reuses a server already on its port unless
+   `PLAYWRIGHT_REUSE_SERVER=1`; set `PLAYWRIGHT_PORT` per worktree and
+   `PLAYWRIGHT_OUTPUT_DIR` per concurrent run (see `playwright.settings.mjs`).
 8. **Host-environment notes (not app bugs):** in the Claude desktop app's
    built-in browser, `window.open` popups close the browser pane, ZIP
    downloads are saved as GUID-named `.tmp` files, and a PNG export once

@@ -40,6 +40,7 @@ next-env.d.ts
 .firebase/
 firebase-debug.log*
 playwright-report/
+/test-results-*/
 test-results/
 *.tsbuildinfo
 gha-creds-*.json
