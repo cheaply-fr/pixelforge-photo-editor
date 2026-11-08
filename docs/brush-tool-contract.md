@@ -224,6 +224,7 @@ Stroke Path with Brush (Brush, Pencil, Eraser; the 20,000-dab budget covers
 all copies), Mixer Brush, History and Art History Brush, Clone Stamp and
 Healing Brush (each copy samples a source point mapped by the same
 transform); Spot Healing, Patch and Smudge stay single-copy (see
-[`paint-symmetry-contract.md`](./paint-symmetry-contract.md)). Open (fix wave
-4 in the rubric): there are no custom brush tip shapes and no brush blend
-mode.
+[`paint-symmetry-contract.md`](./paint-symmetry-contract.md)). Brush and Pencil have a **Mode** (blend mode) option (W4-3); see
+"Brush and Pencil Mode" in
+[`brush-dynamics-contract.md`](./brush-dynamics-contract.md). Open (fix wave
+4 in the rubric): there are no custom brush tip shapes.

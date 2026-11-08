@@ -38,6 +38,7 @@ const base = {
   brushBuildUp: 0,
   brushFlow: 100,
   brushOpacity: 100,
+  brushBlendMode: 'source-over',
 } as const satisfies Partial<CustomBrushPreset>;
 
 const dynamics = (values: Partial<BrushDynamics>): BrushDynamics =>
@@ -68,11 +69,12 @@ export const BUILT_IN_BRUSH_PRESETS: readonly BuiltInBrushPreset[] = Object.free
     ...base,
     id: 'builtin-soft-glow',
     label: 'Soft glow',
-    description: 'Large, fully soft and low opacity for halos and light bloom',
+    description: 'Large, fully soft, low opacity and Screen mode for halos and light bloom',
     size: 220,
     hardness: 0,
     spacing: 20,
     brushOpacity: 12,
+    brushBlendMode: 'screen',
     brushDynamics: dynamics({}),
   },
   {

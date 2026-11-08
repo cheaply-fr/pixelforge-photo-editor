@@ -285,17 +285,23 @@ import {
 } from '../src/layerMergeVisible';
 import {
   applyLayerArrange,
+  clippingGroupKeys,
+  expandClippingGroupSelection,
   layerArrangeReason,
   planLayerArrange,
+  stepLayerRuns,
   type LayerArrangeMode,
 } from '../src/layerArrange';
 import { combineSelectionBounds } from '../src/layerSelection';
+import { rasterizedLayer, rasterizeRenderSource } from '../src/layerRasterize';
 import { applyLayerLock, layerLockReason, planLayerLock } from '../src/layerLock';
 import {
   clippingCandidateBase,
   clippingGroupBase,
   isClippingSourceLayer,
   preserveClippingAfterReorder,
+  preserveClippingAfterReplace,
+  sanitizeClippingRelations,
   validClippingRelationship,
 } from '../src/layerClipping';
 import CurveEditor from '../src/CurveEditor';
@@ -440,6 +446,15 @@ import {
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
+import {
+  BRUSH_BLEND_DEFAULT,
+  BRUSH_BLEND_MODE_GROUPS,
+  compositeBrushBlendLayer,
+  compositeBrushBlendRect,
+  normalizeBrushBlendMode,
+  usesBrushBlendStroke,
+  type BrushBlendMode,
+} from '../src/brushBlend';
 import {
   GRADIENT_BLEND_DEFAULT,
   GRADIENT_BLEND_LABELS,
@@ -1669,6 +1684,8 @@ type Gesture = {
   selectionMask?: Uint8ClampedArray;
   /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
   selectionStroke?: SelectionStroke;
+  /** Separate stroke buffer for a Brush/Pencil stroke in a non-Normal blend mode. */
+  blendStroke?: BrushBlendStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
@@ -2484,11 +2501,67 @@ const confinedGestureEdit = (
   draw: (target: HTMLCanvasElement) => boolean,
 ) => {
   const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (g.blendStroke) {
+    const changed = draw(g.blendStroke.paint);
+    if (changed)
+      blendStrokeRect(g.blendStroke, buffer, stroke?.mask, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
+    return changed;
+  }
   if (!stroke) return draw(buffer);
   const changed = draw(stroke.raw);
   if (changed)
     confineStrokeRect(stroke, buffer, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
   return changed;
+};
+/**
+ * Brush/Pencil stroke in a non-Normal blend mode (see `src/brushBlend.ts`).
+ * Dabs land on the transparent `paint` canvas with the ordinary source-over
+ * dab arithmetic, so they build coverage like Normal and never blend against
+ * each other; each touched rectangle of the visible buffer is recomposited as
+ * `original ⊕mode paint` (then confined by the selection, if any). The preview
+ * and the commit both read that buffer, so they are identical. Normal strokes
+ * never create one and keep stamping straight onto the buffer.
+ */
+type BrushBlendStroke = {
+  paint: HTMLCanvasElement;
+  original: Uint8ClampedArray;
+  mode: BrushBlendMode;
+};
+const beginBrushBlendStroke = (
+  buffer: HTMLCanvasElement,
+  tool: string,
+  mode: BrushBlendMode,
+  selection: SelectionStroke | undefined,
+): BrushBlendStroke | undefined => {
+  if (!usesBrushBlendStroke(tool, mode)) return undefined;
+  return {
+    paint: surface(buffer.width, buffer.height),
+    original: selection?.original ??
+      buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+    mode,
+  };
+};
+/** Recomposite one rectangle of a blend-mode stroke into the visible buffer. */
+const blendStrokeRect = (
+  stroke: BrushBlendStroke,
+  target: HTMLCanvasElement,
+  mask: Uint8ClampedArray | undefined,
+  rect: PixelRect | null,
+) => {
+  if (!rect) return false;
+  const image = stroke.paint
+      .getContext('2d')!
+      .getImageData(rect.x, rect.y, rect.width, rect.height),
+    targetContext = target.getContext('2d')!,
+    before = targetContext.getImageData(rect.x, rect.y, rect.width, rect.height).data,
+    composed = compositeBrushBlendRect(stroke.original, image.data, target.width, rect, stroke.mode, mask);
+  let changed = false;
+  for (let index = 0; index < composed.length && !changed; index += 1)
+    changed = composed[index] !== before[index];
+  if (!changed) return false;
+  image.data.set(composed);
+  targetContext.putImageData(image, rect.x, rect.y);
+  return true;
 };
 /**
  * Stamp a Brush/Pencil/Eraser/Clone/Healing segment into the gesture buffer,
@@ -2511,14 +2584,18 @@ const stampGestureSegment = (
   const draw = (target: HTMLCanvasElement) =>
       stampCanvasSegment(target, from, to, { ...options, symmetry }),
     buffer = g.buffer!,
-    stroke = g.selectionStroke;
-  if (!stroke) return draw(buffer);
-  const changed = draw(stroke.raw);
+    stroke = g.selectionStroke,
+    blend = g.blendStroke;
+  if (!stroke && !blend) return draw(buffer);
+  const changed = draw(blend ? blend.paint : stroke!.raw);
   if (changed)
-    for (const transform of symmetry)
-      confineStrokeRect(stroke, buffer, brushSegmentRect(
+    for (const transform of symmetry) {
+      const rect = brushSegmentRect(
         applyAffine(transform, from), applyAffine(transform, to),
-        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height));
+        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height);
+      if (blend) blendStrokeRect(blend, buffer, stroke?.mask, rect);
+      else confineStrokeRect(stroke!, buffer, rect);
+    }
   return changed;
 };
 /** Pattern Stamp counterpart of `stampGestureSegment`. */
@@ -2770,6 +2847,7 @@ export default function Home() {
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
     [brushOpacity, setBrushOpacity] = useState(100),
+    [brushBlendMode, setBrushBlendMode] = useState<BrushBlendMode>(BRUSH_BLEND_DEFAULT),
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
@@ -3589,6 +3667,7 @@ export default function Home() {
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -3697,6 +3776,7 @@ export default function Home() {
     setBackgroundColor(s.backgroundColor || '#ffffff');
     setSize(clampBrushSize(s.size));
     setBrushOpacity(s.brushOpacity ?? 100);
+    setBrushBlendMode(normalizeBrushBlendMode(s.brushBlendMode));
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
@@ -3765,6 +3845,7 @@ export default function Home() {
     setBackgroundColor,
     setSize,
     setBrushOpacity,
+    setBrushBlendMode,
     setHardness,
     setPressureSize,
     setPressureOpacity,
@@ -3869,6 +3950,8 @@ export default function Home() {
     setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
     if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
+    // Presets saved before the blend mode existed paint Normal.
+    setBrushBlendMode(normalizeBrushBlendMode(preset.brushBlendMode));
     setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
   };
@@ -3927,6 +4010,7 @@ export default function Home() {
         brushBuildUp,
         brushFlow,
         brushOpacity,
+        brushBlendMode,
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -7443,6 +7527,7 @@ export default function Home() {
         backgroundColor,
         size,
         brushOpacity,
+        brushBlendMode,
         hardness,
         pressureSize,
         pressureOpacity,
@@ -7565,6 +7650,7 @@ export default function Home() {
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -9131,7 +9217,11 @@ export default function Home() {
           size: brushSize, hardness, flow: brushOpacity / 100, selectionMask,
         });
       } else {
-        changed = stampStrokePathSamples(buffer, plan.samples, {
+        // Brush/Pencil in a non-Normal mode stroke the path on a transparent
+        // buffer, then composite it once over the layer (src/brushBlend.ts).
+        const blendMode = usesBrushBlendStroke(tool, brushBlendMode) ? brushBlendMode : undefined,
+          target = blendMode ? surface(buffer.width, buffer.height) : buffer;
+        changed = stampStrokePathSamples(target, plan.samples, {
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -9153,6 +9243,17 @@ export default function Home() {
           colorBackground: brushColor(backgroundColor),
           symmetry,
         });
+        if (changed && blendMode) {
+          const bufferContext = buffer.getContext('2d')!,
+            composed = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+          composed.data.set(compositeBrushBlendLayer(
+            composed.data,
+            target.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+            buffer.width,
+            blendMode,
+          ));
+          bufferContext.putImageData(composed, 0, 0);
+        }
         // Photoshop confines painting to the active selection (every
         // symmetry copy is confined by the same layer-space mask).
         if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
@@ -9311,7 +9412,7 @@ export default function Home() {
         locked: false,
         ...(mergeGroupIds.size === 1 ? { groupId: [...mergeGroupIds][0] } : {}),
       };
-      const next = selectedPlan?.ok
+      const replaced = selectedPlan?.ok
         ? applySelectedLayerMerge(f, selectedPlan, merged)
         : (() => {
             const layers = f.layers.slice();
@@ -9331,6 +9432,14 @@ export default function Home() {
               selectedLayerIds: [merged.id],
             };
           })();
+      // A merged base keeps its remaining clipped layers, and a merge inside
+      // one clipping group stays clipped.
+      const next = preserveClippingAfterReplace(
+        f,
+        selectedLayers.map((layer) => layer.id),
+        replaced,
+        merged.id,
+      );
       if (
         commit(next)
       )
@@ -9418,11 +9527,19 @@ export default function Home() {
   };
   const reorder = (direction: number) => {
     const f = current(),
-      layers = f.layers.slice(),
-      from = layers.findIndex((l) => l.id === f.active),
+      from = f.layers.findIndex((l) => l.id === f.active),
       to = from + direction;
-    if (to < 0 || to >= layers.length || layerIsLocked(f, layers[from])) return;
-    [layers[from], layers[to]] = [layers[to], layers[from]];
+    if (to < 0 || to >= f.layers.length || layerIsLocked(f, f.layers[from])) return;
+    // A clipping group base moves with its clipped layers, and a step past
+    // another clipping group jumps the whole group instead of landing inside it.
+    const keys = clippingGroupKeys(f),
+      moving = expandClippingGroupSelection(f, [f.active], keys);
+    if (f.layers.some((layer) => moving.has(layer.id) && layerIsLocked(f, layer))) {
+      setNotice('Unlock the clipped layers before moving their base');
+      return;
+    }
+    const layers = stepLayerRuns(f.layers, moving, direction > 0 ? 1 : -1, keys);
+    if (layers.every((layer, index) => layer === f.layers[index])) return;
     const { frame: next, released } = preserveClippingAfterReorder(f, { ...f, layers });
     if (commit(next) && released.length)
       setNotice(`Clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`);
@@ -9461,39 +9578,21 @@ export default function Home() {
     // Layer styles stay live on the rasterized layer instead of being baked:
     // the pixels are rendered without them and the same styles are kept, so
     // a glow or shadow remains editable (and follows the new pixels' alpha).
+    // The clipping relationship, folder, link and other layer properties are
+    // kept on the new pixels too (see rasterizedLayer).
     const keptStyles = isNeutralLayerStyles(layer.styles) ? undefined : layer.styles;
     try {
       const image = await renderFrame(
         {
           ...f,
-          layers: [
-            {
-              ...layer,
-              visible: true,
-              opacity: 1,
-              blend: 'source-over',
-              // Bake live filter effects and adjustments into the new pixels,
-              // as Photoshop bakes Smart Filters when rasterizing.
-              adjustments: layer.adjustments,
-              styles: undefined,
-            },
-          ],
+          // Bake live filter effects, smart filters and adjustments into the
+          // new pixels, as Photoshop bakes Smart Filters when rasterizing.
+          layers: [rasterizeRenderSource(layer)],
         },
         assets.current,
       );
       if (current() !== f) return;
-      const rasterLayer: Layer = {
-        ...commonLayer(layer.name),
-        id: layer.id,
-        kind: 'raster',
-        asset: addAsset(assets.current, image),
-        opacity: layer.opacity,
-        blend: layer.blend,
-        visible: layer.visible,
-        adjustments: { ...neutral },
-        groupId: layer.groupId,
-        ...(keptStyles ? { styles: keptStyles } : {}),
-      };
+      const rasterLayer = rasterizedLayer(layer, addAsset(assets.current, image));
       const changed = commit({
         ...f,
         layers: f.layers.map((item) => (item.id === layer.id ? rasterLayer : item)),
@@ -10216,7 +10315,9 @@ export default function Home() {
       setNotice('Unlock every selected layer before nesting them');
       return;
     }
-    const nested: Frame = {
+    // Links to bases left outside the nested contents are dropped there; a
+    // nested run of clipped layers is clipped outside instead (below).
+    const nested: Frame = sanitizeClippingRelations({
       w: original.w,
       h: original.h,
       ...(original.colorMode ? { colorMode: original.colorMode } : {}),
@@ -10227,7 +10328,7 @@ export default function Home() {
         ? original.active
         : selected[0].id,
       selectedLayerIds: selected.map((layer) => layer.id),
-    };
+    });
     try {
       const rendered = await renderFrame(nested, assets.current);
       if (current() !== original) {
@@ -10250,13 +10351,13 @@ export default function Home() {
         groups = (original.groups || []).filter((group) =>
           original.layers.some((layer) => !selectedIds.has(layer.id) && layer.groupId === group.id),
         );
-      if (commit({
+      if (commit(preserveClippingAfterReplace(original, [...selectedIds], {
         ...original,
         layers: [...layersBefore, nestedLayer, ...layersAfter],
         groups: groups.length ? groups : undefined,
         active: nestedLayer.id,
         selectedLayerIds: [nestedLayer.id],
-      }))
+      }, nestedLayer.id)))
         setNotice('Selected layers nested into an editable Smart Object');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not nest the selected layers');
@@ -12491,6 +12592,8 @@ export default function Home() {
           g.buffer = buffer;
           g.selectionMask = selectionMask;
           g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
+          // Brush/Pencil in a non-Normal mode paint on their own stroke buffer.
+          g.blendStroke = beginBrushBlendStroke(buffer, tool, brushBlendMode, g.selectionStroke);
           let from = local;
           let stabilized = local;
           for (const point of g.queued || [
@@ -18437,6 +18540,25 @@ export default function Home() {
                         ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable.'
                         : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
                     </p>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil') && (
+                    <label className="select-row">
+                      <span>Mode</span>
+                      <select
+                        aria-label="Brush mode"
+                        title="Blend mode for each stroke; dabs within one stroke never blend with each other"
+                        value={brushBlendMode}
+                        onChange={(event) => setBrushBlendMode(normalizeBrushBlendMode(event.target.value))}
+                      >
+                        {BRUSH_BLEND_MODE_GROUPS.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.modes.map((item) => (
+                              <option key={item.value} value={item.value}>{item.label}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
                   )}
                   {tool !== 'magic-eraser' && tool !== 'red-eye' && (
                     <Slider
