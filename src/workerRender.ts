@@ -317,7 +317,21 @@ export async function renderFrameWithWorker(
     options.forceWorker === true ||
     globalScope.__PIXELFORGE_FORCE_WORKER__ === true ||
     frame.w * frame.h >= WORKER_MIN_PIXELS;
-  if (overrides || !useWorker || !canRenderInWorker()) return fallback();
+  if (!useWorker || !canRenderInWorker()) return fallback();
+  if (overrides) {
+    // Gesture previews of large documents go to the persistent worker too:
+    // it holds the composite below the stroke and the filtered layers above
+    // it, which a main-thread render would recompute for every preview.
+    if (!options.reuseWorker) return fallback();
+    validateFrame(frame, assets);
+    const bitmaps = await overrideBitmaps(overrides);
+    if (!bitmaps) return fallback();
+    if (isCancelled()) {
+      closeOverrideBitmaps(bitmaps);
+      throw abortError();
+    }
+    return persistentWorkerRender(frame, assets, options, fallback, bitmaps);
+  }
   validateFrame(frame, assets);
   if (options.signal?.aborted) throw abortError();
   if (options.reuseWorker)
@@ -539,7 +553,22 @@ type PersistentTask = {
   lastCompleted: number;
   watchdog?: RenderWatchdog;
   abortHandler?: () => void;
+  /**
+   * In-progress stroke surfaces as bitmaps, transferred with the request so
+   * gesture previews render in the worker, against its warm layer and
+   * composite caches, instead of recomputing every filtered layer on the
+   * main thread. Detached once posted.
+   */
+  overrides?: Record<string, ImageBitmap>;
+  overridesPosted?: boolean;
 };
+
+function closeOverrideBitmaps(bitmaps: Record<string, ImageBitmap> | undefined): void {
+  if (!bitmaps) return;
+  for (const bitmap of Object.values(bitmaps)) {
+    try { bitmap.close(); } catch { /* already detached */ }
+  }
+}
 
 /**
  * One-worker latest-wins session used by the editor's committed render path.
@@ -563,6 +592,7 @@ class PersistentWorkerSession {
     assets: Assets,
     options: WorkerRenderOptions,
     fallback: PersistentFallback,
+    overrides?: Record<string, ImageBitmap>,
   ): Promise<CanvasImageSource> {
     const id = ++requestId;
     return new Promise<CanvasImageSource>((resolve, reject) => {
@@ -572,6 +602,7 @@ class PersistentWorkerSession {
         assets,
         options,
         fallback,
+        overrides,
         resolve,
         reject,
         settled: false,
@@ -584,6 +615,7 @@ class PersistentWorkerSession {
       });
       if (options.signal?.aborted || options.isCancelled?.()) {
         task.settled = true;
+        closeOverrideBitmaps(task.overrides);
         reject(abortError());
         return;
       }
@@ -597,6 +629,7 @@ class PersistentWorkerSession {
 
   private rejectQueued(task: PersistentTask): void {
     task.settled = true;
+    if (!task.overridesPosted) closeOverrideBitmaps(task.overrides);
     if (task.abortHandler) task.options.signal?.removeEventListener('abort', task.abortHandler);
     task.reject(abortError());
     if (this.queued === task) this.queued = undefined;
@@ -621,6 +654,15 @@ class PersistentWorkerSession {
     // Mark the task active before constructing/posting so a constructor or
     // postMessage failure can settle it through the normal fallback path.
     this.active = task;
+    if (task.overridesPosted) {
+      // The stroke bitmaps went with the first attempt; a resend (missing
+      // asset) renders this preview on the main thread instead.
+      this.finish(task, () => {
+        void task.fallback().then(task.resolve, task.reject);
+      });
+      void this.startNext();
+      return;
+    }
     try {
       const worker = this.ensureWorker();
       task.watchdog = startRenderWatchdog(renderWatchdogBudget(task.frame), (error) => {
@@ -642,7 +684,9 @@ class PersistentWorkerSession {
         decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
         filterWorkers: filterWorkerOverride(),
-      }, primes.transfer);
+        ...(task.overrides ? { overrides: task.overrides } : {}),
+      }, [...primes.transfer, ...Object.values(task.overrides ?? {})]);
+      if (task.overrides) task.overridesPosted = true;
       this.workerAssetKeys = new Set(Object.values(assetKeys));
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
@@ -991,10 +1035,31 @@ function persistentWorkerRender(
   assets: Assets,
   options: WorkerRenderOptions,
   fallback: PersistentFallback,
+  overrides?: Record<string, ImageBitmap>,
 ): Promise<CanvasImageSource> {
   try {
-    return persistentSession.submit(frame, assets, options, fallback);
+    return persistentSession.submit(frame, assets, options, fallback, overrides);
   } catch {
+    closeOverrideBitmaps(overrides);
     return fallback();
+  }
+}
+
+/**
+ * Snapshot live stroke canvases as transferable bitmaps for the worker, or
+ * undefined when the browser cannot (the caller then renders on the main
+ * thread as before).
+ */
+async function overrideBitmaps(
+  overrides: Record<string, HTMLCanvasElement>,
+): Promise<Record<string, ImageBitmap> | undefined> {
+  if (typeof createImageBitmap !== 'function') return undefined;
+  const bitmaps: Record<string, ImageBitmap> = {};
+  try {
+    for (const [id, canvas] of Object.entries(overrides)) bitmaps[id] = await createImageBitmap(canvas);
+    return bitmaps;
+  } catch {
+    closeOverrideBitmaps(bitmaps);
+    return undefined;
   }
 }

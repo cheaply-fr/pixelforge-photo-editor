@@ -37,7 +37,37 @@ type RenderRequest = {
   filterWorkers?: number;
   /** Pixels the main thread already holds for a just-committed asset. */
   decodedPixels?: Array<{ id: string; key: string; pixels: ArrayBuffer }>;
+  /** Live stroke surfaces (layer id -> bitmap) for a gesture preview. */
+  overrides?: Record<string, ImageBitmap>;
 };
+
+/** Accept only bitmaps for layers of this frame, at a bounded size. */
+function requestOverrides(
+  value: unknown,
+  frame: Frame,
+): Record<string, HTMLCanvasElement> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const ids = new Set(frame.layers.map((layer) => layer.id));
+  const overrides: Record<string, HTMLCanvasElement> = {};
+  for (const [id, bitmap] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      !ids.has(id) ||
+      typeof ImageBitmap === 'undefined' ||
+      !(bitmap instanceof ImageBitmap) ||
+      bitmap.width < 1 || bitmap.height < 1 ||
+      bitmap.width > 16000 || bitmap.height > 16000
+    )
+      throw new Error('Worker render overrides are invalid');
+    overrides[id] = bitmap as unknown as HTMLCanvasElement;
+  }
+  return Object.keys(overrides).length ? overrides : undefined;
+}
+
+function closeRequestOverrides(value: unknown): void {
+  if (!value || typeof value !== 'object') return;
+  for (const bitmap of Object.values(value as Record<string, unknown>))
+    if (typeof ImageBitmap !== 'undefined' && bitmap instanceof ImageBitmap) bitmap.close();
+}
 type CancelRequest = { kind: 'cancel'; id: number };
 /** Start filter workers and JIT-warm heavy kernels before a render needs them. */
 type PrewarmRequest = { kind: 'prewarm-filters'; types: string[]; filterWorkers?: number };
@@ -205,7 +235,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
       output = (await renderFrame(
         request.frame,
         request.assets,
-        undefined,
+        requestOverrides(request.overrides, request.frame),
         {
           compositeCache,
           tiledRevision: request.id,
@@ -254,6 +284,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
       // Decoded sources persist between requests (content-keyed, bounded);
       // bitmaps evicted during this render are closed now that it is done.
       releaseRetiredDecodedAssets();
+      closeRequestOverrides(request.overrides);
       cancelled.delete(request.id);
       activeId = undefined;
     }

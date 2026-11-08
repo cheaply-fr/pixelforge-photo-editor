@@ -2467,6 +2467,8 @@ export type RenderOptions = {
    * cache; pass null to render every filter from scratch.
    */
   layerFilterCache?: ByteLruCache<CanvasImageSource> | null;
+  /** Internal: set by the outermost render after it starts a cache pass. */
+  layerFilterPass?: boolean;
   /**
    * Reuse the composite below the active layer between renders of large
    * stacks (see compositeCache.ts). Applies to the outermost render only.
@@ -2651,6 +2653,12 @@ export async function renderFrame(
       ? options?.compositeCache
       : undefined;
   if (options?.compositeCache) options = { ...options, compositeCache: undefined };
+  if (!options?.layerFilterPass) {
+    // One pass per top-level render, so the layer cache keeps a stable set of
+    // layers instead of cycling through more layers than fit its budget.
+    if (options?.layerFilterCache !== null) (options?.layerFilterCache ?? sharedLayerFilterCache()).beginPass();
+    options = { ...options, layerFilterPass: true };
+  }
   const out = surface(frame.w, frame.h),
     context = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group])),
@@ -2961,13 +2969,17 @@ export async function renderFrame(
     const stylesInFrame = stylesActive && layerStylesFollowMask(layer, assets);
     const liveFilterActive = !isNeutralFilterEffects(effectiveFilterEffects(layer.adjustments.filterEffects));
     const unstyledLayer = { ...layer, styles: undefined };
+    // Tiled blurs are cached too: their tile cache is keyed by the document
+    // revision, so without this a Motion Blur layer above the edited one was
+    // recomputed after every brush stroke. Styled layers are keyed even
+    // without a filter, because styles alone cost seconds on large layers.
     const filteredKey = localFilterCache
-      ? layerFilterCacheKey(unstyledLayer, assets, {
-          tiledFilter:
-            options?.tiledRevision !== undefined &&
-            isTiledNeighborhoodBlur(effectiveFilterEffects(layer.adjustments.filterEffects)),
-        })
+      ? layerFilterCacheKey(unstyledLayer, assets, { always: stylesActive })
       : undefined;
+    // Intermediate results only help while the active layer's live filter or
+    // styles are being edited; other layers keep just their final surface so
+    // a many-layer painting fits more layers in the byte budget.
+    const keepIntermediate = layer.id === frame.active;
     const localFilterCacheKey =
       filteredKey && stylesActive && !stylesInFrame
         ? `${filteredKey}|styles:${stableSerialize(layer.styles)}`
@@ -2976,11 +2988,11 @@ export async function renderFrame(
       ? localFilterCache!.get(localFilterCacheKey)
       : undefined;
     const cachedFiltered =
-      !cachedLocal && filteredKey && filteredKey !== localFilterCacheKey
+      !cachedLocal && keepIntermediate && filteredKey && filteredKey !== localFilterCacheKey
         ? localFilterCache!.get(filteredKey)
         : undefined;
     const stackKey =
-      localFilterCache && !cachedLocal && !cachedFiltered && liveFilterActive && layer.smartFilters?.length
+      localFilterCache && keepIntermediate && !cachedLocal && !cachedFiltered && liveFilterActive && layer.smartFilters?.length
         ? layerFilterCacheKey(
             { ...unstyledLayer, adjustments: { ...layer.adjustments, filterEffects: { ...neutralFilterEffects } } },
             assets,
@@ -3285,7 +3297,7 @@ export async function renderFrame(
         rasterSource = filtered;
       }
     }
-    if (computeFilter && filteredKey !== localFilterCacheKey) storeLocal(filteredKey, rasterSource);
+    if (computeFilter && keepIntermediate && filteredKey !== localFilterCacheKey) storeLocal(filteredKey, rasterSource);
     if (computeStyles && isRasterContentLayer(layer) && rasterSource) {
       // Styles decorate the filtered pixels, so a generated Clouds or Light
       // Rays layer gets its glow/shadow from what the filter produced.

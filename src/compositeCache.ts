@@ -98,10 +98,14 @@ export function compositeLayerKeys(
 
 /**
  * Where to snapshot: just below the first live override, else just below the
- * active layer. -1 means no checkpoint is worth keeping.
+ * active layer. A folder is drawn once at its first member, so when the
+ * target is inside a folder the snapshot goes below the folder's first
+ * member; otherwise the folder's key (which includes the edited member)
+ * changed on every edit and the snapshot never matched. -1 means no
+ * checkpoint is worth keeping.
  */
 export function compositeCheckpoint(
-  frame: { layers: readonly { id: string }[]; active?: string },
+  frame: { layers: readonly { id: string; groupId?: string }[]; active?: string },
   overrides?: Readonly<Record<string, unknown>>,
 ): number {
   let target = -1;
@@ -113,6 +117,11 @@ export function compositeCheckpoint(
       }
   }
   if (target < 0) target = frame.layers.findIndex((layer) => layer.id === frame.active);
+  const groupId = target >= 0 ? frame.layers[target].groupId : undefined;
+  if (groupId) {
+    const first = frame.layers.findIndex((layer) => layer.groupId === groupId);
+    if (first >= 0 && first < target) target = first;
+  }
   return target - 1;
 }
 

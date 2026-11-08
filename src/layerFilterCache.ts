@@ -37,6 +37,12 @@ import { isNeutralLayerStyles } from './layerStyles.ts';
 
 export const LAYER_FILTER_CACHE_KEY_VERSION = 1;
 export const LAYER_FILTER_CACHE_DESKTOP_BYTES = 256 * 1024 * 1024;
+/**
+ * Desktops reporting 8 GB or more (the largest `deviceMemory` value browsers
+ * expose): a 2646x4096 layer surface is 43 MB, so 256 MB held only five
+ * filtered or styled layers of a large painting.
+ */
+export const LAYER_FILTER_CACHE_LARGE_DESKTOP_BYTES = 512 * 1024 * 1024;
 export const LAYER_FILTER_CACHE_MOBILE_BYTES = 96 * 1024 * 1024;
 export const LAYER_FILTER_CACHE_LOW_MEMORY_BYTES = 32 * 1024 * 1024;
 
@@ -52,12 +58,23 @@ export type LayerFilterCacheStats = {
   maxBytes: number;
 };
 
-type Entry<V> = { value: V; bytes: number };
+type Entry<V> = { value: V; bytes: number; pass: number };
 
-/** Least-recently-used map bounded by the sum of entry byte sizes. */
+/**
+ * Least-recently-used map bounded by the sum of entry byte sizes.
+ *
+ * A render reads every cached layer once, bottom to top. When the cached
+ * layers of one document need more than the budget, plain LRU evicts exactly
+ * the entries the next render will read first, so every render misses every
+ * layer. `beginPass()` marks the start of a render: entries read or stored in
+ * the current pass are never evicted to make room for another entry of the
+ * same pass; such a store is rejected instead, so a stable subset of layers
+ * stays cached and hits on every following render.
+ */
 export class ByteLruCache<V> {
   private readonly entries = new Map<string, Entry<V>>();
   private totalBytes = 0;
+  private pass = 0;
   private counters = { hits: 0, misses: 0, stores: 0, evictions: 0, rejected: 0 };
 
   readonly maxBytes: number;
@@ -77,6 +94,7 @@ export class ByteLruCache<V> {
     // Map iteration order is insertion order; re-inserting marks it recent.
     this.entries.delete(key);
     this.entries.set(key, entry);
+    entry.pass = this.pass;
     this.counters.hits += 1;
     return entry.value;
   }
@@ -98,16 +116,31 @@ export class ByteLruCache<V> {
       this.counters.rejected += 1;
       return false;
     }
-    while (this.totalBytes + bytes > this.maxBytes && this.entries.size) {
-      const [oldestKey, oldest] = this.entries.entries().next().value!;
-      this.entries.delete(oldestKey);
-      this.totalBytes -= oldest.bytes;
-      this.counters.evictions += 1;
+    if (this.totalBytes + bytes > this.maxBytes) {
+      // Oldest first, skipping entries the current render pass still uses.
+      let evictable = 0;
+      for (const entry of this.entries.values()) if (this.pass === 0 || entry.pass !== this.pass) evictable += entry.bytes;
+      if (this.totalBytes - evictable + bytes > this.maxBytes) {
+        this.counters.rejected += 1;
+        return false;
+      }
+      for (const [oldestKey, oldest] of this.entries) {
+        if (this.totalBytes + bytes <= this.maxBytes) break;
+        if (this.pass !== 0 && oldest.pass === this.pass) continue;
+        this.entries.delete(oldestKey);
+        this.totalBytes -= oldest.bytes;
+        this.counters.evictions += 1;
+      }
     }
-    this.entries.set(key, { value, bytes });
+    this.entries.set(key, { value, bytes, pass: this.pass });
     this.totalBytes += bytes;
     this.counters.stores += 1;
     return true;
+  }
+
+  /** Start a new render pass (see the class comment). */
+  beginPass(): void {
+    this.pass += 1;
   }
 
   delete(key: string): boolean {
@@ -251,6 +284,11 @@ export type LayerFilterCacheLayer = {
 export type LayerFilterCacheKeyOptions = {
   /** True when the bounded tiled blur adapter (with its own telemetry) handles the filter. */
   tiledFilter?: boolean;
+  /**
+   * Key the layer even without a filter stage: the renderer caches layer
+   * styles on top of this key, and styles alone cost seconds on large layers.
+   */
+  always?: boolean;
 };
 
 /**
@@ -272,7 +310,7 @@ export function layerFilterCacheKey(
   const filter = effectiveFilterEffects(layer.adjustments?.filterEffects);
   const filterActive = !isNeutralFilterEffects(filter);
   const smartFilters = effectiveSmartFilters(layer.smartFilters);
-  if (!filterActive && !smartFilters.length) return undefined;
+  if (!filterActive && !smartFilters.length && !options.always) return undefined;
   if (filterActive && options.tiledFilter) return undefined;
   const raster = layer.kind === 'raster';
   const fillColor = raster && layer.fillColor ? layer.fillColor : undefined;
@@ -332,6 +370,7 @@ export function layerFilterCacheBudgetForDevice(hints: LayerFilterCacheDeviceHin
   if (memory !== undefined && memory <= 2) return LAYER_FILTER_CACHE_LOW_MEMORY_BYTES;
   if (hints.mobile === true || (memory !== undefined && memory <= 4))
     return LAYER_FILTER_CACHE_MOBILE_BYTES;
+  if (memory !== undefined && memory >= 8) return LAYER_FILTER_CACHE_LARGE_DESKTOP_BYTES;
   return LAYER_FILTER_CACHE_DESKTOP_BYTES;
 }
 
