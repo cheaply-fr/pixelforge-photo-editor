@@ -100,8 +100,8 @@ test('Quick Mask enters from a selection, paints alpha, exits to a mask selectio
   await drag(page, [0.2, 0.2], [0.8, 0.8]);
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   const selectionDownload = page.waitForEvent('download');
-  await expect(page.getByRole('menuitem', { name: 'Save Selection…', exact: true })).toBeEnabled();
-  await page.getByRole('menuitem', { name: 'Save Selection…', exact: true }).click();
+  await expect(page.getByRole('menuitem', { name: 'Download Selection File…', exact: true })).toBeEnabled();
+  await page.getByRole('menuitem', { name: 'Download Selection File…', exact: true }).click();
   expect((await selectionDownload).suggestedFilename()).toMatch(/\.pixelselection$/);
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   await expect(

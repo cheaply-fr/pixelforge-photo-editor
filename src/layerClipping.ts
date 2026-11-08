@@ -74,6 +74,26 @@ export function clippingBase(
 }
 
 /**
+ * The base of a layer's clipping group. Consecutive clipped layers above one
+ * base all use that base's alpha (a layer clipped to an already-clipped layer
+ * joins the same group), so the persisted adjacent `clippingTo` links are
+ * followed down to the first layer that is not itself clipped.
+ */
+export function clippingGroupBase(
+  frame: Pick<Frame, 'layers'>,
+  source: Layer,
+): Layer | undefined {
+  let base = clippingBase(frame, source);
+  // Each valid link points one index lower, so this terminates.
+  while (base) {
+    const lower = clippingBase(frame, base);
+    if (!lower) return base;
+    base = lower;
+  }
+  return undefined;
+}
+
+/**
  * Remove relationships invalidated by reorder/delete/group edits. This helper
  * is immutable and intentionally leaves valid links byte-for-byte unchanged.
  */
@@ -105,4 +125,52 @@ export function applyClippingAlpha(
       (output[offset + 3] * base[offset + 3]) / 255,
     );
   return output;
+}
+
+/**
+ * Keep clipping groups intact across a stack reorder (Bring Forward, Send
+ * Backward, …). A layer that was clipped before the move stays clipped when it
+ * now sits directly above its clipping group's base or above another layer
+ * that is still clipped to that same base; its adjacent `clippingTo` link is
+ * re-pointed to the new lower neighbour. Any other previously clipped layer is
+ * released and reported, so the caller can say so instead of dropping it
+ * silently. Links are processed bottom-to-top so chains resolve in order.
+ */
+export function preserveClippingAfterReorder<T extends Frame>(
+  before: Pick<Frame, 'layers'>,
+  after: T,
+): { frame: T; released: Layer[] } {
+  const groupKey = new Map<string, string>();
+  for (const layer of before.layers) {
+    const base = layer.clippingTo !== undefined ? clippingGroupBase(before, layer) : undefined;
+    if (layer.clippingTo !== undefined && base) groupKey.set(layer.id, base.id);
+  }
+  const released: Layer[] = [];
+  let changed = false;
+  const layers = [...after.layers];
+  for (let index = 0; index < layers.length; index += 1) {
+    const layer = layers[index],
+      key = groupKey.get(layer.id);
+    if (key === undefined) continue;
+    const below = index > 0 ? layers[index - 1] : undefined;
+    const belowKey = below ? (below.clippingTo !== undefined ? groupKey.get(below.id) : below.id) : undefined;
+    if (
+      below &&
+      belowKey === key &&
+      // A lower member must itself still be clipped after this pass.
+      (below.id === key || below.clippingTo !== undefined) &&
+      validClippingRelationship({ layers }, layer.id, below.id)
+    ) {
+      if (layer.clippingTo !== below.id) {
+        layers[index] = { ...layer, clippingTo: below.id };
+        changed = true;
+      }
+      continue;
+    }
+    const { clippingTo: _clippingTo, ...withoutClipping } = layer;
+    layers[index] = withoutClipping as Layer;
+    released.push(layer);
+    changed = true;
+  }
+  return { frame: changed ? ({ ...after, layers } as T) : after, released };
 }

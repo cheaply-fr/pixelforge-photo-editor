@@ -243,6 +243,7 @@ test('the Eraser follows a transformed path and the dialog cancels without a his
   await setColor(page, 'Drawing color', '#3366ff');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).first().click();
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await settled(page);
   expect((await pixel(page, 600, 400))[3]).toBe(255);
   await drawCurvaturePath(page);
