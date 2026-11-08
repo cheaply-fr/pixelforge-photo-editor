@@ -52,6 +52,8 @@ test('merges grouped RGBA output, retains undo/redo and reload project state', a
     .getByRole('menuitem', { name: 'New transparent document', exact: true })
     .click();
   await page.keyboard.press('Shift+F5');
+  await expect(page.getByRole('dialog', { name: 'Fill' })).toBeVisible();
+  await page.keyboard.press('Enter');
   await expect
     .poll(() =>
       canvas.evaluate((item: HTMLCanvasElement) =>

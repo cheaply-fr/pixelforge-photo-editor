@@ -91,6 +91,10 @@ async function fillSelection(page: Page) {
   await page.getByLabel('Drawing color', { exact: true }).fill('#00ff00');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill…/ }).click();
+  // The Fill dialog defaults to the foreground (drawing) colour at 100%.
+  const dialog = page.getByRole('dialog', { name: 'Fill' });
+  await dialog.getByRole('button', { name: 'Fill', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(page.locator('footer')).toContainText('Selection filled', { timeout: 10000 });
 }
 

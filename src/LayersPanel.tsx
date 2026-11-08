@@ -35,7 +35,7 @@ import { normalizeTextLanguage, TEXT_DIRECTIONS, TEXT_LANGUAGES } from './textLa
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 import {
   clippingCandidateBase,
-  clippingBase,
+  clippingGroupBase,
   isClippingSourceLayer,
 } from './layerClipping';
 
@@ -138,7 +138,7 @@ export default function LayersPanel({
   for (const group of groups)
     if (groupMatchesSearch(group, searchQuery)) matchingGroupIds.add(group.id);
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
-  const clippingMaskBase = clippingBase(frame, layer);
+  const clippingMaskBase = clippingGroupBase(frame, layer);
   const clippingCandidate = clippingCandidateBase(frame, layer);
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
   const selectedIds = new Set(
