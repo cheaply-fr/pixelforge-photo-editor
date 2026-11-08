@@ -16,7 +16,8 @@ import {
 type Update = (next: PaintSymmetrySettings) => void;
 
 /**
- * Compact Paint Symmetry options for Brush, Pencil and Eraser: mode, segment
+ * Compact Paint Symmetry options (Brush, Pencil, Eraser, Mixer, History, Art
+ * History, Clone and Healing; see PAINT_SYMMETRY_TOOLS): mode, segment
  * count, axis rotation, an exact centre and guide visibility.
  */
 export function PaintSymmetryControls({

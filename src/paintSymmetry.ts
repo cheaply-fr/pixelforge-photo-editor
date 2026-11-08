@@ -407,3 +407,78 @@ export function nudgePaintSymmetryCenter(
   if (!move) return null;
   return resolvePaintSymmetryCenter({ center: { x: center.x + move[0], y: center.y + move[1] } }, width, height);
 }
+
+/**
+ * Tools whose hand-drawn strokes honour Paint Symmetry. Brush, Pencil and
+ * Eraser replicate resolved dabs; Mixer Brush, History Brush and Art History
+ * Brush replicate their stroke points; Clone Stamp and Healing Brush
+ * replicate the destination dab and map the source sample point through the
+ * same transform. Spot Healing and Patch are deliberately excluded (see
+ * `docs/paint-symmetry-contract.md`).
+ */
+export const PAINT_SYMMETRY_TOOLS = [
+  'brush',
+  'pencil',
+  'eraser',
+  'mixer-brush',
+  'history-brush',
+  'art-history-brush',
+  'clone',
+  'heal',
+] as const;
+export type PaintSymmetryTool = (typeof PAINT_SYMMETRY_TOOLS)[number];
+
+export function paintSymmetryAppliesToTool(tool: string): tool is PaintSymmetryTool {
+  return (PAINT_SYMMETRY_TOOLS as readonly string[]).includes(tool);
+}
+
+/** Map an offset vector through the linear part only (no translation). */
+export function transformSymmetryVector(matrix: SymmetryAffine, vector: { x: number; y: number }): { x: number; y: number } {
+  return { x: matrix[0] * vector.x + matrix[2] * vector.y, y: matrix[1] * vector.x + matrix[3] * vector.y };
+}
+
+/** Tip orientation of one copy: rotation adds, reflection maps θ → 2α − θ and swaps handedness. */
+export function symmetryTipForTransform(
+  matrix: SymmetryAffine,
+  tip: { angle: number; flipX: boolean; flipY: boolean },
+): { angle: number; flipX: boolean; flipY: boolean } {
+  if (matrix === IDENTITY_AFFINE) return { angle: tip.angle, flipX: tip.flipX, flipY: tip.flipY };
+  const copy = transformSymmetryDab(matrix, { x: 0, y: 0, ...tip });
+  return { angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY };
+}
+
+export type SymmetryCloneDab = SymmetryDab & { sourceX: number; sourceY: number };
+
+/**
+ * Clone Stamp / Healing Brush copies. The same transform maps the destination
+ * dab and its source sample point, so each copy's source offset
+ * (source − destination) is the original offset rotated or mirrored by the
+ * copy's linear part: T(s) − T(d) = L·(s − d). Pixels are still copied
+ * unflipped around that source point (as for any clone dab).
+ */
+export function symmetryCloneCopies(
+  transforms: readonly SymmetryAffine[],
+  dab: SymmetryDab,
+  source: { x: number; y: number },
+): SymmetryCloneDab[] {
+  return transforms.map((matrix) => {
+    const copy = transformSymmetryDab(matrix, dab),
+      mapped = matrix === IDENTITY_AFFINE ? source : applyAffine(matrix, source);
+    return { ...copy, sourceX: mapped.x, sourceY: mapped.y };
+  });
+}
+
+/**
+ * Point-list brushes (Mixer, History, Art History): one point list per copy,
+ * in transform order (the identity copy first is the original list itself).
+ * Extra point fields such as pressure are carried unchanged.
+ */
+export function symmetryStrokePointCopies<T extends { x: number; y: number }>(
+  transforms: readonly SymmetryAffine[],
+  points: readonly T[],
+): T[][] {
+  return transforms.map((matrix) =>
+    matrix === IDENTITY_AFFINE
+      ? [...points]
+      : points.map((point) => ({ ...point, ...applyAffine(matrix, point) })));
+}
