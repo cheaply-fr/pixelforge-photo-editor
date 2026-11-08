@@ -41,3 +41,18 @@ has no custom (sampled) brush tip shapes, so no 4-point “Glint” tip is
 included. Evidence: `src/brushPresetLibrary.ts`,
 `tests/brush-preset-library.test.mjs` and
 `tests/browser/brush-color-presets.spec.ts` on desktop and mobile.
+
+## Blend mode in presets (2026-11-08)
+
+Branch `feat/brush-blend-mode` (roadmap W4-3). Saved and built-in presets now
+capture the Brush/Pencil **Mode** as optional `brushBlendMode` (Normal plus
+the Canvas-native blend modes; see "Brush and Pencil Mode" in
+[`brush-dynamics-contract.md`](./brush-dynamics-contract.md)). Applying a
+preset always sets the mode: presets saved before it existed omit the field
+and load as **Normal** (unlike opacity, which they leave unchanged). Built-ins
+store a mode too: **Soft glow** uses **Screen**; Star field, Dust / nebula and
+Smoke wisp use Normal. Validation rejects unknown or non-native modes, so a
+`pixelforge.brush-presets.v1` entry, draft or `.pixelforge` preset with one is
+dropped (device library) or fails draft validation, never applied. Evidence:
+`tests/brush-blend-mode.test.mjs` and
+`tests/browser/brush-blend-mode.spec.ts` on desktop and mobile.

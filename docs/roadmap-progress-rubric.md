@@ -341,6 +341,27 @@ From the limitations of #209–#213 and from local test runs. Status: all
 | W4-9 | **Off-main-thread tile encoding** (`OffscreenCanvas.convertToBlob`) once commits can be asynchronous | P3 | **Open** | #213 follow-up 5 |
 | W4-10 | **Local e2e hazard**: `playwright.config` reuses any server already on port 4173 outside CI (`reuseExistingServer`), so a run can test a preview server started from another worktree; concurrent `npm run test:e2e` runs in one worktree delete each other's `test-results`. Run one suite per worktree and stop stray previews first | P3 | **Open** (local tooling only; CI unaffected) | local runs for #209–#213 |
 
+### Properties sidebar auto-scroll (branch `feat/sidebar-autoscroll`)
+
+The right-hand properties sidebar now scrolls to the exact section that owns
+whatever the user just activated: toolbar tools and flyout subtools, tool
+shortcuts, menu tool commands, Filter menu / Filter Gallery / Last Filter
+picks, quick filters, adjustment commands, Layer Style / Rename Layer / Find
+Layers, entering Quick Mask, a plain layer-row click (Layer properties) and
+enabling a layer style (that style's block). Contract:
+`docs/sidebar-autoscroll-contract.md`.
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Typed registry: every `Tool`, `FilterEffectType`, layer style and section-targeting command maps to a section (section-less tools carry a documented reason); Tool options / Text / Rotate View render from the same map | **Implemented locally** | `src/sidebarSections.ts`; `tests/sidebar-sections.test.mjs` |
+| Pure scroll arithmetic (sticky / scroll-padding / off-screen insets, start vs nearest, clamping, keep-visible control) and a ports-based coordinator (last trigger wins, bounded retries, collapse → expand, deferral during strokes/drags, manual-scroll interruption, reduced-motion instant branch, focus rescue only for keyboard menus, polite announcement) | **Implemented locally** | `src/sidebarScrollMath.ts`, `src/sidebarAutoScroll.ts`; `tests/sidebar-scroll-math.test.mjs` (incl. 5 000-case property test), `tests/sidebar-autoscroll.test.mjs` |
+| Collapsible page sections (disclosure headers, persisted per device), landing highlight, bounded mobile sidebar scroll region so reveals never move the canvas | **Implemented locally** | `src/SidebarSection.tsx`, `app/globals.css`; `tests/browser/sidebar-autoscroll.spec.ts` (desktop + mobile, every tool parameterised) |
+| CI / deployment / live acceptance | Pending until the PR's protected `CI and deploy` run, merge and `/release.json` check | — |
+
+Limits: Layers-panel sub-sections are not collapsible; the whole e2e suite
+runs with `prefers-reduced-motion: reduce` so reveals are synchronous with
+clicks (the dedicated spec covers the animated path).
+
 ## Latest protected release evidence
 
 The protected workflow run for the current merged release completed
