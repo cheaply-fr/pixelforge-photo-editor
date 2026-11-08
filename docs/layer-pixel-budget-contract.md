@@ -58,8 +58,9 @@ it to the canvas (paint-time expansion below), and after every committed
 step the editor stores each paint layer the step replaced at its
 non-transparent bounding box (alpha > 0) plus a 64 px transparent margin
 (`AUTO_TRIM_MARGIN`, clamped to the asset), so layer styles such as shadows
-and outlines and small blurs added later are not clipped at the stored
-bounds. It applies to the layers Trim Layer to Content supports (plain,
+and outlines and blurs added later are not clipped at the stored bounds (the
+alpha-spreading blurs reach at most 64 px; see
+[blur-effects-contract.md](blur-effects-contract.md)). It applies to the layers Trim Layer to Content supports (plain,
 integer-positioned paint layers without styles, vector masks, live/smart
 filters, fill colour or cleanup metadata), only to layers whose pixels the
 step changed, and only to layers already in the stored-bounds regime: before

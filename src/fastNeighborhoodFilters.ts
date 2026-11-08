@@ -28,6 +28,7 @@
  */
 
 import type { BlurPathPoint, SpinBlurEllipse } from './filterEffects.ts';
+import { writeSpreadPixel } from './alphaSpread.ts';
 
 const clampUnit = (value: number) => (value < 0 ? 0 : value > 1 ? 1 : value);
 const clampByte = (value: number) => (value < 0 ? 0 : value > 255 ? 255 : Math.round(value));
@@ -506,12 +507,13 @@ function lensBlurRow(
   tapOffset: Int32Array,
   output: Uint8ClampedArray,
   strength: number,
+  spreadCoverage = 0,
 ): void {
   const count = tapX.length;
   const rowInside = y - reach >= 0 && y + reach < height;
   for (let x = 0; x < width; x += 1) {
     const destination = (y * width + x) * 4;
-    if (source[destination + 3] === 0) continue;
+    if (source[destination + 3] === 0 && !spreadCoverage) continue;
     let red = 0, green = 0, blue = 0, weight = 0;
     if (rowInside && x - reach >= 0 && x + reach < width) {
       for (let tap = 0; tap < count; tap += 1) {
@@ -535,6 +537,10 @@ function lensBlurRow(
         weight += alpha;
       }
     }
+    if (spreadCoverage) {
+      writeSpreadPixel(source, output, destination, red, green, blue, weight, spreadCoverage, strength);
+      continue;
+    }
     if (!weight) continue;
     output[destination] = clampByte(source[destination] * (1 - strength) + red / weight * strength);
     output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + green / weight * strength);
@@ -555,6 +561,8 @@ export function fastLensBlur(
   output: Uint8ClampedArray,
   strength: number,
   rows?: RowRange,
+  /** Blur alpha too (premultiplied) so strokes on transparent layers soften; see alphaSpread.ts. */
+  spread = false,
 ): void {
   const merged = new Map<string, [number, number, number]>();
   for (const [dx, dy] of offsets) {
@@ -573,8 +581,10 @@ export function fastLensBlur(
     reach = Math.max(reach, Math.abs(dx), Math.abs(dy));
   });
   const [firstRow, endRow] = rowSpan(rows, height);
+  // Every tap counts (edge taps repeat the clamped edge pixel), in alpha-byte units.
+  const spreadCoverage = spread ? offsets.length * 255 : 0;
   for (let y = firstRow; y < endRow; y += 1)
-    lensBlurRow(source, width, height, y, reach, tapX, tapY, tapWeight, tapOffset, output, strength);
+    lensBlurRow(source, width, height, y, reach, tapX, tapY, tapWeight, tapOffset, output, strength, spreadCoverage);
 }
 
 /* ------------------------------------------------------------------ */

@@ -258,9 +258,11 @@ measurements; these are local/live observations, not CI budgets.
   matched variance and support ≤ radius above that, so cost no longer grows
   with radius, and scales the watchdog with pixels × layers (see
   [worker-render-contract.md](worker-render-contract.md)). Tolerance against
-  the exact kernel, enforced by `tests/gaussian-blur.test.mjs`: opaque pixels
-  within 3 levels (mean ≤ 1.5); isolated partly transparent pixels beside
-  strong contrast within ~10 % (28 levels). Integer running sums keep tiled
+  the exact kernel, enforced by `tests/gaussian-blur.test.mjs`: opaque images
+  within 3 levels (mean ≤ 1.5); since the blur also spreads alpha (see
+  [blur-effects-contract.md](blur-effects-contract.md)), images with
+  transparency are compared as composited premultiplied colour plus alpha,
+  within 10 levels (mean ≤ 2.5). Integer running sums keep tiled
   and full-frame renders bit-identical. Median, Dust & Scratches and
   Reflection Removal now use sliding histograms, and Motion Blur precomputes
   its taps; all four are byte-identical to before.
