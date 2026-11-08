@@ -441,6 +441,15 @@ import {
   type BrushMode,
 } from '../src/brush';
 import {
+  BRUSH_BLEND_DEFAULT,
+  BRUSH_BLEND_MODE_GROUPS,
+  compositeBrushBlendLayer,
+  compositeBrushBlendRect,
+  normalizeBrushBlendMode,
+  usesBrushBlendStroke,
+  type BrushBlendMode,
+} from '../src/brushBlend';
+import {
   GRADIENT_BLEND_DEFAULT,
   GRADIENT_BLEND_LABELS,
   GRADIENT_BLEND_MODES,
@@ -1667,6 +1676,8 @@ type Gesture = {
   selectionMask?: Uint8ClampedArray;
   /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
   selectionStroke?: SelectionStroke;
+  /** Separate stroke buffer for a Brush/Pencil stroke in a non-Normal blend mode. */
+  blendStroke?: BrushBlendStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
@@ -2447,11 +2458,67 @@ const confinedGestureEdit = (
   draw: (target: HTMLCanvasElement) => boolean,
 ) => {
   const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (g.blendStroke) {
+    const changed = draw(g.blendStroke.paint);
+    if (changed)
+      blendStrokeRect(g.blendStroke, buffer, stroke?.mask, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
+    return changed;
+  }
   if (!stroke) return draw(buffer);
   const changed = draw(stroke.raw);
   if (changed)
     confineStrokeRect(stroke, buffer, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
   return changed;
+};
+/**
+ * Brush/Pencil stroke in a non-Normal blend mode (see `src/brushBlend.ts`).
+ * Dabs land on the transparent `paint` canvas with the ordinary source-over
+ * dab arithmetic, so they build coverage like Normal and never blend against
+ * each other; each touched rectangle of the visible buffer is recomposited as
+ * `original ⊕mode paint` (then confined by the selection, if any). The preview
+ * and the commit both read that buffer, so they are identical. Normal strokes
+ * never create one and keep stamping straight onto the buffer.
+ */
+type BrushBlendStroke = {
+  paint: HTMLCanvasElement;
+  original: Uint8ClampedArray;
+  mode: BrushBlendMode;
+};
+const beginBrushBlendStroke = (
+  buffer: HTMLCanvasElement,
+  tool: string,
+  mode: BrushBlendMode,
+  selection: SelectionStroke | undefined,
+): BrushBlendStroke | undefined => {
+  if (!usesBrushBlendStroke(tool, mode)) return undefined;
+  return {
+    paint: surface(buffer.width, buffer.height),
+    original: selection?.original ??
+      buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+    mode,
+  };
+};
+/** Recomposite one rectangle of a blend-mode stroke into the visible buffer. */
+const blendStrokeRect = (
+  stroke: BrushBlendStroke,
+  target: HTMLCanvasElement,
+  mask: Uint8ClampedArray | undefined,
+  rect: PixelRect | null,
+) => {
+  if (!rect) return false;
+  const image = stroke.paint
+      .getContext('2d')!
+      .getImageData(rect.x, rect.y, rect.width, rect.height),
+    targetContext = target.getContext('2d')!,
+    before = targetContext.getImageData(rect.x, rect.y, rect.width, rect.height).data,
+    composed = compositeBrushBlendRect(stroke.original, image.data, target.width, rect, stroke.mode, mask);
+  let changed = false;
+  for (let index = 0; index < composed.length && !changed; index += 1)
+    changed = composed[index] !== before[index];
+  if (!changed) return false;
+  image.data.set(composed);
+  targetContext.putImageData(image, rect.x, rect.y);
+  return true;
 };
 /**
  * Stamp a Brush/Pencil/Eraser/Clone/Healing segment into the gesture buffer,
@@ -2474,14 +2541,18 @@ const stampGestureSegment = (
   const draw = (target: HTMLCanvasElement) =>
       stampCanvasSegment(target, from, to, { ...options, symmetry }),
     buffer = g.buffer!,
-    stroke = g.selectionStroke;
-  if (!stroke) return draw(buffer);
-  const changed = draw(stroke.raw);
+    stroke = g.selectionStroke,
+    blend = g.blendStroke;
+  if (!stroke && !blend) return draw(buffer);
+  const changed = draw(blend ? blend.paint : stroke!.raw);
   if (changed)
-    for (const transform of symmetry)
-      confineStrokeRect(stroke, buffer, brushSegmentRect(
+    for (const transform of symmetry) {
+      const rect = brushSegmentRect(
         applyAffine(transform, from), applyAffine(transform, to),
-        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height));
+        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height);
+      if (blend) blendStrokeRect(blend, buffer, stroke?.mask, rect);
+      else confineStrokeRect(stroke!, buffer, rect);
+    }
   return changed;
 };
 /** Pattern Stamp counterpart of `stampGestureSegment`. */
@@ -2733,6 +2804,7 @@ export default function Home() {
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
     [brushOpacity, setBrushOpacity] = useState(100),
+    [brushBlendMode, setBrushBlendMode] = useState<BrushBlendMode>(BRUSH_BLEND_DEFAULT),
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
@@ -3552,6 +3624,7 @@ export default function Home() {
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -3660,6 +3733,7 @@ export default function Home() {
     setBackgroundColor(s.backgroundColor || '#ffffff');
     setSize(clampBrushSize(s.size));
     setBrushOpacity(s.brushOpacity ?? 100);
+    setBrushBlendMode(normalizeBrushBlendMode(s.brushBlendMode));
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
@@ -3728,6 +3802,7 @@ export default function Home() {
     setBackgroundColor,
     setSize,
     setBrushOpacity,
+    setBrushBlendMode,
     setHardness,
     setPressureSize,
     setPressureOpacity,
@@ -3832,6 +3907,8 @@ export default function Home() {
     setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
     if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
+    // Presets saved before the blend mode existed paint Normal.
+    setBrushBlendMode(normalizeBrushBlendMode(preset.brushBlendMode));
     setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
   };
@@ -3890,6 +3967,7 @@ export default function Home() {
         brushBuildUp,
         brushFlow,
         brushOpacity,
+        brushBlendMode,
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -7406,6 +7484,7 @@ export default function Home() {
         backgroundColor,
         size,
         brushOpacity,
+        brushBlendMode,
         hardness,
         pressureSize,
         pressureOpacity,
@@ -7528,6 +7607,7 @@ export default function Home() {
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -9086,7 +9166,11 @@ export default function Home() {
           size: brushSize, hardness, flow: brushOpacity / 100, selectionMask,
         });
       } else {
-        changed = stampStrokePathSamples(buffer, plan.samples, {
+        // Brush/Pencil in a non-Normal mode stroke the path on a transparent
+        // buffer, then composite it once over the layer (src/brushBlend.ts).
+        const blendMode = usesBrushBlendStroke(tool, brushBlendMode) ? brushBlendMode : undefined,
+          target = blendMode ? surface(buffer.width, buffer.height) : buffer;
+        changed = stampStrokePathSamples(target, plan.samples, {
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -9107,6 +9191,17 @@ export default function Home() {
           color: tool === 'eraser' ? undefined : brushColor(color),
           colorBackground: brushColor(backgroundColor),
         });
+        if (changed && blendMode) {
+          const bufferContext = buffer.getContext('2d')!,
+            composed = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+          composed.data.set(compositeBrushBlendLayer(
+            composed.data,
+            target.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+            buffer.width,
+            blendMode,
+          ));
+          bufferContext.putImageData(composed, 0, 0);
+        }
         // Photoshop confines painting to the active selection.
         if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
       }
@@ -12450,6 +12545,8 @@ export default function Home() {
           g.buffer = buffer;
           g.selectionMask = selectionMask;
           g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
+          // Brush/Pencil in a non-Normal mode paint on their own stroke buffer.
+          g.blendStroke = beginBrushBlendStroke(buffer, tool, brushBlendMode, g.selectionStroke);
           let from = local;
           let stabilized = local;
           for (const point of g.queued || [
@@ -18398,6 +18495,25 @@ export default function Home() {
                         ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable.'
                         : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
                     </p>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil') && (
+                    <label className="select-row">
+                      <span>Mode</span>
+                      <select
+                        aria-label="Brush mode"
+                        title="Blend mode for each stroke; dabs within one stroke never blend with each other"
+                        value={brushBlendMode}
+                        onChange={(event) => setBrushBlendMode(normalizeBrushBlendMode(event.target.value))}
+                      >
+                        {BRUSH_BLEND_MODE_GROUPS.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.modes.map((item) => (
+                              <option key={item.value} value={item.value}>{item.label}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
                   )}
                   {tool !== 'magic-eraser' && tool !== 'red-eye' && (
                     <Slider

@@ -267,3 +267,32 @@ test('the Eraser follows a transformed path and the dialog cancels without a his
   for (const x of [210, 400, 590]) expect((await pixel(page, x, 400))[3], `erased ${x}`).toBe(0);
   for (const [x, y] of [[700, 400], [400, 430], [150, 400]]) expect((await pixel(page, x, y))[3], `kept ${x},${y}`).toBe(255);
 });
+
+test('Stroke Path with Brush honours the brush Mode: a Multiply path multiplies once', async ({ page }) => {
+  await setColor(page, 'Drawing color', '#ff0000');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Fill/ }).first().click();
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
+  await settled(page);
+  await drawCurvaturePath(page);
+  const line: PathModel = { ...arch, nodes: [{ x: 0, y: 0 }, { x: 100, y: 0 }] };
+  await hidePathLayer(page, line, [4, 0, 0, 4, 200, 400]);
+  await setBrush(page, '20', '#808080');
+  await page.getByLabel('Hardness', { exact: true }).fill('100');
+  await page.getByLabel('Brush mode', { exact: true }).selectOption('multiply');
+  const dialog = await openStrokePath(page);
+  await dialog.getByLabel('Stroke tool').selectOption('brush');
+  await dialog.getByLabel('Simulate pressure').uncheck();
+  await dialog.getByRole('button', { name: 'Stroke path', exact: true }).click();
+  await expect(page.locator('footer')).toContainText('Path stroked with Brush');
+  await settled(page);
+  // Red × 50% grey, once, although consecutive dabs overlap along the path.
+  for (const x of [250, 400, 550]) {
+    const [r, g, b, a] = await pixel(page, x, 400);
+    expect(Math.abs(r - 128), `multiplied ${x}`).toBeLessThanOrEqual(1);
+    expect([g, b, a]).toEqual([0, 0, 255]);
+  }
+  expect(await pixel(page, 400, 440)).toEqual([255, 0, 0, 255]);
+  await menu(page, /^Undo/);
+  expect(await pixel(page, 400, 400)).toEqual([255, 0, 0, 255]);
+});
