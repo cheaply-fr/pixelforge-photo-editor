@@ -41,6 +41,8 @@ const LEGACY_TOOL_OPTIONS_TOOLS = [
   'mixer-brush', 'history-brush', 'art-history-brush', 'selection-brush', 'quick-selection',
   'gradient', 'rectangle', 'ellipse', 'line', 'polygon', 'pen', 'freeform-pen',
   'curvature-pen', 'direct-select',
+  // Added with their tools (docs/shape-tools-contract.md).
+  'rounded-rectangle', 'custom-shape',
 ];
 
 test('every palette tool has exactly one registry entry and nothing else is mapped', () => {

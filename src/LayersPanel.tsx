@@ -12,7 +12,7 @@ import {
   type SelectionOperation,
 } from './document';
 import { MAX_DOCUMENT_LAYERS, detectProjectLimits } from './projectLimits';
-import type { ParametricShapeVariant } from './vectorShapes';
+import { CORNER_RADIUS_MAX, type ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import {
   planLayerArrange,
@@ -1491,6 +1491,17 @@ export default function LayersPanel({
             />
             Filled shape
           </label>
+          {layer.kind === 'rectangle' && (
+            <NumberField
+              key={layer.id + 'radius' + (layer.cornerRadius ?? 0)}
+              label="Corner radius"
+              value={layer.cornerRadius ?? 0}
+              min={0}
+              max={CORNER_RADIUS_MAX}
+              disabled={layerLocked}
+              apply={(cornerRadius) => edit({ cornerRadius })}
+            />
+          )}
           <input
             type="color"
             aria-label="Shape color"

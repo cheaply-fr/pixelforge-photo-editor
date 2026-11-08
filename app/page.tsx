@@ -413,7 +413,8 @@ import { pathContours, transformPath } from '../src/paths';
 import { pathToSvg } from '../src/svgExport';
 import { cloneLayerCss } from '../src/cssExport';
 import { traceAlphaContours } from '../src/alphaContours';
-import { shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
+import { CORNER_RADIUS_MAX, clampCornerRadius, roundedRectNodes, roundedRectPoints, shapeDragBox, shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
+import { CUSTOM_SHAPE_LIBRARY, DEFAULT_CUSTOM_SHAPE_ID, PATH_PRESET_SHAPE_PREFIX, validCustomShapeChoice, customShapeAspect, customShapeEntry, customShapePath, customShapeThumbnailPath, fitPathToBox } from '../src/customShapeLibrary';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -632,6 +633,7 @@ import {
 import {
   hitTestPathHandle,
   hitTestPathNode,
+  pathBounds,
   movePathHandle,
   movePathNode,
   insertPathNode,
@@ -1165,9 +1167,11 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   },
   { id: 'text', label: 'Text', icon: toolIcon('text'), key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: toolIcon('rectangle'), key: 'U' },
+  { id: 'rounded-rectangle', label: 'Rounded Rectangle', icon: toolIcon('rounded-rectangle'), key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: toolIcon('ellipse'), key: 'U' },
   { id: 'line', label: 'Line', icon: toolIcon('line'), key: 'U' },
   { id: 'polygon', label: 'Polygon', icon: toolIcon('polygon'), key: 'U' },
+  { id: 'custom-shape', label: 'Custom Shape', icon: toolIcon('custom-shape'), key: 'U' },
   { id: 'select', label: 'Select', icon: toolIcon('select'), key: 'M' },
   { id: 'ellipse-select', label: 'Elliptical marquee', icon: toolIcon('ellipse-select'), key: 'M' },
   { id: 'row-select', label: 'Single Row marquee', icon: toolIcon('row-select'), key: 'M' },
@@ -1253,7 +1257,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'ellipse', 'line', 'polygon'],
+  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
@@ -2938,6 +2942,8 @@ export default function Home() {
     [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
     [polygonSides, setPolygonSides] = useState(5),
     [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
+    [shapeCornerRadius, setShapeCornerRadius] = useState(16),
+    [customShapeId, setCustomShapeId] = useState<string>(DEFAULT_CUSTOM_SHAPE_ID),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -3762,6 +3768,8 @@ export default function Home() {
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
+    shapeCornerRadius,
+    customShapeId,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -3873,6 +3881,8 @@ export default function Home() {
     setPolygonVariant(s.polygonVariant ?? 'polygon');
     setPolygonSides(Math.max(3, Math.min(32, Math.round(s.polygonSides ?? 5))));
     setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
+    setShapeCornerRadius(Math.max(0, Math.min(CORNER_RADIUS_MAX, Number(s.shapeCornerRadius ?? 16))));
+    setCustomShapeId(validCustomShapeChoice(s.customShapeId) ? s.customShapeId : DEFAULT_CUSTOM_SHAPE_ID);
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -4149,6 +4159,65 @@ export default function Home() {
     setSelectedCustomShapePresetId('');
     setNotice(`Shape preset “${preset.label}” removed from this device`);
   };
+  /** Path preset referenced by a `path-preset:<id>` Custom Shape choice. */
+  const customShapePathPreset = (choice = customShapeId) =>
+    choice.startsWith(PATH_PRESET_SHAPE_PREFIX)
+      ? customPathPresets.find((preset) => `${PATH_PRESET_SHAPE_PREFIX}${preset.id}` === choice)
+      : undefined;
+  const customShapeLabel = () =>
+    customShapePathPreset()?.label ?? customShapeEntry(customShapeId)?.label ?? 'Custom Shape';
+  /** Shift keeps proportions (a square, or the shape's own aspect); Alt drags from the centre. */
+  const newShapeDragBox = (
+    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    modifiers: { shiftKey: boolean; altKey: boolean },
+  ) => {
+    let aspect = 1;
+    if (shapeTool === 'custom-shape') {
+      const preset = customShapePathPreset();
+      if (preset) {
+        try {
+          const bounds = pathBounds(preset.path);
+          aspect = bounds.width > 0 && bounds.height > 0 ? bounds.width / bounds.height : 1;
+        } catch {
+          aspect = 1;
+        }
+      } else aspect = customShapeAspect(customShapeId);
+    }
+    return shapeDragBox(start, end, { proportional: modifiers.shiftKey, fromCenter: modifiers.altKey, aspect });
+  };
+  /** Build the editable layer a Rounded Rectangle or Custom Shape drag creates. */
+  const newShapeLayer = (
+    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    box: { left: number; top: number; width: number; height: number },
+    name: string,
+  ): Layer | undefined => {
+    const width = Math.max(1, Math.min(16000, Math.round(box.width))),
+      height = Math.max(1, Math.min(16000, Math.round(box.height))),
+      matrix: Matrix = [1, 0, 0, 1, Math.round(box.left), Math.round(box.top)];
+    if (shapeTool === 'rounded-rectangle')
+      return {
+        ...commonLayer(name),
+        kind: 'rectangle',
+        width,
+        height,
+        stroke: Math.max(1, size / 3),
+        color,
+        fill: true,
+        cornerRadius: shapeCornerRadius,
+        matrix,
+      };
+    try {
+      const preset = customShapePathPreset();
+      const path = preset
+        ? fitPathToBox(preset.path, width, height, color)
+        : customShapePath(customShapeEntry(customShapeId) ? customShapeId : DEFAULT_CUSTOM_SHAPE_ID, width, height, color);
+      return { ...commonLayer(name), kind: 'path', path, matrix };
+    } catch {
+      return undefined;
+    }
+  };
   const defineCustomShape = () => {
     const label = window.prompt('Name this custom shape', 'Custom shape');
     if (label === null) return;
@@ -4272,12 +4341,7 @@ export default function Home() {
     });
     let points: BooleanPoint[];
     if (layer.kind === 'rectangle') {
-      points = [
-        { x: 0, y: 0 },
-        { x: layer.width, y: 0 },
-        { x: layer.width, y: layer.height },
-        { x: 0, y: layer.height },
-      ];
+      points = roundedRectPoints(layer.width, layer.height, layer.cornerRadius, 12);
     } else if (layer.kind === 'ellipse') {
       points = Array.from({ length: 64 }, (_, index) => {
         const angle = (index * Math.PI * 2) / 64;
@@ -7625,6 +7689,8 @@ export default function Home() {
         polygonVariant,
         polygonSides,
         polygonInnerRadius,
+        shapeCornerRadius,
+        customShapeId,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -7748,6 +7814,8 @@ export default function Home() {
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
+    shapeCornerRadius,
+    customShapeId,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -8906,7 +8974,22 @@ export default function Home() {
       return;
     }
     try {
-      const svg = pathToSvg(booleanOperand(layer), f.w, f.h);
+      // Rounded rectangles keep true cubic corners in SVG; booleans flatten them.
+      const svg = pathToSvg(
+        layer.kind === 'rectangle' && clampCornerRadius(layer.cornerRadius, layer.width, layer.height) > 0
+          ? transformPath({
+              nodes: roundedRectNodes(layer.width, layer.height, layer.cornerRadius),
+              closed: true,
+              fill: layer.fill,
+              stroke: true,
+              strokeWidth: layer.stroke,
+              fillColor: layer.color,
+              strokeColor: layer.color,
+            }, layer.matrix)
+          : booleanOperand(layer),
+        f.w,
+        f.h,
+      );
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(svg);
       setNotice('SVG copied from the editable vector layer');
@@ -12639,6 +12722,8 @@ export default function Home() {
     }
     if (
       tool === 'rectangle' ||
+      tool === 'rounded-rectangle' ||
+      tool === 'custom-shape' ||
       tool === 'ellipse' ||
       tool === 'line' ||
       tool === 'polygon' ||
@@ -13336,6 +13421,19 @@ export default function Home() {
       previewGesture(g);
       g.smoothedLast = destination;
       g.last = local;
+    } else if (g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') {
+      const box = newShapeDragBox(g.tool, g.start, p, e);
+      const layer = newShapeLayer(g.tool, box, 'Shape preview');
+      void paint(layer ? { ...g.frame, layers: [...g.frame.layers, layer] } : g.frame).then(() => {
+        if (gesture.current !== g) return;
+        const context = canvas.current!.getContext('2d')!;
+        context.save();
+        context.strokeStyle = '#fff';
+        context.lineWidth = 1;
+        context.setLineDash([6, 4]);
+        context.strokeRect(box.left, box.top, box.width, box.height);
+        context.restore();
+      });
     } else if (
       g.tool === 'rectangle' ||
       g.tool === 'ellipse' ||
@@ -13992,6 +14090,15 @@ export default function Home() {
               ? 'Mask Brush revealed masked pixels'
               : 'Mask Eraser concealed pixels',
         );
+    } else if ((g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') && g.moved) {
+      const box = newShapeDragBox(g.tool, g.start, p, e);
+      const layer = newShapeLayer(
+        g.tool,
+        box,
+        `${g.tool === 'custom-shape' ? customShapeLabel() : 'Rounded Rectangle'} ${f.layers.length}`,
+      );
+      if (layer) addLayer(layer);
+      else void paint(current());
     } else if (
       (g.tool === 'rectangle' ||
         g.tool === 'ellipse' ||
@@ -18460,6 +18567,70 @@ export default function Home() {
                 >
                   Stroke Path with Brush…
                 </button>
+              )}
+              {tool === 'rounded-rectangle' && (
+                <Slider
+                  label="Corner radius"
+                  value={shapeCornerRadius}
+                  min={0}
+                  max={500}
+                  set={setShapeCornerRadius}
+                  suffix=" px"
+                />
+              )}
+              {tool === 'rounded-rectangle' && (
+                <p className="adjust-note">
+                  Draws a filled rectangle in the foreground colour. The radius is clamped to half the
+                  shorter side and stays editable in Layer properties. Shift draws a square; Alt draws
+                  from the centre.
+                </p>
+              )}
+              {tool === 'custom-shape' && (
+                <fieldset className="custom-shape-picker">
+                  <legend>Custom shape</legend>
+                  <div className="custom-shape-grid">
+                    {CUSTOM_SHAPE_LIBRARY.map((entry) => (
+                      <label
+                        key={entry.id}
+                        title={entry.label}
+                        className={customShapeId === entry.id ? 'selected' : undefined}
+                      >
+                        <input
+                          type="radio"
+                          name="custom-shape-choice"
+                          value={entry.id}
+                          aria-label={entry.label}
+                          checked={customShapeId === entry.id}
+                          onChange={() => setCustomShapeId(entry.id)}
+                        />
+                        <svg viewBox="-1 -1 26 26" aria-hidden="true" focusable="false">
+                          <path d={customShapeThumbnailPath(entry.id)} fillRule={entry.fillRule} />
+                        </svg>
+                      </label>
+                    ))}
+                  </div>
+                  {customPathPresets.length > 0 && (
+                    <label className="select-row">
+                      <span>Saved path as shape</span>
+                      <select
+                        aria-label="Saved path as custom shape"
+                        value={customShapePathPreset() ? customShapeId : ''}
+                        onChange={(event) =>
+                          setCustomShapeId(event.target.value || DEFAULT_CUSTOM_SHAPE_ID)
+                        }
+                      >
+                        <option value="">Built-in library</option>
+                        {customPathPresets.map((preset) => (
+                          <option key={preset.id} value={`${PATH_PRESET_SHAPE_PREFIX}${preset.id}`}>{preset.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <p className="adjust-note">
+                    Drag to draw {customShapeLabel()} as an editable path filled with the foreground
+                    colour. Shift keeps its proportions; Alt draws from the centre.
+                  </p>
+                </fieldset>
               )}
               {tool === 'polygon' && (
                 <label className="select-row">

@@ -144,6 +144,8 @@ export const TOOL_SECTIONS = {
   'curvature-pen': 'tool-options',
   'direct-select': 'tool-options',
   rectangle: 'tool-options',
+  'rounded-rectangle': 'tool-options',
+  'custom-shape': 'tool-options',
   ellipse: 'tool-options',
   line: 'tool-options',
   polygon: 'tool-options',

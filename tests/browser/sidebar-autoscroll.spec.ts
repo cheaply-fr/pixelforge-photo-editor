@@ -22,7 +22,7 @@ const TOOL_LABELS: Record<Tool, string> = {
   dodge: 'Dodge', burn: 'Burn', sponge: 'Sponge', smudge: 'Smudge', blur: 'Blur', sharpen: 'Sharpen',
   pen: 'Pen', 'freeform-pen': 'Freeform Pen', 'curvature-pen': 'Curvature Pen',
   'direct-select': 'Direct Selection', text: 'Text', rectangle: 'Shape', ellipse: 'Ellipse',
-  line: 'Line', polygon: 'Polygon', select: 'Select', 'ellipse-select': 'Elliptical marquee',
+  line: 'Line', polygon: 'Polygon', 'rounded-rectangle': 'Rounded Rectangle', 'custom-shape': 'Custom Shape', select: 'Select', 'ellipse-select': 'Elliptical marquee',
   'row-select': 'Single Row marquee', 'column-select': 'Single Column marquee', lasso: 'Lasso',
   'polygonal-lasso': 'Polygonal Lasso', 'magnetic-lasso': 'Magnetic Lasso',
   'selection-brush': 'Selection Brush', 'quick-selection': 'Quick Selection', 'magic-wand': 'Magic Wand',

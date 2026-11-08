@@ -334,3 +334,14 @@
    its top part is on screen below the canvas, so a tail spacer lets sections
    near the end still scroll their header up into that on-screen band. */
 @media(max-width:680px){.inspector{max-height:100svh;overflow-y:auto}.inspector::after{content:"";grid-column:1/-1;height:60svh;pointer-events:none}}
+/* Custom Shape tool library picker (docs/shape-tools-contract.md). */
+.custom-shape-picker{min-width:0;margin:10px 0 0;padding:0;border:0}.custom-shape-picker legend{margin-bottom:6px;padding:0;color:#93969e;font-size:9px}
+.custom-shape-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:5px}
+.custom-shape-grid label{position:relative;display:grid;place-items:center;min-width:36px;min-height:36px;padding:5px;border:1px solid #30333a;border-radius:7px;background:#202228;color:#b8bbc3;cursor:pointer}
+.custom-shape-grid input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.custom-shape-grid svg{width:22px;height:22px;fill:currentColor;pointer-events:none}
+.custom-shape-grid label:hover{border-color:#564037;color:#ff967b}
+.custom-shape-grid label.selected{border-color:var(--accent);background:#2a211f;color:#ff9d84}
+.custom-shape-grid label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:680px){.custom-shape-grid{grid-template-columns:repeat(auto-fill,minmax(44px,1fr))}.custom-shape-grid label{min-width:44px;min-height:44px}}
+.tool-rounded-rectangle,.tool-custom-shape{cursor:crosshair}

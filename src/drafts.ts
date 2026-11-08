@@ -4,6 +4,8 @@ import {
   assetBytes,
   formatMebibytes,
 } from './projectLimits.ts';
+import { validCornerRadius } from './vectorShapes.ts';
+import { validCustomShapeChoice } from './customShapeLibrary.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -150,9 +152,11 @@ export type Tool =
   | 'curvature-pen'
   | 'direct-select'
   | 'rectangle'
+  | 'rounded-rectangle'
   | 'ellipse'
   | 'line'
   | 'polygon'
+  | 'custom-shape'
   | 'select'
   | 'ellipse-select'
   | 'row-select'
@@ -202,6 +206,10 @@ export type Settings = {
   polygonSides?: number;
   /** Parametric star inner radius (0.1–0.9 of the outer radius). */
   polygonInnerRadius?: number;
+  /** Rounded Rectangle tool corner radius in px (0–8,000); clamped per drawn box. */
+  shapeCornerRadius?: number;
+  /** Custom Shape tool choice: a built-in library id or `path-preset:<id>`. */
+  customShapeId?: string;
   /** Spacing between brush dabs as a percent of diameter (1–1,000). */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -412,9 +420,11 @@ function validSettings(settings: unknown): settings is Settings {
       'curvature-pen',
       'direct-select',
       'rectangle',
+      'rounded-rectangle',
       'ellipse',
       'line',
       'polygon',
+      'custom-shape',
       'select',
       'ellipse-select',
       'row-select',
@@ -510,6 +520,8 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
+  if (!validCornerRadius(candidate.shapeCornerRadius)) return false;
+  if (candidate.customShapeId !== undefined && !validCustomShapeChoice(candidate.customShapeId)) return false;
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
