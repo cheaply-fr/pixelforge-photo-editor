@@ -165,6 +165,8 @@ import {
   type TextMaskOrientation,
 } from '../src/textMask';
 import { useDocument } from '../src/useDocument';
+import { useDelayedFlag } from '../src/useDelayedFlag';
+import { RENDER_STATUS_HIDE_DELAY_MS, RENDER_STATUS_SHOW_DELAY_MS } from '../src/canvasPresentation';
 import {
   applySelectLinkedLayers,
   planSelectLinkedLayers,
@@ -2824,6 +2826,11 @@ export default function Home() {
       paint,
       schedulePaint,
     } = doc;
+  // The status bar reports a render only once it has run for a moment, and
+  // keeps reporting while back-to-back stroke previews follow each other, so
+  // sub-frame renders do not flicker "Rendering… / Render ready". The canvas
+  // `data-rendering` attribute and the shell's aria-busy stay exact.
+  const renderStatusBusy = useDelayedFlag(doc.rendering, RENDER_STATUS_SHOW_DELAY_MS, RENDER_STATUS_HIDE_DELAY_MS);
   // A render can outlive the React event that started it. Keep a mutable
   // revision mirror so async layer commands can reject stale ownership even
   // before a new render paints its replacement frame.
@@ -16005,6 +16012,11 @@ export default function Home() {
       data-testid="editor-shell"
       data-screen-mode={screenMode}
       aria-busy={!ready || doc.rendering}
+      // Only the initial load dims the editor. Renders (every stroke preview,
+      // click and commit) keep aria-busy for assistive technology and tests,
+      // but must never change what is on screen: dimming the shell on
+      // aria-busy made the whole page flash on each click.
+      data-loading={ready ? 'false' : 'true'}
       inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
       onDragOver={(e) => {
@@ -20442,7 +20454,7 @@ export default function Home() {
           data-tiled-cache-evictions={tiledTelemetry?.cacheStats?.evictions ?? 0}
           aria-live="polite"
         >
-          {doc.rendering
+          {renderStatusBusy
             ? `Rendering… ${renderProgress?.completed ?? 0}/${renderProgress?.total ?? 0} layers`
             : 'Render ready'}
         </output>

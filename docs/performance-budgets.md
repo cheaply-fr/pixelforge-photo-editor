@@ -295,6 +295,25 @@ measurements; these are local/live observations, not CI budgets.
   suffix cache or dirty-rect recompositing (roadmap W3-8/W4-8) is the next
   step. One machine, one run each; live builds are not verified.
 
+- Clicking or painting on a large document made the whole editor flash
+  (`fix/canvas-flash`). Root cause: every render, including each coalesced
+  stroke preview and the commit render, set `aria-busy` on the editor shell,
+  and `src/home.css` dimmed `.editor-shell[aria-busy=true]` to 50 % opacity,
+  so a stroke on a 62-layer document blinked the page several times a second.
+  Only the initial load (`data-loading="true"`) dims the shell now; `aria-busy`
+  and the canvas `data-rendering` attribute keep their exact semantics. Renders
+  are presented with `presentCanvasImage` (`src/canvasPresentation.ts`): the
+  finished image is drawn in the same synchronous step that resets the
+  context, and the multi-megapixel backing store is resized only when the
+  document size changes instead of being reallocated on every preview. The
+  status bar shows "Rendering…" only after a render has run for 250 ms and
+  keeps it through gaps under 150 ms between back-to-back previews, so
+  sub-frame renders no longer flicker it. `tests/browser/canvas-flash.spec.ts`
+  samples the canvas's effective opacity, visibility, backing size and
+  off-stroke pixels on every animation frame and attribute change during a
+  stroke and a click on a 1500×1500, 9-layer document (it failed on main with
+  effective opacity 0.5).
+
 ### Radius-heavy filter timings (local, Node 24, 1 MP unless noted)
 
 These are single-run local measurements on a shared development machine
