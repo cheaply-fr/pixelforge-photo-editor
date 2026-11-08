@@ -318,3 +318,19 @@
 .brush-preset-library{border:0;padding:0;margin:0;min-width:0}.brush-preset-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.brush-preset-actions button{flex:1 1 auto;min-height:32px;font-size:12px}
 .update-notice{position:fixed;z-index:60;left:50%;bottom:40px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;max-width:calc(100vw - 32px);padding:8px 10px 8px 14px;border:1px solid #2a5b45;border-radius:10px;background:#18261f;color:#d6f2e2;font-size:12px;box-shadow:0 10px 30px #0009}.update-notice span{min-width:0;overflow-wrap:anywhere}.update-notice button{min-height:32px;padding:0 12px;border:1px solid #3d7a5d;border-radius:7px;background:#20352a;color:#e8fff2;font-size:12px;font-weight:650;white-space:nowrap}.update-notice button:first-of-type{border-color:#45c486;background:#2b6b4c}.update-notice button:hover{background:#2f7a56}@media(max-width:680px){.update-notice{left:16px;right:16px;transform:none;max-width:none;bottom:36px}.update-notice span{flex:1}}
 .edit-fill-swatch{display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}.edit-fill-swatch span{display:inline-block;width:22px;height:22px;border:1px solid #555b66;border-radius:5px}
+/* Properties sidebar: collapsible sections and auto-scroll landing highlight
+   (docs/sidebar-autoscroll-contract.md). */
+.panel-title .panel-toggle{display:flex;align-items:center;gap:7px;min-width:0;min-height:24px;padding:0;border:0;border-radius:5px;background:transparent;color:#d4d5d8;font-size:11px;font-weight:730;text-align:left;cursor:pointer}
+.panel-title .panel-toggle:hover{color:#fff}
+.panel-title .panel-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.panel-title .panel-toggle .panel-chevron{width:12px;color:#6f737c;transition:transform .15s ease}
+.sidebar-section[data-collapsed="true"] .panel-chevron{transform:rotate(-90deg)}
+.sidebar-section[data-collapsed="true"]>.panel-title{margin-bottom:0}
+[data-sidebar-highlight="true"]{border-radius:8px;box-shadow:inset 0 0 0 2px rgba(255,92,53,.55);animation:sidebar-section-landing 1.4s ease-out both}
+@keyframes sidebar-section-landing{0%{box-shadow:inset 0 0 0 2px rgba(255,92,53,.95),0 0 0 3px rgba(255,92,53,.25);background-color:rgba(255,92,53,.08)}100%{box-shadow:inset 0 0 0 2px rgba(255,92,53,0);background-color:transparent}}
+@media (prefers-reduced-motion: reduce){[data-sidebar-highlight="true"]{animation:none !important;box-shadow:inset 0 0 0 2px rgba(255,92,53,.75)}.panel-title .panel-toggle .panel-chevron{transition:none}}
+/* Stacked mobile layout: the sidebar is its own bounded scroll region so an
+   auto-scroll never moves the canvas out from under the user's finger. Only
+   its top part is on screen below the canvas, so a tail spacer lets sections
+   near the end still scroll their header up into that on-screen band. */
+@media(max-width:680px){.inspector{max-height:100svh;overflow-y:auto}.inspector::after{content:"";grid-column:1/-1;height:60svh;pointer-events:none}}
