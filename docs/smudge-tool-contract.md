@@ -31,6 +31,11 @@ tests cover toolbar/shortcut activation, representative colour and alpha
 assertions, active selection clipping, no-op history behavior, undo/redo,
 local reload, project export/import, lock guards and touch cancellation.
 
-The current browser path scans the full asset buffer for each segment. Worker
-and tile processing remains staged behind the large-image performance
+Each segment reads and writes only its window of the gesture buffer: the
+brush reach around its points plus the quarter-brush distance Smudge samples
+behind each pixel (`src/strokeWindow.ts`; windowed and full-layer results are
+byte-identical in `tests/stroke-window.test.mjs`). Live previews share the
+coalesced worker gesture preview described in
+[worker-render-contract.md](./worker-render-contract.md). Dirty-rectangle
+previews and tile processing remain staged behind the large-image performance
 milestone; this contract does not claim Photoshop-scale memory or latency.
