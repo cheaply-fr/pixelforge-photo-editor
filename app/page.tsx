@@ -304,6 +304,7 @@ import {
   sanitizeClippingRelations,
   validClippingRelationship,
 } from '../src/layerClipping';
+import { insertCopiesAboveSources, insertLayerAboveActive } from '../src/layerInsertion';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -8194,11 +8195,23 @@ export default function Home() {
       setRecovering(false);
     }
   };
-  const addLayer = (layer: Layer) => {
+  const addLayer = (layer: Layer, placement: 'top' | 'above-active' = 'above-active') => {
     const f = current();
     if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
       setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       void paint(f);
+      return false;
+    }
+    if (placement === 'above-active' && !layer.groupId && !layer.clippingTo) {
+      // New layers go directly above the active layer, joining its folder
+      // and clipping group (see layerInsertion.ts). A caller that names its
+      // own folder or clipping base (Paste of a copied member) keeps the
+      // explicit path below.
+      const inserted = insertLayerAboveActive(f, layer);
+      if (commit(inserted.frame)) {
+        setNotice(inserted.clipped ? 'Layer added to the clipping group' : 'Layer added');
+        return true;
+      }
       return false;
     }
     let next: Frame = {
@@ -8553,26 +8566,9 @@ export default function Home() {
       name: (layer.name + ' copy').slice(0, 160),
       locked: false,
     }));
-    let next: Frame = {
-      ...f,
-      layers: [...f.layers, ...copies],
-      active: copies.at(-1)!.id,
-      selectedLayerIds: copies.map((layer) => layer.id),
-    };
-    // Copies of grouped layers inherit their folder, so normalize every
-    // affected folder after appending the copies instead of leaving a second
-    // block at the end of the flat stack.
-    for (const groupId of new Set(
-      copies.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
-    )) {
-      const memberIds = next.layers
-        .filter((layer) => layer.groupId === groupId)
-        .map((layer) => layer.id);
-      next = {
-        ...next,
-        layers: groupLayerMembers(next, memberIds, groupId).layers,
-      };
-    }
+    // Each copy goes directly above its source, in the source's folder and
+    // clipping group (src/layerInsertion.ts).
+    const next = insertCopiesAboveSources(f, layers, copies as Layer[]);
     if (
       commit(next)
     )

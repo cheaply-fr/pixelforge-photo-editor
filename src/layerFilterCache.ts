@@ -399,6 +399,31 @@ export function sharedLayerFilterCache(): ByteLruCache<CanvasImageSource> {
 /** Release cached surfaces, e.g. when a different document is installed. */
 export function clearLayerFilterCache(): void {
   sharedCache?.clear();
+  sharedClippedCache?.clear();
+}
+
+/**
+ * A clipped layer's finished result (source × clipping-base alpha), cropped
+ * to its visible bounds. `surface` is undefined when nothing is visible.
+ */
+export type ClippedLayerResult = {
+  surface: CanvasImageSource | undefined;
+  x: number;
+  y: number;
+};
+
+let sharedClippedCache: ByteLruCache<ClippedLayerResult> | undefined;
+
+/**
+ * Per-context cache of clipped-layer results. Without it every render
+ * re-rendered each clipped layer and its base and multiplied their alpha in
+ * software over the whole frame, so reordering, adding or editing any layer
+ * below a clipping group recomputed every group above it. Half the layer
+ * cache budget, pass-aware like the layer cache.
+ */
+export function sharedClippedLayerCache(): ByteLruCache<ClippedLayerResult> {
+  sharedClippedCache ??= new ByteLruCache<ClippedLayerResult>(Math.floor(detectLayerFilterCacheBudget() / 2));
+  return sharedClippedCache;
 }
 
 /** Difference between two stat snapshots (counters) plus the latest occupancy. */
