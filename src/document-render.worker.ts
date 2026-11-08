@@ -14,7 +14,7 @@ import type {
 import type { FilterBandProgress } from './filterBands.ts';
 import { prewarmFilterPool } from './filterWorkerPool.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
-import { CompositeCache } from './compositeCache.ts';
+import { CompositeCache, type CompositeReuse } from './compositeCache.ts';
 import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
 import {
   clearLayerFilterCache,
@@ -87,6 +87,7 @@ type Response =
       width: number;
       height: number;
       layerCache?: LayerFilterCacheStats;
+      composite?: CompositeReuse;
     }
   | {
       kind: 'result-bytes';
@@ -95,6 +96,7 @@ type Response =
       width: number;
       height: number;
       layerCache?: LayerFilterCacheStats;
+      composite?: CompositeReuse;
     }
   | { kind: 'error'; id: number; name: string; message: string };
 
@@ -160,15 +162,16 @@ async function encodeResult(
   width: number,
   height: number,
   layerCache: LayerFilterCacheStats,
+  composite: CompositeReuse,
 ): Promise<void> {
   if (typeof canvas.transferToImageBitmap === 'function') {
     const image = canvas.transferToImageBitmap();
-    scope.postMessage({ kind: 'result', id, image, width, height, layerCache }, [image]);
+    scope.postMessage({ kind: 'result', id, image, width, height, layerCache, composite }, [image]);
     return;
   }
   const blob = await canvas.convertToBlob({ type: 'image/png' });
   const bytes = await blob.arrayBuffer();
-  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache }, [
+  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache, composite }, [
     bytes,
   ]);
 }
@@ -212,6 +215,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
   void (async () => {
     let output: OffscreenCanvas | undefined;
     const cacheBefore = sharedLayerFilterCache().stats();
+    const finalHitsBefore = compositeCache.finalHits;
     try {
       const resolved = resolveRequestAssets(request.assets, request.assetKeys, assetStore);
       if (resolved.missing.length) {
@@ -271,6 +275,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         request.frame.w,
         request.frame.h,
         layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()),
+        { final: compositeCache.finalHits > finalHitsBefore },
       );
     } catch (error) {
       if (cancelled.has(request.id))
