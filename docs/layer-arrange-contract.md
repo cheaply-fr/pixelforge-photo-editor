@@ -14,6 +14,15 @@ The four root-level commands are:
   toward the bottom while preserving relative order.
 - **Send to Back** prepends the selected layers in their existing stack order.
 
+Clipping groups (a base and the consecutive layers clipped to it) are kept
+intact. A selected base expands the plan to its whole clipping group. A
+Bring Forward / Send Backward step of a layer outside a clipping group moves
+past the entire group in one step instead of landing between the base and
+its clipped layers; a clipped layer moving inside its own group still steps
+one layer, and leaving the group releases only that layer. The panel's
+Raise/Lower buttons use the same step rule for the active layer. See
+`clipping-mask-contract.md`.
+
 The planner rejects an absent/empty selection, missing or duplicate IDs, and
 locked layers. Selecting any folder member expands the plan to the complete
 folder block, preserving member order and the folder's isolated blend/opacity

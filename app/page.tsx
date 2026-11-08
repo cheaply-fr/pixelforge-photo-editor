@@ -285,17 +285,23 @@ import {
 } from '../src/layerMergeVisible';
 import {
   applyLayerArrange,
+  clippingGroupKeys,
+  expandClippingGroupSelection,
   layerArrangeReason,
   planLayerArrange,
+  stepLayerRuns,
   type LayerArrangeMode,
 } from '../src/layerArrange';
 import { combineSelectionBounds } from '../src/layerSelection';
+import { rasterizedLayer, rasterizeRenderSource } from '../src/layerRasterize';
 import { applyLayerLock, layerLockReason, planLayerLock } from '../src/layerLock';
 import {
   clippingCandidateBase,
   clippingGroupBase,
   isClippingSourceLayer,
   preserveClippingAfterReorder,
+  preserveClippingAfterReplace,
+  sanitizeClippingRelations,
   validClippingRelationship,
 } from '../src/layerClipping';
 import CurveEditor from '../src/CurveEditor';
@@ -9358,7 +9364,7 @@ export default function Home() {
         locked: false,
         ...(mergeGroupIds.size === 1 ? { groupId: [...mergeGroupIds][0] } : {}),
       };
-      const next = selectedPlan?.ok
+      const replaced = selectedPlan?.ok
         ? applySelectedLayerMerge(f, selectedPlan, merged)
         : (() => {
             const layers = f.layers.slice();
@@ -9378,6 +9384,14 @@ export default function Home() {
               selectedLayerIds: [merged.id],
             };
           })();
+      // A merged base keeps its remaining clipped layers, and a merge inside
+      // one clipping group stays clipped.
+      const next = preserveClippingAfterReplace(
+        f,
+        selectedLayers.map((layer) => layer.id),
+        replaced,
+        merged.id,
+      );
       if (
         commit(next)
       )
@@ -9465,11 +9479,19 @@ export default function Home() {
   };
   const reorder = (direction: number) => {
     const f = current(),
-      layers = f.layers.slice(),
-      from = layers.findIndex((l) => l.id === f.active),
+      from = f.layers.findIndex((l) => l.id === f.active),
       to = from + direction;
-    if (to < 0 || to >= layers.length || layerIsLocked(f, layers[from])) return;
-    [layers[from], layers[to]] = [layers[to], layers[from]];
+    if (to < 0 || to >= f.layers.length || layerIsLocked(f, f.layers[from])) return;
+    // A clipping group base moves with its clipped layers, and a step past
+    // another clipping group jumps the whole group instead of landing inside it.
+    const keys = clippingGroupKeys(f),
+      moving = expandClippingGroupSelection(f, [f.active], keys);
+    if (f.layers.some((layer) => moving.has(layer.id) && layerIsLocked(f, layer))) {
+      setNotice('Unlock the clipped layers before moving their base');
+      return;
+    }
+    const layers = stepLayerRuns(f.layers, moving, direction > 0 ? 1 : -1, keys);
+    if (layers.every((layer, index) => layer === f.layers[index])) return;
     const { frame: next, released } = preserveClippingAfterReorder(f, { ...f, layers });
     if (commit(next) && released.length)
       setNotice(`Clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`);
@@ -9508,39 +9530,21 @@ export default function Home() {
     // Layer styles stay live on the rasterized layer instead of being baked:
     // the pixels are rendered without them and the same styles are kept, so
     // a glow or shadow remains editable (and follows the new pixels' alpha).
+    // The clipping relationship, folder, link and other layer properties are
+    // kept on the new pixels too (see rasterizedLayer).
     const keptStyles = isNeutralLayerStyles(layer.styles) ? undefined : layer.styles;
     try {
       const image = await renderFrame(
         {
           ...f,
-          layers: [
-            {
-              ...layer,
-              visible: true,
-              opacity: 1,
-              blend: 'source-over',
-              // Bake live filter effects and adjustments into the new pixels,
-              // as Photoshop bakes Smart Filters when rasterizing.
-              adjustments: layer.adjustments,
-              styles: undefined,
-            },
-          ],
+          // Bake live filter effects, smart filters and adjustments into the
+          // new pixels, as Photoshop bakes Smart Filters when rasterizing.
+          layers: [rasterizeRenderSource(layer)],
         },
         assets.current,
       );
       if (current() !== f) return;
-      const rasterLayer: Layer = {
-        ...commonLayer(layer.name),
-        id: layer.id,
-        kind: 'raster',
-        asset: addAsset(assets.current, image),
-        opacity: layer.opacity,
-        blend: layer.blend,
-        visible: layer.visible,
-        adjustments: { ...neutral },
-        groupId: layer.groupId,
-        ...(keptStyles ? { styles: keptStyles } : {}),
-      };
+      const rasterLayer = rasterizedLayer(layer, addAsset(assets.current, image));
       const changed = commit({
         ...f,
         layers: f.layers.map((item) => (item.id === layer.id ? rasterLayer : item)),
@@ -10263,7 +10267,9 @@ export default function Home() {
       setNotice('Unlock every selected layer before nesting them');
       return;
     }
-    const nested: Frame = {
+    // Links to bases left outside the nested contents are dropped there; a
+    // nested run of clipped layers is clipped outside instead (below).
+    const nested: Frame = sanitizeClippingRelations({
       w: original.w,
       h: original.h,
       ...(original.colorMode ? { colorMode: original.colorMode } : {}),
@@ -10274,7 +10280,7 @@ export default function Home() {
         ? original.active
         : selected[0].id,
       selectedLayerIds: selected.map((layer) => layer.id),
-    };
+    });
     try {
       const rendered = await renderFrame(nested, assets.current);
       if (current() !== original) {
@@ -10297,13 +10303,13 @@ export default function Home() {
         groups = (original.groups || []).filter((group) =>
           original.layers.some((layer) => !selectedIds.has(layer.id) && layer.groupId === group.id),
         );
-      if (commit({
+      if (commit(preserveClippingAfterReplace(original, [...selectedIds], {
         ...original,
         layers: [...layersBefore, nestedLayer, ...layersAfter],
         groups: groups.length ? groups : undefined,
         active: nestedLayer.id,
         selectedLayerIds: [nestedLayer.id],
-      }))
+      }, nestedLayer.id)))
         setNotice('Selected layers nested into an editable Smart Object');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not nest the selected layers');
