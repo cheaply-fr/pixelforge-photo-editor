@@ -178,15 +178,15 @@ test('saved selections are named, loaded, renamed, deleted and retained in proje
   await page
     .getByRole('button', { name: 'Clear selection', exact: true })
     .click();
-  await page.getByRole('button', { name: /^Load$/ }).click();
+  await page.getByRole('button', { name: 'Load selection Subject area', exact: true }).click();
   await expect(
     page.getByText('Saved selection loaded', { exact: true }),
   ).toBeVisible();
   page.once('dialog', (dialog) => dialog.accept('Hero'));
-  await page.getByRole('button', { name: /^Rename$/ }).click();
+  await page.getByRole('button', { name: 'Rename selection Subject area', exact: true }).click();
   await expect(page.getByText('Hero', { exact: true })).toBeVisible();
   page.once('dialog', (dialog) => dialog.accept());
-  await page.getByRole('button', { name: /^Delete$/ }).click();
+  await page.getByRole('button', { name: 'Delete selection Hero', exact: true }).click();
   await expect(page.getByText('Hero', { exact: true })).toHaveCount(0);
   // Recreate one entry and prove the editable project payload carries it.
   await page
