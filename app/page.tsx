@@ -28,6 +28,26 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { SidebarSection } from '../src/SidebarSection';
+import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
+import type { TriggerOrigin, TriggerSource } from '../src/sidebarAutoScroll';
+import type { RevealAlign } from '../src/sidebarScrollMath';
+import {
+  COLLAPSED_SECTIONS_STORAGE_KEY,
+  LAYER_SELECTION_SECTION,
+  LAYER_STYLE_IDS,
+  QUICK_FILTER_SECTION,
+  QUICK_MASK_SECTION,
+  parseCollapsedSections,
+  sectionForCommand,
+  sectionForFilter,
+  sectionForStyle,
+  sectionForTool,
+  serializeCollapsedSections,
+  toolShowsSection,
+  type SidebarCommandId,
+  type SidebarSectionId,
+} from '../src/sidebarSections';
 
 import {
   LOCAL_CONFLICT,
@@ -692,7 +712,7 @@ import {
   nudgeFilterCenter,
 } from '../src/filterCenter';
 import LightRaysControls, { lightRaysEffectDefaults } from '../src/LightRaysControls';
-import { isNeutralLayerStyles } from '../src/layerStyles';
+import { effectiveLayerStyles, isNeutralLayerStyles } from '../src/layerStyles';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -1053,6 +1073,9 @@ type Command =
   | 'image-mode'
   | 'image-analysis'
   | 'image-adjustments';
+/** Fails typecheck if the sidebar registry names a command the editor lacks. */
+type AssertCommands<T extends Command> = T;
+type SidebarCommand = AssertCommands<SidebarCommandId>;
 
 type MenuItem = {
   label: string;
@@ -2816,6 +2839,82 @@ export default function Home() {
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
   });
+  // Properties sidebar: collapsible registered sections, and auto-scroll to
+  // the section a user activation targets. See
+  // docs/sidebar-autoscroll-contract.md for the full behaviour contract.
+  const inspectorRef = useRef<HTMLElement | null>(null);
+  const sidebarAnnouncerRef = useRef<HTMLDivElement | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<SidebarSectionId>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      return new Set(parseCollapsedSections(window.localStorage.getItem(COLLAPSED_SECTIONS_STORAGE_KEY)));
+    } catch {
+      return new Set();
+    }
+  });
+  const updateSidebarSectionCollapsed = useCallback(
+    (section: SidebarSectionId, collapsed: (wasCollapsed: boolean) => boolean) => {
+      setCollapsedSections((current) => {
+        const next = collapsed(current.has(section));
+        if (current.has(section) === next) return current;
+        const updated = new Set(current);
+        if (next) updated.add(section);
+        else updated.delete(section);
+        try {
+          window.localStorage.setItem(COLLAPSED_SECTIONS_STORAGE_KEY, serializeCollapsedSections(updated));
+        } catch { /* private mode */ }
+        return updated;
+      });
+    },
+    [],
+  );
+  const toggleSidebarSection = useCallback(
+    (section: SidebarSectionId) => updateSidebarSectionCollapsed(section, (was) => !was),
+    [updateSidebarSectionCollapsed],
+  );
+  const expandSidebarSection = useCallback(
+    (section: SidebarSectionId) => updateSidebarSectionCollapsed(section, () => false),
+    [updateSidebarSectionCollapsed],
+  );
+  const { reveal: requestSidebarReveal, clear: clearSidebarReveal } = useSidebarAutoScroll({
+    container: inspectorRef,
+    announcer: sidebarAnnouncerRef,
+    expand: expandSidebarSection,
+  });
+  // The user activation currently being handled. Programmatic paths (draft
+  // restore, action playback, presets) run without one and never scroll.
+  const sidebarTrigger = useRef<{ source: TriggerSource; origin: TriggerOrigin } | null>(null);
+  const withSidebarTrigger = <T,>(source: TriggerSource, origin: TriggerOrigin, run: () => T): T => {
+    const previous = sidebarTrigger.current;
+    sidebarTrigger.current = { source, origin };
+    try {
+      return run();
+    } finally {
+      sidebarTrigger.current = previous;
+    }
+  };
+  /** Reveal `section` for the current user activation; returns whether a reveal was requested. */
+  const revealSidebarSection = (
+    section: SidebarSectionId | null,
+    options: { keep?: Element | null; align?: RevealAlign } = {},
+  ): boolean => {
+    const trigger = sidebarTrigger.current;
+    if (!trigger) return false;
+    if (!section) {
+      clearSidebarReveal();
+      return false;
+    }
+    requestSidebarReveal({
+      section,
+      source: trigger.source,
+      origin: trigger.origin,
+      ...(options.align ? { align: options.align } : {}),
+      ...(options.keep ? { keep: options.keep } : {}),
+    });
+    return true;
+  };
+  const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
+    revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
   const setTool = useCallback((next: Tool) => {
     setActiveTool(next);
@@ -2835,6 +2934,11 @@ export default function Home() {
         return updated;
       });
   }, []);
+  /** Switch tool for a user activation and reveal that tool's sidebar section. */
+  const activateTool = (next: Tool) => {
+    setTool(next);
+    revealSidebarSection(sectionForTool(next));
+  };
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
   // The source is a layer pixel plus the layer placement it was picked in, so
@@ -4630,6 +4734,12 @@ export default function Home() {
     if (quickMasking) exitQuickMask();
     else void enterQuickMask();
   };
+  /** User toggle: entering Quick Mask reveals its options section. */
+  const toggleQuickMaskFromUser = () => {
+    const entering = !quickMasking;
+    toggleQuickMask();
+    if (entering) revealSidebarSection(QUICK_MASK_SECTION);
+  };
   const updateQuickMaskAt = (
     mask: QuickMask,
     x: number,
@@ -4842,6 +4952,29 @@ export default function Home() {
       : undefined;
   const layerIsLocked = (f: Frame, layer: Layer) =>
     layer.locked || Boolean(groupForLayer(f, layer)?.locked);
+  /** Layers panel row click: a plain (single) selection reveals the layer properties. */
+  const selectLayerFromPanel = (
+    id: string,
+    intent?: { additive?: boolean; range?: boolean },
+  ) => {
+    select(id, intent);
+    if (!intent?.additive && !intent?.range)
+      withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection(LAYER_SELECTION_SECTION));
+  };
+  /** Layers panel edits: enabling exactly one layer style reveals that style's controls. */
+  const editLayerFromPanel = (patch: Partial<Layer>) => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    const before = layer ? effectiveLayerStyles(layer.styles) : undefined;
+    const result = editLayer(patch);
+    const nextStyles = (patch as { styles?: Partial<Record<(typeof LAYER_STYLE_IDS)[number], { enabled?: boolean }>> }).styles;
+    if (before && nextStyles && result !== false) {
+      const enabled = LAYER_STYLE_IDS.filter((style) => nextStyles[style]?.enabled === true && !before[style].enabled);
+      if (enabled.length === 1)
+        withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection(sectionForStyle(enabled[0])));
+    }
+    return result;
+  };
   const editLayer = (patch: Partial<Layer>) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before editing layers');
@@ -6857,6 +6990,9 @@ export default function Home() {
       setNotice('Remove the stacked filter, or choose Done to edit the live filter');
       return;
     }
+    // Menu / gallery / shortcut picks reveal the Filter effects section; the
+    // section's own select (switchInPlace) never moves the sidebar.
+    if (!choice.switchInPlace) revealSidebarSection(sectionForFilter(type));
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (
@@ -7099,6 +7235,7 @@ export default function Home() {
   /** Live filter-centre drag preview (frame space) before the edit commits. */
   const [filterCenterDrag, setFilterCenterDrag] = useState<{ centerX: number; centerY: number } | null>(null);
   const chooseFilter = (filter: string, label: string) => {
+    revealSidebarSection(QUICK_FILTER_SECTION);
     if (adjust({ filter }))
       setNotice(`${label} applied to selected layer; remains editable`);
   };
@@ -14463,7 +14600,7 @@ export default function Home() {
       )?.[0] as Tool | undefined;
       if (customTool) {
         e.preventDefault();
-        setTool(customTool);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(customTool));
         setNotice(toolSelectionNotice(customTool, TOOLS.find((item) => item.id === customTool)?.label || customTool));
         return;
       }
@@ -14477,7 +14614,7 @@ export default function Home() {
           return;
         }
         e.preventDefault();
-        runCommandRef.current?.(customCommand);
+        withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(customCommand));
         return;
       }
       if (e.key === 'F5' && e.shiftKey) {
@@ -14557,7 +14694,7 @@ export default function Home() {
       }
       if (e.key.toLowerCase() === 'q') {
         e.preventDefault();
-        toggleQuickMask();
+        withSidebarTrigger('shortcut', 'keyboard', toggleQuickMaskFromUser);
         return;
       }
       if (e.key.toLowerCase() === 'x') {
@@ -14581,7 +14718,7 @@ export default function Home() {
         const next = e.shiftKey
           ? (tool === 'rotate-view' ? lastRFamilyTool.current : tool)
           : 'rotate-view';
-        setTool(next as Tool);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next as Tool));
         setNotice(
           toolSelectionNotice(
             next as Tool,
@@ -14599,7 +14736,7 @@ export default function Home() {
           group[
             (index < 0 ? 0 : index + direction + group.length) % group.length
           ];
-        setTool(next);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next));
         setNotice(
           toolSelectionNotice(
             next,
@@ -14611,7 +14748,7 @@ export default function Home() {
       const alias = TOOL_ALIASES[lower];
       if (alias) {
         e.preventDefault();
-        setTool(alias);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(alias));
         setNotice(
           toolSelectionNotice(
             alias,
@@ -14821,17 +14958,17 @@ export default function Home() {
     else if (command === 'combine-shapes-intersect') return combineSelectedShapes('intersect');
     else if (command === 'combine-shapes-exclude') return combineSelectedShapes('exclude');
     else if (command === 'patch-tool') {
-      setTool('patch');
+      activateTool('patch');
       clearCloneSource();
       setNotice('Patch tool selected; click a source, then drag a destination');
     } else if (command === 'mixer-brush-tool') {
-      setTool('mixer-brush');
+      activateTool('mixer-brush');
       setNotice('Mixer Brush selected; drag to blend the immutable source snapshot');
     } else if (command === 'history-brush-tool') {
-      setTool('history-brush');
+      activateTool('history-brush');
       setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
     } else if (command === 'art-history-brush-tool') {
-      setTool('art-history-brush');
+      activateTool('art-history-brush');
       setNotice(`Art History Brush selected; local painterly source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
     } else if (command === 'set-history-source') {
       setHistorySourceIndex(index.current);
@@ -14843,10 +14980,10 @@ export default function Home() {
     } else if (command === 'content-aware-scale') {
       await applyContentAwareScale();
     } else if (command === 'open-type') {
-      setTool('text');
+      activateTool('text');
       setNotice('OpenType controls are available in the selected text layer inspector');
     } else if (command === 'text-tool') {
-      setTool('text');
+      activateTool('text');
       setNotice('Text tool selected');
     } else if (command === 'text-align-left') alignText('left');
     else if (command === 'text-align-center') alignText('center');
@@ -14884,7 +15021,8 @@ export default function Home() {
     else if (command === 'find-layers') {
       const input = document.getElementById('find-layers');
       if (input instanceof HTMLInputElement) {
-        input.focus();
+        // The reveal scrolls; focusing without scrolling avoids a second jump.
+        input.focus(revealCommandSection('find-layers', input) ? { preventScroll: true } : undefined);
         input.select();
         setNotice('Find layers focused; search by name, type, group or state');
       }
@@ -14892,7 +15030,7 @@ export default function Home() {
     else if (command === 'rename-layer') {
       const input = document.getElementById('layer-name');
       if (input instanceof HTMLInputElement) {
-        input.focus();
+        input.focus(revealCommandSection('rename-layer', input) ? { preventScroll: true } : undefined);
         input.select();
         setNotice('Layer name focused; enter a new name');
       }
@@ -14902,7 +15040,7 @@ export default function Home() {
         'input[aria-label="Enable outline"]',
       );
       if (input) {
-        input.focus();
+        input.focus(revealCommandSection('layer-style', input) ? { preventScroll: true } : undefined);
         setNotice('Layer Style controls focused');
       }
     }
@@ -14911,7 +15049,7 @@ export default function Home() {
     else if (command === 'reselect') reselect();
     else if (command === 'invert-selection') invertSelection();
     else if (command === 'similar-selection') await applySimilarSelection();
-    else if (command === 'quick-mask') toggleQuickMask();
+    else if (command === 'quick-mask') toggleQuickMaskFromUser();
     else if (command === 'save-selection') {
       // Store a named selection in the document (the Saved selections panel
       // lists it); downloading a file is the separate command below.
@@ -14979,22 +15117,32 @@ export default function Home() {
     else if (command === 'release-clipping-mask') releaseClippingMask();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'image-mode') toggleImageMode();
-    else if (command === 'levels')
-      setNotice('Levels controls are available in Adjust selected layer');
-    else if (command === 'hue-saturation')
+    else if (command === 'levels') {
+        setNotice('Levels controls are available in Adjust selected layer');
+      revealCommandSection('levels');
+    }
+    else if (command === 'hue-saturation') {
       setNotice(
         'Hue/Saturation controls are available in Adjust selected layer',
       );
-    else if (command === 'curves')
-      setNotice('Curves controls are available in Adjust selected layer');
-    else if (command === 'color-balance')
+      revealCommandSection('hue-saturation');
+    }
+    else if (command === 'curves') {
+        setNotice('Curves controls are available in Adjust selected layer');
+      revealCommandSection('curves');
+    }
+    else if (command === 'color-balance') {
       setNotice(
         'Color Balance controls are available in Adjust selected layer',
       );
-    else if (command === 'sharpen-noise')
+      revealCommandSection('color-balance');
+    }
+    else if (command === 'sharpen-noise') {
       setNotice(
         'Sharpen and Noise controls are available in Adjust selected layer',
       );
+      revealCommandSection('sharpen-noise');
+    }
     else if (command === 'auto-tone') return autoCorrect('tone');
     else if (command === 'auto-contrast') return autoCorrect('contrast');
     else if (command === 'auto-color') return autoCorrect('color');
@@ -15141,19 +15289,19 @@ export default function Home() {
       chooseFilterEffect('zigzag', 'ZigZag (radial local approximation)');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
-      setTool('crop');
+      activateTool('crop');
       setNotice('Drag on the image to crop');
     } else if (command === 'perspective-crop') {
-      setTool('perspective-crop');
+      activateTool('perspective-crop');
       setNotice('Drag on the image to define a perspective crop');
     } else if (command === 'slice') {
       if (cropPreview) cancelCropPreview();
       if (perspectiveCropPreview) cancelPerspectiveCropPreview();
-      setTool('slice');
+      activateTool('slice');
       clearCloneSource();
       setNotice('Drag on the image to select a slice');
     } else if (command === 'slice-select') {
-      setTool('slice-select');
+      activateTool('slice-select');
       clearCloneSource();
       setNotice(
         current().slices?.length
@@ -15162,7 +15310,7 @@ export default function Home() {
       );
     } else if (command === 'frame') {
       if (slicePreview) cancelSlicePreview();
-      setTool('frame');
+      activateTool('frame');
       clearCloneSource();
       setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
@@ -15714,7 +15862,7 @@ export default function Home() {
       gesture.current = null;
       void paint(current());
     }
-    setTool(id);
+    activateTool(id);
     clearCloneSource();
     closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
@@ -16062,7 +16210,7 @@ export default function Home() {
           close={() => setCommandSearchOpen(false)}
           run={(command) => {
             setCommandSearchOpen(false);
-            void runCommand(command as Command);
+            withSidebarTrigger('command-search', 'unknown', () => void runCommand(command as Command));
           }}
         />
       )}
@@ -16101,7 +16249,7 @@ export default function Home() {
           close={() => setFilterGalleryOpen(false)}
           apply={(command) => {
             setFilterGalleryOpen(false);
-            void runCommand(command as Command);
+            withSidebarTrigger('dialog', 'unknown', () => void runCommand(command as Command));
           }}
         />
       )}
@@ -16116,7 +16264,7 @@ export default function Home() {
           close={() => setAdjustmentsOpen(false)}
           choose={(command: AdjustmentCommand) => {
             setAdjustmentsOpen(false);
-            void runCommand(command);
+            withSidebarTrigger('dialog', 'unknown', () => void runCommand(command));
           }}
         />
       )}
@@ -16351,9 +16499,13 @@ export default function Home() {
                             ? 'Planned for a later roadmap stage'
                             : undefined
                         }
-                        onClick={() => {
+                        onClick={(event) => {
                           setActiveMenu(null);
-                          void runCommand(item.command);
+                          withSidebarTrigger(
+                            'menu',
+                            event.detail === 0 ? 'keyboard' : 'pointer',
+                            () => void runCommand(item.command),
+                          );
                         }}
                       >
                         <span>{item.label}</span>
@@ -16479,14 +16631,18 @@ export default function Home() {
                         onKeyDown={(event) =>
                           openToolFlyoutFromKeyboard(event, id)
                         }
-                        onClick={() => {
+                        onClick={(event) => {
                           if (toolHoldOpened.current) {
                             // Releasing a long press opens the flyout without
                             // immediately selecting the parent tool.
                             toolHoldOpened.current = false;
                             return;
                           }
-                          selectToolbarTool(id, label);
+                          withSidebarTrigger(
+                            'toolbar',
+                            event.detail === 0 ? 'keyboard' : 'pointer',
+                            () => selectToolbarTool(id, label),
+                          );
                         }}
                         aria-label={`${label} tool`}
                         aria-pressed={tool === id}
@@ -16546,7 +16702,9 @@ export default function Home() {
                                 (candidate) => candidate.id === subtoolId,
                               );
                               if (subtool)
-                                selectToolbarTool(subtool.id, subtool.label);
+                                withSidebarTrigger('flyout', 'unknown', () =>
+                                  selectToolbarTool(subtool.id, subtool.label),
+                                );
                             }}
                             onClose={closeToolFlyout}
                           />
@@ -16562,7 +16720,13 @@ export default function Home() {
             className={
               quickMasking ? 'active quick-mask-tool' : 'quick-mask-tool'
             }
-            onClick={toggleQuickMask}
+            onClick={(event) =>
+              withSidebarTrigger(
+                'toolbar',
+                event.detail === 0 ? 'keyboard' : 'pointer',
+                toggleQuickMaskFromUser,
+              )
+            }
             aria-label="Quick Mask mode"
             aria-pressed={quickMasking}
             title="Quick Mask mode (Q)"
@@ -17379,16 +17543,16 @@ export default function Home() {
             </button>
           </div>
         </section>
-        <aside className="inspector">
+        <aside className="inspector" ref={inspectorRef} aria-label="Properties">
           {frame && (
             <LayersPanel
               frame={frame}
               pixelUsage={layerPixelUsage(frame, assets.current)}
-              select={select}
+              select={selectLayerFromPanel}
               selectAll={selectAllLayers}
               deselectLayers={deselectLayers}
               isolateLayers={isolateLayers}
-              edit={editLayer}
+              edit={editLayerFromPanel}
               add={addPaint}
               addAdjustment={addAdjustmentLayer}
               addSmartObject={() => chooseSmartObjectFile(false)}
@@ -17437,11 +17601,14 @@ export default function Home() {
             />
           )}
           {frame && (
-            <section
-              className="panel saved-selections-panel"
-              aria-label="Saved selections"
+            <SidebarSection
+              id="saved-selections"
+              className="saved-selections-panel"
+              icon={Bookmark}
+              title="Saved selections"
+              collapsed={collapsedSections.has('saved-selections')}
+              onToggle={toggleSidebarSection}
             >
-              <Title icon={Bookmark} text="Saved selections" />
               <label className="layer-field">
                 Selection name
                 <input
@@ -17492,12 +17659,13 @@ export default function Home() {
                   <small>No saved selections yet.</small>
                 )}
               </div>
-            </section>
+            </SidebarSection>
           )}
           {quickMasking && quickMask && (
             <section
               className="panel quick-mask-panel"
               aria-label="Quick Mask options"
+              data-sidebar-section="quick-mask"
             >
               <Title
                 icon={Bookmark}
@@ -17519,16 +17687,18 @@ export default function Home() {
               </p>
             </section>
           )}
-          <section className="panel">
-            <Title
-              icon={WandSparkles}
-              text="Adjust selected layer"
-              action="Reset"
-              onClick={() => {
-                resetAdjustments();
-                setNotice('Adjustments reset');
-              }}
-            />
+          <SidebarSection
+            id="adjustments"
+            icon={WandSparkles}
+            title="Adjust selected layer"
+            action="Reset"
+            onAction={() => {
+              resetAdjustments();
+              setNotice('Adjustments reset');
+            }}
+            collapsed={collapsedSections.has('adjustments')}
+            onToggle={toggleSidebarSection}
+          >
             <Slider
               label="Brightness"
               value={brightness}
@@ -17811,10 +17981,16 @@ export default function Home() {
               uses a bounded unsharp mask and Noise is deterministic, all
               without changing source pixels.
             </p>
-          </section>
-          {tool === 'rotate-view' && (
-            <section className="panel" data-testid="view-rotation-controls">
-              <Title icon={RotateCw} text="Rotate View" />
+          </SidebarSection>
+          {toolShowsSection(tool, 'rotate-view') && (
+            <SidebarSection
+              id="rotate-view"
+              testId="view-rotation-controls"
+              icon={RotateCw}
+              title="Rotate View"
+              collapsed={collapsedSections.has('rotate-view')}
+              onToggle={toggleSidebarSection}
+            >
               <output data-testid="view-rotation-value" aria-live="polite">
                 {normalizeViewRotation(viewRotation)}°
               </output>
@@ -17830,10 +18006,15 @@ export default function Home() {
                 </button>
               </div>
               <p className="adjust-note">Rotate View changes only the canvas viewport. Document pixels, layers and exports stay unchanged.</p>
-            </section>
+            </SidebarSection>
           )}
-          <section className="panel">
-            <Title icon={Crop} text="Transform" />
+          <SidebarSection
+            id="transform"
+            icon={Crop}
+            title="Transform"
+            collapsed={collapsedSections.has('transform')}
+            onToggle={toggleSidebarSection}
+          >
             <div className="transform">
               <button
                 aria-label="Rotate left"
@@ -17857,44 +18038,15 @@ export default function Home() {
                 <FlipVertical2 />
               </button>
             </div>
-          </section>
-          {(tool === 'brush' ||
-            tool === 'pencil' ||
-            tool === 'color-replace' ||
-            tool === 'eraser' ||
-            tool === 'background-eraser' ||
-            tool === 'magic-eraser' ||
-            tool === 'mask-brush' ||
-            tool === 'mask-eraser' ||
-            tool === 'adjustment-brush' ||
-            tool === 'dodge' ||
-            tool === 'burn' ||
-            tool === 'sponge' ||
-            tool === 'smudge' ||
-            tool === 'blur' ||
-            tool === 'sharpen' ||
-            tool === 'clone' ||
-            tool === 'heal' ||
-            tool === 'spot-heal' ||
-            tool === 'patch' ||
-            tool === 'red-eye' ||
-            tool === 'pattern-stamp' ||
-            tool === 'mixer-brush' ||
-            tool === 'history-brush' ||
-            tool === 'art-history-brush' ||
-            tool === 'selection-brush' ||
-            tool === 'quick-selection' ||
-            tool === 'gradient' ||
-            tool === 'rectangle' ||
-            tool === 'ellipse' ||
-            tool === 'line' ||
-            tool === 'polygon' ||
-            tool === 'pen' ||
-            tool === 'freeform-pen' ||
-            tool === 'curvature-pen' ||
-            tool === 'direct-select') && (
-            <section className="panel">
-              <Title icon={Brush} text="Tool options" />
+          </SidebarSection>
+          {toolShowsSection(tool, 'tool-options') && (
+            <SidebarSection
+              id="tool-options"
+              icon={Brush}
+              title="Tool options"
+              collapsed={collapsedSections.has('tool-options')}
+              onToggle={toggleSidebarSection}
+            >
               {tool === 'gradient' && (
                 <label className="select-row">
                   <span>Gradient type</span>
@@ -18788,11 +18940,16 @@ export default function Home() {
                   )}
                 </>
               )}
-            </section>
+            </SidebarSection>
           )}
-          {tool === 'text' && (
-            <section className="panel">
-              <Title icon={Type} text="Text" />
+          {toolShowsSection(tool, 'text') && (
+            <SidebarSection
+              id="text"
+              icon={Type}
+              title="Text"
+              collapsed={collapsedSections.has('text')}
+              onToggle={toggleSidebarSection}
+            >
               <input
                 aria-label="Text content"
                 className="text-input"
@@ -18814,10 +18971,15 @@ export default function Home() {
                 set={setFontSize}
                 suffix="px"
               />
-            </section>
+            </SidebarSection>
           )}
-          <section className="panel">
-            <Title icon={Sparkles} text="Quick filters" />
+          <SidebarSection
+            id="quick-filters"
+            icon={Sparkles}
+            title="Quick filters"
+            collapsed={collapsedSections.has('quick-filters')}
+            onToggle={toggleSidebarSection}
+          >
             <div className="filters">
               {FILTERS.map(([label, value, first, second]) => (
                 <button
@@ -18835,14 +18997,16 @@ export default function Home() {
                 </button>
               ))}
             </div>
-          </section>
-          <section className="panel" aria-label="Filter effects">
-            <Title
-              icon={Sparkles}
-              text="Filter effects"
-              action="Clear"
-              onClick={() => chooseFilterEffect('none', 'Filter effect')}
-            />
+          </SidebarSection>
+          <SidebarSection
+            id="filter-effects"
+            icon={Sparkles}
+            title="Filter effects"
+            action="Clear"
+            onAction={() => chooseFilterEffect('none', 'Filter effect')}
+            collapsed={collapsedSections.has('filter-effects')}
+            onToggle={toggleSidebarSection}
+          >
             {filterStackEditIndex !== null && (
               <p className="adjust-note filter-stack-editing" data-testid="filter-stack-editing">
                 Editing stacked filter {filterStackEditIndex + 1}.{' '}
@@ -20090,7 +20254,7 @@ export default function Home() {
                 </fieldset>
               );
             })()}
-          </section>
+          </SidebarSection>
           <section className="panel cloud-panel">
             <h3>My projects</h3>
             {member ? (
@@ -20158,6 +20322,12 @@ export default function Home() {
             />
           )}
         </aside>
+        <div
+          ref={sidebarAnnouncerRef}
+          className="sr-only"
+          aria-live="polite"
+          data-testid="sidebar-autoscroll-announcer"
+        />
       </div>
       <footer>
         <span>

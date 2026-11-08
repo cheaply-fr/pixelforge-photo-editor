@@ -11,7 +11,16 @@ export default defineConfig({
     ? Number.parseInt(process.env.PLAYWRIGHT_WORKERS || '2', 10)
     : undefined,
   reporter: [['list'], ['html', { open: 'never' }]],
-  use: { baseURL: 'http://127.0.0.1:4173', trace: 'retain-on-failure' },
+  use: {
+    baseURL: 'http://127.0.0.1:4173',
+    trace: 'retain-on-failure',
+    // The properties sidebar auto-scrolls to the section a tool/menu click
+    // targets. With reduced motion that reveal is an instant jump committed
+    // with the click, so specs that read element geometry right after a click
+    // stay deterministic. sidebar-autoscroll.spec.ts opts back into motion to
+    // cover the animated path (docs/sidebar-autoscroll-contract.md).
+    contextOptions: { reducedMotion: 'reduce' },
+  },
   webServer: { command: 'npm run preview -- --port 4173', url: 'http://127.0.0.1:4173', reuseExistingServer: !process.env.CI },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'] } },
