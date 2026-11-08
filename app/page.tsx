@@ -207,6 +207,10 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import {
+  formatSelectionFeather,
+  normalizeSelectionFeather,
+} from '../src/selectionFeather';
 import SaveSelectionDialog from '../src/SaveSelectionDialog';
 import EditFillDialog from '../src/EditFillDialog';
 import { editFillColor, type EditFillOptions } from '../src/editFill';
@@ -5735,7 +5739,7 @@ export default function Home() {
           shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h,
           feather, inverted: false, mask: maskId,
         },
-      })) setNotice(`Select and Mask applied (smooth ${smoothRadius} px, feather ${feather} px)`);
+      })) setNotice(`Select and Mask applied (smooth ${smoothRadius} px, feather ${formatSelectionFeather(feather)} px)`);
     } catch (error) {
       if (isCurrentSelectionOperation(f, frameIndex, workToken))
         setNotice(error instanceof Error ? error.message : 'Select and Mask failed');
@@ -6248,10 +6252,14 @@ export default function Home() {
     }
     setSelection({ ...f.selection, inverted: !f.selection.inverted });
   };
-  const setSelectionFeather = (feather: number) => {
-    const f = current();
+  const setSelectionFeather = (value: number) => {
+    const f = current(), feather = normalizeSelectionFeather(value);
+    if (Number.isNaN(feather)) {
+      setNotice('Selection feather must be 0 to 1000 px');
+      return;
+    }
     if (f.selection && commit({ ...f, selection: { ...f.selection, feather } }))
-      setNotice(`Selection feather set to ${Math.round(feather)} px`);
+      setNotice(`Selection feather set to ${formatSelectionFeather(feather)} px`);
   };
   const createMaskFromSelection = async () => {
     const f = current(),
