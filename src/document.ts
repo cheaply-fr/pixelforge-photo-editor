@@ -177,7 +177,7 @@ import {
 } from './projectLimits.ts';
 import {
   applyClippingAlpha,
-  clippingBase,
+  clippingGroupBase,
   isClippingSourceLayer,
   validClippingRelationship,
 } from './layerClipping.ts';
@@ -2736,12 +2736,12 @@ export async function renderFrame(
       reportProgress(layerIndex);
       continue;
     }
-    const clippedBase = clippingBase(frame, layer);
+    const clippedBase = clippingGroupBase(frame, layer);
     if (clippedBase) {
       // Render the source and base independently. Applying destination-in to
       // `out` would clip every lower layer, including unrelated artwork.
-      // Stripping the relationship from these one-layer renders also keeps
-      // the bounded slice deterministic if a legacy draft contains a chain.
+      // Every layer of a clipping group (consecutive clipped layers) uses the
+      // group's base alpha, not the clipped layer directly below it.
       const { clippingTo: _sourceClipping, ...sourceWithoutClipping } = layer,
         { clippingTo: _baseClipping, ...baseWithoutClipping } = clippedBase,
         nestedOptions = options?.onProgress

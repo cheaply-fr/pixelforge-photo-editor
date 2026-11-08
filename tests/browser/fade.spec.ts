@@ -19,6 +19,8 @@ test('Edit Fade blends the previous raster edit with a bounded opacity and remai
   await page.getByLabel('Drawing color', { exact: true }).fill('#ff0000');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await expect(page.locator('footer')).toContainText('Layer filled', { timeout: 10000 });
   const before = await project(page);
   const activeBefore = before.history[before.index].layers.find((layer: { id: string }) => layer.id === before.history[before.index].active);

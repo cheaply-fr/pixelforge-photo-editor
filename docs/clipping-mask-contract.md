@@ -8,16 +8,27 @@ rendered alpha includes compound contours and even-odd holes.
 
 Create and Release Clipping Mask are available from the Layer menu and Layers
 panel. The source and base must be visible and unlocked. Each accepted action
-creates one history entry; Undo and Redo restore the relationship. Reorder,
-delete, grouping, and import validation remove links that are no longer
-adjacent, same-folder, or structurally valid.
+creates one history entry; Undo and Redo restore the relationship. Delete,
+grouping, and import validation remove links that are no longer adjacent,
+same-folder, or structurally valid.
+
+Consecutive clipped layers form one clipping group. Each stored link still
+names the adjacent lower layer, but rendering follows the links down to the
+group's base: every clipped layer in the group uses the base's alpha, not the
+alpha of the clipped layer directly below it, and the Layers panel reports
+"Clipped to <base>". Documents saved with such chains load unchanged.
+
+Bring Forward, Send Backward, Bring to Front, Send to Back and the panel's
+Raise/Lower keep a clipped layer clipped while it still sits directly above
+its group's base or another layer of the same group (the adjacent link is
+re-pointed). A clipped layer moved out of its group is released and the
+status names it; Undo restores it.
 
 Rendering isolates the source and base, then multiplies source alpha by the
 base's rendered alpha. This preserves unrelated lower artwork, source RGB
 bytes, transforms, masks, adjustments, styles and editable base geometry.
 Project export/import and local draft reload retain the relationship. The
-bounded slice deliberately excludes multi-level clipping chains and adjustment
-layers as bases.
+bounded slice excludes adjustment layers as bases.
 
 Pure coverage includes adjacency, root/folder guards, invalid-link cleanup,
 compound-base eligibility and immutable partial-alpha buffers. Browser coverage

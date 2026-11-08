@@ -90,6 +90,8 @@ test('RGB Curves changes representative pixels, keeps source editable, and survi
   await setColor(page, '#808080');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const pixel = () =>
     canvas.evaluate((node: HTMLCanvasElement) =>
