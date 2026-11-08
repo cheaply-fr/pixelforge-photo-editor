@@ -998,6 +998,8 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const sample = () =>
     canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1087,6 +1089,8 @@ test('Edit Fill is undoable and menu selection commands persist', async ({
   const canvas = page.getByTestId('editor-canvas');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await expect
     .poll(() =>
       canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1145,6 +1149,10 @@ test('Edit Clear, Shift-F5 fill and Merge Visible preserve pixels and hidden lay
     )
     .toEqual([255, 255, 255, 255]);
   await page.keyboard.press('Shift+F5');
+  // Shift+F5 opens the Fill dialog with the Fill button focused: Enter applies
+  // the default foreground fill.
+  await expect(page.getByRole('dialog', { name: 'Fill' })).toBeVisible();
+  await page.keyboard.press('Enter');
   await expect
     .poll(() =>
       canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1902,6 +1910,8 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
   await setColorInput('#707070');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const sample = () =>
     canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1946,6 +1956,8 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
   });
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const sample = () =>
     canvas.evaluate((item: HTMLCanvasElement) =>

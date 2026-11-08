@@ -88,3 +88,17 @@ export function healthLabel(health: ReleaseHealth): string {
   if (health === 'degraded') return 'Server degraded';
   return 'Offline · local editing';
 }
+
+/**
+ * Whether the server now serves a different build than the one running in
+ * this tab. `loadedCommit` is the commit baked into the bundle (or, without
+ * one, the first release this tab saw). Unknown or malformed data never
+ * claims an update.
+ */
+export function releaseUpdateAvailable(
+  loadedCommit: string | undefined,
+  release: ReleaseInfo | null,
+): boolean {
+  if (!release || !commit(loadedCommit)) return false;
+  return release.commit.toLowerCase() !== loadedCommit.toLowerCase();
+}

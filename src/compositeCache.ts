@@ -88,8 +88,12 @@ export function compositeLayerKeys(
     let key = ownKey(layer);
     if (layer.groupId)
       key = `group:${JSON.stringify(groups.get(layer.groupId) ?? null)}[${(members.get(layer.groupId) || []).map(ownKey).join('|')}]`;
-    const base = layer.clippingTo ? byId.get(layer.clippingTo) : undefined;
-    if (base) key += `^${ownKey(base)}`;
+    // A clipped layer depends on every layer down to its clipping group's base.
+    let base = layer.clippingTo ? byId.get(layer.clippingTo) : undefined;
+    for (let depth = 0; base && depth < frame.layers.length; depth += 1) {
+      key += `^${ownKey(base)}`;
+      base = base.clippingTo ? byId.get(base.clippingTo) : undefined;
+    }
     const path = layer.textPath?.pathLayerId ? byId.get(layer.textPath.pathLayerId) : undefined;
     if (path) key += `~${ownKey(path)}`;
     return key;

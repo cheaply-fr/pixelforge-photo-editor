@@ -187,6 +187,9 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import SaveSelectionDialog from '../src/SaveSelectionDialog';
+import EditFillDialog from '../src/EditFillDialog';
+import { editFillColor, type EditFillOptions } from '../src/editFill';
 import StrokePathDialog, { type StrokePathRequest } from '../src/StrokePathDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
@@ -270,7 +273,9 @@ import { combineSelectionBounds } from '../src/layerSelection';
 import { applyLayerLock, layerLockReason, planLayerLock } from '../src/layerLock';
 import {
   clippingCandidateBase,
+  clippingGroupBase,
   isClippingSourceLayer,
+  preserveClippingAfterReorder,
   validClippingRelationship,
 } from '../src/layerClipping';
 import CurveEditor from '../src/CurveEditor';
@@ -933,6 +938,7 @@ type Command =
   | 'puppet-warp'
   | 'quick-mask'
   | 'save-selection'
+  | 'download-selection'
   | 'load-selection'
   | 'reset'
   | 'levels'
@@ -1475,8 +1481,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Similar', command: 'similar-selection' },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
-    { label: 'Load Selection…', command: 'load-selection' },
+    { label: 'Load Selection File…', command: 'load-selection' },
     { label: 'Save Selection…', command: 'save-selection' },
+    { label: 'Download Selection File…', command: 'download-selection' },
     { label: 'Mask from Selection', command: 'mask-selection' },
   ],
   Filter: [
@@ -1592,8 +1599,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   ],
 };
 
+/** Tools whose one gesture spans several presses (click-to-place, tap-to-arm). */
+const MULTI_PRESS_GESTURE_TOOLS: readonly Tool[] = ['polygonal-lasso', 'magnetic-lasso', 'pen', 'curvature-pen'];
+
 type Gesture = {
   tool: Tool;
+  /** The owning press was released; the commit may still be waiting. */
+  released?: boolean;
   start: { x: number; y: number };
   last: { x: number; y: number };
   frame: Frame;
@@ -3049,6 +3061,8 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  const [saveSelectionOpen, setSaveSelectionOpen] = useState(false);
+  const [editFillOpen, setEditFillOpen] = useState(false);
   const [strokePathDialog, setStrokePathDialog] = useState<{ pathLayerId?: string; targetLayerId?: string } | null>(null);
   const [strokePathSettings, setStrokePathSettings] = useState<StrokePathSettings>(() => ({ ...DEFAULT_STROKE_PATH_SETTINGS }));
   const [cameraRawEditing, setCameraRawEditing] = useState(false);
@@ -3346,8 +3360,16 @@ export default function Home() {
   // Pointer whose paint gesture waits for a trimmed layer to expand.
   const expansionPointer = useRef<{
     pointerId: number;
+    /** Moves made while the layer grows; replayed into the started gesture. */
+    moves: React.PointerEvent<HTMLCanvasElement>[];
     release?: React.PointerEvent<HTMLCanvasElement>;
   } | null>(null);
+  /**
+   * Pointer that owns the current single-drag gesture. Moves and releases of
+   * another pointer (a hovering pen, a second finger) never extend or end it,
+   * so a new stroke can never continue a stroke from a different press.
+   */
+  const gesturePointer = useRef<number | null>(null);
   const paintSpan = useRef<PerformanceSpan | null>(null);
   const viewZoomRef = useRef(viewZoom);
   /** Image box and client anchor captured before a zoom, applied after commit. */
@@ -7464,6 +7486,23 @@ export default function Home() {
       cancelled = true;
     };
   }, [ready, frame, quickMasking, paint, assets]);
+  /**
+   * "New version available → Reload": wait for the queued local draft save,
+   * and only reload when nothing unsaved or in progress would be lost.
+   */
+  const reloadForNewVersion = async () => {
+    if (gesture.current || cloudBusy || recovering) {
+      setNotice('Finish the current edit, then reload to update');
+      return;
+    }
+    setNotice('Saving the local draft before reloading…');
+    await saveQueue.current.catch(() => undefined);
+    if (saving.current) {
+      setNotice('The local draft is not saved yet; reload after it is saved (or export a copy)');
+      return;
+    }
+    window.location.reload();
+  };
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
       if (saving.current || cloudBusy || recovering || gesture.current)
@@ -8005,7 +8044,9 @@ export default function Home() {
         ),
       })
     ) {
-      setNotice(`Clipping mask created from ${base.name || 'base layer'}`);
+      // Clipping to an already-clipped layer joins that layer's clipping group.
+      const groupBase = clippingGroupBase(f, base) ?? base;
+      setNotice(`Clipping mask created from ${groupBase.name || 'base layer'}`);
       return true;
     }
     return false;
@@ -8687,7 +8728,19 @@ export default function Home() {
     const layer = current().layers.find((item) => item.id === current().active);
     if (layer) editLayer({ visible: !layer.visible });
   };
-  const fillActiveLayer = async () => {
+  /** Edit > Fill… / Shift+F5: check the target, then ask for contents. */
+  const openEditFill = () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Select a visible, unlocked raster layer before filling');
+      return;
+    }
+    setEditFillOpen(true);
+  };
+  const fillActiveLayer = async (
+    options: EditFillOptions = { contents: 'foreground', color, opacity: 100, mode: 'source-over' },
+  ) => {
     // A paint layer stored at its content bounds (or a new empty layer) is
     // grown to the canvas first, so Fill covers the whole selection.
     await expandRasterLayerForPaint();
@@ -8709,7 +8762,11 @@ export default function Home() {
       context.drawImage(image, 0, 0);
       const fill = surface(output.width, output.height),
         fillContext = fill.getContext('2d')!;
-      fillContext.fillStyle = color;
+      fillContext.fillStyle = editFillColor(options.contents, {
+        foreground: color,
+        background: backgroundColor,
+        color: options.color,
+      });
       fillContext.fillRect(0, 0, fill.width, fill.height);
       if (f.selection) {
         const mask = await localSelectionMask(
@@ -8723,6 +8780,8 @@ export default function Home() {
         fillContext.globalCompositeOperation = 'destination-in';
         fillContext.drawImage(mask, 0, 0);
       }
+      context.globalAlpha = options.opacity / 100;
+      context.globalCompositeOperation = options.mode as GlobalCompositeOperation;
       context.drawImage(fill, 0, 0);
       const asset = addAsset(assets.current, output);
       if (
@@ -9179,8 +9238,12 @@ export default function Home() {
       to = from + direction;
     if (to < 0 || to >= layers.length || layerIsLocked(f, layers[from])) return;
     [layers[from], layers[to]] = [layers[to], layers[from]];
-    commit({ ...f, layers });
+    const { frame: next, released } = preserveClippingAfterReorder(f, { ...f, layers });
+    if (commit(next) && released.length)
+      setNotice(`Clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`);
   };
+  const clippingReleaseNames = (released: readonly Layer[]) =>
+    released.map((layer) => layer.name || 'layer').join(', ');
   const arrangeLayers = (mode: LayerArrangeMode) => {
     const f = current();
     const plan = planLayerArrange(f, mode);
@@ -9188,8 +9251,10 @@ export default function Home() {
       setNotice(layerArrangeReason(plan.reason));
       return false;
     }
-    const next = applyLayerArrange(f, plan);
-    if (next === f) return false;
+    const arranged = applyLayerArrange(f, plan);
+    if (arranged === f) return false;
+    // Clipped layers stay clipped while they remain in their clipping group.
+    const { frame: next, released } = preserveClippingAfterReorder(f, arranged);
     if (!commit(next)) return false;
     const labels: Record<LayerArrangeMode, string> = {
       front: 'Bring to Front',
@@ -9197,7 +9262,11 @@ export default function Home() {
       backward: 'Send Backward',
       back: 'Send to Back',
     };
-    setNotice(`${labels[mode]} applied; undo restores the previous order`);
+    setNotice(
+      released.length
+        ? `${labels[mode]} applied; clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`
+        : `${labels[mode]} applied; undo restores the previous order`,
+    );
     return true;
   };
   const rasterize = async () => {
@@ -10721,7 +10790,11 @@ export default function Home() {
         return;
       }
     }
-    if (gesture.current || !frame) return;
+    // One press at a time: a second press while a stroke is still starting
+    // (its layer growing or its pixels decoding) is ignored rather than
+    // joined to that stroke.
+    if (gesture.current || !frame || (!skipExpansion && expansionPointer.current)) return;
+    gesturePointer.current = e.pointerId;
     if (
       !skipExpansion &&
       !quickMasking &&
@@ -10731,8 +10804,13 @@ export default function Home() {
       // Grow a trimmed paint layer before the tool reads its pixels. A quick
       // tap can be released while the asset decodes, so remember the release
       // and replay it once the tool has started its gesture.
-      const pending: { pointerId: number; release?: React.PointerEvent<HTMLCanvasElement> } = {
+      const pending: {
+        pointerId: number;
+        moves: React.PointerEvent<HTMLCanvasElement>[];
+        release?: React.PointerEvent<HTMLCanvasElement>;
+      } = {
         pointerId: e.pointerId,
+        moves: [],
       };
       expansionPointer.current = pending;
       try {
@@ -10765,7 +10843,13 @@ export default function Home() {
       const latestSource = cloneSourceRef.current;
       cloneSourceRef.current = pressSource;
       try {
-        await pointerDown(replay(e), true);
+        // The gesture exists once pointerDown returns its promise; feed it the
+        // moves made while the layer grew before any later live move, so a
+        // fast stroke or gradient drag keeps its whole path.
+        const started = pointerDown(replay(e), true);
+        if (gesture.current && gesturePointer.current === e.pointerId)
+          for (const move of pending.moves) pointerMove(replay(move));
+        await started;
       } finally {
         if (latestSource !== pressSource) cloneSourceRef.current = latestSource;
       }
@@ -12276,6 +12360,15 @@ export default function Home() {
       await g.pending;
     }
   };
+  /**
+   * Whether a move/release belongs to the gesture's press. Click-to-place
+   * tools (lassos and pens) keep one gesture across several presses, which
+   * may each use a new pointer id on touch.
+   */
+  const ownsGesture = (g: Gesture, e: React.PointerEvent<HTMLCanvasElement>) =>
+    MULTI_PRESS_GESTURE_TOOLS.includes(g.tool) ||
+    gesturePointer.current === null ||
+    gesturePointer.current === e.pointerId;
   const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (quickMaskGesture.current && quickMaskRef.current) {
       const p = point(e),
@@ -12285,8 +12378,30 @@ export default function Home() {
       g.last = p;
       return;
     }
+    if (expansionPointer.current) {
+      if (expansionPointer.current.pointerId === e.pointerId && expansionPointer.current.moves.length < 4096)
+        expansionPointer.current.moves.push(e);
+      return;
+    }
     const g = gesture.current;
-    if (!g) return;
+    if (!g || g.released || !ownsGesture(g, e)) return;
+    if (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') {
+      // The browser may merge several pointer samples into one move event;
+      // paint each of them so fast flicks and pen curves keep their shape.
+      const native = e.nativeEvent as PointerEvent | undefined,
+        coalesced = typeof native?.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : [];
+      if (native && coalesced.length > 1) {
+        // A replayed move (see the trimmed-layer expansion) carries an offset.
+        const dx = e.clientX - native.clientX, dy = e.clientY - native.clientY;
+        for (const sample of coalesced.slice(0, -1))
+          pointerMove(Object.create(e, {
+            clientX: { value: sample.clientX + dx },
+            clientY: { value: sample.clientY + dy },
+            pressure: { value: sample.pressure },
+            nativeEvent: { value: sample },
+          }) as React.PointerEvent<HTMLCanvasElement>);
+      }
+    }
     const p = point(e);
     const local =
       (g.layer?.kind === 'raster' || g.layer?.kind === 'path' || (g.layer && isVectorMaskableLayer(g.layer) && Boolean(g.layer.vectorMask)))
@@ -13125,7 +13240,10 @@ export default function Home() {
       return;
     }
     const g = gesture.current;
-    if (!g) return;
+    if (!g || !ownsGesture(g, e)) return;
+    // Later moves (a hovering pen, the next press of the same mouse) must not
+    // extend this stroke while its commit waits for decoding.
+    if (!MULTI_PRESS_GESTURE_TOOLS.includes(g.tool)) g.released = true;
     if (g.tool === 'polygonal-lasso') {
       if (e.type === 'pointercancel') {
         gesture.current = null;
@@ -13661,7 +13779,13 @@ export default function Home() {
     } else if (g.tool === 'frame') {
       void paint(f);
       setNotice('Frame needs a drag of at least one pixel');
-    } else if (g.tool === 'gradient' && g.moved && g.layer) {
+    } else if (
+      g.tool === 'gradient' &&
+      g.layer &&
+      (g.moved || g.start.x !== local.x || g.start.y !== local.y)
+    ) {
+      // A release that arrives before any move reached the gesture (or before
+      // the layer and selection were prepared) still commits at its point.
       try {
         if (g.layer.kind !== 'raster') return;
         // The live preview prepared the decoded layer and selection at
@@ -13681,6 +13805,9 @@ export default function Home() {
       } catch {
         setNotice('Could not apply gradient');
       }
+    } else if (g.tool === 'gradient') {
+      void paint(f);
+      setNotice('Gradient: drag from the start point to the end point');
     } else if (
       (g.tool === 'mixer-brush' || g.tool === 'history-brush' || g.tool === 'art-history-brush') &&
       g.buffer &&
@@ -14316,7 +14443,7 @@ export default function Home() {
       }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
-        void fillActiveLayer();
+        openEditFill();
         return;
       }
       if (command) {
@@ -14606,7 +14733,7 @@ export default function Home() {
     else if (command === 'paste-clipboard-image') void pasteSystemClipboardImage();
     else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
-    else if (command === 'fill-layer') return fillActiveLayer();
+    else if (command === 'fill-layer') openEditFill();
     else if (command === 'stroke-selection') return strokeSelection();
     else if (command === 'stroke-path-brush') openStrokePathDialog();
     else if (command === 'new-layer') addPaint();
@@ -14747,9 +14874,12 @@ export default function Home() {
     else if (command === 'similar-selection') await applySimilarSelection();
     else if (command === 'quick-mask') toggleQuickMask();
     else if (command === 'save-selection') {
-      saveCurrentSelection();
-      exportSelection();
-    } else if (command === 'load-selection') selectionFile.current?.click();
+      // Store a named selection in the document (the Saved selections panel
+      // lists it); downloading a file is the separate command below.
+      if (current().selection) setSaveSelectionOpen(true);
+      else setNotice('Create a selection before saving it');
+    } else if (command === 'download-selection') exportSelection();
+    else if (command === 'load-selection') selectionFile.current?.click();
     else if (command === 'transform-selection') {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
@@ -15365,6 +15495,7 @@ export default function Home() {
       case 'quick-mask':
         return !frame;
       case 'save-selection':
+      case 'download-selection':
         return !frame.selection;
       case 'load-selection':
         return !frame;
@@ -15779,6 +15910,29 @@ export default function Home() {
           initialTargetLayerId={strokePathDialog.targetLayerId}
           close={() => setStrokePathDialog(null)}
           apply={(request) => void strokePathWithBrush(request)}
+        />
+      )}
+      {saveSelectionOpen && frame?.selection && (
+        <SaveSelectionDialog
+          initialName={savedSelectionName}
+          existingNames={(frame.savedSelections?.selections || []).map((entry) => entry.name)}
+          close={() => setSaveSelectionOpen(false)}
+          save={(name) => {
+            setSaveSelectionOpen(false);
+            saveCurrentSelection(name);
+          }}
+        />
+      )}
+      {editFillOpen && frame && (
+        <EditFillDialog
+          foreground={color}
+          background={backgroundColor}
+          hasSelection={Boolean(frame.selection)}
+          close={() => setEditFillOpen(false)}
+          apply={(options) => {
+            setEditFillOpen(false);
+            void fillActiveLayer(options);
+          }}
         />
       )}
       {selectionFeathering && (
@@ -16196,7 +16350,7 @@ export default function Home() {
           <button className="export" onClick={() => download()}>
             <Download /> Export
           </button>
-          <ReleaseStatus />
+          <ReleaseStatus onReload={() => void reloadForNewVersion()} />
           <AccountMenu member={member} checking={checking} unavailable={signInUnavailable} retry={retrySignIn} />
         </div>
       </header>
@@ -17275,13 +17429,22 @@ export default function Home() {
                 {(frame.savedSelections?.selections || []).map((entry) => (
                   <div className="saved-selection-row" key={entry.id}>
                     <span>{entry.name}</span>
-                    <button onClick={() => loadSavedSelection(entry.id)}>
+                    <button
+                      aria-label={`Load selection ${entry.name}`}
+                      onClick={() => loadSavedSelection(entry.id)}
+                    >
                       Load
                     </button>
-                    <button onClick={() => renameSavedSelection(entry.id)}>
+                    <button
+                      aria-label={`Rename selection ${entry.name}`}
+                      onClick={() => renameSavedSelection(entry.id)}
+                    >
                       Rename
                     </button>
-                    <button onClick={() => deleteSavedSelection(entry.id)}>
+                    <button
+                      aria-label={`Delete selection ${entry.name}`}
+                      onClick={() => deleteSavedSelection(entry.id)}
+                    >
                       Delete
                     </button>
                   </div>
