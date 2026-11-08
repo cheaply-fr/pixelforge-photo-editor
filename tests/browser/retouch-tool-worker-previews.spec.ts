@@ -80,11 +80,17 @@ async function buildStack(page: Page) {
   await importPhoto(page);
   await addPaintLayers(page, 4, true);
   const layers = page.getByRole('button', { name: /^Select layer / });
-  // The panel lists layers top first; the photo is last. A duplicate goes on top.
+  // The panel lists layers top first; the photo is last. Put its copy on top
+  // of the stack (Duplicate may place it directly above the photo).
   await layers.nth((await layers.count()) - 1).click();
   await settled(page);
   await menu(page, 'Layer', /^Duplicate Layer/);
   await settled(page);
+  if (!/copy/i.test((await layers.nth(0).getAttribute('aria-label')) || '')) {
+    await menu(page, 'Layer', /^Bring to Front/);
+    await settled(page);
+  }
+  await expect(layers.nth(0)).toHaveAccessibleName(/copy/i);
   await page.getByLabel('Layer opacity', { exact: true }).fill('85');
   await settled(page);
   await addPaintLayers(page, 4, true);
