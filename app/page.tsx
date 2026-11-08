@@ -490,6 +490,7 @@ import {
   stepBrushSize,
   type BrushSpacingState,
 } from '../src/brushSize';
+import { precedingCoalescedSamples } from '../src/pointerSamples';
 import {
   BRUSH_PRESSURE_CURVES,
   normalizeBrushPressureCurve,
@@ -1641,6 +1642,19 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
 
 /** Tools whose one gesture spans several presses (click-to-place, tap-to-arm). */
 const MULTI_PRESS_GESTURE_TOOLS: readonly Tool[] = ['polygonal-lasso', 'magnetic-lasso', 'pen', 'curvature-pen'];
+/**
+ * Tools whose result depends on the whole pointer path, not just its latest
+ * position: each browser-coalesced sample of a move is applied to them (see
+ * `precedingCoalescedSamples`). Drag-to-size tools (shapes, marquees, crop,
+ * move, gradient) only need the latest position.
+ */
+const STROKE_SAMPLING_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
+  'brush', 'pencil', 'eraser', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge',
+  'clone', 'heal', 'spot-heal', 'patch', 'pattern-stamp', 'red-eye', 'color-replace',
+  'background-eraser', 'mixer-brush', 'history-brush', 'art-history-brush',
+  'mask-brush', 'mask-eraser', 'adjustment-brush', 'selection-brush', 'quick-selection',
+  'lasso', 'magnetic-lasso', 'freeform-pen',
+]);
 
 type Gesture = {
   tool: Tool;
@@ -12652,8 +12666,30 @@ export default function Home() {
     MULTI_PRESS_GESTURE_TOOLS.includes(g.tool) ||
     gesturePointer.current === null ||
     gesturePointer.current === e.pointerId;
-  const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  /**
+   * Apply the samples the browser coalesced into `e` before `e` itself, as
+   * individual moves marked `intermediate`. Chromium delivers one pointermove
+   * per animation frame and lists the rest in getCoalescedEvents(); a hidden
+   * tab or app pane gets almost no frames, so without this a stroke made
+   * there keeps only a few positions and paints straight chords.
+   */
+  const applyCoalescedSamples = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    for (const sample of precedingCoalescedSamples(e, e.nativeEvent as PointerEvent | undefined))
+      pointerMove(Object.create(e, {
+        clientX: { value: sample.clientX },
+        clientY: { value: sample.clientY },
+        pressure: { value: sample.pressure ?? e.pressure },
+        nativeEvent: { value: sample.source },
+      }) as React.PointerEvent<HTMLCanvasElement>, true);
+  };
+  /**
+   * `intermediate` marks a coalesced sample that a later sample of the same
+   * event follows: it is applied to the stroke, but tools whose preview is a
+   * direct render or a full recomputation leave that to the final sample.
+   */
+  const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>, intermediate = false) => {
     if (quickMaskGesture.current && quickMaskRef.current) {
+      if (!intermediate) applyCoalescedSamples(e);
       const p = point(e),
         g = quickMaskGesture.current;
       if (!brushSegmentDue(Math.hypot(p.x - g.last.x, p.y - g.last.y), size)) return;
@@ -12668,22 +12704,14 @@ export default function Home() {
     }
     const g = gesture.current;
     if (!g || g.released || !ownsGesture(g, e)) return;
-    if (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') {
-      // The browser may merge several pointer samples into one move event;
-      // paint each of them so fast flicks and pen curves keep their shape.
-      const native = e.nativeEvent as PointerEvent | undefined,
-        coalesced = typeof native?.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : [];
-      if (native && coalesced.length > 1) {
-        // A replayed move (see the trimmed-layer expansion) carries an offset.
-        const dx = e.clientX - native.clientX, dy = e.clientY - native.clientY;
-        for (const sample of coalesced.slice(0, -1))
-          pointerMove(Object.create(e, {
-            clientX: { value: sample.clientX + dx },
-            clientY: { value: sample.clientY + dy },
-            pressure: { value: sample.pressure },
-            nativeEvent: { value: sample },
-          }) as React.PointerEvent<HTMLCanvasElement>);
-      }
+    // The browser may merge several pointer samples into one move event (one
+    // per animation frame, and almost none while the page is hidden); apply
+    // each of them so fast flicks, pen curves and background strokes keep
+    // their shape. The stroke never depends on how often frames run.
+    if (!intermediate && STROKE_SAMPLING_TOOLS.has(g.tool)) {
+      applyCoalescedSamples(e);
+      // A sample can end or replace the gesture (e.g. a cancelled stroke).
+      if (gesture.current !== g || g.released) return;
     }
     const p = point(e);
     const local =
@@ -12715,7 +12743,7 @@ export default function Home() {
           ...g.maskRefinementStroke,
           points: [from, point],
         }) || Boolean(g.changed);
-        if (g.maskPreviewAsset) {
+        if (g.maskPreviewAsset && !intermediate) {
           setPreviewAsset(assets.current, g.maskPreviewAsset, g.maskBuffer);
           const previewFrame: Frame = {
             ...g.frame,
@@ -12751,7 +12779,7 @@ export default function Home() {
       g.last = { x, y };
       // Until the selection snapshot is ready, record points only; the
       // capture paints the first preview with every point so far.
-      if (g.selectionPending) return;
+      if (g.selectionPending || intermediate) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
@@ -12773,7 +12801,7 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
-      if (g.selectionPending) return;
+      if (g.selectionPending || intermediate) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
@@ -12798,7 +12826,7 @@ export default function Home() {
         g.points = next;
         g.last = p;
         g.moved = next.length > 1;
-        previewFreeformPath(g);
+        if (!intermediate) previewFreeformPath(g);
       }
       return;
     }
@@ -12962,6 +12990,11 @@ export default function Home() {
         g.last = p;
         return;
       }
+      // The mask is recomputed from every point; the event's last sample does it.
+      if (intermediate) {
+        g.last = p;
+        return;
+      }
       g.quickSelectionMask = quickSelectionMask(g.quickSelectionSource, {
         width: g.frame.w,
         height: g.frame.h,
@@ -13005,7 +13038,7 @@ export default function Home() {
       });
       g.selectionBrushMask = result.mask;
       g.changed = Boolean(g.changed || result.changed);
-      selectionBrushPreview(g);
+      if (!intermediate) selectionBrushPreview(g);
       g.last = p;
       return;
     }
@@ -13344,7 +13377,7 @@ export default function Home() {
     } else if (g.tool === 'lasso') {
       const points = g.points || (g.points = [g.start]);
       if (Math.hypot(p.x - g.last.x, p.y - g.last.y) >= 2) points.push(p);
-      void paint(g.frame).then(() => {
+      if (!intermediate) void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         const x = canvas.current!.getContext('2d')!;
         x.save();
@@ -13380,7 +13413,7 @@ export default function Home() {
         g.moved = true;
         g.last = snapped;
       }
-      void paint(g.frame).then(() => {
+      if (!intermediate) void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         const x = canvas.current!.getContext('2d')!;
         x.save();
