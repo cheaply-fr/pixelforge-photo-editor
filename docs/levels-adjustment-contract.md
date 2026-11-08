@@ -17,9 +17,13 @@ vector layers:
 Alpha is copied byte-for-byte. RGB bytes for fully transparent pixels are also
 left untouched, so hidden source data survives edits and later mask changes.
 The source asset is immutable; changing a slider creates an undoable metadata
-revision. Output black must remain below output white, just as input black
-must remain below input white. Legacy projects that omit output fields migrate
-to `0` and `255` without changing rendered pixels.
+revision. Input black must remain below input white. Output black and output
+white are each 0–255 and may be in either order: output black above output
+white inverts the corrected tones (255 / 0 is a full inversion) and equal
+values give a flat level. This applies to layer Levels and adjustment layers
+alike. Ordered output ranges render exactly as before, and legacy projects
+that omit output fields migrate to `0` and `255` without changing rendered
+pixels.
 
 The controls intentionally operate on the composite RGB channels together.
 Per-channel Levels, histogram editing, 16/32-bit processing, linear-light

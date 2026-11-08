@@ -5,8 +5,11 @@
 //
 // Opens a noisy full-canvas photo layer (incompressible: worst case for PNG
 // encoding) and a sparse paint layer, paints short strokes and reports the
-// time from pointer-up to the committed, rendered stroke, plus the browser's
-// own `paint` performance spans when present.
+// time from pointer-up to the committed, rendered stroke, then times keyboard
+// undo and redo through every photo stroke. Builds that publish them also
+// report the `pixelforge.tile-commit` and `pixelforge.decoded-tile-cache`
+// counters (docs/tiled-layer-assets-contract.md). STROKES (default 8) sets
+// the number of photo strokes.
 import { chromium } from '@playwright/test';
 import zlib from 'node:zlib';
 
@@ -105,13 +108,56 @@ async function stroke(index, fx, fy) {
   return Math.round(performance.now() - start);
 }
 
-const results = { fullLayerCommitMs: [], sparseLayerCommitMs: [] };
-// Full-canvas noisy photo layer: the whole layer is re-encoded per commit.
-for (let i = 0; i < 3; i++) results.fullLayerCommitMs.push(await stroke(i, 0.2, 0.2 + i * 0.1));
+const marks = (name) =>
+  page.evaluate((mark) => {
+    const entries = performance.getEntriesByName(mark, 'mark').map((entry) => entry.detail);
+    performance.clearMarks(mark);
+    return entries;
+  }, name);
+const summary = (entries, keys) =>
+  Object.fromEntries(keys.map((key) => [key, entries.reduce((total, entry) => total + (Number(entry?.[key]) || 0), 0)]));
+
+/** Time one keyboard undo/redo from key press to the settled render. */
+async function historyStep(keys) {
+  const before = await position.innerText();
+  const start = performance.now();
+  await page.keyboard.press(keys);
+  await page.waitForFunction(
+    (previous) => document.querySelector('[aria-label="History position"]')?.textContent !== previous,
+    before,
+    { timeout: 120_000, polling: 10 },
+  );
+  await settled();
+  return Math.round(performance.now() - start);
+}
+
+const STROKES = Number(process.env.STROKES || 8);
+const results = { fullLayerCommitMs: [], sparseLayerCommitMs: [], undoMs: [], redoMs: [] };
+// Full-canvas noisy photo layer.
+await marks('pixelforge.tile-commit');
+for (let i = 0; i < STROKES; i++)
+  results.fullLayerCommitMs.push(await stroke(i, 0.12 + (i % 2) * 0.4, 0.1 + i * 0.1));
+results.fullLayerTileCommits = summary(await marks('pixelforge.tile-commit'), ['tiles', 'hashed', 'skipped', 'encoded']);
+// Undo every stroke, then redo them: older versions fall out of the
+// whole-asset decoded cache and are assembled from tiles again.
+await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
+await page.waitForTimeout(1500);
+await marks('pixelforge.decoded-tile-cache');
+for (let i = 0; i < STROKES; i++) results.undoMs.push(await historyStep('Control+z'));
+for (let i = 0; i < STROKES; i++) results.redoMs.push(await historyStep('Control+Shift+z'));
+const tileCache = await marks('pixelforge.decoded-tile-cache');
+results.decodedTiles = Object.fromEntries(
+  ['main', 'worker'].map((context) => [
+    context,
+    summary(tileCache.filter((entry) => entry?.context === context), ['hits', 'misses', 'seeded']),
+  ]),
+);
 // A new paint layer: grown in place, then stored at the stroke's bounds.
 await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
 await settled();
+await marks('pixelforge.tile-commit');
 for (let i = 0; i < 3; i++) results.sparseLayerCommitMs.push(await stroke(10 + i, 0.2, 0.6 + i * 0.1));
+results.sparseLayerTileCommits = summary(await marks('pixelforge.tile-commit'), ['tiles', 'hashed', 'skipped', 'encoded']);
 results.paintSpans = await page.evaluate(() =>
   performance.getEntriesByType('measure').filter((entry) => /paint/i.test(entry.name)).slice(-6).map((entry) => [entry.name, Math.round(entry.duration)]),
 );

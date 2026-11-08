@@ -1,6 +1,7 @@
 # Tiled, Blob-backed layer assets
 
-Status: first slice implemented (see "What this slice ships" and "Follow-ups").
+Status: first slice implemented (#213); dirty-rectangle hints (W4-5) and the
+decoded-tile cache (W4-7) added. See "Follow-ups" for what remains.
 
 ## Why
 
@@ -60,9 +61,61 @@ removed by a `FinalizationRegistry` once no asset holds the tile). A hit
 reuses the existing tile object; only misses are encoded (`toDataURL` of a
 tile-sized scratch canvas drawn from the source, so the PNG decodes to exactly
 the hashed pixels). A stroke on a full-canvas layer therefore encodes the few
-tiles it touched, plus a readback and hash of the layer (about 0.1 s for
-10.8 MP). Dirty-rectangle hints from the gesture (skip hashing untouched
-tiles) are a follow-up; content addressing already gives the same output.
+tiles it touched. Without a hint (below) the whole layer is still read back
+and hashed (about 0.1 s for 10.8 MP).
+
+### Dirty-rectangle hints
+
+`addAsset(assets, canvas, { hint: { base, dirty } })` (and
+`tileCanvas(canvas, undefined, hint)`) states that `canvas` equals the asset
+`base` everywhere outside the rectangle `dirty` (`null`: nothing changed).
+Tile cells wholly outside the rectangle take `base`'s tile objects without
+any `getImageData` or hash; only the cells the rectangle touches are read
+(one `getImageData` per tile row, limited to the touched columns), hashed and,
+if new, encoded. Because tiles are content addressed, the result is the same
+asset, tile for tile and by object, as the full scan whenever the hint is
+true. The hint is ignored, and the commit scans the whole canvas, when:
+
+- `base` is not a tiled asset (a legacy data URL, a missing id), so there are
+  no previous tile keys (`fallback: 'no-base'`);
+- `base` has other dimensions than the canvas: the layer was expanded,
+  trimmed or cropped since the buffer was drawn (`'base-size'`);
+- `base` fails the structural tile checks (`'base-invalid'`), or the
+  rectangle is not finite and non-negative (`'dirty-invalid'`).
+
+Hints are only passed where every write is known. `src/canvasDirty.ts`
+tracks a gesture buffer (`trackCanvasWrites`) right after the layer's stored
+pixels are drawn into it; the shared stamp (`stampCanvas`, which covers the
+brush tip, size/angle/scatter/colour dynamics, texture, dual brush, bristles,
+wet edges, build-up and each Paint Symmetry copy) and the selection
+confinement (`confineStrokeRect`) report the exact rectangle of every
+`putImageData`. Writes to an untracked canvas are ignored, a non-finite
+rectangle marks the buffer unknown, and an unknown buffer commits with a full
+scan. Current users:
+
+- Brush, Pencil and Eraser strokes (with or without a selection or Paint
+  Symmetry): base = the layer asset the stroke buffer was drawn from.
+- Layer → Stroke Path with Brush (Brush, Pencil, Eraser) without a
+  selection; with a selection (whole-buffer confinement) or Smudge it scans.
+- The paint-time expansion of a layer stored at its content bounds: the new
+  canvas-size buffer is transparent except where the old asset was drawn, so
+  the hint is an all-empty base (`emptyTiledAsset`) and the drawn rectangle.
+
+Every other tool (gradients, fills, filters, clone/heal, retouch tools,
+masks, merges) commits with a full scan, exactly as before.
+
+The automatic content-bounds storage after a paint commit
+(`storeAtContentBounds`) also uses the tile layout: pixels outside the
+non-empty tiles are transparent, so it reads back only the rectangle of the
+non-empty tiles (`tiledContentRegion`) and plans the trim from it
+(`planLayerTrim(…, region)`, identical to the whole-layer plan).
+
+Each tiled commit publishes its counters as the performance mark
+`pixelforge.tile-commit` (detail: `tiles`, `hashed`, `skipped`, `encoded`,
+`reused`, `empty`, `hinted`, `fallback`). With
+`window.__PIXELFORGE_VERIFY_TILE_HINTS__ = true` (tests and diagnostics
+only) every hinted commit also runs the full scan and records
+`fullScanMatch` (same tile objects in every cell).
 
 An asset whose tile list equals an existing asset's (same dimensions and
 keys) reuses that asset id, as identical data URLs did before.
@@ -80,6 +133,38 @@ returns an `ImageBitmap` from an `OffscreenCanvas`. Install-time verification
 tile once and checks its size instead of assembling every version. `primeDecodedAsset` and
 the worker prime from #195 still seed both caches with the committed
 buffer, so the commit render never decodes the tiles it just encoded.
+
+### Decoded-tile cache
+
+Assembling a tiled asset (main thread and render worker) first draws every
+tile found in a per-context decoded-tile cache, synchronously, and decodes
+only the others (equal tiles within one asset decode once). Decoded tiles are
+then retained, so undo, redo or the next stroke's start on a version that
+shares most tiles with one already assembled decodes only the tiles it does
+not share.
+
+- Keys are the tile key plus the encoded byte size, so the worker's structured
+  clones of a tile hit the same entry. Values are `ImageBitmap`s.
+- The cache is an LRU bounded by RGBA bytes with the same device tiers as the
+  layer filter cache: 96 MiB desktop, 192 MiB with `deviceMemory` ≥ 8,
+  32 MiB on phones or ≤ 4 GB, 12 MiB on ≤ 2 GB (a 2646 × 4096 layer is
+  about 43 MiB of tiles). Evicted bitmaps are closed at once; that is safe
+  because a cached bitmap is drawn in the same task that reads it.
+- A committed tiled asset's tiles are seeded from the pixels the commit
+  already holds (the private snapshot `primeDecodedAsset` keeps on the main
+  thread, the primed pixels in the worker) at idle time, so even the first
+  assembly after a commit decodes nothing it shares with it. Seeding is
+  skipped when the asset's missing tiles would need more than half the
+  budget.
+- `clearDecodedAssetCache` (a different document in the worker) also clears
+  the decoded tiles.
+- Counters are published as `pixelforge.decoded-tile-cache` marks (detail:
+  `hits`, `misses`, `stores`, `seeded`, `evictions`, `rejected`, `entries`,
+  `bytes`, `maxBytes` and `context: 'main' | 'worker'`); the worker sends its
+  per-render delta with the result, as the layer filter cache does.
+
+Install-time verification (`verifyAssetsDecode`) still decodes each distinct
+tile only to check its size and does not fill the cache.
 
 The content fingerprint of a tiled asset is its dimensions, tile count and a
 64-bit hash of the ordered tile keys (`assetFingerprint`). The composite,
@@ -161,6 +246,31 @@ tiled asset.
 
 ## Measurements (local, not CI)
 
+### W4-5 / W4-7
+
+`node scripts/measure-stroke-commit.mjs <url>` (now also times keyboard undo
+and redo through eight photo strokes and reports the tile counters) on the
+same Windows desktop, headless Chromium, 2646 × 4096 noisy photo, two runs
+per build, `main` `05a0b65` against this change:
+
+| Operation | Before (`05a0b65`) | After |
+| --- | --- | --- |
+| Stroke commit, full-canvas noisy photo layer (8 strokes × 2 runs) | 343–568 ms | 263–382 ms |
+| Stroke commit, new paint layer (3 strokes × 2 runs) | 504–716 ms | 268–349 ms |
+| Undo, versions still in the whole-asset decoded cache (steps 1–4) | 123–204 ms | 140–188 ms |
+| Undo, versions assembled from tiles (steps 5–8) | 343–398 ms | 167–269 ms |
+| Redo, versions assembled from tiles (steps 5–8) | 295–430 ms | 175–235 ms |
+
+Times are key press / pointer-up to the settled render. Counters from the
+same runs: the eight photo commits hashed 18 of 1,408 tiles (the rest were
+reused from the hint's base unread); the three paint-layer strokes (and their
+three paint-time expansions) hashed 25 of 1,056; undo/redo assembled every
+older version in the render worker from cached tiles (1,408 hits, 0
+misses). The remaining commit cost is mostly the commit render and the worker
+prime readback (follow-up 6), not tiling.
+
+### #213
+
 `node scripts/measure-stroke-commit.mjs <url>` on one Windows desktop,
 headless Chromium, 2646 × 4096 noisy photo, pointer-up → committed and
 rendered stroke, two runs of three strokes each:
@@ -187,16 +297,36 @@ small; the full-canvas readback and hash it now adds is about 0.1 s.
   identical pixels and tiled records, `.pixelforge` export/import round trip
   with PNG assets, and legacy data-URL documents that still load and convert
   on the next stroke.
+- `tests/tile-dirty-rect-and-decode-cache.test.mjs` (pure): hint validation
+  and fallbacks, dirty tile ranges, randomized hinted commits equal to the
+  full scan (same keys and tile objects) while reading only the dirty tile
+  rows and columns, transparent and erased tiles, the empty-base expansion
+  hint, the trusted-hint contract, canvas write tracking, trim planning from
+  the non-empty tile region, the decoded-tile LRU (budget, eviction closes,
+  clone keys, device tiers, counters), assembly that decodes only unshared
+  tiles, duplicate tiles decoded once, failed tiles never cached, and
+  seeding.
+- `tests/browser/tile-dirty-rect-and-decode-cache.spec.ts` (desktop +
+  mobile): hard and soft Brush, Pencil, Eraser, vertical symmetry and a
+  selection-confined stroke on a photo layer, and soft strokes on a new paint
+  layer (expansion + trim), each committing only its tiles with
+  `fullScanMatch`, then exact undo, redo and reload; undo/redo after a reload
+  assembling older versions from the decoded-tile cache on the main thread
+  and in the render worker.
 
 ## Follow-ups
 
-1. Dirty-rectangle hints from paint gestures, so a commit hashes only touched
-   tiles instead of reading back the whole layer.
+1. ~~Dirty-rectangle hints~~ (W4-5): done for Brush, Pencil, Eraser, Stroke
+   Path with Brush and the paint-time expansion. Other pixel tools still scan
+   the whole layer; they can opt in by tracking their writes.
 2. Portable bundle v4 storing tiles (`tiles/<sha256>.png`) so exporting a
    long history of tiled assets does not flatten each version; cloud payloads
    would follow.
-3. Decoded-tile cache, so undo to a version that shares most tiles assembles
-   from decoded tiles instead of decoding every tile Blob again.
+3. ~~Decoded-tile cache~~ (W4-7): done.
 4. Dirty-region previews and worker-side partial composites.
 5. Encode new tiles off the main thread (`OffscreenCanvas.convertToBlob`) when
    a commit can become asynchronous.
+6. The worker prime still reads back the whole committed buffer
+   (`primeWorkerDecodedAsset`: one `getImageData` and a 43 MB transfer at
+   10.8 MP). With the decoded-tile cache the worker could receive only the
+   new tiles' pixels.

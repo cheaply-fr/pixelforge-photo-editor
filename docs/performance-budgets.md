@@ -28,6 +28,7 @@ project API:
 | Portable `.pixelforge` project and local draft | 1 GiB archive / referenced PNG data and 4,096 assets (format ceiling) | Keep downloads and IndexedDB writes bounded while allowing large layered posters |
 | Private cloud project | 16 MiB per document, 30 projects and 256 MiB per library | Preserve the existing Marketplace API quota |
 | Tiled effect session cache | Device-aware 2–16 MiB process-local LRU (mobile capped at 4 MiB) | Reuse repeat renders without persisting pixels or allowing unbounded mobile memory |
+| Decoded-tile cache (tiled layer assets) | Per context (main thread, render worker): 96 MiB desktop, 192 MiB ≥ 8 GB, 32 MiB phones or ≤ 4 GB, 12 MiB ≤ 2 GB; LRU of decoded 256² tiles, evictions closed | Undo/redo and stroke starts reuse decoded tiles shared between versions instead of decoding every tile PNG (`tiled-layer-assets-contract.md`) |
 
 These are protection limits, not a promise that every device can edit at the
 maximum. A 16 MP RGBA surface is approximately 64 MiB before Canvas backing
@@ -227,8 +228,14 @@ measurements; these are local/live observations, not CI budgets.
   layers of 1 MP or more as content-addressed, Blob-backed 256² tiles and
   encodes only new tiles per commit: the same harness measured 0.48–0.60 s
   against 2.0–3.4 s before (local, one Windows desktop; a new paint layer is
-  unchanged within noise). Open: dirty-rect hints, decoded-tile cache,
-  dirty-region previews and off-main-thread encoding; `.pixelforge` export
+  unchanged within noise). W4-5 / W4-7 then committed paint strokes from
+  their dirty rectangle (only touched tiles read back and hashed; the
+  content-bounds trim reads only non-empty tiles) and added a decoded-tile
+  cache: locally 263–382 ms vs 343–568 ms on the photo layer, 268–349 ms vs
+  504–716 ms on a new paint layer, and 167–269 ms vs 295–430 ms for undo/redo
+  to versions no longer in the whole-asset decoded cache (`05a0b65` vs the
+  change, same harness). Open: dirty-region previews, off-main-thread
+  encoding and a tile-level worker prime; `.pixelforge` export
   of a tiled history flattens every version and is slower than before (fix
   wave 4 in the rubric; see
   [`tiled-layer-assets-contract.md`](./tiled-layer-assets-contract.md)).
@@ -258,9 +265,11 @@ measurements; these are local/live observations, not CI budgets.
   matched variance and support ≤ radius above that, so cost no longer grows
   with radius, and scales the watchdog with pixels × layers (see
   [worker-render-contract.md](worker-render-contract.md)). Tolerance against
-  the exact kernel, enforced by `tests/gaussian-blur.test.mjs`: opaque pixels
-  within 3 levels (mean ≤ 1.5); isolated partly transparent pixels beside
-  strong contrast within ~10 % (28 levels). Integer running sums keep tiled
+  the exact kernel, enforced by `tests/gaussian-blur.test.mjs`: opaque images
+  within 3 levels (mean ≤ 1.5); since the blur also spreads alpha (see
+  [blur-effects-contract.md](blur-effects-contract.md)), images with
+  transparency are compared as composited premultiplied colour plus alpha,
+  within 10 levels (mean ≤ 2.5). Integer running sums keep tiled
   and full-frame renders bit-identical. Median, Dust & Scratches and
   Reflection Removal now use sliding histograms, and Motion Blur precomputes
   its taps; all four are byte-identical to before.

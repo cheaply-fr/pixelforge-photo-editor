@@ -752,10 +752,15 @@ test('box and Gaussian blur are deterministic editable effects with bounded meta
   assert.notDeepEqual(box, gaussian);
   assert.ok(box[(4 * 4) + 0] < 255);
   assert.ok(gaussian[(3 * 4) + 0] > 0);
-  assert.equal(pixel(gaussian, 9, 0, 0)[3], 0);
-  assert.deepEqual(pixel(gaussian, 9, 0, 0).slice(0, 3), [77, 66, 55]);
-  for (let x = 1; x < 9; x += 1)
-    assert.equal(pixel(gaussian, 9, x, 0)[3], 255);
+  // Alpha is blurred too: the transparent end pixel gains coverage from its
+  // visible neighbours (never its hidden 77,66,55 RGB), the next pixel loses
+  // a little, and pixels whose whole kernel is opaque stay opaque.
+  for (const result of [box, gaussian]) {
+    assert.ok(pixel(result, 9, 0, 0)[3] > 0 && pixel(result, 9, 0, 0)[3] < 255);
+    assert.deepEqual(pixel(result, 9, 0, 0).slice(0, 3), [0, 0, 0]);
+    assert.ok(pixel(result, 9, 1, 0)[3] < 255);
+    for (let x = 3; x < 9; x += 1) assert.equal(pixel(result, 9, x, 0)[3], 255);
+  }
 });
 
 test('motion blur is a deterministic directional effect with source-safe alpha handling', () => {
@@ -770,8 +775,13 @@ test('motion blur is a deterministic directional effect with source-safe alpha h
   const second = applyFilterEffectsPixels(source, 11, 3, effect);
   assert.deepEqual(first, second);
   assert.deepEqual(source, original);
-  assert.equal(pixel(first, 11, 0, 0)[3], 0);
-  assert.deepEqual(pixel(first, 11, 0, 0).slice(0, 3), [17, 28, 39]);
+  // The transparent column gains coverage along the motion direction from
+  // its visible (black) neighbours, never its hidden 17,28,39 RGB.
+  assert.ok(pixel(first, 11, 0, 0)[3] > 0 && pixel(first, 11, 0, 0)[3] < 255);
+  assert.deepEqual(pixel(first, 11, 0, 0).slice(0, 3), [0, 0, 0]);
+  // Vertical motion never reaches across columns, so that column stays hidden.
+  const vertical = applyFilterEffectsPixels(source, 11, 3, { ...effect, angle: 90 });
+  assert.deepEqual(pixel(vertical, 11, 0, 0), [17, 28, 39, 0]);
   assert.ok(pixel(first, 11, 5, 1)[0] < 255);
   assert.ok(pixel(first, 11, 4, 1)[0] > 0);
   assert.equal(pixel(first, 11, 5, 1)[3], 255);
@@ -1373,7 +1383,8 @@ test('Blur applies a light local box kernel with safe transparent padding', () =
   const original = source.slice();
   const result = applyFilterEffectsPixels(source, 5, 1, { type: 'blur', amount: 100, radius: 6 });
   assert.deepEqual(source, original);
-  assert.deepEqual(pixel(result, 5, 0, 0), [80, 20, 10, 0]);
+  // Half of the 2-tap edge window is visible black: alpha 128, no hidden RGB.
+  assert.deepEqual(pixel(result, 5, 0, 0), [0, 0, 0, 128]);
   assert.ok(pixel(result, 5, 1, 0)[0] > 0);
   assert.ok(pixel(result, 5, 2, 0)[0] < 255);
   assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'blur', amount: 70, radius: 6 })), true);
@@ -1391,8 +1402,8 @@ test('Blur More is a stronger deterministic box blur with safe metadata', () => 
     radius: 2,
   });
   assert.deepEqual(source, original);
-  assert.equal(pixel(result, 9, 0, 0)[3], 0);
-  assert.deepEqual(pixel(result, 9, 0, 0).slice(0, 3), [41, 52, 63]);
+  assert.ok(pixel(result, 9, 0, 0)[3] > 0 && pixel(result, 9, 0, 0)[3] < 255);
+  assert.notDeepEqual(pixel(result, 9, 0, 0).slice(0, 3), [41, 52, 63]);
   assert.ok(pixel(result, 9, 2, 0)[0] > 0);
   assert.ok(pixel(result, 9, 4, 0)[0] < 255);
   assert.equal(validFilterEffects(effectiveFilterEffects({ type: 'blur-more', amount: 85, radius: 6 })), true);
@@ -1408,8 +1419,9 @@ test('lens blur uses a bounded local approximation with explicit source and alph
   const output = applyFilterEffectsPixels(source, 9, 5, effect);
   assert.deepEqual(source, original);
   assert.notDeepEqual(output, source);
-  assert.equal(pixel(output, 9, 0, 0)[3], 0);
-  assert.deepEqual(pixel(output, 9, 0, 0).slice(0, 3), [0, 0, 0]);
+  // The transparent corner is filled from its visible neighbours.
+  assert.ok(pixel(output, 9, 0, 0)[3] > 0 && pixel(output, 9, 0, 0)[3] < 255);
+  assert.ok(pixel(output, 9, 0, 0)[0] > 0);
 });
 
 test('lens blur keeps alpha, softens a point highlight and remains bounded on tiny canvases', () => {

@@ -18,6 +18,9 @@ Choosing Render → Clouds stores a `cloudRender` block:
   quarter of the document's shorter side (200 px for 1200×800, 662 px for
   2646×4096). Octaves are added down to roughly 2 px, so large clouds keep
   fine detail.
+- The noise generator (`forEachCloudRow`) is shared with Difference Clouds,
+  which additionally offsets each octave's lattice; Clouds keeps the aligned
+  lattice, so its output is unchanged.
 - Each render is stretched to its own noise range, so the result always
   spans the full background-to-foreground mix. Without this, a cloud size near
   the image size left the whole image in a narrow mid-grey band.
