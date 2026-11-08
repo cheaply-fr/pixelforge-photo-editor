@@ -56,6 +56,16 @@ The Layers panel indents each clipped row under its base with an `↳` glyph
 the row's accessible description; the row's accessible name stays
 "Select layer <name>". The indent fits the compact mobile layout.
 
+New layers (Add paint layer, fill, adjustment, text, shape and path layers,
+paste and placed images) are inserted directly above the active layer
+(`src/layerInsertion.ts`), inside its folder unless the folder is locked (then
+directly above the folder). When the active layer is clipped, or is a base or
+member whose group continues above it, the new layer joins that clipping group:
+it clips to the active layer and the clipped layer above is re-pointed to it,
+so the group keeps the same base ("Layer added to the clipping group"). Undo
+removes the layer and restores the previous links. Paste of a copied folder
+member keeps its explicit folder placement.
+
 Rendering isolates the source and base, then multiplies source alpha by the
 base's rendered alpha. This preserves unrelated lower artwork, source RGB
 bytes, transforms, masks, adjustments, styles and editable base geometry.

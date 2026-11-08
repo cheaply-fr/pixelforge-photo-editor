@@ -58,8 +58,9 @@ it to the canvas (paint-time expansion below), and after every committed
 step the editor stores each paint layer the step replaced at its
 non-transparent bounding box (alpha > 0) plus a 64 px transparent margin
 (`AUTO_TRIM_MARGIN`, clamped to the asset), so layer styles such as shadows
-and outlines and small blurs added later are not clipped at the stored
-bounds. It applies to the layers Trim Layer to Content supports (plain,
+and outlines and blurs added later are not clipped at the stored bounds (the
+alpha-spreading blurs reach at most 64 px; see
+[blur-effects-contract.md](blur-effects-contract.md)). It applies to the layers Trim Layer to Content supports (plain,
 integer-positioned paint layers without styles, vector masks, live/smart
 filters, fill colour or cleanup metadata), only to layers whose pixels the
 step changed, and only to layers already in the stored-bounds regime: before
@@ -138,6 +139,34 @@ first member, so when the edited layer is inside a folder the snapshot is
 taken below the folder's first member; before, editing any layer inside a
 folder invalidated the snapshot on every render. One snapshot is retained per render
 context and released when another document is installed.
+
+The same context also keeps the finished composite of the last committed
+render (no live stroke overrides), keyed by `compositeEquivalenceKey`: the
+ordered keys of the layers that can draw, with names, lock state, the active
+and selected layers, folder collapse state and raw `clippingTo` links left
+out (a clipped layer is keyed by its clipping group's base instead). Hidden
+and 0% layers, and plain raster layers whose asset is known to be fully
+transparent (a tiled asset with only empty tiles, or a PNG of at most 64×64
+pixels whose alpha is zero, such as a new paint layer) and carry no styles,
+filters, vector mask, healing/content-aware metadata, matting or adjustments,
+are left out as inert. Adding, deleting, renaming or reselecting such a layer
+therefore returns the cached composite at once instead of recompositing the
+stack (on a 49-layer 2646×4096 painting "Add paint layer" used to show
+"Rendering… 43/50 layers"). Each render publishes a best-effort
+`pixelforge.composite-cache` performance mark with `{ final: boolean }`.
+The retained finished composite is one more canvas-sized surface per render
+context.
+
+Clipped layers cache their finished result (source × clipping-base alpha),
+cropped to its visible pixels, in a pass-aware cache of half the layer-cache
+budget (`sharedClippedLayerCache`), keyed by `clippedLayerCacheKey`: the
+source without its outer opacity, blend, folder or name, the clipping group's
+base, a bound text path, their asset contents, frame size and colour mode.
+Before, every render re-rendered each clipped layer and its base and
+multiplied their alpha over the whole frame in software, so reordering,
+adding or editing anything below a clipping group recomputed every group
+above it. Live stroke overrides on the source or base are never cached. The
+`pixelforge.composite-cache` mark also reports `clippedHits`.
 
 ## Not covered
 

@@ -223,16 +223,20 @@ test('every consecutive clipped layer uses the group base, and arranging keeps c
   await expect(footer(page)).toContainText('Selection filled');
   await menu(page, 'Select', /^Deselect Ctrl\+D$/);
   await settled(page);
-  // Two full-canvas layers above, both clipped.
+  // Two full-canvas layers above, both clipped. Red is clipped explicitly;
+  // Blue is added above the clipped Red, so it joins the group on creation.
   for (const [label, colorValue] of [['Red', '#ff0000'], ['Blue', '#0000ff']] as const) {
     await addPaintLayer(page);
+    if (label === 'Blue') await expect(footer(page)).toContainText('Layer added to the clipping group');
     await name(label);
     await setColor(page, 'Drawing color', colorValue);
     await menu(page, 'Edit', /^Fill…/);
     await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
     await expect(footer(page)).toContainText('Layer filled');
-    await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
-    await expect(footer(page)).toContainText('Clipping mask created from Base');
+    if (label === 'Red') {
+      await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
+      await expect(footer(page)).toContainText('Clipping mask created from Base');
+    }
     await settled(page);
   }
   // The second clipped layer shows only inside the base, not over the
