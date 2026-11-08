@@ -560,46 +560,139 @@ function blurAlpha(source: Uint8ClampedArray, width: number, height: number, rad
 }
 
 /**
- * Sliding minimum over a centred window of `radius` along one axis using the
- * van Herk/Gil-Werman block decomposition: three comparisons per sample
- * regardless of the radius. Samples outside the line read as `outside`.
+ * Exact 1-D squared Euclidean distance transform (Felzenszwalb and
+ * Huttenlocher): `output[i] = min_q (i - q)^2 + input[q]` over one line.
  */
-function minLine(
-  input: Uint8ClampedArray,
-  output: Uint8ClampedArray,
+function distanceLine(
+  values: Float32Array,
   start: number,
   stride: number,
   length: number,
-  radius: number,
-  outside: number,
-  prefix: Uint8ClampedArray,
-  suffix: Uint8ClampedArray,
+  input: Float64Array,
+  output: Float64Array,
+  hull: Int32Array,
+  bounds: Float64Array,
 ) {
-  const window = radius * 2 + 1, padded = length + radius * 2;
-  const at = (i: number) => {
-    const source = i - radius;
-    return source >= 0 && source < length ? input[start + source * stride] : outside;
-  };
-  for (let blockStart = 0; blockStart < padded; blockStart += window) {
-    const blockEnd = Math.min(padded, blockStart + window);
-    let running = 255;
-    for (let i = blockStart; i < blockEnd; i += 1) prefix[i] = running = Math.min(running, at(i));
-    running = 255;
-    for (let i = blockEnd - 1; i >= blockStart; i -= 1) suffix[i] = running = Math.min(running, at(i));
+  for (let i = 0; i < length; i += 1) input[i] = values[start + i * stride];
+  let k = 0;
+  hull[0] = 0;
+  bounds[0] = -Infinity;
+  bounds[1] = Infinity;
+  for (let q = 1; q < length; q += 1) {
+    // bounds[0] is -Infinity, so this always stops at k = 0 at the latest.
+    let p = hull[k];
+    let crossing = ((input[q] + q * q) - (input[p] + p * p)) / (2 * q - 2 * p);
+    while (crossing <= bounds[k]) {
+      k -= 1;
+      p = hull[k];
+      crossing = ((input[q] + q * q) - (input[p] + p * p)) / (2 * q - 2 * p);
+    }
+    k += 1;
+    hull[k] = q;
+    bounds[k] = crossing;
+    bounds[k + 1] = Infinity;
   }
-  // Output sample x covers padded indices [x, x + 2r].
-  for (let x = 0; x < length; x += 1) output[start + x * stride] = Math.min(suffix[x], prefix[x + window - 1]);
+  k = 0;
+  for (let i = 0; i < length; i += 1) {
+    while (bounds[k + 1] < i) k += 1;
+    const p = hull[k];
+    output[i] = (i - p) * (i - p) + input[p];
+  }
+  for (let i = 0; i < length; i += 1) values[start + i * stride] = output[i];
 }
 
-/** Square-window erosion (minimum) with transparent samples outside the area. */
-function erodeAlpha(source: Uint8ClampedArray, width: number, height: number, radius: number) {
-  if (radius <= 0) return source.slice();
-  const horizontal = new Uint8ClampedArray(width * height), output = new Uint8ClampedArray(width * height);
-  const scratchLength = Math.max(width, height) + radius * 2;
-  const prefix = new Uint8ClampedArray(scratchLength), suffix = new Uint8ClampedArray(scratchLength);
-  for (let y = 0; y < height; y += 1) minLine(source, horizontal, y * width, 1, width, radius, 0, prefix, suffix);
-  for (let x = 0; x < width; x += 1) minLine(horizontal, output, x, width, height, radius, 0, prefix, suffix);
-  return output;
+/**
+ * Squared Euclidean distance from each sample to the nearest `outside`
+ * sample, capped at `cap` (larger distances read as `cap`). Separable and
+ * linear in the area, so the cost does not depend on the choke distance.
+ */
+export function squaredDistanceToOutside(
+  outside: Uint8Array,
+  width: number,
+  height: number,
+  cap: number,
+): Float32Array {
+  const field = new Float32Array(width * height);
+  for (let i = 0; i < field.length; i += 1) field[i] = outside[i] ? 0 : cap;
+  const longest = Math.max(width, height);
+  const input = new Float64Array(longest), output = new Float64Array(longest);
+  const hull = new Int32Array(longest), bounds = new Float64Array(longest + 1);
+  for (let x = 0; x < width; x += 1) distanceLine(field, x, width, height, input, output, hull, bounds);
+  for (let y = 0; y < height; y += 1) distanceLine(field, y * width, 1, width, input, output, hull, bounds);
+  for (let i = 0; i < field.length; i += 1) if (field[i] > cap) field[i] = cap;
+  return field;
+}
+
+export type InnerShadowBand = {
+  /** Shadow source alpha over a crop of the layer (255 = full shadow). */
+  mask: Uint8ClampedArray;
+  /** Crop origin and size in layer pixels (may extend past the layer). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+  blur: number;
+};
+
+/**
+ * The Inner Shadow source before blur: everything outside the layer's alpha
+ * plus a choke band `distance` pixels wide inside its edge, measured with a
+ * Euclidean distance (a circle chokes to a smaller circle, not a diamond or
+ * square). Pixels beyond the layer bounds count as outside. The crop covers
+ * the painted bounds moved back by the offset, padded by the blur support, so
+ * every destination pixel can read `band[p - offset]` without edge cases.
+ */
+export function innerShadowBand(
+  alpha: Uint8ClampedArray,
+  width: number,
+  height: number,
+  bounds: AlphaBounds,
+  shadow: Pick<InnerShadowStyle, 'distance' | 'blur' | 'offsetX' | 'offsetY'>,
+): InnerShadowBand {
+  const distance = Math.max(0, Math.round(shadow.distance));
+  const blur = Math.max(0, Math.round(shadow.blur));
+  const offsetX = Math.round(shadow.offsetX), offsetY = Math.round(shadow.offsetY);
+  const reach = blur + 1;
+  const x = bounds.minX - offsetX - reach, y = bounds.minY - offsetY - reach;
+  const cropWidth = bounds.maxX - bounds.minX + 1 + reach * 2;
+  const cropHeight = bounds.maxY - bounds.minY + 1 + reach * 2;
+  // The distance field needs every outside sample within `distance + 1` of
+  // the crop, so it runs over a slightly larger area.
+  const margin = distance + 1;
+  const fieldX = x - margin, fieldY = y - margin;
+  const fieldWidth = cropWidth + margin * 2, fieldHeight = cropHeight + margin * 2;
+  // Coverage is measured relative to the layer's most opaque pixel, so a
+  // uniformly semi-transparent layer (an 85% Clouds fill) is shaded at its
+  // edges only instead of being tinted everywhere.
+  let peak = 0;
+  for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+    for (let x = bounds.minX; x <= bounds.maxX; x += 1) peak = Math.max(peak, alpha[y * width + x]);
+  const scale = peak > 0 ? 255 / peak : 0;
+  const sample = (gx: number, gy: number) =>
+    gx >= 0 && gx < width && gy >= 0 && gy < height ? Math.min(255, alpha[gy * width + gx] * scale) : 0;
+  const outside = new Uint8Array(fieldWidth * fieldHeight);
+  for (let fy = 0; fy < fieldHeight; fy += 1)
+    for (let fx = 0; fx < fieldWidth; fx += 1)
+      outside[fy * fieldWidth + fx] = sample(fieldX + fx, fieldY + fy) < 128 ? 1 : 0;
+  const cap = (distance + 2) * (distance + 2);
+  const field = squaredDistanceToOutside(outside, fieldWidth, fieldHeight, cap);
+  const mask = new Uint8ClampedArray(cropWidth * cropHeight);
+  for (let cy = 0; cy < cropHeight; cy += 1)
+    for (let cx = 0; cx < cropWidth; cx += 1) {
+      const own = sample(x + cx, y + cy);
+      let value = Math.round(255 - own);
+      if (own >= 128 && distance > 0) {
+        const squared = field[(cy + margin) * fieldWidth + cx + margin];
+        // Full shadow up to `distance` pixels from the edge, then a one-pixel
+        // antialiased ramp.
+        const coverage = distance + 1 - Math.sqrt(squared);
+        if (coverage > 0) value = Math.max(value, Math.round(Math.min(1, coverage) * 255));
+      }
+      mask[cy * cropWidth + cx] = value;
+    }
+  return { mask, x, y, width: cropWidth, height: cropHeight, offsetX, offsetY, blur };
 }
 
 /**
@@ -763,6 +856,14 @@ export function applyLayerStylesPixels(
   for (let i = 0; i < alpha.length; i += 1) alpha[i] = source[i * 4 + 3];
   const bounds = alphaBounds(source, width, height);
   if (!bounds) return effectOnly ? output : source.slice();
+  // The source is composited back over the outer effects below. Clear the
+  // copy's coverage first (RGB bytes stay), so a semi-transparent pixel is
+  // not composited over itself and does not become more opaque just because
+  // a style is enabled. Every covered pixel is inside `bounds` and is drawn
+  // again by the source pass, so fully opaque pixels are unchanged.
+  if (!effectOnly)
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1)
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) output[(y * width + x) * 4 + 3] = 0;
   if (styles.dropShadow.enabled && (part === 'all' || part === 'drop-shadow')) {
     const radius = Math.round(styles.dropShadow.blur);
     // Blur only the source extent plus the kernel radius. The previous full
@@ -833,53 +934,19 @@ export function applyLayerStylesPixels(
       const i = (y * width + x) * 4;
       over(output, i, source[i], source[i + 1], source[i + 2], source[i + 3]);
     }
-  if (styles.innerShadow.enabled) {
-    const distance = Math.round(styles.innerShadow.distance);
-    const blur = Math.round(styles.innerShadow.blur);
-    const padding = distance + blur + Math.max(
-      Math.abs(Math.round(styles.innerShadow.offsetX)),
-      Math.abs(Math.round(styles.innerShadow.offsetY)),
-    );
-    const sourceX = Math.max(0, bounds.minX - padding);
-    const sourceY = Math.max(0, bounds.minY - padding);
-    const sourceRight = Math.min(width - 1, bounds.maxX + padding);
-    const sourceBottom = Math.min(height - 1, bounds.maxY + padding);
-    const sourceWidth = sourceRight - sourceX + 1;
-    const sourceHeight = sourceBottom - sourceY + 1;
-    // Erode an area padded by `distance` so every crop sample sees the same
-    // square neighbourhood as a full-frame minimum. Samples outside the layer
-    // read as transparent, exactly like the historical per-pixel window, and
-    // the separable pass costs the same at any distance.
-    const erodeX = Math.max(0, sourceX - distance), erodeY = Math.max(0, sourceY - distance);
-    const erodeRight = Math.min(width - 1, sourceRight + distance);
-    const erodeBottom = Math.min(height - 1, sourceBottom + distance);
-    const erodeWidth = erodeRight - erodeX + 1, erodeHeight = erodeBottom - erodeY + 1;
-    const erodeSource = new Uint8ClampedArray(erodeWidth * erodeHeight);
-    for (let y = 0; y < erodeHeight; y += 1)
-      for (let x = 0; x < erodeWidth; x += 1)
-        erodeSource[y * erodeWidth + x] = alpha[(erodeY + y) * width + erodeX + x];
-    const eroded = erodeAlpha(erodeSource, erodeWidth, erodeHeight, distance);
-    const edge = new Uint8ClampedArray(sourceWidth * sourceHeight);
-    for (let y = 0; y < sourceHeight; y += 1)
-      for (let x = 0; x < sourceWidth; x += 1) {
-        const gx = sourceX + x, gy = sourceY + y;
-        const own = alpha[gy * width + gx];
-        if (own === 0) continue;
-        edge[y * sourceWidth + x] = Math.max(0, own - eroded[(gy - erodeY) * erodeWidth + gx - erodeX]);
-      }
-    const softened = blurShadowAlpha(edge, sourceWidth, sourceHeight, blur, styles.innerShadow.falloff);
-    const [r, g, b] = color(styles.innerShadow.color);
-    const offsetX = Math.round(styles.innerShadow.offsetX);
-    const offsetY = Math.round(styles.innerShadow.offsetY);
+  if (styles.innerShadow.enabled && styles.innerShadow.opacity > 0) {
+    const shadow = styles.innerShadow;
+    const band = innerShadowBand(alpha, width, height, bounds, shadow);
+    const softened = blurShadowAlpha(band.mask, band.width, band.height, band.blur, shadow.falloff);
+    const [r, g, b] = color(shadow.color);
     for (let y = bounds.minY; y <= bounds.maxY; y += 1)
       for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
         const destination = (y * width + x) * 4;
         if (source[destination + 3] === 0) continue;
-        const sx = x - offsetX - sourceX;
-        const sy = y - offsetY - sourceY;
-        if (sx < 0 || sx >= sourceWidth || sy < 0 || sy >= sourceHeight) continue;
-        const amount = softened[sy * sourceWidth + sx] *
-          (source[destination + 3] / 255) * styles.innerShadow.opacity;
+        // The shadow is the choked outside region moved by the offset: a
+        // pixel reads the band `offset` pixels back toward the light.
+        const sx = x - band.offsetX - band.x, sy = y - band.offsetY - band.y;
+        const amount = softened[sy * band.width + sx] * (source[destination + 3] / 255) * shadow.opacity;
         over(output, destination, r, g, b, amount);
       }
   }

@@ -517,6 +517,20 @@ export function effectiveFilterEffects(
   return normalized;
 }
 
+/**
+ * Start a new live filter from the previous one plus the chosen filter's
+ * defaults. Type-bound settings of the previous filter (Clouds colours, Light
+ * Rays geometry, a blur path…) are dropped by re-normalizing for the new type,
+ * so a record such as `{ type: 'motion-blur', cloudRender }` can never reach
+ * document validation (it used to fail with "Invalid layer document").
+ */
+export function retypeFilterEffects(
+  previous: Partial<FilterEffects> | undefined,
+  next: Partial<FilterEffects> & { type: FilterEffectType },
+): FilterEffects {
+  return effectiveFilterEffects({ ...effectiveFilterEffects(previous), ...next });
+}
+
 function validBlurPath(value: unknown): value is BlurPathPoint[] {
   return Array.isArray(value) && value.length >= 2 && value.length <= 8 && value.every((point) =>
     point && typeof point === 'object' && !Array.isArray(point) &&
@@ -1411,64 +1425,62 @@ function applyMotionBlur(
   const dx = Math.cos(radians);
   const dy = Math.sin(radians);
   const mix = clamp(strength, 0, 1);
-  // Nearest-neighbour step offsets are the same for every pixel; precompute
-  // them so the inner loop does no rounding or per-sample allocation.
+  // Each tap samples the nearest pixel `step` pixels along the direction:
+  // (x + round(dx * step), y + round(dy * step)), clamped to the layer. The
+  // rounded offsets are the same for every pixel (so tiles and bands render
+  // exactly like the whole image) and are precomputed once.
   const taps = bounded * 2 + 1,
-    stepX = new Float64Array(taps),
-    stepY = new Float64Array(taps),
-    // Integer byte offsets for pixels whose whole footprint is in bounds.
-    // For an integer x, Math.round(x + f) === x + Math.round(f) unless the
-    // fraction of f sits within double rounding error of one half; such
-    // angles simply keep the general path, so output stays bit-identical.
+    tapX = new Int32Array(taps),
+    tapY = new Int32Array(taps),
     tapOffsets = new Int32Array(taps);
   let reachX = 0,
-    reachY = 0,
-    fastPath = true;
+    reachY = 0;
   for (let step = -bounded; step <= bounded; step += 1) {
     const index = step + bounded;
-    stepX[index] = dx * step;
-    stepY[index] = dy * step;
-    const offsetX = Math.round(stepX[index]),
-      offsetY = Math.round(stepY[index]);
-    for (const value of [stepX[index], stepY[index]]) {
-      const fraction = Math.abs(value - Math.floor(value) - 0.5);
-      if (fraction !== 0 && fraction < 1e-6) fastPath = false;
-    }
-    reachX = Math.max(reachX, Math.abs(offsetX));
-    reachY = Math.max(reachY, Math.abs(offsetY));
-    tapOffsets[index] = (offsetY * width + offsetX) * 4;
+    tapX[index] = Math.round(dx * step);
+    tapY[index] = Math.round(dy * step);
+    reachX = Math.max(reachX, Math.abs(tapX[index]));
+    reachY = Math.max(reachY, Math.abs(tapY[index]));
+    tapOffsets[index] = tapY[index] * width + tapX[index];
   }
+  // One 32-bit read per tap (RGBA bytes in memory order) on little-endian
+  // engines; the alpha/255 table holds exactly the quotients the division
+  // would produce, so the sums are bit-identical to the per-tap division.
+  const packed = LITTLE_ENDIAN && source.byteOffset % 4 === 0
+    ? new Uint32Array(source.buffer, source.byteOffset, width * height)
+    : undefined;
+  const alphaUnit = UNIT_ALPHA;
   for (let y = 0; y < height; y += 1) {
-    const rowInside = fastPath && y - reachY >= 0 && y + reachY < height;
+    const rowInside = y - reachY >= 0 && y + reachY < height;
     for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
+      const pixel = y * width + x,
+        destination = pixel * 4;
       if (source[destination + 3] === 0) continue;
       let red = 0,
         green = 0,
         blue = 0,
         weight = 0;
-      if (rowInside && x - reachX >= 0 && x + reachX < width) {
+      if (packed && rowInside && x - reachX >= 0 && x + reachX < width) {
+        // Interior fast path: every tap is in bounds.
         for (let index = 0; index < taps; index += 1) {
-          const offset = destination + tapOffsets[index],
-            alpha = source[offset + 3] / 255;
+          const value = packed[pixel + tapOffsets[index]], alpha = alphaUnit[value >>> 24];
+          if (!alpha) continue;
+          red += (value & 255) * alpha;
+          green += ((value >>> 8) & 255) * alpha;
+          blue += ((value >>> 16) & 255) * alpha;
+          weight += alpha;
+        }
+      } else
+        for (let index = 0; index < taps; index += 1) {
+          const offset =
+              (clamp(y + tapY[index], 0, height - 1) * width + clamp(x + tapX[index], 0, width - 1)) * 4,
+            alpha = alphaUnit[source[offset + 3]];
           if (!alpha) continue;
           red += source[offset] * alpha;
           green += source[offset + 1] * alpha;
           blue += source[offset + 2] * alpha;
           weight += alpha;
         }
-      } else for (let index = 0; index < taps; index += 1) {
-        // Same clamp(round()) sampling as sourcePixel(), inlined.
-        const sx = clamp(Math.round(x + stepX[index]), 0, width - 1),
-          sy = clamp(Math.round(y + stepY[index]), 0, height - 1),
-          offset = (sy * width + sx) * 4,
-          alpha = source[offset + 3] / 255;
-        if (!alpha) continue;
-        red += source[offset] * alpha;
-        green += source[offset + 1] * alpha;
-        blue += source[offset + 2] * alpha;
-        weight += alpha;
-      }
       if (!weight) continue;
       output[destination] = clampByte(source[destination] * (1 - mix) + (red / weight) * mix);
       output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (green / weight) * mix);
@@ -1477,6 +1489,10 @@ function applyMotionBlur(
     }
   }
 }
+
+/** a / 255 for every byte value, computed with the same division. */
+const UNIT_ALPHA = Float64Array.from({ length: 256 }, (_, alpha) => alpha / 255);
+const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
 
 /**
  * Apply a bounded spin-style radial blur around an editable centre point.

@@ -661,11 +661,13 @@ import {
   effectiveFilterEffects,
   isNeutralFilterEffects,
   neutralFilterEffects,
+  retypeFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
 import {
   appendSmartFilter,
   moveSmartFilter,
+  planFilterChoice,
   removeSmartFilter,
   replaceSmartFilter,
   setSmartFilterEnabled,
@@ -683,6 +685,7 @@ import {
   nudgeFilterCenter,
 } from '../src/filterCenter';
 import LightRaysControls, { lightRaysEffectDefaults } from '../src/LightRaysControls';
+import { isNeutralLayerStyles } from '../src/layerStyles';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -6786,7 +6789,11 @@ export default function Home() {
   // Live filters render over the stored asset. A paint layer stored at its
   // content bounds (or a new empty layer) is grown to the canvas first, so a
   // generator such as Clouds or a blur covers the canvas, not the stored box.
-  const chooseFilterEffect = (type: FilterEffectType, label: string) => {
+  const chooseFilterEffect = (
+    type: FilterEffectType,
+    label: string,
+    choice: { switchInPlace?: boolean } = {},
+  ) => {
     if (filterStackEditIndex !== null && type === 'none') {
       setNotice('Remove the stacked filter, or choose Done to edit the live filter');
       return;
@@ -6799,24 +6806,26 @@ export default function Home() {
       canTrimRasterLayer(layer) &&
       rasterExpansionTarget(f)
     ) {
-      void expandRasterLayerForPaint().then(() => applyFilterEffectChoice(type, label));
+      void expandRasterLayerForPaint().then(() => applyFilterEffectChoice(type, label, choice));
       return;
     }
-    applyFilterEffectChoice(type, label);
+    applyFilterEffectChoice(type, label, choice);
   };
-  const applyFilterEffectChoice = (type: FilterEffectType, label: string) => {
+  const applyFilterEffectChoice = (
+    type: FilterEffectType,
+    label: string,
+    choice: { switchInPlace?: boolean } = {},
+  ) => {
     if (type !== 'none') {
       const frame = current();
       prewarmFilterWorkers([type], { w: frame.w, h: frame.h });
       setLastFilterType(type);
       try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
     }
-    if (
-      commitFilterEffects(
+    const next: Adjustments['filterEffects'] =
           type === 'none'
             ? { ...neutralFilterEffects }
-            : {
-                ...effectiveFilterEffects(filterEffects),
+            : retypeFilterEffects(filterEffects, {
                 type,
                 ...(type === 'path-blur' ? { path: DEFAULT_BLUR_PATH.map((point) => ({ ...point })) } : {}),
                 ...(type === 'spin-blur' ? { spinEllipse: { ...DEFAULT_SPIN_ELLIPSE } } : {}),
@@ -6933,15 +6942,47 @@ export default function Home() {
                       ? 90
                       : 0,
                 ...(type === 'light-rays' ? lightRaysEffectDefaults() : {}),
-              },
+              });
+    if (filterStackEditIndex !== null) {
+      if (commitFilterEffects(next))
+        setNotice(type === 'none' ? 'Local filter effect cleared' : `Stacked filter ${filterStackEditIndex + 1} is now ${label}`);
+      return;
+    }
+    const activeLayer = current().layers.find((item) => item.id === current().active);
+    const plan = planFilterChoice({
+      live: activeLayer?.adjustments.filterEffects,
+      stack: activeLayer?.smartFilters,
+      type,
+      stackable: Boolean(activeLayer && isRasterContentLayer(activeLayer)),
+      switchInPlace: choice.switchInPlace,
+    });
+    const previousLabel = plan.kind === 'stack' ? filterTypeLabel(plan.moved.type) : plan.replaced ? filterTypeLabel(plan.replaced.type) : '';
+    if (plan.kind === 'stack') {
+      // One undoable step: the previous live filter keeps rendering from the
+      // filter stack and the chosen filter applies on top of it.
+      if (
+        activeLayer &&
+        editLayer({
+          smartFilters: plan.stack,
+          adjustments: { ...effectiveAdjustments(activeLayer.adjustments), filterEffects: next },
+        })
       )
-    )
+        setNotice(
+          `${previousLabel} moved to the filter stack (${plan.stack.length}/${SMART_FILTER_MAX}); ${label} applied on top and remains editable in Filter effects`,
+        );
+      return;
+    }
+    if (commitFilterEffects(next))
       setNotice(
         type === 'none'
           ? 'Local filter effect cleared'
-          : filterStackEditIndex !== null
-            ? `Stacked filter ${filterStackEditIndex + 1} is now ${label}`
-            : `${label} applied; remains editable in Filter effects`,
+          : plan.reason === 'stack-full'
+            ? `Filter stack is full (${SMART_FILTER_MAX}/${SMART_FILTER_MAX}); ${label} replaced ${previousLabel} as the live filter`
+            : plan.reason === 'unsupported'
+              ? `${label} replaced ${previousLabel}; this layer cannot hold a filter stack`
+              : plan.reason === 'switch'
+                ? `${label} replaced ${previousLabel} as the live filter; remains editable in Filter effects`
+                : `${label} applied; remains editable in Filter effects`,
       );
   };
   const convertForSmartFilters = () => {
@@ -9163,6 +9204,10 @@ export default function Home() {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
     if (layerIsLocked(f, layer)) return;
+    // Layer styles stay live on the rasterized layer instead of being baked:
+    // the pixels are rendered without them and the same styles are kept, so
+    // a glow or shadow remains editable (and follows the new pixels' alpha).
+    const keptStyles = isNeutralLayerStyles(layer.styles) ? undefined : layer.styles;
     try {
       const image = await renderFrame(
         {
@@ -9176,6 +9221,7 @@ export default function Home() {
               // Bake live filter effects and adjustments into the new pixels,
               // as Photoshop bakes Smart Filters when rasterizing.
               adjustments: layer.adjustments,
+              styles: undefined,
             },
           ],
         },
@@ -9192,13 +9238,18 @@ export default function Home() {
         visible: layer.visible,
         adjustments: { ...neutral },
         groupId: layer.groupId,
+        ...(keptStyles ? { styles: keptStyles } : {}),
       };
       const changed = commit({
         ...f,
         layers: f.layers.map((item) => (item.id === layer.id ? rasterLayer : item)),
       });
       if (changed)
-        setNotice('Layer rasterized. Undo restores editable content.');
+        setNotice(
+          keptStyles
+            ? 'Layer rasterized; layer styles kept editable on the new pixels. Undo restores editable content.'
+            : 'Layer rasterized. Undo restores editable content.',
+        );
     } catch {
       setNotice('Could not rasterize layer');
     }
@@ -18608,6 +18659,7 @@ export default function Home() {
                   event.target.value as FilterEffectType,
                   event.target.options[event.target.selectedIndex]?.text ||
                     'Filter effect',
+                  { switchInPlace: true },
                 )
               }
             >
@@ -18923,7 +18975,11 @@ export default function Home() {
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
                 {filterEffects.type === 'light-rays' && (
-                  <LightRaysControls effect={filterEffects} change={setFilterEffects} />
+                  <LightRaysControls
+                    effect={filterEffects}
+                    change={setFilterEffects}
+                    layerSize={isRasterContentLayer(active) && assets.current[active.asset] ? { w: assets.current[active.asset].w, h: assets.current[active.asset].h } : undefined}
+                  />
                 )}
             {filterEffects.type === 'picture-frame' && (
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>

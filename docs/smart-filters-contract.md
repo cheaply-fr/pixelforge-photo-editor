@@ -42,6 +42,31 @@ the arrow keys (one layer pixel, Shift for ten, Home recentres). Twirl and
 Polar Coordinates gained centre sliders. Per-filter blend modes and
 per-filter masks are not yet supported.
 
+## Choosing another filter from the Filter menu
+
+Choosing a filter from the Filter menu (or Last Filter) on a raster or
+smart-object layer whose live filter is a different, non-neutral effect now
+stacks instead of failing: the live effect moves to the end of the filter
+stack and the chosen filter becomes the new live filter, as one undoable edit
+(`planFilterChoice` in `src/smartFilters.ts`). The status names both, e.g.
+"Clouds moved to the filter stack (1/8); Motion Blur applied on top and
+remains editable in Filter effects". The chosen filter replaces the live one
+instead when the live slot is empty or neutral, when the same filter is chosen
+again, when the **Filter effect** list in the panel changes the live type in
+place, when the layer cannot hold a stack, or when the stack is full (8/8);
+each case has its own status message. The new live record is re-normalised
+for its type (`retypeFilterEffects`), so type-bound settings such as the
+Clouds colours or Light Rays geometry never leak into another filter. Before
+this, Clouds followed by Motion Blur produced `{ type: 'motion-blur',
+cloudRender }`, which failed validation with "Invalid layer document".
+
+Rendering a stacked layer caches the stack result separately from the live
+filter (see `layerFilterCacheKey`), so scrubbing the live filter's parameters
+does not recompute stacked generators such as Clouds.
+
+Evidence: `tests/filter-style-fixes.test.mjs` and
+`tests/browser/filter-style-fixes.spec.ts` (desktop and mobile).
+
 ## Editing a stacked entry in place
 
 Each stacked entry has an **Edit stacked filter n. Name** toggle

@@ -16,11 +16,19 @@ The values are finite and bounded:
 - Drop shadow uses a six-digit hex colour, opacity `0..1`, offsets
   `-1000..1000` pixels, and box blur `0..250` pixels.
 - Inner shadow uses a six-digit hex colour, opacity `0..1`, offsets
-  `-1000..1000` pixels, box blur `0..250` pixels and inward edge distance
-  `1..250` pixels. It is clipped to the source alpha and never paints
-  transparent pixels. The edge distance uses a separable van Herk/Gil-Werman
-  square erosion whose cost does not depend on the distance; its pixels are
-  identical to the historical per-pixel square window.
+  `-1000..1000` pixels, blur `0..250` pixels and inward edge (choke) distance
+  `1..250` pixels. Its source is everything outside the layer's alpha
+  (including beyond the layer bounds) plus a band `distance` pixels wide
+  inside the edge, measured with an exact Euclidean distance transform
+  (separable, cost independent of the distance), so a circle chokes to a
+  smaller circle. That source is blurred, then moved by the X/Y offset like
+  Drop Shadow: a pixel reads the shadow `offset` pixels back toward the light,
+  so an offset of (0, 15) shades the top inner edge and leaves the bottom
+  clear. It is clipped to the source alpha and never paints transparent
+  pixels. Before this change the band came from a square-window erosion
+  (corners darker than edges; distance 60 on a circle left a square-ish
+  hole) and the offset only shifted that band, so the shadow was not
+  directional.
 - Outer glow uses a six-digit hex colour (default `#ffffbe`), opacity `0..1`,
   size `0..250` pixels, spread `0..100` percent and any layer blend mode
   (default Screen). The alpha is softened by three radius-independent box
@@ -66,7 +74,14 @@ pixels and avoids browser-specific `CanvasRenderingContext2D.filter` output.
 
 The document model validates the optional `styles` object at every import,
 local-draft and cloud-project boundary. Raster layers apply it in local
-coordinates before filters, masks, transforms and group compositing; editable
+coordinates after the filter stack and the live filter (so a Clouds or Light
+Rays layer is decorated from the generated pixels) and before transforms and
+group compositing. A raster or smart-object layer with an enabled pixel mask
+instead applies its styles in frame space after the mask, so they follow
+layer alpha x mask: a full-canvas Clouds layer masked to a circle glows and
+shades around the circle. Layer → Rasterize keeps enabled styles on the new
+raster layer (they are not baked into its pixels) and says so in the status;
+the mask, filters and adjustments are baked as before. Editable
 text/vector layers use the isolated render path so their source metadata stays
 editable. The source asset and mask references remain unchanged, so duplicate,
 undo, reload, export and history trimming continue to work through the existing

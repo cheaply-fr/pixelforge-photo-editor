@@ -148,6 +148,54 @@ export function lightRaysBandSafe(value: Partial<LightRaysSettings> | undefined)
   return normalizeLightRaysSettings(value).mode === 'generate';
 }
 
+/** Brightness below which a ray tip counts as faded out for the UI readout. */
+export const LIGHT_RAYS_VISIBLE_THRESHOLD = 0.05;
+
+export type LightRaysPixelExtent = {
+  /** The percentage base: half the layer's shorter side, in layer pixels. */
+  base: number;
+  /** Rays start this far from the centre (layer pixels). */
+  innerRadius: number;
+  /** Nominal ray length beyond the inner radius (layer pixels). */
+  length: number;
+  /** innerRadius + length: where the longest unvaried ray ends. */
+  outerRadius: number;
+  /**
+   * Where an unvaried generated ray fades below 5% brightness with the
+   * current falloff (layer pixels from the centre). Randomness can shorten
+   * individual rays further. Equal to outerRadius for source streaks, whose
+   * exponential decay is not a hard tip.
+   */
+  visibleRadius: number;
+};
+
+/**
+ * Pixel meaning of the stored percentage settings for a layer of
+ * `width` x `height` pixels. Lengths and the inner radius are stored as
+ * percentages of half the shorter side (so saved documents keep their look
+ * when the canvas is resized); the UI shows these pixel values next to them.
+ */
+export function lightRaysPixelExtent(
+  value: Partial<LightRaysSettings> | undefined,
+  width: number,
+  height: number,
+): LightRaysPixelExtent {
+  const settings = normalizeLightRaysSettings(value);
+  const base = Math.max(0.5, Math.min(Math.max(1, width), Math.max(1, height)) / 2);
+  const length = Math.max(1, (settings.length / 100) * base);
+  const innerRadius = (settings.innerRadius / 100) * base;
+  const exponent = 0.15 + (settings.falloff / 100) * 3.85;
+  const visibleFraction =
+    settings.mode === 'generate' ? 1 - LIGHT_RAYS_VISIBLE_THRESHOLD ** (1 / exponent) : 1;
+  return {
+    base,
+    innerRadius,
+    length,
+    outerRadius: innerRadius + length,
+    visibleRadius: innerRadius + length * visibleFraction,
+  };
+}
+
 export type LightRay = {
   /** Direction in radians, normalized to [0, 2π). */
   angle: number;
@@ -190,9 +238,7 @@ export function lightRaysGeometry(
   seed: number,
 ): LightRaysGeometry {
   const settings = normalizeLightRaysSettings(value);
-  const half = Math.max(0.5, Math.min(width, height) / 2);
-  const length = Math.max(1, (settings.length / 100) * half);
-  const innerRadius = (settings.innerRadius / 100) * half;
+  const { length, innerRadius } = lightRaysPixelExtent(settings, width, height);
   const hash = seededHash(seed >>> 0);
   const random = settings.randomness / 100;
   const count = settings.count;

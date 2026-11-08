@@ -3,6 +3,7 @@ import {
   DEFAULT_LIGHT_RAYS_SETTINGS,
   DEFAULT_STARBURST_PATCH,
   LIGHT_RAYS_LIMITS,
+  lightRaysPixelExtent,
   normalizeLightRaysSettings,
   type LightRaysSettings,
 } from './lightRays';
@@ -22,20 +23,22 @@ export function lightRaysEffectDefaults(): Partial<FilterEffects> {
   };
 }
 
-function Range({ label, value, min, max, step = 1, suffix = '', change }: {
+function Range({ label, value, min, max, step = 1, suffix = '', detail, change }: {
   label: string;
   value: number;
   min: number;
   max: number;
   step?: number;
   suffix?: string;
+  /** Extra readout after the value, e.g. the resulting pixel radius. */
+  detail?: string;
   change: (value: number) => void;
 }) {
   return (
     <label className="slider">
       <span>
         <b>{label}</b>
-        <output>{value}{suffix}</output>
+        <output>{value}{suffix}{detail ? ` · ${detail}` : ''}</output>
       </span>
       <input
         aria-label={label}
@@ -51,14 +54,18 @@ function Range({ label, value, min, max, step = 1, suffix = '', change }: {
 }
 
 /** Editable Light Rays parameters for the Filter effects panel. */
-export default function LightRaysControls({ effect, change }: {
+export default function LightRaysControls({ effect, change, layerSize }: {
   effect: FilterEffects;
   change: (patch: Partial<FilterEffects>) => void;
+  /** The filtered layer's pixel size; lengths are shown in its pixels. */
+  layerSize?: { w: number; h: number };
 }) {
   const settings = normalizeLightRaysSettings(effect.lightRays);
+  const extent = layerSize ? lightRaysPixelExtent(settings, layerSize.w, layerSize.h) : undefined;
+  const px = (value: number) => `${Math.round(value)} px`;
   const update = (patch: Partial<LightRaysSettings>) =>
     change({ lightRays: normalizeLightRaysSettings({ ...settings, ...patch }) });
-  const range = (key: keyof typeof LIGHT_RAYS_LIMITS, label: string, suffix = '', step = 1) => (
+  const range = (key: keyof typeof LIGHT_RAYS_LIMITS, label: string, suffix = '', step = 1, detail?: string) => (
     <Range
       label={label}
       value={settings[key]}
@@ -66,6 +73,7 @@ export default function LightRaysControls({ effect, change }: {
       max={LIGHT_RAYS_LIMITS[key][1]}
       step={step}
       suffix={suffix}
+      detail={detail}
       change={(value) => update({ [key]: value } as Partial<LightRaysSettings>)}
     />
   );
@@ -101,12 +109,22 @@ export default function LightRaysControls({ effect, change }: {
         </label>
       )}
       {range('count', source ? 'Streak variation cells' : 'Ray count')}
-      {range('length', source ? 'Streak length' : 'Ray length', '%')}
+      {range('length', source ? 'Streak length' : 'Ray length', '%', 1, extent && px(extent.length))}
       {!source && range('width', 'Ray width', ' px', 0.5)}
       {!source && settings.shape === 'rays' && range('sharpness', 'Ray taper', '%')}
       {range('randomness', 'Ray randomness', '%')}
       {range('rotation', 'Ray rotation', '°')}
-      {range('innerRadius', 'Inner radius', '%')}
+      {range('innerRadius', 'Inner radius', '%', 1, extent && px(extent.innerRadius))}
+      {extent && (
+        <p className="adjust-note" data-testid="light-rays-extent">
+          {source ? 'Streaks start' : 'Rays run'} from {px(extent.innerRadius)} to {px(extent.outerRadius)} from
+          the centre. Percentages are of half the layer&apos;s shorter side ({px(extent.base)}), so the look
+          scales with the layer.
+          {!source && extent.visibleRadius < extent.outerRadius - 1 && (
+            <> At this falloff rays fade out by about {px(extent.visibleRadius)}; lower Ray falloff to see their full length.</>
+          )}
+        </p>
+      )}
       {range('falloff', 'Ray falloff', '%')}
       {range('intensity', 'Ray intensity', '%')}
       {source && range('threshold', 'Bright threshold')}
