@@ -8,6 +8,7 @@
  */
 
 import { radialCoverage } from './brush.ts';
+import { strokeWindow, strokeWindowReach, windowedCanvasStroke } from './strokeWindow.ts';
 
 export const ERASER_MAX_SIZE = 10000;
 export const ERASER_MAX_DIMENSION = 16000;
@@ -385,16 +386,20 @@ export function eraseBackgroundStroke(
     throw new Error('Background Eraser canvases must have matching dimensions');
   const sourceContext = source.getContext('2d'), outputContext = output.getContext('2d');
   if (!sourceContext || !outputContext) throw new Error('Background Eraser canvas context is unavailable');
-  const sourceImage = sourceContext.getImageData(0, 0, source.width, source.height),
-    outputImage = outputContext.getImageData(0, 0, output.width, output.height),
-    result = applyBackgroundEraserStroke(sourceImage.data, outputImage.data, {
-      width: source.width, height: source.height, x1, y1, x2, y2, size, tolerance, opacity, target,
-    });
-  if (!result.changed) return false;
-  const next = outputContext.createImageData(output.width, output.height);
-  next.data.set(result.pixels);
-  outputContext.putImageData(next, 0, 0);
-  return true;
+  // Only the segment's window is read and written, so a pointer move costs
+  // the brush area rather than the whole layer.
+  const finiteSize = Number.isFinite(size) ? size : 1;
+  return windowedCanvasStroke(
+    output,
+    strokeWindow([{ x: x1, y: y1 }, { x: x2, y: y2 }], strokeWindowReach.sampled(finiteSize), output.width, output.height),
+    ({ source: sourcePixels, destination, rect, width, height }) =>
+      applyBackgroundEraserStroke(sourcePixels!, destination, {
+        width, height,
+        x1: x1 - rect.x, y1: y1 - rect.y, x2: x2 - rect.x, y2: y2 - rect.y,
+        size, tolerance, opacity, target,
+      }),
+    { source, tool: 'background-eraser' },
+  );
 }
 
 // Short aliases make the byte-array operations discoverable at integration
