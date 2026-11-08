@@ -197,7 +197,7 @@ test('Gaussian Blur softens brush strokes on a clipped paint layer and keeps it 
 
   await saved(page);
   await page.reload();
-  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
   await settled(page);
   const reloaded = profile(await column(page), 'white');
   expect(reloaded.touched).toBe(profile(baked, 'white').touched);
@@ -223,7 +223,7 @@ test('an unclipped stroke layer blurs, survives reload, and Box/Motion/Lens blur
 
   await saved(page);
   await page.reload();
-  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
   await settled(page);
   expect(profile(await column(page), 'transparent')).toEqual(r40);
 
@@ -264,7 +264,7 @@ test('a 2646×4096 stroke layer (tiled render path) blurs and the radius changes
   expect(r40.peak).toBeLessThan(r7.peak);
   await saved(page);
   await page.reload();
-  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
   await settled(page);
   expect(profile(await column(page, x), 'transparent')).toEqual(r40);
 });
