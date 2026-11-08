@@ -22,6 +22,7 @@ import {
   fastZoomRadialBlur,
   type RowRange,
 } from './fastNeighborhoodFilters.ts';
+import { boxCoverage, spreadAlphaByte, spreadChannel, writeSpreadPixel } from './alphaSpread.ts';
 import {
   normalizeLightRaysSettings,
   renderLightRays,
@@ -782,7 +783,7 @@ function blendPixel(
 }
 
 /** Circular aperture integration with a fixed 49-sample area budget.
- * Samples exclude hidden RGB and destination alpha remains source-owned.
+ * Samples are weighted by alpha; with `spread` (the Lens Blur filter) alpha is blurred too.
  * This simulates uniform circular bokeh; depth-map occlusion is not inferred.
  */
 function applyLensBlur(
@@ -803,7 +804,7 @@ function applyLensBlur(
       Math.round(Math.sin(sample * goldenAngle) * distance),
     ]);
   }
-  fastLensBlur(source, width, height, offsets, output, strength, rows);
+  fastLensBlur(source, width, height, offsets, output, strength, rows, true);
 }
 
 /**
@@ -964,6 +965,8 @@ function applyBoxBlur(
   output: Uint8ClampedArray,
   strength: number,
   selector?: (x: number, y: number) => number,
+  /** Blur alpha too (premultiplied) so strokes on transparent layers soften; see alphaSpread.ts. */
+  spread = false,
 ): void {
   // Separable weighted running sums are linear in pixel count, independent
   // of radius. Alpha weighting avoids invisible padding causing dark halos.
@@ -1017,7 +1020,13 @@ function applyBoxBlur(
       for (let y = 0; y < height; y += 1) {
         const offset = (y * width + x) * 4,
           mix = clamp(strength * (selector?.(x, y) ?? 1), 0, 1);
-        if (source[offset + 3] && weight > 0) {
+        if (spread) {
+          const coverage = boxCoverage(x, width, bounded) * boxCoverage(y, height, bounded),
+            value = spreadChannel(source[offset + channel], source[offset + 3], sum, weight, coverage, mix);
+          if (value >= 0) output[offset + channel] = value;
+          if (channel === 0)
+            output[offset + 3] = spreadAlphaByte(source[offset + 3], weight, coverage, mix);
+        } else if (source[offset + 3] && weight > 0) {
           output[offset + channel] = clampByte(
             source[offset + channel] * (1 - mix) + (sum / weight) * mix,
           );
@@ -1196,9 +1205,11 @@ function kernelLine(
 /**
  * Apply a separable Gaussian blur while weighting colour by alpha.
  *
- * The source alpha channel is never sampled into the output. Fully
- * transparent pixels therefore retain their hidden RGB padding and partially
- * transparent edges cannot introduce dark halos. Samples outside the image
+ * Without `spread` the source alpha channel is never sampled into the
+ * output: fully transparent pixels retain their hidden RGB padding. With
+ * `spread` (the Gaussian Blur filter) alpha is blurred too, see
+ * alphaSpread.ts. Either way partially transparent edges cannot introduce
+ * dark halos. Samples outside the image
  * are absent (zero weight) and the result is renormalised by the accumulated
  * alpha weight, so the image edge stays stable for every valid radius.
  *
@@ -1228,6 +1239,8 @@ function applyGaussianBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  /** Blur alpha too (premultiplied) so strokes on transparent layers soften; see alphaSpread.ts. */
+  spread = false,
 ): void {
   const bounded = Math.max(1, Math.min(64, Math.round(radius))),
     sigma = Math.max(0.5, bounded / 3),
@@ -1285,6 +1298,19 @@ function applyGaussianBlur(
     verticalValue = new Float64Array(height),
     verticalWeight = new Float64Array(height);
 
+  // Spread mode needs the in-image kernel mass in the weight's units. The
+  // operator is separable, so it is the product of one row and one column
+  // profile of an all-ones line (times 255 on the integer box path).
+  let spreadCoverageX: Float64Array | undefined,
+    spreadCoverageY: Float64Array | undefined;
+  if (spread) {
+    line.fill(1);
+    filter(line, lineResult, width);
+    spreadCoverageX = Float64Array.from(lineResult, (value) => (exact ? value : value * 255));
+    const ones = new Float64Array(height).fill(1);
+    spreadCoverageY = new Float64Array(height);
+    filter(ones, spreadCoverageY, height);
+  }
   // The exact path keeps the historical normalised alpha (byte / 255); the
   // box path uses integer bytes so its running sums are exact.
   // Horizontal alpha weight is shared by all three colour channels. An opaque
@@ -1390,6 +1416,24 @@ function applyGaussianBlur(
         const row = y * width + x0;
         for (let column = 0; column < columns; column += 1) {
           const outputOffset = (row + column) * 4;
+          if (spreadCoverageX && spreadCoverageY) {
+            const weight = sharedWeights && horizontalWeight
+                ? horizontalWeight[row + column]
+                : columnWeights[column * height + y],
+              coverage = spreadCoverageX[x0 + column] * spreadCoverageY[y],
+              value = spreadChannel(
+                source[outputOffset + channel],
+                source[outputOffset + 3],
+                columnValues[column * height + y],
+                weight,
+                coverage,
+                mix,
+              );
+            if (value >= 0) output[outputOffset + channel] = value;
+            if (channel === 0)
+              output[outputOffset + 3] = spreadAlphaByte(source[outputOffset + 3], weight, coverage, mix);
+            continue;
+          }
           if (!source[outputOffset + 3]) continue;
           const weight = sharedWeights && horizontalWeight
             ? horizontalWeight[row + column]
@@ -1406,8 +1450,9 @@ function applyGaussianBlur(
 }
 
 /**
- * Apply a bounded directional blur while preserving source alpha and
- * transparent RGB padding. Samples are nearest-neighbour and symmetric
+ * Apply a bounded directional blur. With `spread` (the Motion Blur filter)
+ * alpha is blurred along the direction; otherwise source alpha and
+ * transparent RGB padding are preserved. Samples are nearest-neighbour and symmetric
  * around each destination pixel, which keeps the result deterministic across
  * browsers and makes the effect safe for small images.
  */
@@ -1419,6 +1464,8 @@ function applyMotionBlur(
   angle: number,
   output: Uint8ClampedArray,
   strength: number,
+  /** Blur alpha too (premultiplied); see alphaSpread.ts. */
+  spread = false,
 ): void {
   const bounded = Math.max(1, Math.min(64, Math.round(radius)));
   const radians = (angle * Math.PI) / 180;
@@ -1455,7 +1502,7 @@ function applyMotionBlur(
     for (let x = 0; x < width; x += 1) {
       const pixel = y * width + x,
         destination = pixel * 4;
-      if (source[destination + 3] === 0) continue;
+      if (source[destination + 3] === 0 && !spread) continue;
       let red = 0,
         green = 0,
         blue = 0,
@@ -1481,6 +1528,11 @@ function applyMotionBlur(
           blue += source[offset + 2] * alpha;
           weight += alpha;
         }
+      if (spread) {
+        // Every tap is counted (edge taps repeat the clamped edge pixel).
+        writeSpreadPixel(source, output, destination, red, green, blue, weight, taps, mix);
+        continue;
+      }
       if (!weight) continue;
       output[destination] = clampByte(source[destination] * (1 - mix) + (red / weight) * mix);
       output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (green / weight) * mix);
@@ -3752,17 +3804,17 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'blur') {
     // Photoshop's one-click Blur is a light, bounded box blur. Keep it
     // distinct from Average (whole-image average) and Blur More (stronger).
-    applyBoxBlur(data, width, height, 1, output, strength);
+    applyBoxBlur(data, width, height, 1, output, strength, undefined, true);
   } else if (effect.type === 'blur-more') {
     // Photoshop's one-click Blur More is a stronger, bounded box blur. Keep
     // the source-safe renderer and metadata contract while doubling radius.
-    applyBoxBlur(data, width, height, Math.min(64, effect.radius * 2), output, strength);
+    applyBoxBlur(data, width, height, Math.min(64, effect.radius * 2), output, strength, undefined, true);
   } else if (effect.type === 'field-blur') {
     applyFieldBlur(data, width, height, effect, output);
   } else if (effect.type === 'box-blur') {
-    applyBoxBlur(data, width, height, effect.radius, output, strength);
+    applyBoxBlur(data, width, height, effect.radius, output, strength, undefined, true);
   } else if (effect.type === 'gaussian-blur') {
-    applyGaussianBlur(data, width, height, effect.radius, output, strength);
+    applyGaussianBlur(data, width, height, effect.radius, output, strength, true);
   } else if (effect.type === 'sharpen') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'high-pass') {
@@ -3795,7 +3847,7 @@ export function applyFilterEffectsPixels(
       strength,
     );
   } else if (effect.type === 'motion-blur') {
-    applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
+    applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength, true);
   } else if (effect.type === 'radial-blur') {
     (effect.radialMode === 'zoom' ? applyZoomRadialBlur : applyRadialBlur)(
       data, width, height, effect.radius, effect.centerX, effect.centerY, output, strength,
