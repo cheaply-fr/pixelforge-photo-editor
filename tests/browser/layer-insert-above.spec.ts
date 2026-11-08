@@ -216,3 +216,65 @@ test('Duplicate Layer puts the copy directly above its source, inside its clippi
   await selectLayer(page, 'Paint 3');
   await expect(page.getByText(/^Clipped to /)).toHaveCount(0);
 });
+
+test('reordering a layer under a clipping group reuses the clipped results and matches a cold render', async ({ page }) => {
+  test.setTimeout(300_000);
+  await menu(page, 'Image', 'Canvas Size…');
+  await page.getByLabel('Width (px)').fill('1500');
+  await page.getByLabel('Height (px)').fill('1500');
+  await page.getByRole('button', { name: 'Apply canvas size', exact: true }).click();
+  await expect(canvas(page)).toHaveJSProperty('width', 1500);
+  await settled(page);
+  for (let index = 0; index < 8; index += 1) await addPaintLayer(page);
+  // Paint 4 is a clipping base; Paint 5 is clipped to it and Paint 6, added
+  // above the clipped Paint 5, joins the group. Paint 2 is unrelated.
+  for (const name of ['Paint 2', 'Paint 4', 'Paint 5']) {
+    await selectLayer(page, name);
+    await menu(page, 'Filter', 'Clouds');
+    await settled(page);
+  }
+  await page.getByRole('button', { name: 'Create clipping mask', exact: true }).click();
+  await expect(footer(page)).toContainText('Clipping mask created from Paint 4');
+  await settled(page);
+  await addPaintLayer(page);
+  await expect(footer(page)).toContainText('Layer added to the clipping group');
+  await menu(page, 'Filter', 'Clouds');
+  await settled(page);
+  await page.getByLabel('Layer opacity', { exact: true }).fill('60');
+  await settled(page);
+
+  const clippedHits = () =>
+    page.evaluate(() =>
+      (performance.getEntriesByName('pixelforge.composite-cache', 'mark') as PerformanceMark[]).reduce(
+        (total, mark) => total + ((mark.detail as { clippedHits?: number }).clippedHits ?? 0),
+        0,
+      ),
+    );
+  await selectLayer(page, 'Paint 2');
+  const before = await digest(page);
+  await clearCompositeMarks(page);
+  await menu(page, 'Layer', /^Bring to Front/);
+  await settled(page);
+  expect((await order(page))[0]).toBe('Paint 2');
+  // Both clipped layers come from the cache instead of re-rendering the
+  // source and base and multiplying their alpha again.
+  expect(await clippedHits()).toBeGreaterThanOrEqual(2);
+  const moved = await digest(page);
+  expect(moved).not.toBe(before);
+
+  await clearCompositeMarks(page);
+  await undo(page);
+  expect(await clippedHits()).toBeGreaterThanOrEqual(2);
+  expect(await digest(page)).toBe(before);
+  await redo(page);
+  expect(await digest(page)).toBe(moved);
+
+  // Cached and cold renders agree.
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device', {
+    timeout: 30_000,
+  });
+  await page.reload();
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await settled(page);
+  expect(await digest(page)).toBe(moved);
+});

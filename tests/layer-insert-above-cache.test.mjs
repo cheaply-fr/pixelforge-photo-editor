@@ -33,7 +33,7 @@ const paintedTiled = (hash) => ({
   w: 512,
   h: 512,
   tileSize: 256,
-  tiles: [{ hash, blob: undefined, url: undefined }, null, null, null],
+  tiles: [{ key: hash, blob: undefined }, null, null, null],
 });
 const frameOf = (layers, patch = {}) => ({
   w: 512,
@@ -415,4 +415,64 @@ test('a copy of a folder member stays in the folder next to its source', async (
   const next = insertCopiesAboveSources(frame, [frame.layers[0]], [raster(70, { groupId: 'g' })]);
   assert.deepEqual(ids(next), [id(1), id(70), id(2), id(3)]);
   assert.equal(next.layers[1].groupId, 'g');
+});
+
+// ------------------------------------------------------ clipped layer cache
+
+test('alphaBounds finds the visible rectangle, or nothing', async () => {
+  const { alphaBounds } = await import('../src/compositeCache.ts');
+  const w = 6, h = 5, pixels = new Uint8ClampedArray(w * h * 4);
+  assert.equal(alphaBounds(pixels, w, h), undefined);
+  const set = (x, y) => { pixels[(y * w + x) * 4 + 3] = 1; };
+  set(2, 1);
+  assert.deepEqual(alphaBounds(pixels, w, h), { x: 2, y: 1, w: 1, h: 1 });
+  set(4, 3);
+  set(1, 2);
+  assert.deepEqual(alphaBounds(pixels, w, h), { x: 1, y: 1, w: 4, h: 3 });
+  set(5, 4);
+  set(0, 0);
+  assert.deepEqual(alphaBounds(pixels, w, h), { x: 0, y: 0, w: 6, h: 5 });
+});
+
+test('clipped-layer keys follow source and base content, not position, names or the outer blend', async () => {
+  const { clippedLayerCacheKey } = await import('../src/compositeCache.ts');
+  const assets = { 'asset-1': paintedTiled('1'.repeat(32)), 'asset-2': paintedTiled('2'.repeat(32)) };
+  const base = raster(1), source = raster(2, { clippingTo: id(1) });
+  const frame = frameOf([base, source]);
+  const key = clippedLayerCacheKey(frame, source, base, assets);
+  assert.ok(key);
+  // Reordering other layers, renaming, locking, outer opacity/blend and the
+  // raw link (stored adjacent vs. resolved base) do not change the result.
+  const moved = frameOf([raster(7), base, raster(8), source]);
+  assert.equal(clippedLayerCacheKey(moved, source, base, assets), key);
+  assert.equal(
+    clippedLayerCacheKey(frame, { ...source, name: 'x', locked: true, opacity: 0.3, blend: 'multiply', clippingTo: 'other', groupId: 'g' }, { ...base, name: 'y' }, assets),
+    key,
+  );
+  // Anything the clipped pixels depend on does.
+  const changed = [
+    clippedLayerCacheKey(frame, { ...source, matrix: [1, 0, 0, 1, 4, 0] }, base, assets),
+    clippedLayerCacheKey(frame, source, { ...base, opacity: 0.5 }, assets),
+    clippedLayerCacheKey(frame, source, { ...base, matrix: [1, 0, 0, 1, 0, 4] }, assets),
+    clippedLayerCacheKey(frame, source, base, { ...assets, 'asset-2': paintedTiled('3'.repeat(32)) }),
+    clippedLayerCacheKey(frame, source, base, { ...assets, 'asset-1': paintedTiled('4'.repeat(32)) }),
+    clippedLayerCacheKey({ ...frame, colorMode: 'grayscale' }, source, base, assets),
+    clippedLayerCacheKey({ ...frame, w: 256 }, source, base, assets),
+  ];
+  for (const other of changed) assert.notEqual(other, key);
+  assert.equal(new Set(changed).size, changed.length);
+  // Live overrides on either layer are never cached.
+  assert.equal(clippedLayerCacheKey(frame, source, base, assets, { [id(2)]: {} }), undefined);
+  assert.equal(clippedLayerCacheKey(frame, source, base, assets, { [id(1)]: {} }), undefined);
+  assert.ok(clippedLayerCacheKey(frame, source, base, assets, { [id(9)]: {} }));
+});
+
+test('the clipped-layer cache is cleared with the layer cache and uses half its budget', async () => {
+  const { clearLayerFilterCache, sharedClippedLayerCache, detectLayerFilterCacheBudget } = await import('../src/layerFilterCache.ts');
+  const cache = sharedClippedLayerCache();
+  assert.equal(cache.maxBytes, Math.floor(detectLayerFilterCacheBudget() / 2));
+  cache.set('k', { surface: undefined, x: 0, y: 0 }, 64);
+  assert.equal(cache.has('k'), true);
+  clearLayerFilterCache();
+  assert.equal(cache.has('k'), false);
 });

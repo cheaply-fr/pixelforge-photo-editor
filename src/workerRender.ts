@@ -19,6 +19,7 @@ import {
   clearLayerFilterCache,
   layerFilterCacheDelta,
   markLayerFilterCacheStats,
+  sharedClippedLayerCache,
   sharedLayerFilterCache,
   validLayerFilterCacheStats,
 } from './layerFilterCache.ts';
@@ -282,6 +283,7 @@ export async function renderFrameWithWorker(
   const fallback = async () => {
     const cacheBefore = sharedLayerFilterCache().stats();
     const finalHitsBefore = mainThreadCompositeCache.finalHits;
+    const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
     const image = await renderFrame(frame, assets, overrides, {
       compositeCache: mainThreadCompositeCache,
       signal: options.signal,
@@ -310,7 +312,10 @@ export async function renderFrameWithWorker(
     if (isCancelled()) throw abortError();
     markLayerFilterCacheStats(layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()));
     if (!overrides || !Object.keys(overrides).length)
-      markCompositeReuse({ final: mainThreadCompositeCache.finalHits > finalHitsBefore });
+      markCompositeReuse({
+        final: mainThreadCompositeCache.finalHits > finalHitsBefore,
+        clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
+      });
     return image;
   };
   const globalScope = globalThis as typeof globalThis & {

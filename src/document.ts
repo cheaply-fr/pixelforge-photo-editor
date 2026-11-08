@@ -100,6 +100,7 @@ import {
   layerFilterCacheKey,
   stableSerialize,
   sharedLayerFilterCache,
+  sharedClippedLayerCache,
   surfaceBytes,
   type ByteLruCache,
 } from './layerFilterCache.ts';
@@ -165,6 +166,8 @@ import {
   COMPOSITE_CACHE_MIN_LAYERS,
   compositeCheckpoint,
   compositeEquivalenceKey,
+  clippedLayerCacheKey,
+  alphaBounds,
   compositeLayerKeys,
   type CompositeCache,
 } from './compositeCache.ts';
@@ -2747,7 +2750,10 @@ export async function renderFrame(
   if (!options?.layerFilterPass) {
     // One pass per top-level render, so the layer cache keeps a stable set of
     // layers instead of cycling through more layers than fit its budget.
-    if (options?.layerFilterCache !== null) (options?.layerFilterCache ?? sharedLayerFilterCache()).beginPass();
+    if (options?.layerFilterCache !== null) {
+      (options?.layerFilterCache ?? sharedLayerFilterCache()).beginPass();
+      sharedClippedLayerCache().beginPass();
+    }
     options = { ...options, layerFilterPass: true };
   }
   const out = surface(frame.w, frame.h),
@@ -2849,6 +2855,27 @@ export async function renderFrame(
       continue;
     }
     const clippedBase = clippingGroupBase(frame, layer);
+    const clippedKey =
+      clippedBase && options?.layerFilterCache !== null
+        ? clippedLayerCacheKey(
+            frame as unknown as Parameters<typeof clippedLayerCacheKey>[0],
+            layer as unknown as Parameters<typeof clippedLayerCacheKey>[1],
+            clippedBase as unknown as Parameters<typeof clippedLayerCacheKey>[2],
+            assets,
+            overrides,
+          )
+        : undefined;
+    const clippedCached = clippedKey ? sharedClippedLayerCache().get(clippedKey) : undefined;
+    if (clippedBase && clippedCached) {
+      // Same source, base and assets as an earlier render: reuse the result.
+      if (clippedCached.surface) {
+        const placed = surface(frame.w, frame.h);
+        placed.getContext('2d')!.drawImage(clippedCached.surface, clippedCached.x, clippedCached.y);
+        compositeFrameSurface(context, placed, frame.w, frame.h, layer.opacity, layer.blend);
+      }
+      reportProgress(layerIndex);
+      continue;
+    }
     if (clippedBase) {
       // Render the source and base independently. Applying destination-in to
       // `out` would clip every lower layer, including unrelated artwork.
@@ -2904,6 +2931,22 @@ export async function renderFrame(
         clippedPixels = applyClippingAlpha(sourcePixels.data, basePixels.data);
       sourcePixels.data.set(clippedPixels);
       sourceContext.putImageData(sourcePixels, 0, 0);
+      if (clippedKey && !options?.isCancelled?.()) {
+        // Keep the result cropped to its visible pixels for later renders.
+        const bounds = alphaBounds(clippedPixels, frame.w, frame.h);
+        let cropped: HTMLCanvasElement | undefined;
+        if (bounds) {
+          cropped = surface(bounds.w, bounds.h);
+          cropped
+            .getContext('2d')!
+            .drawImage(sourceSurface, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+        }
+        sharedClippedLayerCache().set(
+          clippedKey,
+          { surface: cropped, x: bounds?.x ?? 0, y: bounds?.y ?? 0 },
+          bounds ? surfaceBytes(bounds.w, bounds.h) : 64,
+        );
+      }
       compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;

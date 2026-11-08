@@ -20,6 +20,7 @@ import {
   clearLayerFilterCache,
   layerFilterCacheDelta,
   primeAssetFingerprints,
+  sharedClippedLayerCache,
   sharedLayerFilterCache,
   type LayerFilterCacheStats,
 } from './layerFilterCache.ts';
@@ -216,6 +217,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     let output: OffscreenCanvas | undefined;
     const cacheBefore = sharedLayerFilterCache().stats();
     const finalHitsBefore = compositeCache.finalHits;
+    const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
     try {
       const resolved = resolveRequestAssets(request.assets, request.assetKeys, assetStore);
       if (resolved.missing.length) {
@@ -275,7 +277,10 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         request.frame.w,
         request.frame.h,
         layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()),
-        { final: compositeCache.finalHits > finalHitsBefore },
+        {
+          final: compositeCache.finalHits > finalHitsBefore,
+          clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
+        },
       );
     } catch (error) {
       if (cancelled.has(request.id))

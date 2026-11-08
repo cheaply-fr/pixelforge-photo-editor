@@ -156,6 +156,17 @@ stack (on a 49-layer 2646×4096 painting "Add paint layer" used to show
 The retained finished composite is one more canvas-sized surface per render
 context.
 
+Clipped layers cache their finished result (source × clipping-base alpha),
+cropped to its visible pixels, in a pass-aware cache of half the layer-cache
+budget (`sharedClippedLayerCache`), keyed by `clippedLayerCacheKey`: the
+source without its outer opacity, blend, folder or name, the clipping group's
+base, a bound text path, their asset contents, frame size and colour mode.
+Before, every render re-rendered each clipped layer and its base and
+multiplied their alpha over the whole frame in software, so reordering,
+adding or editing anything below a clipping group recomputed every group
+above it. Live stroke overrides on the source or base are never cached. The
+`pixelforge.composite-cache` mark also reports `clippedHits`.
+
 ## Not covered
 
 - Layer-mask painting, Quick Mask and adjustment brushes write canvas-space

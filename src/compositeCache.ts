@@ -207,6 +207,83 @@ export function compositeEquivalenceKey(
   return `${frame.w}x${frame.h}:${JSON.stringify(frame.colorMode ?? null)}\n${parts.join('\n')}`;
 }
 
+const CLIPPED_SOURCE_NEUTRAL_FIELDS = new Set(['name', 'locked', 'clippingTo', 'groupId', 'opacity', 'blend']);
+const CLIPPED_BASE_NEUTRAL_FIELDS = new Set(['name', 'locked', 'clippingTo', 'groupId']);
+
+/**
+ * Content key of a clipped layer's result: the source layer (without the
+ * opacity and blend the outer compositor applies, its folder or name), its
+ * clipping group's base, a bound text path, the content of every asset they
+ * read, and the frame size and colour mode. Undefined (do not cache) when a
+ * live override feeds either layer.
+ */
+export function clippedLayerCacheKey(
+  frame: { w: number; h: number; colorMode?: unknown; layers: readonly KeyLayer[] },
+  source: KeyLayer,
+  base: KeyLayer,
+  assets: Readonly<Record<string, KeyAsset | undefined>>,
+  overrides?: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (overrides && (Object.hasOwn(overrides, source.id) || Object.hasOwn(overrides, base.id))) return undefined;
+  const contentKey = (layer: KeyLayer, neutral: ReadonlySet<string>) => {
+    const ids = new Set<string>();
+    layerAssetIds(layer, ids);
+    const prints = [...ids]
+      .sort()
+      .map((id) => {
+        const asset = assets[id];
+        return isAssetShape(asset) ? `${id}=${assetFingerprint(asset)}` : `${id}=?`;
+      })
+      .join(',');
+    let key = `${JSON.stringify(withoutFields(layer, neutral))}#${prints}`;
+    const pathId = layer.textPath?.pathLayerId;
+    if (pathId) {
+      const path = frame.layers.find((item) => item.id === pathId);
+      key += `~${path ? JSON.stringify(path) : '?'}`;
+    }
+    return key;
+  };
+  return `clip:${frame.w}x${frame.h}:${JSON.stringify(frame.colorMode ?? null)}
+${contentKey(source, CLIPPED_SOURCE_NEUTRAL_FIELDS)}
+${contentKey(base, CLIPPED_BASE_NEUTRAL_FIELDS)}`;
+}
+
+/**
+ * Bounds of the pixels with non-zero alpha in an RGBA buffer, or undefined
+ * when every pixel is transparent.
+ */
+export function alphaBounds(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+): { x: number; y: number; w: number; h: number } | undefined {
+  let minX = width,
+    minY = height,
+    maxX = -1,
+    maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width * 4;
+    let first = -1;
+    for (let x = 0; x < width; x += 1)
+      if (pixels[row + x * 4 + 3] !== 0) {
+        first = x;
+        break;
+      }
+    if (first < 0) continue;
+    let last = first;
+    for (let x = width - 1; x > first; x -= 1)
+      if (pixels[row + x * 4 + 3] !== 0) {
+        last = x;
+        break;
+      }
+    if (first < minX) minX = first;
+    if (last > maxX) maxX = last;
+    if (minY > y) minY = y;
+    maxY = y;
+  }
+  return maxX < 0 ? undefined : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
 /** Number of leading keys two key lists share. */
 export function sharedPrefix(a: readonly string[], b: readonly string[]): number {
   const limit = Math.min(a.length, b.length);
@@ -287,14 +364,17 @@ export class CompositeCache<S = unknown> {
 }
 
 /** Per-render composite cache outcome, published as a diagnostics mark. */
-export type CompositeReuse = { final: boolean };
+export type CompositeReuse = { final: boolean; clippedHits?: number };
 
 export function validCompositeReuse(value: unknown): value is CompositeReuse {
   return (
     !!value &&
     typeof value === 'object' &&
     !Array.isArray(value) &&
-    typeof (value as Record<string, unknown>).final === 'boolean'
+    typeof (value as Record<string, unknown>).final === 'boolean' &&
+    ((value as Record<string, unknown>).clippedHits === undefined ||
+      (Number.isSafeInteger((value as Record<string, unknown>).clippedHits) &&
+        ((value as Record<string, unknown>).clippedHits as number) >= 0))
   );
 }
 
@@ -305,7 +385,7 @@ export function validCompositeReuse(value: unknown): value is CompositeReuse {
 export function markCompositeReuse(reuse: CompositeReuse): void {
   try {
     if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
-      performance.mark('pixelforge.composite-cache', { detail: { final: reuse.final } });
+      performance.mark('pixelforge.composite-cache', { detail: { final: reuse.final, clippedHits: reuse.clippedHits ?? 0 } });
   } catch {
     // Diagnostics must never affect rendering.
   }
