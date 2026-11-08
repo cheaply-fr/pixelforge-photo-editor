@@ -17,11 +17,19 @@ test('Levels output range maps the corrected endpoints and preserves identity de
   assert.equal(levelsChannel(128, 0, 255, 1), 128);
 });
 
-test('Levels output controls are bounded and require ordered ranges', () => {
+test('Levels output controls are bounded and may be reversed or equal', () => {
   assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: 32, levelsOutputWhite: 224 }), true);
   assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: -1 }), false);
   assert.equal(validAdjustments({ ...neutral, levelsOutputWhite: 256 }), false);
-  assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: 224, levelsOutputWhite: 32 }), false);
+  assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: 256 }), false);
+  assert.equal(validAdjustments({ ...neutral, levelsOutputWhite: -1 }), false);
+  assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: Number.NaN }), false);
+  // Reversed (inverting) and equal (flat) output ranges are valid now.
+  assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: 224, levelsOutputWhite: 32 }), true);
+  assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: 255, levelsOutputWhite: 0 }), true);
+  assert.equal(validAdjustments({ ...neutral, levelsOutputBlack: 128, levelsOutputWhite: 128 }), true);
+  // Input levels keep their ordered contract.
+  assert.equal(validAdjustments({ ...neutral, levelsBlack: 200, levelsWhite: 100 }), false);
 });
 
 test('Levels remapping is detached, alpha-safe and preserves hidden RGB bytes', () => {

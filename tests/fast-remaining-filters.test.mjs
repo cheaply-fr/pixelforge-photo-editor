@@ -178,7 +178,6 @@ function referenceLensBlur(source, width, height, radius, strength) {
   for (let y = 0; y < height; y += 1)
     for (let x = 0; x < width; x += 1) {
       const destination = (y * width + x) * 4;
-      if (!source[destination + 3]) continue;
       let red = 0, green = 0, blue = 0, weight = 0;
       for (const [dx, dy] of offsets) {
         const offset = (clamp(y + dy, 0, height - 1) * width + clamp(x + dx, 0, width - 1)) * 4;
@@ -188,10 +187,21 @@ function referenceLensBlur(source, width, height, radius, strength) {
         blue += source[offset + 2] * alpha;
         weight += alpha;
       }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + red / weight * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + green / weight * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + blue / weight * strength);
+      // Alpha-spreading output (src/alphaSpread.ts): every tap counts, in alpha-byte units.
+      const coverage = offsets.length * 255, alpha = source[destination + 3], sums = [red, green, blue];
+      if (alpha === 255 && weight >= coverage * (1 - 1e-9)) {
+        for (let channel = 0; channel < 3; channel += 1)
+          output[destination + channel] = clampByte(source[destination + channel] * (1 - strength) + sums[channel] / weight * strength);
+        continue;
+      }
+      const alphaByte = clampByte(((alpha / 255) * (1 - strength) + Math.min(1, weight / coverage) * strength) * 255);
+      output[destination + 3] = alphaByte;
+      if (!alphaByte) continue;
+      const keep = (alpha / 255) * (1 - strength) * coverage;
+      for (let channel = 0; channel < 3; channel += 1)
+        output[destination + channel] = clampByte(
+          (source[destination + channel] * keep + sums[channel] * strength) / (keep + weight * strength),
+        );
     }
   return output;
 }
@@ -477,7 +487,8 @@ test('fast kernels leave transparent pixels and the source buffer untouched', ()
   const copy = new Uint8ClampedArray(source);
   for (const effect of [
     { type: 'smart-blur', radius: 8 }, { type: 'smart-sharpen', radius: 8 }, { type: 'surface-blur', radius: 8 },
-    { type: 'shape-blur', radius: 12 }, { type: 'reduce-noise', radius: 8 }, { type: 'lens-blur', radius: 20 },
+    // Lens Blur spreads alpha by design (tests/blur-alpha-spread.test.mjs).
+    { type: 'shape-blur', radius: 12 }, { type: 'reduce-noise', radius: 8 },
     { type: 'radial-blur', radius: 30 }, { type: 'spin-blur', radius: 30 }, { type: 'path-blur', radius: 30 },
   ]) {
     const output = applyFilterEffectsPixels(source, width, height, { ...effect, amount: 100 });

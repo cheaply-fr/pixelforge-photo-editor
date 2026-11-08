@@ -696,6 +696,7 @@ import {
   MAX_CLOUD_RENDER_SCALE,
   MIN_CLOUD_RENDER_SCALE,
   defaultCloudScale,
+  differenceCloudScale,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_NEURAL_ENHANCE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
@@ -7144,6 +7145,9 @@ export default function Home() {
                 ...(type === 'deinterlace' ? { deinterlace: { ...DEFAULT_DEINTERLACE_SETTINGS } } : {}),
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
+                } : {}),
+                ...(type === 'difference-clouds' ? {
+                  cloudScale: defaultCloudScale(frame?.w ?? 0, frame?.h ?? 0),
                 } : {}),
                 ...(type === 'clouds' ? {
                   cloudRender: {
@@ -17864,20 +17868,17 @@ export default function Home() {
               label="Levels output black"
               value={levelsOutputBlack}
               min={0}
-              max={254}
-              set={(value) =>
-                setLevelsOutputBlack(Math.min(value, levelsOutputWhite - 1))
-              }
+              max={255}
+              // Output black above output white inverts the tones.
+              set={setLevelsOutputBlack}
               suffix=""
             />
             <Slider
               label="Levels output white"
               value={levelsOutputWhite}
-              min={1}
+              min={0}
               max={255}
-              set={(value) =>
-                setLevelsOutputWhite(Math.max(value, levelsOutputBlack + 1))
-              }
+              set={setLevelsOutputWhite}
               suffix=""
             />
             <div className="adjustment-subtitle">Curves (nondestructive)</div>
@@ -19435,7 +19436,7 @@ export default function Home() {
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
             {filterEffects.type === 'difference-clouds' && (
-              <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
+              <p>The same smooth multi-octave clouds as Render &gt; Clouds, in black to white, difference-blended with the layer; transparent pixels count as black, so an empty layer becomes the clouds. Cloud size, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
             )}
                 {filterEffects.type === 'neural-enhance' && (
                   <>
@@ -19460,7 +19461,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && filterEffects.type !== 'difference-clouds' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
@@ -19496,8 +19497,6 @@ export default function Home() {
                           ? 'Fragment offset'
                       : filterEffects.type === 'picture-frame'
                           ? 'Frame width'
-                      : filterEffects.type === 'difference-clouds'
-                          ? 'Cloud scale'
                       : filterEffects.type === 'flame'
                           ? 'Flame detail'
                       : filterEffects.type === 'radial-blur'
@@ -20046,6 +20045,16 @@ export default function Home() {
                       }}
                     />
                   </label>
+                )}
+                {filterEffects.type === 'difference-clouds' && (
+                  <Slider
+                    label="Cloud size"
+                    value={differenceCloudScale(filterEffects)}
+                    min={MIN_CLOUD_RENDER_SCALE}
+                    max={MAX_CLOUD_RENDER_SCALE}
+                    set={(value) => setFilterEffects({ cloudScale: Math.round(value) })}
+                    suffix="px"
+                  />
                 )}
                 {filterEffects.type === 'difference-clouds' && (
                   <label className="slider">

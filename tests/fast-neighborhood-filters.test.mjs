@@ -84,7 +84,6 @@ function referenceMotion(source, width, height, radius, angle, strength) {
   for (let y = 0; y < height; y += 1)
     for (let x = 0; x < width; x += 1) {
       const destination = (y * width + x) * 4;
-      if (!source[destination + 3]) continue;
       const sums = [0, 0, 0];
       let weight = 0;
       for (let step = -bounded; step <= bounded; step += 1) {
@@ -98,10 +97,21 @@ function referenceMotion(source, width, height, radius, angle, strength) {
         for (let channel = 0; channel < 3; channel += 1) sums[channel] += source[offset + channel] * alpha;
         weight += alpha;
       }
-      if (!weight) continue;
-      const mix = clamp(strength, 0, 1);
+      // Alpha-spreading output (src/alphaSpread.ts): every tap counts.
+      const mix = clamp(strength, 0, 1), coverage = bounded * 2 + 1, alpha = source[destination + 3];
+      if (alpha === 255 && weight >= coverage * (1 - 1e-9)) {
+        for (let channel = 0; channel < 3; channel += 1)
+          output[destination + channel] = clampByte(source[destination + channel] * (1 - mix) + (sums[channel] / weight) * mix);
+        continue;
+      }
+      const alphaByte = clampByte(((alpha / 255) * (1 - mix) + Math.min(1, weight / coverage) * mix) * 255);
+      output[destination + 3] = alphaByte;
+      if (!alphaByte) continue;
+      const keep = (alpha / 255) * (1 - mix) * coverage;
       for (let channel = 0; channel < 3; channel += 1)
-        output[destination + channel] = clampByte(source[destination + channel] * (1 - mix) + (sums[channel] / weight) * mix);
+        output[destination + channel] = clampByte(
+          (source[destination + channel] * keep + sums[channel] * mix) / (keep + weight * mix),
+        );
     }
   return output;
 }
