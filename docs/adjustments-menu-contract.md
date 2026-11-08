@@ -13,4 +13,5 @@ of Photoshop's full adjustment-layer dialog or colour-management parity. It
 does not upload pixels or create a second adjustment implementation. Desktop
 and mobile acceptance covers the family entry, dialog semantics, selection and
 close behavior; the individual adjustment suites remain authoritative for
-pixel, persistence, lock and round-trip behavior.
+pixel, persistence, lock and round-trip behavior. Multi-point Curves editing
+is specified in [`curves-adjustment-contract.md`](./curves-adjustment-contract.md).

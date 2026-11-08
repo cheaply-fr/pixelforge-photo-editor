@@ -304,8 +304,13 @@ import {
   sanitizeClippingRelations,
   validClippingRelationship,
 } from '../src/layerClipping';
-import CurveEditor from '../src/CurveEditor';
-import { type CurveChannel, type CurvePoints } from '../src/curves';
+import CurveEditor, { type CurveChangeOptions } from '../src/CurveEditor';
+import {
+  curveInterpolation,
+  type CurveChannel,
+  type CurveInterpolation,
+  type CurvePoints,
+} from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { applyFadePixels } from '../src/fade';
 import { createBackgroundMask } from '../src/backgroundRemoval';
@@ -2800,7 +2805,9 @@ export default function Home() {
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
     commandDisabledRef = useRef<Record<string, boolean>>({}),
-    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new');
+    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new'),
+    // History entry created by the current curve-point drag (see setCurve).
+    curveGestureFrame = useRef<Frame | null>(null);
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
     [name, setName] = useState('coastline-edit');
@@ -6978,8 +6985,47 @@ export default function Home() {
       adjust({ levelsOutputWhite });
   const setColorBalance = (patch: Partial<Adjustments['colorBalance']>) =>
     adjust({ colorBalance: { ...colorBalance, ...patch } });
-  const setCurve = (channel: CurveChannel, points: CurvePoints) =>
-    adjust({ curves: { ...curves, [channel]: points } });
+  // One curve-point drag is one undo step: the first change commits, later
+  // changes of the same drag amend that history entry in place.
+  const setCurve = (
+    channel: CurveChannel,
+    points: CurvePoints,
+    options?: CurveChangeOptions,
+  ) => {
+    const next = {
+      ...curves,
+      interpolation: curveInterpolation(curves),
+      [channel]: points,
+    };
+    const top = current();
+    if (options?.continuing && curveGestureFrame.current === top) {
+      const amended: Frame = {
+        ...top,
+        layers: top.layers.map((layer) =>
+          layer.id === top.active
+            ? {
+                ...layer,
+                adjustments: {
+                  ...effectiveAdjustments(layer.adjustments),
+                  curves: next,
+                },
+              }
+            : layer,
+        ),
+      };
+      if (doc.amend(amended, top)) {
+        curveGestureFrame.current = current();
+        // amend() replaces the entry without rendering; repaint like commit.
+        void paint(current());
+        return;
+      }
+    }
+    const committed = adjust({ curves: next });
+    curveGestureFrame.current =
+      committed && current() !== top ? current() : null;
+  };
+  const setCurveInterpolation = (interpolation: CurveInterpolation) =>
+    adjust({ curves: { ...curves, interpolation } });
   const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
   const updateRecordedFilterParameters = (effects: Adjustments['filterEffects']) => {
@@ -17886,26 +17932,34 @@ export default function Home() {
               suffix=""
             />
             <div className="adjustment-subtitle">Curves (nondestructive)</div>
-            <CurveEditor
-              label="RGB"
-              points={curves.rgb}
-              onChange={(points) => setCurve('rgb', points)}
-            />
-            <CurveEditor
-              label="Red"
-              points={curves.red}
-              onChange={(points) => setCurve('red', points)}
-            />
-            <CurveEditor
-              label="Green"
-              points={curves.green}
-              onChange={(points) => setCurve('green', points)}
-            />
-            <CurveEditor
-              label="Blue"
-              points={curves.blue}
-              onChange={(points) => setCurve('blue', points)}
-            />
+            <label className="check-row">
+              <input
+                aria-label="Smooth curve interpolation"
+                type="checkbox"
+                checked={curveInterpolation(curves) === 'monotone'}
+                onChange={(event) =>
+                  setCurveInterpolation(
+                    event.target.checked ? 'monotone' : 'linear',
+                  )
+                }
+              />
+              Smooth curve interpolation
+            </label>
+            {(['rgb', 'red', 'green', 'blue'] as const).map((channel) => (
+              <CurveEditor
+                key={channel}
+                label={
+                  channel === 'rgb'
+                    ? 'RGB'
+                    : channel[0].toUpperCase() + channel.slice(1)
+                }
+                points={curves[channel]}
+                interpolation={curveInterpolation(curves)}
+                onChange={(points, options) =>
+                  setCurve(channel, points, options)
+                }
+              />
+            ))}
             <div className="adjustment-subtitle">Color Balance</div>
             <Slider
               label="Shadows cyan/red"
