@@ -32,6 +32,11 @@ coverage is in `tests/browser/retouch-tools.spec.ts` and includes flyout icons,
 keyboard cycling, representative pixel changes, source retention, undo/redo,
 reload, lock guards and no duplicate toolbar slots.
 
-The browser path currently scans the active asset buffer per segment. Worker and
-tile processing for interactive brush latency on very large images remains
-staged behind the scale milestone.
+Each segment reads and writes only its window of the gesture buffer: the
+brush reach around its points plus the 4 px averaging neighbourhood
+(`src/strokeWindow.ts`; byte-identical to the full-layer kernel in
+`tests/stroke-window.test.mjs`). Live previews share the coalesced worker
+gesture preview described in
+[worker-render-contract.md](./worker-render-contract.md). Dirty-rectangle
+previews and tile processing for very large images remain staged behind the
+scale milestone.

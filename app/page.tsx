@@ -653,10 +653,14 @@ import {
   type StrokePathSettings,
 } from '../src/strokePath';
 import { applyRetouchStroke } from '../src/retouch';
+import { strokeWindow, strokeWindowReach, windowPoint, windowedCanvasStroke } from '../src/strokeWindow';
 import {
   DEFAULT_HISTORY_BRUSH,
   DEFAULT_ART_HISTORY_BRUSH,
   DEFAULT_MIXER_BRUSH,
+  applyArtHistoryBrushPixels,
+  applyHistoryBrushPixels,
+  applyMixerBrushPixels,
   applySymmetricRetouchBrush,
   interpolateBrushStrokePoints,
   type HistoryBrushSettings,
@@ -2249,7 +2253,11 @@ const redEyeCanvasStroke = (
   return changed;
 };
 
-/** Apply one immutable tonal stroke to a canvas pair and publish the new pixels. */
+/**
+ * Apply one immutable tonal stroke to a canvas pair and publish the new
+ * pixels. Only the segment's window (its brush reach) is read and written, so
+ * a pointer move costs the brush area, not the whole layer.
+ */
 const tonalCanvasSegment = (
   source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
@@ -2266,58 +2274,47 @@ const tonalCanvasSegment = (
     spongeVibrance: number;
     selectionMask?: Uint8ClampedArray;
   },
-) => {
-  const sourceContext = source.getContext('2d')!,
-    destinationContext = destination.getContext('2d')!,
-    sourcePixels = sourceContext.getImageData(
-      0,
-      0,
-      source.width,
-      source.height,
-    ),
-    destinationPixels = destinationContext.getImageData(
-      0,
-      0,
-      destination.width,
-      destination.height,
-    );
-  const result =
-    options.mode === 'sponge'
-      ? applySpongeStroke(sourcePixels.data, destinationPixels.data, {
-          width: destination.width,
-          height: destination.height,
-          x1: from.x,
-          y1: from.y,
-          x2: to.x,
-          y2: to.y,
-          size: options.size,
-          hardness: options.hardness,
-          amount: options.spongeVibrance / 100,
-          flow: options.flow,
-          mode: options.spongeMode,
-          selectionMask: options.selectionMask,
-        })
-      : applyDodgeBurnStroke(sourcePixels.data, destinationPixels.data, {
-          width: destination.width,
-          height: destination.height,
-          x1: from.x,
-          y1: from.y,
-          x2: to.x,
-          y2: to.y,
-          size: options.size,
-          hardness: options.hardness,
-          exposure: options.exposure / 100,
-          flow: options.flow,
-          range: options.range,
-          mode: options.mode,
-          selectionMask: options.selectionMask,
-        });
-  destinationPixels.data.set(result.pixels);
-  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
-  return result.changed;
-};
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.tonal(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return options.mode === 'sponge'
+        ? applySpongeStroke(sourcePixels!, destinationPixels, {
+            width,
+            height,
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            size: options.size,
+            hardness: options.hardness,
+            amount: options.spongeVibrance / 100,
+            flow: options.flow,
+            mode: options.spongeMode,
+            selectionMask,
+          })
+        : applyDodgeBurnStroke(sourcePixels!, destinationPixels, {
+            width,
+            height,
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            size: options.size,
+            hardness: options.hardness,
+            exposure: options.exposure / 100,
+            flow: options.flow,
+            range: options.range,
+            mode: options.mode,
+            selectionMask,
+          });
+    },
+    { source, selectionMask: options.selectionMask, tool: options.mode },
+  );
 
-/** Apply one immutable Smudge segment and publish the preview pixels. */
+/** Apply one immutable Smudge segment and publish the preview pixels (windowed like the tonal tools). */
 const smudgeCanvasSegment = (
   source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
@@ -2329,37 +2326,99 @@ const smudgeCanvasSegment = (
     flow: number;
     selectionMask?: Uint8ClampedArray;
   },
-) => {
-  const sourceContext = source.getContext('2d')!,
-    destinationContext = destination.getContext('2d')!,
-    sourcePixels = sourceContext.getImageData(
-      0,
-      0,
-      source.width,
-      source.height,
-    ),
-    destinationPixels = destinationContext.getImageData(
-      0,
-      0,
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.smudge(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return applySmudgeStroke(sourcePixels!, destinationPixels, {
+        width,
+        height,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        size: options.size,
+        hardness: options.hardness,
+        flow: options.flow,
+        selectionMask,
+      });
+    },
+    { source, selectionMask: options.selectionMask, tool: 'smudge' },
+  );
+
+/** Apply one immutable Blur or Sharpen segment to the gesture buffer (windowed). */
+const retouchCanvasSegment = (
+  source: HTMLCanvasElement,
+  destination: HTMLCanvasElement,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: {
+    size: number;
+    hardness: number;
+    flow: number;
+    mode: 'blur' | 'sharpen';
+    selectionMask?: Uint8ClampedArray;
+  },
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.retouch(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return applyRetouchStroke(sourcePixels!, destinationPixels, {
+        width,
+        height,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        size: options.size,
+        hardness: options.hardness,
+        flow: options.flow,
+        mode: options.mode,
+        selectionMask,
+      });
+    },
+    { source, selectionMask: options.selectionMask, tool: options.mode },
+  );
+
+/**
+ * Apply Mixer Brush, History Brush or Art History Brush dabs at `points` to
+ * the gesture buffer, reading the stroke-source pixels only inside the dabs'
+ * window. Returns whether the buffer changed.
+ */
+const mixerHistoryCanvasDabs = (
+  tool: 'mixer-brush' | 'history-brush' | 'art-history-brush',
+  sourcePixels: Uint8ClampedArray,
+  destination: HTMLCanvasElement,
+  points: readonly BrushStrokePoint[],
+  settings: MixerBrushSettings | HistoryBrushSettings | ArtHistoryBrushSettings,
+  selectionMask?: Uint8ClampedArray,
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow(
+      points,
+      tool === 'art-history-brush'
+        ? strokeWindowReach.artHistory(settings.size, (settings as ArtHistoryBrushSettings).style)
+        : strokeWindowReach.mixer(settings.size),
       destination.width,
       destination.height,
     ),
-    result = applySmudgeStroke(sourcePixels.data, destinationPixels.data, {
-      width: destination.width,
-      height: destination.height,
-      x1: from.x,
-      y1: from.y,
-      x2: to.x,
-      y2: to.y,
-      size: options.size,
-      hardness: options.hardness,
-      flow: options.flow,
-      selectionMask: options.selectionMask,
-    });
-  destinationPixels.data.set(result.pixels);
-  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
-  return result.changed;
-};
+    ({ source, destination: pixels, selectionMask: mask, rect, width, height }) => {
+      const local = points.map((point) => windowPoint(point, rect));
+      return {
+        pixels: tool === 'mixer-brush'
+          ? applyMixerBrushPixels(pixels, source!, width, height, local, settings as MixerBrushSettings, mask)
+          : tool === 'history-brush'
+          ? applyHistoryBrushPixels(pixels, source!, width, height, local, settings as HistoryBrushSettings, mask)
+          : applyArtHistoryBrushPixels(pixels, source!, width, height, local, settings as ArtHistoryBrushSettings, mask),
+      };
+    },
+    { source: sourcePixels, selectionMask, tool },
+  );
 
 /**
  * Smudge counterpart of `stampStrokePathSamples`: smear between consecutive
@@ -11727,25 +11786,14 @@ export default function Home() {
           if (gesture.current !== g) return;
           let from = g.start;
           for (const queued of g.queued || []) {
-            const result = applyRetouchStroke(
-              new Uint8ClampedArray(sourceContext.getImageData(0, 0, source.width, source.height).data),
-              new Uint8ClampedArray(bufferContext.getImageData(0, 0, buffer.width, buffer.height).data),
-              {
-                width: buffer.width,
-                height: buffer.height,
-                x1: from.x,
-                y1: from.y,
-                x2: queued.x,
-                y2: queued.y,
-                size: localSize(layer.matrix, size),
-                hardness,
-                flow: brushOpacity / 100,
-                mode: tool,
-                selectionMask: g.selectionMask,
-              },
-            );
-            bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
-            g.changed = Boolean(g.changed || result.changed);
+            const changed = retouchCanvasSegment(source, buffer, from, queued, {
+              size: localSize(layer.matrix, size),
+              hardness,
+              flow: brushOpacity / 100,
+              mode: tool,
+              selectionMask: g.selectionMask,
+            });
+            g.changed = Boolean(g.changed || changed);
             from = queued;
           }
           g.queued = undefined;
@@ -11819,14 +11867,24 @@ export default function Home() {
           if (gesture.current !== g) return;
           const points = (g.queued || []).map((item) => ({ x: item.x, y: item.y, pressure: item.pressure }));
           g.brushPoints = points;
-          const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
-          const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, {
-            ...(tool === 'mixer-brush' ? mixerBrush : tool === 'history-brush' ? historyBrush : artHistoryBrush),
-            size: localSize(layer.matrix, size),
-            hardness,
-          }, g.selectionMask, g.paintSymmetry);
-          if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
-          buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          const brushSize = localSize(layer.matrix, size);
+          const retouchOptions =
+            tool === 'mixer-brush'
+              ? { ...mixerBrush, size: brushSize, hardness }
+              : tool === 'history-brush'
+              ? { ...historyBrush, size: brushSize, hardness }
+              : { ...artHistoryBrush, size: brushSize, hardness };
+          if ((g.paintSymmetry?.length ?? 0) > 1) {
+            // Paint Symmetry copies are applied over the whole buffer (#220).
+            const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
+            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry);
+            if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
+            buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          } else {
+            // Without symmetry only the brush's reach is read and written.
+            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask);
+            if (tool === 'art-history-brush') g.changed = changed;
+          }
           g.last = points.at(-1) || g.last;
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
@@ -13045,27 +13103,14 @@ export default function Home() {
     }
     if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.source && g.layer) {
       if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer.matrix, size))) return;
-      const sourceContext = g.source.getContext('2d')!,
-        bufferContext = g.buffer.getContext('2d')!,
-        result = applyRetouchStroke(
-          new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
-          new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
-          {
-            width: g.buffer.width,
-            height: g.buffer.height,
-            x1: g.last.x,
-            y1: g.last.y,
-            x2: local.x,
-            y2: local.y,
-            size: localSize(g.layer.matrix, size),
-            hardness,
-            flow: brushOpacity / 100,
-            mode: g.tool,
-            selectionMask: g.selectionMask,
-          },
-        );
-      bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
-      g.changed = Boolean(g.changed || result.changed);
+      const changed = retouchCanvasSegment(g.source, g.buffer, g.last, local, {
+        size: localSize(g.layer.matrix, size),
+        hardness,
+        flow: brushOpacity / 100,
+        mode: g.tool,
+        selectionMask: g.selectionMask,
+      });
+      g.changed = Boolean(g.changed || changed);
       previewGesture(g);
       g.last = local;
       return;
@@ -13078,23 +13123,34 @@ export default function Home() {
       const nextPoint = { x: local.x, y: local.y, pressure: pressure(e) };
       const spacing = Math.max(1, localSize(g.layer.matrix, size) * 0.35);
       const segmentPoints = interpolateBrushStrokePoints(g.last, nextPoint, spacing);
-      const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
-      let next: Uint8ClampedArray;
+      const brushSize = localSize(g.layer.matrix, size);
+      let changed: boolean;
       try {
-        next = applySymmetricRetouchBrush(
-          g.tool,
-          destination,
-          g.sourcePixels,
-          g.buffer.width,
-          g.buffer.height,
-          g.tool === 'history-brush' ? [nextPoint] : segmentPoints,
-          {
-            ...(g.tool === 'mixer-brush' ? mixerBrush : g.tool === 'history-brush' ? historyBrush : artHistoryBrush),
-            size: localSize(g.layer.matrix, size),
-            hardness,
-          },
-          g.selectionMask,
-          g.paintSymmetry,
+        const retouchOptions =
+          g.tool === 'mixer-brush'
+            ? { ...mixerBrush, size: brushSize, hardness }
+            : g.tool === 'history-brush'
+            ? { ...historyBrush, size: brushSize, hardness }
+            : { ...artHistoryBrush, size: brushSize, hardness };
+        const strokePoints = g.tool === 'history-brush' ? [nextPoint] : segmentPoints;
+        if ((g.paintSymmetry?.length ?? 0) > 1) {
+          // Paint Symmetry copies are applied over the whole buffer (#220).
+          const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
+          const next = applySymmetricRetouchBrush(
+            g.tool,
+            destination,
+            g.sourcePixels,
+            g.buffer.width,
+            g.buffer.height,
+            strokePoints,
+            retouchOptions,
+            g.selectionMask,
+            g.paintSymmetry,
+          );
+          changed = g.tool === 'art-history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
+          g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+        } else
+          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask
         );
       } catch (error) {
         if (g.tool !== 'art-history-brush') throw error;
@@ -13103,8 +13159,7 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Art History Brush stroke cancelled');
         return;
       }
-      if (g.tool === 'art-history-brush') g.changed = Boolean(g.changed || next.some((value, pixel) => value !== destination[pixel]));
-      g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+      if (g.tool === 'art-history-brush') g.changed = Boolean(g.changed || changed);
       g.brushPoints = [...(g.brushPoints || []), ...segmentPoints];
       g.moved = true;
       g.last = local;
@@ -14282,29 +14337,14 @@ export default function Home() {
         setNotice('Smudge stroke applied');
     } else if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.layer && g.source) {
       let changed = Boolean(g.changed);
-      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y)) {
-        const sourceContext = g.source.getContext('2d')!,
-          bufferContext = g.buffer.getContext('2d')!,
-          result = applyRetouchStroke(
-            new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
-            new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
-            {
-              width: g.buffer.width,
-              height: g.buffer.height,
-              x1: g.last.x,
-              y1: g.last.y,
-              x2: local.x,
-              y2: local.y,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-              flow: brushOpacity / 100,
-              mode: g.tool,
-              selectionMask: g.selectionMask,
-            },
-          );
-        bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
-        changed = result.changed || changed;
-      }
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
+        changed = retouchCanvasSegment(g.source, g.buffer, g.last, local, {
+          size: localSize(g.layer.matrix, size),
+          hardness,
+          flow: brushOpacity / 100,
+          mode: g.tool,
+          selectionMask: g.selectionMask,
+        }) || changed;
       if (!changed) {
         void paint(f);
         setNotice(`No ${g.tool === 'blur' ? 'Blur' : 'Sharpen'} change applied`);

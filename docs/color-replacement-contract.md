@@ -32,6 +32,10 @@ exported asset's red/green channel values and confirms unrelated pixels stay
 unchanged, then reloads and checks the tool and settings round-trip. A
 non-raster, locked or hidden layer is rejected without mutating the draft.
 
+Each segment reads and writes only the window its stamps can reach
+(`src/strokeWindow.ts`), so a pointer move on a large layer costs the brush
+area rather than the whole layer.
+
 This is a bounded local replacement primitive. Contiguous-region replacement,
 edge-aware sampling, Mixer Brush blending and global color-management remain
 separate roadmap work.

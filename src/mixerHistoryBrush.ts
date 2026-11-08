@@ -197,15 +197,18 @@ function coverageAt(x: number, y: number, point: BrushStrokePoint, settings: Mix
 }
 
 function alphaMix(destination: Uint8ClampedArray, source: ArrayLike<number>, offset: number, amount: number, preserveSourceTransparency: boolean, sampledSource?: ArrayLike<number>) {
+  // A sampled colour is one RGBA pixel; otherwise paint the source pixel at
+  // this offset (not the source's first pixel).
   const paint = sampledSource ?? source;
-  const sa = paint[3] / 255;
+  const base = sampledSource ? 0 : offset;
+  const sa = paint[base + 3] / 255;
   if (preserveSourceTransparency && sa <= 0) return false;
   const da = destination[offset + 3] / 255;
   const outputAlpha = clamp(da + (sa - da) * amount, 0, 1);
   let changed = false;
   for (let channel = 0; channel < 3; channel += 1) {
     const before = destination[offset + channel];
-    const sourceColour = paint[channel];
+    const sourceColour = paint[base + channel];
     destination[offset + channel] = Math.round(before + (sourceColour - before) * amount);
     changed = changed || before !== destination[offset + channel];
   }
