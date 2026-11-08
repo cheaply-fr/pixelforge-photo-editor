@@ -133,3 +133,78 @@ selection confinement and Paint Symmetry, preset round-trip, reload and
 project export). This is a bounded local approximation of brush blend modes,
 not Photoshop parity: there is no Behind/Clear mode, no per-stroke opacity
 ceiling separate from flow, and no mode for Mixer, History or retouch brushes.
+
+## Silk strands (2026-11-08)
+
+Branch `feat/brush-silk-strands`. Brush options gain a **Silk strands**
+checkbox next to Count. When it is on, one ordinary drag paints a ribbon of
+fine parallel strands that twist around the stroke, so silky smoke, hair-like
+wisps and light trails no longer need thousands of scripted points. Brush
+only: Pencil, Eraser and the other brush-family tools do not show it.
+
+Controls (all persisted, all deterministic):
+
+| Control | Range | Default | Meaning |
+| --- | --- | --- | --- |
+| Strands | 1–48 | 16 | Number of strands across the ribbon |
+| Ribbon width | 1–2,000 px | 120 | Full width of the ribbon at its widest |
+| Twists | 0–20 per stroke (0.5 steps) | 2 | Full turns of the ribbon over the whole stroke |
+| Wobble | 0–100% | 35 | Per-strand low-frequency drift (turbulence) |
+| Strand opacity jitter | 0–100% | 50 | Random reduction of each strand's peak opacity (up to 90%) |
+| Seed | 0–99,999 | 1 | Seed for every per-strand random choice; **New seed** picks another |
+
+Geometry (`src/brushStrands.ts`, pure):
+
+- The pointer samples (including browser-coalesced ones) are thinned (≥ 2 px
+  apart, at most 8,192), interpolated with a centripetal Catmull-Rom spline
+  and resampled at an even arc-length step of `width / 60` clamped to 1–4 px
+  (at most 4,000 samples; the live preview uses at most 1,200). Directions
+  are box-filtered over half the ribbon width (at most 120 px) before the
+  normals are taken, so a few sparse samples still give smooth strands and
+  the inner side of a bend does not fold.
+- Strand *k* sits at a ribbon coordinate *u* spread evenly across [−1, 1]
+  (with a small seeded jitter) and is offset along the normal by
+  `width/2 · sin(πt)^0.5 · (u·cos(φ + twists·2π·t) + a₁·sin(f₁·2π·t + p₁) + a₂·sin(f₂·2π·t + p₂)) / (1 + 0.5·wobble)`,
+  with *t* the normalized arc length and φ a seeded phase shared by every
+  strand. All strands therefore meet where the cosine is zero (an integer
+  number of twists gives exactly 2 × twists crossings), the ribbon tapers to
+  a point at both ends, and no strand leaves the ribbon's half-width.
+- Each strand starts up to 16% late and ends up to 16% early (seeded), with
+  an opacity envelope `sin(π·t′)^0.8` and a thickness taper `sin(π·t′)^0.5`
+  inside its own window; strands on the far side of the twist are dimmed by
+  up to 25%.
+- Strand thickness is the brush **Size**, scaled by pen pressure when
+  pressure-to-size is on (and opacity by pressure when pressure-to-opacity is
+  on), using the selected pressure curve. Brush **Opacity** × **Flow** scales
+  every strand. Hardness, spacing, scatter, Count, texture, dual brush,
+  bristle, wet edges, build-up and colour dynamics do not apply to strands.
+- Strands are drawn as polylines with butt caps and round joins. Consecutive
+  segments whose opacity (1/64 steps) and width (¼ px steps) round to the same
+  values share one path, so joints never double up alpha and a long stroke
+  needs few draw calls.
+
+Painting path: pointer moves only record samples and redraw a separate,
+screen-resolution overlay canvas (at most 4,096 px on its longest side, one
+redraw per animation frame, CSS `mix-blend-mode` matching the brush mode where
+CSS has one). No layer-stack render runs during the drag, so the cost per move
+does not depend on document size or layer count. On release the strands are
+built once more at full resolution, painted into the layer buffer (each Paint
+Symmetry copy, confined to the active selection, composited in the brush blend
+mode like ordinary dabs) and committed as one undoable edit; the overlay is
+cleared when that commit has rendered. A tap without a drag paints nothing.
+
+Persistence: `settings.brushStrands` in drafts and `.pixelforge` projects,
+and optional `brushStrands` in saved and built-in brush presets (presets saved
+before it existed load with strands off). Validation rejects out-of-range
+values. The built-in **Silk smoke** preset paints 22 strands, 140 px ribbon,
+1.5 twists, 40% wobble, 60% strand opacity jitter, seed 7, 2 px strands with
+pressure-to-size, 70% opacity, **Screen** mode.
+
+This is a bounded local approximation of a ribbon brush for painting: it is
+not a smoke or fluid simulation, has no self-occlusion between strands, and
+is not modelled on any other editor's brush engine. Evidence:
+`tests/brush-strands.test.mjs` (determinism by seed, taper, crossing count,
+width bounds, sparse-input smoothness, pressure, batching, persistence) and
+`tests/browser/brush-strands.spec.ts` (desktop and mobile: controls and
+persistence, Silk smoke preset, distinct strands and no render during the drag,
+twist pinch points and identical repaint after undo).

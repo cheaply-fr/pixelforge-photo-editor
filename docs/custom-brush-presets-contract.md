@@ -56,3 +56,16 @@ Smoke wisp use Normal. Validation rejects unknown or non-native modes, so a
 dropped (device library) or fails draft validation, never applied. Evidence:
 `tests/brush-blend-mode.test.mjs` and
 `tests/browser/brush-blend-mode.spec.ts` on desktop and mobile.
+
+## Silk strands in presets (2026-11-08)
+
+Branch `feat/brush-silk-strands`. Presets can capture the Brush **Silk
+strands** settings as optional `brushStrands` (see "Silk strands" in
+[`brush-dynamics-contract.md`](./brush-dynamics-contract.md)). Applying a
+preset always sets them: presets saved before the field existed load with
+strands off. A fifth built-in, **Silk smoke**, turns strands on (22 strands,
+140 px ribbon, 1.5 twists, 2 px strands, Screen mode). Invalid strand values
+make a stored or imported preset invalid, so it is dropped rather than
+applied. Evidence: `tests/brush-strands.test.mjs`,
+`tests/brush-preset-library.test.mjs` and
+`tests/browser/brush-strands.spec.ts` on desktop and mobile.

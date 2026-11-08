@@ -103,6 +103,7 @@ import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './bru
 import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
+import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -179,6 +180,8 @@ export type Settings = {
   brushOpacity?: number;
   /** Brush/Pencil blend mode (Canvas-native modes); older drafts omit it and paint Normal. */
   brushBlendMode?: BrushBlendMode;
+  /** Brush Silk strands mode; older drafts omit it and paint ordinary dabs. */
+  brushStrands?: BrushStrandSettings;
   hardness?: number;
   /** Opt-in pen/touch pressure mapping for configured brush diameter. */
   pressureSize?: boolean;
@@ -519,6 +522,7 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.gradientOpacity !== undefined && !validGradientOpacity(candidate.gradientOpacity)) return false;
   if (candidate.brushBlendMode !== undefined && !validBrushBlendMode(candidate.brushBlendMode)) return false;
   if (candidate.brushDynamics !== undefined && !validBrushDynamics(candidate.brushDynamics)) return false;
+  if (candidate.brushStrands !== undefined && !validBrushStrands(candidate.brushStrands)) return false;
   if (candidate.paintSymmetry !== undefined && !validPaintSymmetry(candidate.paintSymmetry)) return false;
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;

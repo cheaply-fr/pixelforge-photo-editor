@@ -492,9 +492,30 @@ import {
 } from '../src/brushSize';
 import {
   BRUSH_PRESSURE_CURVES,
+  mapBrushPressure,
   normalizeBrushPressureCurve,
   type BrushPressureCurve,
 } from '../src/brushPressure';
+import {
+  BRUSH_STRANDS_COUNT_MAX,
+  BRUSH_STRANDS_COUNT_MIN,
+  BRUSH_STRANDS_MAX_INPUT_POINTS,
+  BRUSH_STRANDS_SEED_MAX,
+  BRUSH_STRANDS_TWISTS_MAX,
+  BRUSH_STRANDS_WIDTH_MAX,
+  BRUSH_STRANDS_WIDTH_MIN,
+  DEFAULT_BRUSH_STRANDS,
+  buildStrands,
+  drawStrands,
+  normalizeBrushStrands,
+  smoothStrandPath,
+  strandBounds,
+  strandPathOptions,
+  thinStrandInput,
+  type BrushStrandSettings,
+  type Strand,
+  type StrandInputPoint,
+} from '../src/brushStrands';
 import {
   BRUSH_PRESETS,
   brushPresetById,
@@ -564,6 +585,7 @@ import {
 } from '../src/brushDynamics';
 import {
   DEFAULT_PAINT_SYMMETRY,
+  IDENTITY_AFFINE,
   affineMaxScale,
   applyAffine,
   normalizePaintSymmetry,
@@ -1687,6 +1709,16 @@ type Gesture = {
   blendStroke?: BrushBlendStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
+  /**
+   * Brush Silk strands stroke: layer-local pointer samples. Moves only redraw
+   * a lightweight overlay preview; the strands are painted into the layer
+   * buffer once, on release.
+   */
+  strands?: {
+    settings: BrushStrandSettings;
+    points: StrandInputPoint[];
+    frameRequest?: number;
+  };
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
   cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -2617,6 +2649,58 @@ const stampGestureSegment = (
     }
   return changed;
 };
+/**
+ * Paint a finished Silk strands stroke into the gesture buffer (each Paint
+ * Symmetry copy too), confined to the selection and composited in the brush
+ * blend mode exactly like ordinary dabs. Returns whether anything was drawn.
+ */
+const paintGestureStrands = (
+  g: Gesture,
+  strands: readonly Strand[],
+  color: string,
+  opacity: number,
+) => {
+  const bounds = strandBounds(strands);
+  if (!bounds || !g.buffer || opacity <= 0) return false;
+  const copies: readonly SymmetryAffine[] =
+      g.paintSymmetry && g.paintSymmetry.length > 1 ? g.paintSymmetry : [IDENTITY_AFFINE],
+    buffer = g.buffer,
+    stroke = g.selectionStroke,
+    blend = g.blendStroke,
+    target = blend ? blend.paint : stroke ? stroke.raw : buffer,
+    context = target.getContext('2d')!;
+  for (const copy of copies) {
+    context.save();
+    context.transform(copy[0], copy[1], copy[2], copy[3], copy[4], copy[5]);
+    drawStrands(context, strands, color, opacity);
+    context.restore();
+  }
+  if (!stroke && !blend) return true;
+  for (const copy of copies) {
+    const corners = [
+      applyAffine(copy, { x: bounds.x, y: bounds.y }),
+      applyAffine(copy, { x: bounds.x + bounds.width, y: bounds.y }),
+      applyAffine(copy, { x: bounds.x, y: bounds.y + bounds.height }),
+      applyAffine(copy, { x: bounds.x + bounds.width, y: bounds.y + bounds.height }),
+    ];
+    const rect = brushSegmentRect(
+      { x: Math.min(...corners.map((c) => c.x)), y: Math.min(...corners.map((c) => c.y)) },
+      { x: Math.max(...corners.map((c) => c.x)), y: Math.max(...corners.map((c) => c.y)) },
+      2, buffer.width, buffer.height);
+    if (blend) blendStrokeRect(blend, buffer, stroke?.mask, rect);
+    else confineStrokeRect(stroke!, buffer, rect);
+  }
+  return true;
+};
+/** Path samples the live Silk strands preview uses at most per redraw. */
+const STRAND_PREVIEW_MAX_SAMPLES = 1200;
+/** CSS blend for the Silk strands overlay so the preview matches the brush mode. */
+const STRAND_PREVIEW_CSS_BLENDS = new Set([
+  'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn',
+  'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity',
+]);
+const strandPreviewBlend = (mode: BrushBlendMode): React.CSSProperties['mixBlendMode'] =>
+  STRAND_PREVIEW_CSS_BLENDS.has(mode) ? (mode as React.CSSProperties['mixBlendMode']) : 'normal';
 /** Pattern Stamp counterpart of `stampGestureSegment`. */
 const patternGestureSegment = (
   g: Gesture,
@@ -2786,6 +2870,8 @@ export default function Home() {
     selectionFile = useRef<HTMLInputElement>(null),
     batchImageFile = useRef<HTMLInputElement>(null),
     quickMaskOverlayCanvas = useRef<HTMLCanvasElement>(null),
+    strandOverlay = useRef<HTMLCanvasElement>(null),
+    strandOverlayClear = useRef<{ timer: number; revision: number } | null>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
     menuButtonRefs = useRef<Record<MenuName, HTMLButtonElement | null>>(
@@ -2887,6 +2973,7 @@ export default function Home() {
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushDynamics, setBrushDynamics] = useState<BrushDynamics>(() => ({ ...DEFAULT_BRUSH_DYNAMICS })),
+    [brushStrands, setBrushStrands] = useState<BrushStrandSettings>(() => ({ ...DEFAULT_BRUSH_STRANDS })),
     [paintSymmetry, setPaintSymmetry] = useState<PaintSymmetrySettings>(() => ({ ...DEFAULT_PAINT_SYMMETRY })),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
@@ -3457,6 +3544,97 @@ export default function Home() {
         ? { frame: g.frame, overrides: { [g.layer.id]: g.buffer } }
         : null,
     );
+  /**
+   * Silk strands for the current gesture, in the layer's pixel space. The
+   * live preview uses a coarser path on very long strokes.
+   */
+  const buildGestureStrands = (g: Gesture, preview = false): Strand[] => {
+    if (!g.strands || !g.layer) return [];
+    const matrix = g.layer.matrix,
+      settings = normalizeBrushStrands({
+        ...g.strands.settings,
+        width: Math.min(BRUSH_STRANDS_WIDTH_MAX, Math.max(BRUSH_STRANDS_WIDTH_MIN, localSize(matrix, g.strands.settings.width))),
+      }),
+      path = smoothStrandPath(g.strands.points, {
+        ...strandPathOptions(settings),
+        ...(preview ? { maxSamples: STRAND_PREVIEW_MAX_SAMPLES } : {}),
+      });
+    return buildStrands(path, settings, {
+      strandWidth: localSize(matrix, size),
+      sizeAt: pressureSize ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
+      opacityAt: pressureOpacity ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
+    });
+  };
+  /** Wipe the Silk strands overlay preview. */
+  const clearStrandPreview = () => {
+    const overlay = strandOverlay.current;
+    if (strandOverlayClear.current) window.clearTimeout(strandOverlayClear.current.timer);
+    strandOverlayClear.current = null;
+    if (!overlay) return;
+    overlay.getContext('2d')?.clearRect(0, 0, overlay.width, overlay.height);
+    overlay.dataset.strands = '0';
+  };
+  /**
+   * Keep the preview until the committed document has rendered, so the
+   * strands never blink out between release and the new composite.
+   */
+  const clearStrandPreviewAfterRender = (revisionBefore: number) => {
+    if (strandOverlayClear.current) window.clearTimeout(strandOverlayClear.current.timer);
+    // The render effect below clears it; the timer is only a fallback.
+    strandOverlayClear.current = { timer: window.setTimeout(clearStrandPreview, 4000), revision: revisionBefore };
+  };
+  /**
+   * Draw the in-progress Silk strands on the overlay canvas (screen
+   * resolution, bounded) instead of re-rendering the layer stack.
+   */
+  const drawStrandPreview = (g: Gesture) => {
+    const overlay = strandOverlay.current,
+      element = canvas.current;
+    if (!overlay || !element || !g.layer || !g.strands) return;
+    const ratio = window.devicePixelRatio || 1,
+      cssWidth = element.clientWidth || g.frame.w,
+      cssHeight = element.clientHeight || g.frame.h,
+      fit = Math.min(1, 4096 / Math.max(cssWidth * ratio, cssHeight * ratio, 1)),
+      width = Math.max(1, Math.round(cssWidth * ratio * fit)),
+      height = Math.max(1, Math.round(cssHeight * ratio * fit));
+    if (overlay.width !== width) overlay.width = width;
+    if (overlay.height !== height) overlay.height = height;
+    const context = overlay.getContext('2d');
+    if (!context) return;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const strands = buildGestureStrands(g, true),
+      sx = width / g.frame.w,
+      sy = height / g.frame.h,
+      [a, b, c, d, e, f] = g.layer.matrix,
+      copies: readonly SymmetryAffine[] =
+        g.paintSymmetry && g.paintSymmetry.length > 1 ? g.paintSymmetry : [IDENTITY_AFFINE];
+    for (const copy of copies) {
+      context.setTransform(sx * a, sy * b, sx * c, sy * d, sx * e, sy * f);
+      context.transform(copy[0], copy[1], copy[2], copy[3], copy[4], copy[5]);
+      drawStrands(context, strands, color, (brushOpacity / 100) * (brushFlow / 100));
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    overlay.dataset.strands = String(strands.length);
+  };
+  /** At most one overlay redraw per animation frame. */
+  const scheduleStrandPreview = (g: Gesture) => {
+    if (!g.strands || g.strands.frameRequest !== undefined) return;
+    if (strandOverlayClear.current) {
+      window.clearTimeout(strandOverlayClear.current.timer);
+      strandOverlayClear.current = null;
+    }
+    g.strands.frameRequest = requestAnimationFrame(() => {
+      if (!g.strands) return;
+      g.strands.frameRequest = undefined;
+      if (gesture.current === g && !g.released) drawStrandPreview(g);
+    });
+  };
+  // Clear a committed Silk strands preview once the new composite has rendered.
+  useEffect(() => {
+    const pending = strandOverlayClear.current;
+    if (pending && !doc.rendering && revision !== pending.revision) clearStrandPreview();
+  }, [doc.rendering, revision]);
   /** Decoded layer pixels and selection coverage a gradient drag renders over. */
   const prepareGradientBase = async (
     frame: Frame,
@@ -3703,6 +3881,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    brushStrands,
     paintSymmetry,
     brushTexture,
     brushDual,
@@ -3814,6 +3993,7 @@ export default function Home() {
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
     setBrushDynamics(normalizeBrushDynamics(s.brushDynamics));
+    setBrushStrands(normalizeBrushStrands(s.brushStrands));
     setPaintSymmetry(normalizePaintSymmetry(s.paintSymmetry));
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
@@ -3882,6 +4062,7 @@ export default function Home() {
     setBrushSmoothing,
     setBrushScatter,
     setBrushDynamics,
+    setBrushStrands,
     setBrushTexture,
     setBrushDual,
     setBrushBristle,
@@ -3961,6 +4142,8 @@ export default function Home() {
     setBrushSmoothing(preset.brushSmoothing);
     setBrushScatter(preset.brushScatter);
     setBrushDynamics(normalizeBrushDynamics(preset.brushDynamics));
+    // Presets saved before Silk strands existed paint ordinary dabs.
+    setBrushStrands(normalizeBrushStrands(preset.brushStrands));
     setBrushTexture(preset.brushTexture);
     setBrushDual(preset.brushDual);
     setSecondaryBrushPreset(preset.secondaryBrushPreset);
@@ -4021,6 +4204,7 @@ export default function Home() {
         brushSmoothing,
         brushScatter,
         brushDynamics,
+        brushStrands,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -7563,6 +7747,7 @@ export default function Home() {
         brushSmoothing,
         brushScatter,
         brushDynamics,
+        brushStrands,
         paintSymmetry,
         brushTexture,
         brushDual,
@@ -7686,6 +7871,7 @@ export default function Home() {
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    brushStrands,
     paintSymmetry,
     brushTexture,
     brushDual,
@@ -12577,6 +12763,10 @@ export default function Home() {
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
       // Paint Symmetry is fixed for the stroke at pointer-down.
       g.paintSymmetry = paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix);
+      if (tool === 'brush' && brushStrands.enabled) {
+        g.strands = { settings: brushStrands, points: [{ x: local.x, y: local.y, pressure: pressure(e) }] };
+        scheduleStrandPreview(g);
+      }
       g.pending = (async () => {
         try {
           const image = await decodeAsset(assets.current[rasterAsset!]),
@@ -12594,7 +12784,8 @@ export default function Home() {
           g.blendStroke = beginBrushBlendStroke(buffer, tool, brushBlendMode, g.selectionStroke);
           let from = local;
           let stabilized = local;
-          for (const point of g.queued || [
+          // A Silk strands stroke paints nothing until release.
+          for (const point of g.strands ? [] : g.queued || [
             { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
           ]) {
             const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
@@ -12630,9 +12821,10 @@ export default function Home() {
           }
           g.smoothedLast = stabilized;
           g.queued = undefined;
-          void paint(f, { [layer.id]: buffer });
+          if (!g.strands) void paint(f, { [layer.id]: buffer });
         } catch {
           gesture.current = null;
+          if (g.strands) clearStrandPreview();
           setNotice('Could not prepare paint layer');
         }
       })();
@@ -12689,6 +12881,15 @@ export default function Home() {
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
     g.moved = true;
+    if (g.strands) {
+      // Silk strands: collect the sample and redraw only the overlay preview.
+      const points = g.strands.points;
+      points.push({ x: local.x, y: local.y, pressure: g.lastPressure });
+      if (points.length > BRUSH_STRANDS_MAX_INPUT_POINTS * 2) g.strands.points = thinStrandInput(points);
+      scheduleStrandPreview(g);
+      g.last = local;
+      return;
+    }
     if (
       (g.tool === 'mask-brush' ||
         g.tool === 'mask-eraser' ||
@@ -13580,6 +13781,7 @@ export default function Home() {
         ? latest.layers.find((layer) => layer.id === g.layer!.id)
         : undefined;
     if (latest !== f || (g.layer && latestLayer !== g.layer)) {
+      if (g.strands) clearStrandPreview();
       if (g.tool === 'ruler') setMeasurementPreview(null);
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(latest);
@@ -13587,6 +13789,7 @@ export default function Home() {
       return;
     }
     if (e.type === 'pointercancel') {
+      if (g.strands) clearStrandPreview();
       if (g.tool === 'rotate-view')
         setViewRotation(normalizeViewRotation(g.viewRotationStart ?? 0));
       if (g.tool === 'ruler') setMeasurementPreview(null);
@@ -13788,6 +13991,28 @@ export default function Home() {
           ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       })) setNotice('Patch applied nondestructively');
+    } else if (g.tool === 'brush' && g.strands && g.buffer && g.layer) {
+      const strands = buildGestureStrands(g),
+        painted = strands.length > 0 &&
+          paintGestureStrands(g, strands, color, (brushOpacity / 100) * (brushFlow / 100));
+      if (!painted) {
+        clearStrandPreview();
+        void paint(f);
+        setNotice('Silk strands need a longer drag');
+        return;
+      }
+      const asset = addPaintedAsset(g.buffer),
+        revisionBefore = revisionRef.current;
+      const changed = commit({
+        ...f,
+        layers: f.layers.map((l) =>
+          l.id === g.layer!.id ? ({ ...l, kind: 'raster', asset } as Layer) : l,
+        ),
+      });
+      if (changed) {
+        clearStrandPreviewAfterRender(revisionBefore);
+        setNotice(`Silk strands painted (${strands.length} strand${strands.length === 1 ? '' : 's'})`);
+      } else clearStrandPreview();
     } else if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
       g.buffer &&
@@ -17206,6 +17431,16 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
+            {frame && tool === 'brush' && brushStrands.enabled && (
+              <canvas
+                ref={strandOverlay}
+                className="strand-preview-overlay"
+                data-testid="strand-preview-overlay"
+                data-strands="0"
+                aria-hidden="true"
+                style={{ mixBlendMode: strandPreviewBlend(brushBlendMode) }}
+              />
+            )}
             {frame && (tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
               <PaintSymmetryOverlay
                 value={paintSymmetry}
@@ -18598,6 +18833,103 @@ export default function Home() {
                             set={(count) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, count }))}
                             suffix=""
                           />
+                          {tool === 'brush' && (
+                            <fieldset className="strand-controls" aria-label="Silk strands options" data-testid="strand-controls">
+                              <label className="check-row">
+                                <input
+                                  aria-label="Silk strands"
+                                  type="checkbox"
+                                  checked={brushStrands.enabled}
+                                  onChange={(event) => {
+                                    const enabled = event.target.checked;
+                                    setBrushStrands((current) => ({ ...current, enabled }));
+                                  }}
+                                />
+                                Silk strands
+                              </label>
+                              {brushStrands.enabled && (
+                                <>
+                                  <p className="adjust-note" data-testid="strand-note">
+                                    One drag paints a twisting ribbon of fine strands. Size and pen pressure set strand
+                                    thickness; the strands are previewed while you drag and painted on release. A
+                                    bounded local approximation, not a smoke simulation.
+                                  </p>
+                                  <Slider
+                                    label="Strands"
+                                    value={brushStrands.count}
+                                    min={BRUSH_STRANDS_COUNT_MIN}
+                                    max={BRUSH_STRANDS_COUNT_MAX}
+                                    suffix=""
+                                    set={(count) => setBrushStrands((current) => normalizeBrushStrands({ ...current, count }))}
+                                  />
+                                  <Slider
+                                    label="Ribbon width"
+                                    value={brushStrands.width}
+                                    min={BRUSH_STRANDS_WIDTH_MIN}
+                                    max={BRUSH_STRANDS_WIDTH_MAX}
+                                    suffix=" px"
+                                    set={(width) => setBrushStrands((current) => normalizeBrushStrands({ ...current, width }))}
+                                  />
+                                  <Slider
+                                    label="Twists"
+                                    value={brushStrands.twists}
+                                    min={0}
+                                    max={BRUSH_STRANDS_TWISTS_MAX}
+                                    step={0.5}
+                                    suffix=" per stroke"
+                                    set={(twists) => setBrushStrands((current) => normalizeBrushStrands({ ...current, twists }))}
+                                  />
+                                  <Slider
+                                    label="Wobble"
+                                    value={brushStrands.wobble}
+                                    min={0}
+                                    max={100}
+                                    set={(wobble) => setBrushStrands((current) => normalizeBrushStrands({ ...current, wobble }))}
+                                  />
+                                  <Slider
+                                    label="Strand opacity jitter"
+                                    value={brushStrands.opacityJitter}
+                                    min={0}
+                                    max={100}
+                                    set={(opacityJitter) =>
+                                      setBrushStrands((current) => normalizeBrushStrands({ ...current, opacityJitter }))}
+                                  />
+                                  <div className="strand-seed-row">
+                                    <label className="select-row">
+                                      <span>Seed</span>
+                                      <input
+                                        aria-label="Strand seed"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={0}
+                                        max={BRUSH_STRANDS_SEED_MAX}
+                                        step={1}
+                                        value={brushStrands.seed}
+                                        onChange={(event) => {
+                                          const seed = Number(event.target.value);
+                                          if (event.target.value !== '' && Number.isFinite(seed))
+                                            setBrushStrands((current) => normalizeBrushStrands({ ...current, seed }));
+                                        }}
+                                      />
+                                    </label>
+                                    <button
+                                      type="button"
+                                      title="Pick a new random seed for the next stroke"
+                                      onClick={() =>
+                                        setBrushStrands((current) =>
+                                          normalizeBrushStrands({
+                                            ...current,
+                                            seed: (current.seed + 1 + Math.floor(Math.random() * BRUSH_STRANDS_SEED_MAX)) %
+                                              (BRUSH_STRANDS_SEED_MAX + 1),
+                                          }))}
+                                    >
+                                      New seed
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </fieldset>
+                          )}
                           <Slider
                             label="Count jitter"
                             value={brushDynamics.countJitter}
