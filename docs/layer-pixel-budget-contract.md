@@ -133,7 +133,10 @@ more layers the outermost render keeps one canvas-sized snapshot of the
 composite below the active layer (`src/compositeCache.ts`), keyed by layer
 state and asset content fingerprints (folders, clipping bases and text paths
 included). Later renders, including stroke previews, start from that snapshot
-while every layer below is unchanged. One snapshot is retained per render
+while every layer below is unchanged. A folder is composited once at its
+first member, so when the edited layer is inside a folder the snapshot is
+taken below the folder's first member; before, editing any layer inside a
+folder invalidated the snapshot on every render. One snapshot is retained per render
 context and released when another document is installed.
 
 ## Not covered

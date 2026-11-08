@@ -275,9 +275,16 @@ output rows the same way.
 ## Fallback and interactive edits
 
 The renderer uses the existing main-thread `renderFrame` path when worker
-capability probing fails, worker construction fails, an abort is already
-requested, or a caller supplies a live per-layer canvas override (for example,
-an in-progress brush gesture). The fallback keeps local editing functional on
+capability probing fails, worker construction fails, or an abort is already
+requested. A live per-layer canvas override (an in-progress brush or gradient
+gesture) on a document large enough for the worker is snapshotted with
+`createImageBitmap` and transferred to the persistent worker with the request,
+so stroke previews start from the worker's composite snapshot and cached
+filtered layers instead of recomputing every filtered layer on the main
+thread. The worker accepts bitmaps only for layers of the requested frame (at
+most 16,000 px per side) and closes them after the render; if bitmaps cannot be
+created, or a request has to be resent, the preview falls back to the main
+thread. The fallback keeps local editing functional on
 browsers without OffscreenCanvas and preserves the previous canvas on a failed
 or cancelled render. Main-thread rendering yields between layers and observes
 the same cancellation predicate, so fallback work is bounded even though it is
@@ -299,8 +306,9 @@ rendering:
   multi-worker pool and prioritisation remain future work.
 * Progress currently counts full-frame layer passes. It is not a pixel or tile
   percentage and does not imply that the worker is streaming a partial canvas.
-* Interactive override canvases stay on the main-thread fallback. A full
-  worker-aware brush/adjustment command model is still planned.
+* Interactive overrides travel as whole-layer bitmaps per preview; there is
+  no dirty-rectangle protocol yet, and a full worker-aware brush/adjustment
+  command model is still planned.
 * Canvas font availability, CSS filter implementations and browser colour
   management can differ between the worker and the visible document canvas.
   PixelForge must keep representative pixel/alpha fixtures and disclose any
@@ -327,7 +335,7 @@ shared between tabs.
 * **Layer-local filtered surfaces.** A raster or asset-backed Smart Object layer
   is built in local coordinates in a fixed order: source (asset or solid fill),
   Spot Healing, Patch, Content-Aware Fill/Move/Scale, Matting, Smart Filters,
-  Layer Styles, Filter Effect. When that stage contains a non-neutral Filter
+  Filter Effect, Layer Styles (on a masked layer, styles run in frame space after the mask). When that stage contains a non-neutral Filter
   Effect or Smart Filters, its completed surface is cached under a canonical
   key: key version, kind, local dimensions, the source's content fingerprint
   (or the fill colour), every local-stage metadata field, the fingerprints of
@@ -336,11 +344,22 @@ shared between tabs.
   Effect (`effectiveFilterEffects`, so equivalent parameters share a key).
   Matrix, CSS/tonal adjustments, layer masks, vector masks, clipping, opacity,
   blend mode, visibility and grouping are applied afterwards in frame space and
-  are deliberately not part of the key. Layers with a live override canvas,
-  nested Smart Object contents, or a filter routed through the tiled
-  neighbourhood adapter (which owns its telemetry contract) bypass the cache.
-  The LRU is bounded by RGBA bytes: 256 MiB by default, 96 MiB on mobile user
-  agents or `navigator.deviceMemory <= 4`, 32 MiB when `deviceMemory <= 2`. A
+  are deliberately not part of the key. Layers with a live override canvas or
+  nested Smart Object contents bypass the cache. Results of the tiled
+  neighbourhood adapter (Motion Blur and the other tiled blurs) are cached
+  like any other filter; before, they were recomputed after every edit to any
+  layer. Styled layers are keyed even without a filter, with the styles
+  appended to the key; a masked layer's styles are cached in frame space
+  together with the mask. Separate filter-stack and pre-style entries are kept
+  only for the active layer (they make scrubbing its live filter cheap); other
+  layers keep only their final surface. The LRU is bounded by RGBA bytes:
+  512 MiB on desktops reporting `navigator.deviceMemory >= 8`, 256 MiB by
+  default, 96 MiB on mobile user agents or `deviceMemory <= 4`, 32 MiB when
+  `deviceMemory <= 2`. Each top-level render starts a cache pass; an entry
+  read or stored in the current pass is not evicted for another entry of the
+  same pass (that store is rejected instead). Plain LRU evicted exactly the
+  layers the next render reads first whenever a painting's cached layers
+  exceeded the budget, so every render missed every layer. A
   surface larger than the budget is rendered but not retained. Only a completed
   local stage is stored; cancellation and failures throw before the store.
   Cached surfaces are read only with `drawImage`.

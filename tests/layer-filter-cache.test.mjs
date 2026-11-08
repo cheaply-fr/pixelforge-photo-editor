@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ByteLruCache,
   LAYER_FILTER_CACHE_DESKTOP_BYTES,
+  LAYER_FILTER_CACHE_LARGE_DESKTOP_BYTES,
   LAYER_FILTER_CACHE_LOW_MEMORY_BYTES,
   LAYER_FILTER_CACHE_MOBILE_BYTES,
   assetFingerprint,
@@ -246,7 +247,9 @@ test('the LRU evicts least-recently used entries by byte size', () => {
 
 test('the cache budget follows coarse device memory hints', () => {
   assert.equal(layerFilterCacheBudgetForDevice({}), LAYER_FILTER_CACHE_DESKTOP_BYTES);
-  assert.equal(layerFilterCacheBudgetForDevice({ deviceMemory: 8 }), LAYER_FILTER_CACHE_DESKTOP_BYTES);
+  assert.equal(layerFilterCacheBudgetForDevice({ deviceMemory: 8 }), LAYER_FILTER_CACHE_LARGE_DESKTOP_BYTES);
+  assert.equal(layerFilterCacheBudgetForDevice({ deviceMemory: 8, mobile: true }), LAYER_FILTER_CACHE_MOBILE_BYTES);
+  assert.equal(layerFilterCacheBudgetForDevice({ deviceMemory: 6 }), LAYER_FILTER_CACHE_DESKTOP_BYTES);
   assert.equal(layerFilterCacheBudgetForDevice({ deviceMemory: 4 }), LAYER_FILTER_CACHE_MOBILE_BYTES);
   assert.equal(layerFilterCacheBudgetForDevice({ mobile: true }), LAYER_FILTER_CACHE_MOBILE_BYTES);
   assert.equal(layerFilterCacheBudgetForDevice({ deviceMemory: 2, mobile: false }), LAYER_FILTER_CACHE_LOW_MEMORY_BYTES);
@@ -358,9 +361,9 @@ for (const [name, effect] of Object.entries(FILTERS)) {
       assert.notDeepEqual(fresh.pixels, unfiltered.pixels);
       const cache = new ByteLruCache(1024 * 1024);
       const first = await renderFrame(frame, assets, undefined, { layerFilterCache: cache });
-      // With a filter stack, the stack result is cached separately so that
-      // scrubbing the live filter never recomputes the stacked filters.
-      const stores = name === 'gaussian-blur' ? 2 : 1;
+      // The filtered layer is not the active layer, so only its final
+      // surface is kept (no separate filter-stack entry).
+      const stores = 1;
       assert.deepEqual(cache.stats().stores, stores);
       assert.deepEqual(first.pixels, fresh.pixels);
       // An unrelated opacity edit and a move of the filtered layer reuse it.
