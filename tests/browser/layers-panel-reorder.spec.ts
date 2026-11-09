@@ -526,7 +526,7 @@ test.describe('touch', () => {
     await addImageLayer(page, 'blue.png', BLUE);
     expect(await pixel(page, 10, 10)).toEqual([0, 0, 255, 255]);
     const cdp = await page.context().newCDPSession(page);
-    const touch = (type: string, x?: number, y?: number) =>
+    const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', x?: number, y?: number) =>
       cdp.send('Input.dispatchTouchEvent', {
         type,
         touchPoints: x === undefined ? [] : [{ x, y: y! }],
