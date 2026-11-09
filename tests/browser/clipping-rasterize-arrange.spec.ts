@@ -120,7 +120,7 @@ test('Rasterize keeps the clipping mask of a clipped layer with a Clouds + Embos
 
   await expect(page.getByRole('button', { name: 'Release clipping mask', exact: true })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Create clipping mask', exact: true })).toBeDisabled();
-  await expect(row(page, 'Figure shade')).toHaveAccessibleDescription('Clipped to Figure');
+  await expect(row(page, 'Figure shade')).toHaveAccessibleDescription(/^Clipped to Figure; layer \d+ of \d+/);
   const rasterized = await sample(page);
   expect(rasterized.outside).toEqual(before.outside);
   expect(rasterized.inside).toEqual(filtered.inside);
@@ -181,10 +181,11 @@ test('Layers panel indents clipped rows with an accessible "Clipped to" descript
   const shade = row(page, 'Figure shade'),
     highlight = row(page, 'Highlight'),
     figure = row(page, 'Figure');
-  // Accessible names are unchanged; the group base is the description.
-  await expect(shade).toHaveAccessibleDescription('Clipped to Figure');
-  await expect(highlight).toHaveAccessibleDescription('Clipped to Figure');
-  await expect(figure).toHaveAccessibleDescription('');
+  // Accessible names are unchanged; the group base (then the stack position)
+  // is the description.
+  await expect(shade).toHaveAccessibleDescription(/^Clipped to Figure; layer \d+ of \d+/);
+  await expect(highlight).toHaveAccessibleDescription(/^Clipped to Figure; layer \d+ of \d+/);
+  await expect(figure).toHaveAccessibleDescription(/^layer \d+ of \d+/);
   await expect(shade).toHaveAttribute('data-clipped', 'true');
   await expect(figure).not.toHaveAttribute('data-clipped', 'true');
   await expect(shade.locator('.layer-clip-glyph')).toHaveText('↳');
@@ -202,9 +203,9 @@ test('Layers panel indents clipped rows with an accessible "Clipped to" descript
   await highlight.click();
   await page.getByRole('button', { name: 'Release clipping mask', exact: true }).click();
   await expect(highlight).not.toHaveAttribute('data-clipped', 'true');
-  await expect(highlight).toHaveAccessibleDescription('');
+  await expect(highlight).toHaveAccessibleDescription(/^layer \d+ of \d+/);
   await menu(page, 'Edit', /^Undo/);
-  await expect(highlight).toHaveAccessibleDescription('Clipped to Figure');
+  await expect(highlight).toHaveAccessibleDescription(/^Clipped to Figure; layer \d+ of \d+/);
 });
 
 test('Send Backward / Bring Forward move an outside layer past the whole clipping group', async ({
@@ -230,7 +231,7 @@ test('Send Backward / Bring Forward move an outside layer past the whole clippin
   await expect(page.locator('footer')).not.toContainText('released');
   expect((await names()).slice(-3)).toEqual(['X', 'Figure', 'Figure shade']);
   expect(await clipped()).toBe(true);
-  await expect(row(page, 'Figure shade')).toHaveAccessibleDescription('Clipped to Figure');
+  await expect(row(page, 'Figure shade')).toHaveAccessibleDescription(/^Clipped to Figure; layer \d+ of \d+/);
 
   await menu(page, 'Layer', 'Bring Forward');
   await expect(page.locator('footer')).toContainText('Bring Forward applied');
@@ -272,9 +273,9 @@ test('Merge Layers of a base and its first clipped layer keeps the rest of the g
   const merged = layers.at(-2)!, highlight = layers.at(-1)!;
   expect(merged.name).toBe('Figure + Figure shade');
   expect(highlight).toMatchObject({ name: 'Highlight', clippingTo: merged.id });
-  await expect(row(page, 'Highlight')).toHaveAccessibleDescription('Clipped to Figure + Figure shade');
+  await expect(row(page, 'Highlight')).toHaveAccessibleDescription(/^Clipped to Figure \+ Figure shade; layer \d+ of \d+/);
   await menu(page, 'Edit', /^Undo/);
-  await expect(row(page, 'Highlight')).toHaveAccessibleDescription('Clipped to Figure');
+  await expect(row(page, 'Highlight')).toHaveAccessibleDescription(/^Clipped to Figure; layer \d+ of \d+/);
 });
 
 test('arranging a clipping base moves its clipped layers with it', async ({ page }) => {
@@ -289,7 +290,7 @@ test('arranging a clipping base moves its clipped layers with it', async ({ page
   await expect(page.locator('footer')).toContainText('Send Backward applied');
   await expect(page.locator('footer')).not.toContainText('released');
   expect((await names()).slice(-3)).toEqual(['Figure', 'Figure shade', 'Y']);
-  await expect(row(page, 'Figure shade')).toHaveAccessibleDescription('Clipped to Figure');
+  await expect(row(page, 'Figure shade')).toHaveAccessibleDescription(/^Clipped to Figure; layer \d+ of \d+/);
   await menu(page, 'Edit', /^Undo/);
   await expect.poll(names).toEqual(start);
 });

@@ -4,6 +4,8 @@ import {
   assetBytes,
   formatMebibytes,
 } from './projectLimits.ts';
+import { validCornerRadius } from './vectorShapes.ts';
+import { validCustomShapeChoice } from './customShapeLibrary.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -104,6 +106,7 @@ import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.
 import { validSmudgeSettings, type SmudgeSettings } from './smudge.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
+import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -149,11 +152,17 @@ export type Tool =
   | 'pen'
   | 'freeform-pen'
   | 'curvature-pen'
+  | 'add-anchor'
+  | 'delete-anchor'
+  | 'convert-point'
+  | 'path-select'
   | 'direct-select'
   | 'rectangle'
+  | 'rounded-rectangle'
   | 'ellipse'
   | 'line'
   | 'polygon'
+  | 'custom-shape'
   | 'select'
   | 'ellipse-select'
   | 'row-select'
@@ -180,6 +189,8 @@ export type Settings = {
   brushOpacity?: number;
   /** Brush/Pencil blend mode (Canvas-native modes); older drafts omit it and paint Normal. */
   brushBlendMode?: BrushBlendMode;
+  /** Brush Silk strands mode; older drafts omit it and paint ordinary dabs. */
+  brushStrands?: BrushStrandSettings;
   hardness?: number;
   /** Opt-in pen/touch pressure mapping for configured brush diameter. */
   pressureSize?: boolean;
@@ -203,6 +214,10 @@ export type Settings = {
   polygonSides?: number;
   /** Parametric star inner radius (0.1–0.9 of the outer radius). */
   polygonInnerRadius?: number;
+  /** Rounded Rectangle tool corner radius in px (0–8,000); clamped per drawn box. */
+  shapeCornerRadius?: number;
+  /** Custom Shape tool choice: a built-in library id or `path-preset:<id>`. */
+  customShapeId?: string;
   /** Spacing between brush dabs as a percent of diameter (1–1,000). */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -416,11 +431,17 @@ function validSettings(settings: unknown): settings is Settings {
       'pen',
       'freeform-pen',
       'curvature-pen',
+      'add-anchor',
+      'delete-anchor',
+      'convert-point',
+      'path-select',
       'direct-select',
       'rectangle',
+      'rounded-rectangle',
       'ellipse',
       'line',
       'polygon',
+      'custom-shape',
       'select',
       'ellipse-select',
       'row-select',
@@ -516,6 +537,8 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
+  if (!validCornerRadius(candidate.shapeCornerRadius)) return false;
+  if (candidate.customShapeId !== undefined && !validCustomShapeChoice(candidate.customShapeId)) return false;
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
@@ -525,6 +548,7 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.gradientOpacity !== undefined && !validGradientOpacity(candidate.gradientOpacity)) return false;
   if (candidate.brushBlendMode !== undefined && !validBrushBlendMode(candidate.brushBlendMode)) return false;
   if (candidate.brushDynamics !== undefined && !validBrushDynamics(candidate.brushDynamics)) return false;
+  if (candidate.brushStrands !== undefined && !validBrushStrands(candidate.brushStrands)) return false;
   if (candidate.paintSymmetry !== undefined && !validPaintSymmetry(candidate.paintSymmetry)) return false;
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
