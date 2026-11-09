@@ -44,13 +44,13 @@ const historyPosition = (page: Page) => page.getByLabel('History position', { ex
 
 test('save a Brush preset, change options, apply it back, then Reset Tool', async ({ page }) => {
   await selectTool(page, 'Brush');
-  await expect(status(page)).toContainText('Brush: No preset applied');
+  await expect(status(page)).toContainText('Brush · No preset applied');
   await setSlider(page, 'Hardness', '40');
   await setSlider(page, 'Opacity', '55');
   await setSlider(page, 'Smoothing', '30');
   const history = await historyPosition(page);
   await savePreset(page, 'Soft ink');
-  await expect(status(page)).toContainText('Brush: Soft ink');
+  await expect(status(page)).toContainText('Brush · Soft ink');
   await expect(modified(page)).toHaveCount(0);
 
   // Changing an option marks the preset modified; applying restores it.
@@ -80,7 +80,7 @@ test('save a Brush preset, change options, apply it back, then Reset Tool', asyn
   await expect(page.getByLabel('Hardness', { exact: true })).toHaveValue('100');
   await expect(page.getByLabel('Opacity', { exact: true })).toHaveValue('100');
   await expect(page.getByLabel('Smoothing', { exact: true })).toHaveValue('0');
-  await expect(status(page)).toContainText('Brush: No preset applied');
+  await expect(status(page)).toContainText('Brush · No preset applied');
   expect(await historyPosition(page)).toBe(history);
 });
 
@@ -129,7 +129,7 @@ test('presets survive reload and other tools’ presets switch tools from the al
   await expect(applyButton(page, 'Feather erase')).toBeVisible();
   await applyButton(page, 'Feather erase').click();
   await expect(footer(page)).toContainText('Tool preset “Feather erase” applied to Eraser');
-  await expect(status(page)).toContainText('Eraser: Feather erase');
+  await expect(status(page)).toContainText('Eraser · Feather erase');
   await expect(page.getByLabel('Hardness', { exact: true })).toHaveValue('20');
 
   // Search filters by preset and tool name.
@@ -194,7 +194,7 @@ test('rename, duplicate, reorder, update and delete presets', async ({ page }) =
   await panel.getByRole('button', { name: 'Delete preset', exact: true }).click();
   await expect(footer(page)).toContainText('Tool preset “Base wash copy” deleted');
   await expect.poll(names).toEqual(['Second', 'Base wash']);
-  await expect(status(page)).toContainText('Brush: No preset applied');
+  await expect(status(page)).toContainText('Brush · No preset applied');
 });
 
 test('drag and drop reorders presets', async ({ page, isMobile }) => {
@@ -236,7 +236,7 @@ test('export and import a preset file, rejecting invalid files', async ({ page }
 
 test('tool presets are keyboard operable and fit the layout', async ({ page }) => {
   await selectTool(page, 'Smudge');
-  await expect(status(page)).toContainText('Smudge: No preset applied');
+  await expect(status(page)).toContainText('Smudge · No preset applied');
   await trigger(page).focus();
   await page.keyboard.press('Enter');
   await expect(trigger(page)).toHaveAttribute('aria-expanded', 'true');
@@ -246,7 +246,7 @@ test('tool presets are keyboard operable and fit the layout', async ({ page }) =
   await page.keyboard.type('Big blend');
   await page.keyboard.press('Enter');
   await expect(footer(page)).toContainText('Tool preset “Big blend” saved on this device');
-  await expect(status(page)).toContainText('Smudge: Big blend');
+  await expect(status(page)).toContainText('Smudge · Big blend');
   // Colour is not a Smudge option, so the include-colour option is disabled.
   await expect(presetsPanel(page).getByLabel('Include colour', { exact: true })).toBeDisabled();
   await page.keyboard.press('Escape');
@@ -270,7 +270,7 @@ test('tools without options show no presets control', async ({ page }) => {
   await selectTool(page, 'Eyedropper');
   await expect(presetsPanel(page)).toHaveCount(0);
   await selectTool(page, 'Text');
-  await expect(status(page)).toContainText('Text: No preset applied');
+  await expect(status(page)).toContainText('Text · No preset applied');
   await selectTool(page, 'Select');
   await expect(status(page)).toContainText('Select: No preset applied');
 });

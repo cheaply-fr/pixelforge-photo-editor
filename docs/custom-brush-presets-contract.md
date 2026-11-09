@@ -65,3 +65,16 @@ options captures whole-tool option snapshots for every tool with options
 (`pixelforge.tool-presets.v1`), with Reset Tool / Reset All Tools and
 JSON import/export. Brush presets above are unchanged and keep travelling in
 drafts and projects. See [`tool-presets-contract.md`](./tool-presets-contract.md).
+
+## Smudge presets (2026-11-09)
+
+Branch `feat/smudge-tool-options`. Smudge shows the same **Saved brush
+preset** library. A preset saved while Smudge is active also captures an
+optional `smudge` object (Strength, Mode, Finger Painting, Sample All Layers,
+Ignore Adjustments, pressure strength); choosing it restores those options and
+the shared tip (size, hardness, angle, roundness, scatter/count/jitter,
+bristle, texture). Built-ins and presets saved before this field existed carry
+no `smudge` and leave the Smudge options unchanged. Invalid `smudge` values
+fail validation (device library entries are dropped, drafts and projects are
+rejected). Evidence: `tests/smudge.test.mjs` and
+`tests/browser/smudge-options.spec.ts` on desktop and mobile.

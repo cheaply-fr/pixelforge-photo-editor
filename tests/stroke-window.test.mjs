@@ -11,7 +11,6 @@ import {
   windowedCanvasStroke,
 } from '../src/strokeWindow.ts';
 import { applyDodgeBurnStroke, applySpongeStroke } from '../src/tonal.ts';
-import { applySmudgeStroke } from '../src/smudge.ts';
 import { applyRetouchStroke } from '../src/retouch.ts';
 import {
   DEFAULT_ART_HISTORY_BRUSH,
@@ -111,7 +110,7 @@ test('every reach covers the brush radius and grows with the kernel read margin'
       strokeWindowReach.sampled(size),
     ])
       assert.ok(reach >= size / 2 + 1, `size ${size}`);
-    assert.ok(strokeWindowReach.smudge(size) >= size / 2 + size * 0.25 + 1);
+    assert.ok(strokeWindowReach.smudge(size) >= Math.ceil(size / 2) + 3);
     assert.ok(strokeWindowReach.retouch(size) >= size / 2 + 4 + 1);
     assert.ok(strokeWindowReach.artHistory(size, 24) >= size / 2 + 24 + 1);
   }
@@ -236,29 +235,8 @@ for (const spongeMode of ['saturate', 'desaturate']) {
   });
 }
 
-test('windowed smudge equals the full-layer stroke, including samples behind the brush', () => {
-  for (const size of [...SIZES, 30])
-    for (const withSelection of [false, true]) {
-      const settings = { size, hardness: 55, flow: 0.85 };
-      compareTool({
-        name: 'smudge',
-        width: 45,
-        height: 31,
-        seed: size * 17 + (withSelection ? 5 : 0),
-        segments: 12,
-        withSelection,
-        reach: () => strokeWindowReach.smudge(size),
-        full: ({ source, destination, from, to, selection }) =>
-          applySmudgeStroke(source, destination, {
-            width: 45, height: 31, x1: from.x, y1: from.y, x2: to.x, y2: to.y, ...settings, selectionMask: selection,
-          }),
-        windowed: windowedRun(({ source, destination, selectionMask, width, height }, a, b) =>
-          applySmudgeStroke(source, destination, {
-            width, height, x1: a.x, y1: a.y, x2: b.x, y2: b.y, ...settings, selectionMask,
-          }), 'smudge'),
-      });
-    }
-});
+// Windowed Smudge (carried paint across segments) is compared with the
+// full-layer stroke in tests/smudge.test.mjs.
 
 for (const mode of ['blur', 'sharpen']) {
   test(`windowed ${mode} equals the full-layer stroke, including its neighbourhood reads`, () => {

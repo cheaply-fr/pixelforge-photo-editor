@@ -145,7 +145,7 @@ export function ToolPresetsControl(props: ToolPresetsControlProps) {
           <span className="tool-presets-trigger-text">
             <b>Tool presets</b>
             <small data-testid="tool-preset-status">
-              {toolLabel}: {status}
+              {toolLabel} · {status}
             </small>
           </span>
           {modified && (
