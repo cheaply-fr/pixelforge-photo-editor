@@ -407,3 +407,5 @@
 }
 /* Tool labels are controls, not text: a drag across the rail must not select them. */
 .toolbar,.tool-flyout{-webkit-user-select:none;user-select:none}
+/* Contain visually hidden text (sr-only, curve hints) inside its scroll panel, so it cannot stretch the page and let the editor shift. */
+.inspector,.curve-editor{position:relative}
