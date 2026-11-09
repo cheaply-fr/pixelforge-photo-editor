@@ -209,9 +209,15 @@ import {
   type TiledAsset,
 } from './tiledAssets.ts';
 
+import { SYSTEM_FONTS, isFontFamilyName } from './fontLibrary.ts';
+import { ensureTextLayerFonts, frameFontRequests } from './fontLoader.ts';
+
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = GROUP_BLEND_MODES;
-export const FONTS = ['Arial', 'Georgia', 'Courier New', 'Verdana'] as const;
+/** Built-in system families; the self-hosted library is in fontLibrary.ts. */
+export const FONTS = SYSTEM_FONTS;
+/** Any portable family name (system, library or unknown-but-preserved). */
+export type FontFamilyName = string;
 export const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
 export type TextAlign = (typeof TEXT_ALIGNS)[number];
 /** Canvas text flow modes. Older drafts omit orientation and remain horizontal. */
@@ -342,7 +348,8 @@ export type Layer = Common &
         text: string;
         color: string;
         fontSize: number;
-        fontFamily: (typeof FONTS)[number];
+        /** Family name; unknown families stay editable and render with a fallback. */
+        fontFamily: FontFamilyName;
         bold: boolean;
         /** Width of the editable text box used for alignment. */
         boxWidth: number;
@@ -1689,7 +1696,7 @@ export function validateFrame(
         !short(layer.text, 10000) ||
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         !number(layer.fontSize, 1, 1000) ||
-        !FONTS.includes(layer.fontFamily as (typeof FONTS)[number]) ||
+        !isFontFamilyName(layer.fontFamily) ||
         typeof layer.bold !== 'boolean' ||
         !number(layer.boxWidth ?? 640, 1, 16000) ||
         !TEXT_ALIGNS.includes((layer.textAlign ?? 'left') as TextAlign) ||
@@ -2868,6 +2875,12 @@ export async function renderFrame(
   const nestedDepth = options?.nestedDepth ?? 0;
   if (nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
     throw new Error('Nested Smart Object depth exceeds the local safety limit');
+  // Library fonts load on demand: wait for every face a text layer needs
+  // before Canvas measures or draws it. A family that failed or timed out
+  // renders with the fallback, and that composite is not cached so the next
+  // render after the font arrives redraws it (docs/font-library-contract.md).
+  if (!(await ensureTextLayerFonts(frameFontRequests(frame))) && options?.compositeCache)
+    options = { ...options, compositeCache: undefined };
   // The prefix composite cache applies to the outermost render only; nested
   // folder, clipping and decorated-layer renders never see it.
   const compositeCache =

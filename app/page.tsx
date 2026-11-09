@@ -27,7 +27,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SidebarSection } from '../src/SidebarSection';
 import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
 import type { TriggerOrigin, TriggerSource } from '../src/sidebarAutoScroll';
@@ -819,6 +819,13 @@ import {
 } from '../src/fontPreview';
 import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
+import FontFamilySelect from '../src/FontFamilySelect';
+import { fontFamilyKind, isSelectableFontFamily, missingFontFamilies } from '../src/fontLibrary';
+import { ensureTextLayerFonts, sharedFontLoader } from '../src/fontLoader';
+import { currentTextCaretAdapter, planGlyphInsert } from '../src/glyphInsert';
+import type { GlyphInsertMode } from '../src/GlyphsPanel';
+import { useFontLoadState } from '../src/useFontLibrary';
+const GlyphsPanel = lazy(() => import('../src/GlyphsPanel'));
 import HistogramDialog from '../src/HistogramDialog';
 import { buildHistogram, type HistogramData } from '../src/histogram';
 import AdjustmentsDialog, { type AdjustmentCommand } from '../src/AdjustmentsDialog';
@@ -1120,6 +1127,7 @@ type Command =
   | 'font-preview-size'
   | 'language-options'
   | 'missing-fonts'
+  | 'glyphs'
   | 'image-mode'
   | 'image-analysis'
   | 'image-adjustments';
@@ -1527,6 +1535,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Language Options', command: 'language-options' },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'missing-fonts' },
+    { label: 'Glyphs, Icons & Symbols…', command: 'glyphs' },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
     { label: 'Load Default Type Styles', command: 'load-default-type-styles' },
     { label: 'Save Default Type Styles', command: 'save-default-type-styles' },
@@ -3064,7 +3073,8 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56),
-    [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
+    [fontFamily, setFontFamily] = useState<string>('Arial'),
+    [glyphsOpen, setGlyphsOpen] = useState(false),
     [fontPreviewSize, setFontPreviewSize] = useState<FontPreviewSize>(DEFAULT_FONT_PREVIEW_SIZE),
     [missingFontsOpen, setMissingFontsOpen] = useState(false),
     [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
@@ -4030,7 +4040,7 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
-    setFontFamily(s.fontFamily && FONTS.includes(s.fontFamily) ? s.fontFamily : 'Arial');
+    setFontFamily(s.fontFamily && isSelectableFontFamily(s.fontFamily) ? s.fontFamily : 'Arial');
     setFontPreviewSize(normalizeFontPreviewSize(s.fontPreviewSize));
     setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
@@ -4100,13 +4110,25 @@ export default function Home() {
     setFontFamily,
     setFontPreviewSize,
   ]);
-  const fontAvailability = checkFontAvailability(
+  // Library fonts load on demand; choosing one starts its download.
+  const libraryFontState = useFontLoadState(fontFamily, fontFamilyKind(fontFamily) === 'library' ? { priority: 'high', weight: 700 } : false);
+  const fontAvailability = fontFamilyKind(fontFamily) === 'library' ? (libraryFontState === 'failed' ? 'fallback' : 'available') : checkFontAvailability(
     fontFamily,
     (font) =>
       typeof document !== 'undefined' && document.fonts
         ? document.fonts.check(font)
         : true,
   );
+  // Portable projects keep unknown family names; disclose them once per set.
+  const missingDocumentFonts = missingFontFamilies(
+    (frame?.layers ?? []).flatMap((layer) => (layer.kind === 'text' ? [layer.fontFamily] : [])),
+  ).join(', ');
+  const announcedMissingFonts = useRef('');
+  useEffect(() => {
+    if (!missingDocumentFonts || announcedMissingFonts.current === missingDocumentFonts) return;
+    announcedMissingFonts.current = missingDocumentFonts;
+    setNotice(`Missing fonts: ${missingDocumentFonts}. Text stays editable and renders with a fallback font.`);
+  }, [missingDocumentFonts]);
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
     if (!preset) return;
@@ -5435,6 +5457,51 @@ export default function Home() {
     }
     editLayer({ textPath: binding });
     setNotice('Text attached to editable path');
+  };
+  /** Glyphs panel insertion; see src/glyphInsert.ts for the adapter order. */
+  const insertGlyph = async (glyph: string, family: string, mode: GlyphInsertMode) => {
+    const f = current();
+    const plan = mode === 'shape'
+      ? { kind: 'new-layer' as const, text: glyph, fontFamily: family }
+      : planGlyphInsert({ active: f.active, layers: f.layers.map((layer) => ({ ...layer, locked: layerIsLocked(f, layer) })) }, glyph, family);
+    void sharedFontLoader().ensure(family, { text: glyph, priority: 'high' });
+    if (plan.kind === 'caret') {
+      if (currentTextCaretAdapter()?.insertTextAtCaret(glyph) !== false) {
+        setNotice('Glyph inserted at the text caret');
+        return;
+      }
+    }
+    if (plan.kind === 'append') {
+      if (editLayer({ text: plan.text } as Partial<Layer>)) setNotice('Glyph added to the active text layer');
+      return;
+    }
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice('Layer limit reached; remove a layer before inserting a glyph');
+      return;
+    }
+    const size = Math.max(24, Math.min(256, fontSize * 2));
+    const added = addLayer({
+      ...commonLayer(`Glyph ${glyph}`),
+      kind: 'text',
+      text: glyph,
+      fontSize: size,
+      fontFamily: family,
+      bold: false,
+      color,
+      boxWidth: Math.max(size * 2, 64),
+      textAlign: 'left',
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      orientation: 'horizontal',
+      matrix: [1, 0, 0, 1, Math.max(0, Math.round(f.w / 2 - size / 2)), Math.max(0, Math.round(f.h / 2 - size / 2))],
+    });
+    if (!added) return;
+    if (mode === 'shape') {
+      await ensureTextLayerFonts([{ fontFamily: family, text: glyph }]);
+      await convertTextToShape();
+      return;
+    }
+    setNotice(`Glyph added as a new ${family} text layer`);
   };
   const pasteLoremIpsum = () => {
     const f = current();
@@ -15267,6 +15334,7 @@ export default function Home() {
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'spellcheck') return setSpellcheckOpen(true);
     else if (command === 'missing-fonts') return setMissingFontsOpen(true);
+    else if (command === 'glyphs') return setGlyphsOpen(true);
     else if (command === 'color-settings') return setColorSettingsOpen(true);
     else if (command === 'assign-profile') return setColorProfileOperation('assign');
     else if (command === 'convert-profile') return setColorProfileOperation('convert');
@@ -16706,7 +16774,7 @@ export default function Home() {
       )}
       {updateTextLayersOpen && (
         <UpdateTextLayersDialog
-          initialFont={textLayers[0]?.fontFamily && FONTS.includes(textLayers[0].fontFamily as (typeof FONTS)[number]) ? textLayers[0].fontFamily as (typeof FONTS)[number] : 'Arial'}
+          initialFont={textLayers[0]?.fontFamily && isSelectableFontFamily(textLayers[0].fontFamily) ? textLayers[0].fontFamily : 'Arial'}
           initialSize={textLayers[0]?.fontSize ?? fontSize}
           count={textLayers.length}
           close={() => setUpdateTextLayersOpen(false)}
@@ -16725,7 +16793,16 @@ export default function Home() {
         <SpellcheckDialog layers={spellcheckLayers} close={() => setSpellcheckOpen(false)} />
       )}
       {missingFontsOpen && (
-        <MissingFontsDialog families={FONTS} close={() => setMissingFontsOpen(false)} />
+        <MissingFontsDialog families={[...new Set([...FONTS, ...textLayers.map((layer) => layer.fontFamily)])]} close={() => setMissingFontsOpen(false)} />
+      )}
+      {glyphsOpen && (
+        <Suspense fallback={null}>
+          <GlyphsPanel
+            currentFamily={activeTextLayer?.fontFamily ?? fontFamily}
+            close={() => setGlyphsOpen(false)}
+            onInsert={(glyph, family, mode) => void insertGlyph(glyph, family, mode)}
+          />
+        </Suspense>
       )}
       {menuSettingsOpen && (
         <MenuSettingsDialog
@@ -19403,7 +19480,8 @@ export default function Home() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
-              <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) }}>{font}</option>)}</select></label>
+              <div className="select-row font-select-row"><span>Font</span><FontFamilySelect label="Text tool font" value={fontFamily} onChange={setFontFamily} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
               {fontAvailability === 'fallback' && (
                 <output data-testid="font-fallback-warning" className="adjust-note">
                   “{fontFamily}” is unavailable; browser fallback rendering is active.
