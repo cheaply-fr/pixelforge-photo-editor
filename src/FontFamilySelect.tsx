@@ -31,7 +31,9 @@ export default function FontFamilySelect({
   disabled?: boolean;
 }) {
   const [browsing, setBrowsing] = useState(false);
-  const unknown = fontFamilyKind(value) === 'unknown';
+  // '' means the selected characters use several fonts.
+  const mixed = value === '';
+  const unknown = !mixed && fontFamilyKind(value) === 'unknown';
   const choose = (family: string) => {
     if (fontFamilyKind(family) === 'library') void sharedFontLoader().ensure(family, { priority: 'high' });
     onChange(family);
@@ -39,6 +41,11 @@ export default function FontFamilySelect({
   return (
     <span className="font-family-select">
       <select aria-label={label} className={className || undefined} value={value} disabled={disabled} onChange={(event) => choose(event.target.value)}>
+        {mixed && (
+          <option value="" disabled>
+            Mixed fonts
+          </option>
+        )}
         {unknown && (
           <option value={value}>
             {value} (missing)
