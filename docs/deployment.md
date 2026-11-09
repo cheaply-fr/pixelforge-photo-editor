@@ -29,6 +29,25 @@ After publication, both the Google origin and custom domain must return the expe
 
 The Actions `Run workflow` control can redeploy the current `main` revision. It runs all checks again.
 
+## Release versions
+
+Every production deploy carries a new, increasing version without any commit on `main` (no bot commits, no CI pushes, no tags). `scripts/release-version.mjs` derives it at build time; `vite.config.ts` bakes it into the bundle (next to the commit) and `scripts/write-release.mjs` writes the same value to `/release.json` and `/api/readyz.json` (served as `/health` and `/api/readyz`).
+
+| Build | Version | Example |
+| --- | --- | --- |
+| `main` push or `Run workflow` on `main` (deploys) | `<major>.<minor>.<GITHUB_RUN_NUMBER>` | `0.1.512` |
+| Pull request run | `<package version>-pr.<number>+<sha7>` | `0.1.0-pr.226+1a2b3c4` |
+| Other Actions run | `<package version>-ci.<run>+<sha7>` | `0.1.0-ci.530+1a2b3c4` |
+| Local build or dev server | `<package version>-dev+<sha7>` | `0.1.0-dev+1a2b3c4` |
+
+- `major.minor` come from `package.json`; its patch is replaced by the run number. Bump `major.minor` there (in a normal PR) for a deliberate larger step; never lower them.
+- `GITHUB_RUN_NUMBER` is per workflow and increases with every run of **CI and deploy**, so successive deploys are strictly increasing. PR runs share the counter, so production versions have gaps (`0.1.512`, then `0.1.518`). A re-run (any attempt) keeps its run number, so re-running a deploy republishes the same version. Renaming `ci-cd.yml` creates a new workflow whose numbers restart at 1: bump `minor` in the same change.
+- The four validate shards build in the same run, so their artifacts carry the same version; the deploy job publishes that tested artifact unchanged.
+- A main deploy run without a valid run number fails the build rather than publishing a stale version.
+- `/release.json` also has `channel` (`release`, `pr`, `ci` or `dev`) next to `application`, `version`, `commit` and `builtAt`.
+- In the deploy job `npm run verify:deployment` derives the expected version from the same run and requires both live URLs to report it in `/release.json` and `/api/readyz.json`, in addition to the commit. Elsewhere it checks that the two artifacts agree; set `EXPECTED_VERSION` to check a specific version by hand.
+- No tag is created per deploy: that needs `contents: write` for the workflow token (the workflow is intentionally read-only) and a tag push from CI. Map a version to its commit through `/release.json` or the Actions run with that number.
+
 ## Rollback
 
 For a normal rollback, revert the faulty change through a pull request. The reverted build follows the same checks and deployment path. For an urgent hosting-only rollback, choose a previously verified release in Firebase Hosting's release history, then reconcile `main` with a revert before another deployment. Do not use an old artifact without checking its embedded commit and compatibility.
@@ -49,4 +68,4 @@ The editor build uses static hosting. Optional project storage runs through Mark
 
 ## Editor release status
 
-The editor top bar displays the package version from `/release.json` and a compact server state derived from `/api/readyz.json`. The indicator is **Server online** only when both artifacts are valid, identify `pixelforge-photo-editor`, and report the same commit and version with `ready: true`. A readiness failure or commit mismatch is shown as **Server degraded**; an unavailable or malformed artifact falls back to **Offline · local editing** so anonymous editing remains usable. Both requests are no-store reads, time out after five seconds and are polled every 30 seconds. The service worker bypasses these paths so cached shell metadata cannot report an offline server as healthy. The baked app version remains visible when a probe fails; mobile shows the state text as well as the coloured dot. The status has an accessible live label containing the version and current state.
+The editor top bar displays the version of the running build (baked into the bundle, equal to `/release.json` for that build; see **Release versions**) and a compact server state derived from `/api/readyz.json`. The indicator is **Server online** only when both artifacts are valid, identify `pixelforge-photo-editor`, and report the same commit and version with `ready: true`. A readiness failure or commit mismatch is shown as **Server degraded**; an unavailable or malformed artifact falls back to **Offline · local editing** so anonymous editing remains usable. Both requests are no-store reads, time out after five seconds and are polled every 30 seconds. The service worker bypasses these paths so cached shell metadata cannot report an offline server as healthy. The baked app version remains visible when a probe fails. When a newer deploy is detected (its commit differs from the baked one) the label keeps the running version and a non-blocking **New version available (v…)** notice names the new version, with Reload and Later; mobile shows the state text as well as the coloured dot. The status has an accessible live label containing the version and current state.

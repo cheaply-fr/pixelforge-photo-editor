@@ -66,6 +66,9 @@ test('version mismatches are degraded even when commits match', () => {
 });
 
 test('versionless local metadata keeps a useful local label', () => {
-  assert.equal(releaseLabel(parseReleasePayload({ application: 'pixelforge-photo-editor', commit })), 'v0.1.0');
-  assert.equal(releaseLabel(null), 'v0.1.0');
+  // Unbundled code has no baked build version.
+  assert.equal(releaseLabel(parseReleasePayload({ application: 'pixelforge-photo-editor', commit })), 'v0.0.0-dev');
+  assert.equal(releaseLabel(null), 'v0.0.0-dev');
+  assert.equal(releaseLabel(null, '0.1.512'), 'v0.1.512');
+  assert.equal(releaseLabel(parseReleasePayload({ application: 'pixelforge-photo-editor', commit, version: '0.1.513' }), '0.1.512'), 'v0.1.513');
 });

@@ -32,7 +32,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `Q` | Toggle Quick Mask mode |
 | `D` | Reset foreground/background to black/white |
 | `X` | Swap foreground/background colors |
-| `[` / `]` | Decrease/increase brush size (1–5,000 px; proportional steps: 1 px below 10, 5 px below 100, 10/25/50/100/200/500 px for larger brushes) |
+| `[` / `]` | Decrease/increase brush size (1–5,000 px; proportional steps: 1 px below 10, 5 px below 100, 10/25/50/100/200/500 px for larger brushes) for every painting tool, including Smudge. `Ctrl+[` / `Ctrl+]` stay unbound (reserved for Photoshop's Send Backward / Bring Forward) |
 
 `P` activates the straight-segment Pen and `A` cycles Path Selection then
 Direct Selection (Shift+A reverses). Add/Delete Anchor Point and Convert Point
