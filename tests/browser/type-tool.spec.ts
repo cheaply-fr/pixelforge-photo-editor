@@ -95,7 +95,8 @@ test('click creates point type: type, commit, undo/redo and reload as one step',
   await settle(page);
   expect((await ink(page)).count).toBeGreaterThan(50);
   await page.keyboard.press(`${mod}+Enter`);
-  await expect(overlay(page)).toHaveAttribute('data-editing', 'false');
+  // Committing hands the new type layer to the Move tool.
+  await expect(page.getByRole('button', { name: 'Move tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('.layer-row, [data-layer-id]').filter({ hasText: 'Hello World' }).first()).toBeVisible();
   let saved = await project(page);
   let layers = textLayers(saved);
@@ -165,10 +166,11 @@ test('Escape cancels new type and edits; clicking outside commits', async ({ pag
   await clickCanvas(page, 0.3, 0.3);
   await page.keyboard.type('Keep me');
   await clickCanvas(page, 0.9, 0.9);
-  await expect(overlay(page)).toHaveAttribute('data-editing', 'false');
+  await expect(page.getByRole('button', { name: 'Move tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   expect(textLayers(await project(page)).map((layer) => layer.text)).toEqual(['Keep me']);
 
   // Edit existing type, then cancel: the committed text is unchanged.
+  await selectTool(page, 'Horizontal Type');
   await clickCanvas(page, 0.31, 0.29);
   await expect(overlay(page)).toHaveAttribute('data-editing', 'true');
   await page.keyboard.press('End');
@@ -257,9 +259,14 @@ test('clipboard copy/paste, IME composition and glyph insertion reach the editor
   });
   await expect(overlay(page)).toHaveAttribute('data-selection-end', '10');
   await page.evaluate(() => window.dispatchEvent(new CustomEvent('pixelforge:insert-text', { detail: { text: '©' } })));
+  await page.evaluate(() => (window as Window & { pixelforgeType?: { insertTextAtCaret: (text: string) => boolean } }).pixelforgeType?.insertTextAtCaret('™'));
+  await expect.poll(async () => editor(page).inputValue()).toBe('copycopy日本©™');
+  // Glyphs… opens the font library's Glyphs panel.
   await page.getByRole('button', { name: 'Glyphs…', exact: true }).click();
-  await page.getByRole('button', { name: 'Insert ™', exact: true }).click();
-  await page.keyboard.press(`${mod}+Enter`);
+  const glyphs = page.getByRole('dialog', { name: 'Glyphs, icons & symbols' });
+  await expect(glyphs).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(glyphs).toBeHidden();
   expect(textLayers(await project(page))[0].text).toBe('copycopy日本©™');
 });
 
@@ -267,7 +274,9 @@ test('existing type is edited by clicking with the Type tool or double-clicking 
   await startType(page, 'Edit me');
   await clickCanvas(page, 0.2, 0.3);
   await page.keyboard.press(`${mod}+Enter`);
-  // Click into the type: caret lands inside, typing inserts there.
+  // The commit switched to Move; return to the Type tool and click into the
+  // type: the caret lands inside and typing inserts there.
+  await selectTool(page, 'Horizontal Type');
   await clickCanvas(page, 0.2, 0.29);
   await expect(overlay(page)).toHaveAttribute('data-editing', 'true');
   await page.keyboard.press('End');
@@ -324,7 +333,9 @@ test('Convert to paragraph/point text, presets, find & replace keep styles', asy
   layer = textLayers(await project(page))[0];
   expect(layer.textMode).toBe('point');
 
-  // Presets: save the paragraph look, apply it to another layer.
+  // Presets: save the paragraph look, apply it to another layer. The commit
+  // above switched to Move, so return to the Type tool for its panels.
+  await selectTool(page, 'Horizontal Type');
   await page.locator('details.type-panel summary', { hasText: 'Type presets' }).click();
   await page.getByLabel('Type preset name', { exact: true }).fill('Headline');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
@@ -374,4 +385,79 @@ test('editing a 2,000-character paragraph stays responsive', async ({ page }) =>
   expect(elapsed).toBeLessThan(4000);
   await page.keyboard.press(`${mod}+Enter`);
   expect(textLayers(await project(page))[0].text).toHaveLength(2010);
+});
+
+test('committing type switches to Move so a drag moves the text; Escape keeps the Type tool', async ({ page }) => {
+  await startType(page, '');
+  await clickCanvas(page, 0.25, 0.3);
+  await page.keyboard.type('Drag me');
+  // Escape on new type cancels it and stays on the Type tool.
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Horizontal Type tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(textLayers(await project(page))).toHaveLength(0);
+
+  await clickCanvas(page, 0.25, 0.3);
+  await page.keyboard.type('Drag me');
+  await page.getByRole('button', { name: 'Commit type', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Move tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const before = textLayers(await project(page));
+  expect(before).toHaveLength(1);
+  const [x0, y0] = [before[0].matrix[4], before[0].matrix[5]];
+
+  // The committed layer stays selected, so a drag on the canvas moves it.
+  const canvas = page.getByTestId('editor-canvas');
+  const box = (await canvas.boundingBox())!;
+  const scale = await canvas.evaluate((element: HTMLCanvasElement) => element.getBoundingClientRect().width / element.width);
+  const start = { x: box.x + box.width * 0.27, y: box.y + box.height * 0.29 };
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 40, start.y + 30, { steps: 8 });
+  await page.mouse.up();
+  await settle(page);
+  const after = textLayers(await project(page));
+  expect(after).toHaveLength(1);
+  expect(after[0].text).toBe('Drag me');
+  expect(Math.round(after[0].matrix[4] - x0)).toBeGreaterThan(Math.floor((40 / scale) * 0.8));
+  expect(Math.round(after[0].matrix[5] - y0)).toBeGreaterThan(Math.floor((30 / scale) * 0.8));
+
+  // Pressing T returns to the Type tool and a click edits the moved text.
+  await selectTool(page, 'Horizontal Type');
+  await expect(page.getByRole('button', { name: 'Horizontal Type tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('selecting a text layer reveals the Text section without taking focus; re-selecting does not scroll again', async ({ page }) => {
+  await startType(page, '');
+  await clickCanvas(page, 0.2, 0.3);
+  await page.keyboard.type('Reveal me');
+  await page.keyboard.press(`${mod}+Enter`);
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await settle(page);
+  await selectTool(page, 'Brush');
+  const inspector = page.locator('aside.inspector');
+  const textSectionTop = () =>
+    inspector.evaluate((container) => {
+      const section = container.querySelector('[data-sidebar-section="text"]');
+      if (!section) return null;
+      return section.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    });
+  const inView = async () => {
+    const top = await textSectionTop();
+    const height = await inspector.evaluate((container) => container.clientHeight);
+    return top !== null && top >= -4 && top < height - 24;
+  };
+  // Park the sidebar away from the Text section.
+  await inspector.evaluate((container) => { container.scrollTop = container.scrollHeight; });
+  const row = page.getByRole('button', { name: 'Select layer Reveal me', exact: true });
+  await row.click();
+  await expect.poll(inView).toBe(true);
+  // The click's focus stays on the layer row; the reveal never moves focus.
+  await expect(row).toBeFocused();
+
+  // Reading elsewhere: re-selecting the same layer does not scroll back.
+  await inspector.evaluate((container) => { container.scrollTop = container.scrollHeight; });
+  const parked = await inspector.evaluate((container) => container.scrollTop);
+  // A DOM click: Playwright would first scroll the off-screen row into view.
+  await row.evaluate((element: HTMLElement) => element.click());
+  await page.waitForTimeout(400);
+  expect(await inspector.evaluate((container) => container.scrollTop)).toBe(parked);
 });

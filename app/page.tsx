@@ -1,5 +1,7 @@
 'use client';
 
+import { toolAfterTypeCommit } from '../src/typeCommitTool';
+import { textSectionToReveal } from '../src/textSectionReveal';
 import {
   ArrowDown,
   ArrowUp,
@@ -3188,6 +3190,31 @@ export default function Home() {
     });
     return true;
   };
+  // Text section reveal on text-layer selection (src/textSectionReveal.ts).
+  const lastRevealedTextLayer = useRef<string | undefined>(undefined);
+  const revealTextSectionFor = (layer: { id: string; kind: string } | undefined): boolean => {
+    if (layer?.kind === 'text' && layer.id === lastRevealedTextLayer.current) return true;
+    const section = textSectionToReveal(layer, lastRevealedTextLayer.current);
+    if (!section || !layer) return false;
+    lastRevealedTextLayer.current = layer.id;
+    // The Text section renders once the selection updates; reveal it after
+    // that render (see the effect below).
+    setTextRevealRequest((value) => value + 1);
+    return true;
+  };
+  const [textRevealRequest, setTextRevealRequest] = useState(0);
+  const revealTextSectionNow = useRef<() => void>(() => undefined);
+  useLayoutEffect(() => {
+    revealTextSectionNow.current = () => withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection('text'));
+  });
+  useEffect(() => {
+    if (textRevealRequest) revealTextSectionNow.current();
+  }, [textRevealRequest]);
+  // Selecting any other layer (by any route) re-arms the reveal.
+  const activeLayerId = frame?.active;
+  useEffect(() => {
+    if (activeLayerId !== lastRevealedTextLayer.current) lastRevealedTextLayer.current = undefined;
+  }, [activeLayerId]);
   const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
     revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
@@ -5295,8 +5322,12 @@ export default function Home() {
     intent?: { additive?: boolean; range?: boolean },
   ) => {
     select(id, intent);
-    if (!intent?.additive && !intent?.range)
-      withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection(LAYER_SELECTION_SECTION));
+    if (intent?.additive || intent?.range) return;
+    // A text layer reveals its Type/Character panels; other layers reveal
+    // the layer properties.
+    if (revealTextSectionFor(current().layers.find((layer) => layer.id === id))) return;
+    lastRevealedTextLayer.current = undefined;
+    withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection(LAYER_SELECTION_SECTION));
   };
   /** Layers panel edits: enabling exactly one layer style reveals that style's controls. */
   const editLayerFromPanel = (patch: Partial<Layer>) => {
@@ -11087,9 +11118,17 @@ export default function Home() {
     setNotice,
     addLayer: (layer) => addLayer(layer),
     selectLayer: (id) => select(id),
-    isBaseFont: (family) => (FONTS as readonly string[]).includes(family),
+    isBaseFont: (family) => isSelectableFontFamily(family),
     isLocked: layerIsLocked,
     applyTextMask: (orientation, layer) => applyTextMask(orientation, layer),
+    // After deliberate type commits, hand the text layer to the Move tool.
+    onCommitted: (outcome) => {
+      if (toolAfterTypeCommit(outcome) !== 'move') return;
+      activateTool('move');
+      const committed = current();
+      revealTextSectionFor(committed.layers.find((layer) => layer.id === committed.active));
+      setNotice('Type committed: drag to move it, double-click or press T to edit');
+    },
     defaults: {
       fontFamily,
       fontSize,
@@ -11173,7 +11212,7 @@ export default function Home() {
       if (typeSession) typeTool.commitSession();
       setTextWarp();
     },
-    commit: () => { typeTool.commitSession(); },
+    commit: () => { typeTool.commitSession('confirm'); },
     cancel: () => typeTool.cancelSession(),
     findReplace: () => {
       if (typeSession) typeTool.commitSession();
@@ -19705,7 +19744,7 @@ export default function Home() {
               )}
             </SidebarSection>
           )}
-          {toolShowsSection(tool, 'text') && (
+          {(toolShowsSection(tool, 'text') || Boolean(activeTypeLayer)) && (
             <SidebarSection
               id="text"
               icon={Type}

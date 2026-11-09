@@ -7,6 +7,7 @@
  * supply any family; the controller waits for `document.fonts` before laying
  * out and re-renders when fonts finish loading.
  */
+import { type TypeCommitOutcome, type TypeCommitTrigger } from './typeCommitTool.ts';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   commonLayer,
@@ -80,6 +81,8 @@ export type TypeToolDeps = {
   revision: number;
   /** Disabled while Quick Mask or another modal mode owns the canvas. */
   blocked?: string;
+  /** Called after every commit with how it ended (see typeCommitTool.ts). */
+  onCommitted?: (outcome: TypeCommitOutcome) => void;
 };
 
 export type Point = { x: number; y: number };
@@ -190,11 +193,13 @@ export function useTypeTool(deps: TypeToolDeps) {
   }, [setSession]);
 
   /** End the session, writing one history entry (or a mask selection). */
-  const commitSession = useCallback((reason = 'Type committed'): boolean => {
+  const commitSession = useCallback((trigger: TypeCommitTrigger = 'command', reason = 'Type committed'): boolean => {
     const value = sessionRef.current;
     if (!value) return false;
     setSession(null);
     const d = depsRef.current;
+    const report = (layerKept: boolean) =>
+      d.onCommitted?.({ trigger, mask: Boolean(value.mask), layerKept, tool: d.tool });
     const frame = d.current();
     if (value.mask) {
       void d.paint(frame);
@@ -203,6 +208,7 @@ export function useTypeTool(deps: TypeToolDeps) {
         return true;
       }
       void d.applyTextMask(value.layer.orientation === 'vertical' ? 'vertical' : 'horizontal', value.layer);
+      report(false);
       return true;
     }
     const stored = frame.layers.find((layer): layer is TextLayer => layer.id === value.layerId && layer.kind === 'text');
@@ -218,10 +224,12 @@ export function useTypeTool(deps: TypeToolDeps) {
       const ok = value.isNew ? d.amend(next, frame, 1) : d.commit(next);
       void d.paint(d.current());
       d.setNotice(value.isNew ? 'Empty type layer discarded' : 'Empty type layer deleted');
+      report(false);
       return ok;
     }
     if (!textSessionChanged(value)) {
       void d.paint(frame);
+      report(true);
       return true;
     }
     const autoNamed = stored.name === typeLayerName(value.original.text) || value.isNew;
@@ -233,6 +241,7 @@ export function useTypeTool(deps: TypeToolDeps) {
     const ok = value.isNew ? d.amend(next, frame, 0) : d.commit(next);
     if (value.isNew && ok) void d.paint(next);
     d.setNotice(ok ? reason : 'Type could not be committed');
+    report(ok);
     return ok;
   }, [setSession]);
 
@@ -254,11 +263,11 @@ export function useTypeTool(deps: TypeToolDeps) {
 
   // Leaving the Type tools commits, like choosing another tool in Photoshop.
   useEffect(() => {
-    if (!isTypeTool(deps.tool) && sessionRef.current) commitSession();
+    if (!isTypeTool(deps.tool) && sessionRef.current) commitSession('tool-switch');
   }, [deps.tool, commitSession]);
   // Commit before the page is hidden so a reload never loses typed text.
   useEffect(() => {
-    const hide = () => { if (sessionRef.current) commitSession(); };
+    const hide = () => { if (sessionRef.current) commitSession('page-hide'); };
     window.addEventListener('pagehide', hide);
     return () => window.removeEventListener('pagehide', hide);
   }, [commitSession]);
@@ -276,7 +285,7 @@ export function useTypeTool(deps: TypeToolDeps) {
       if (selection) update((value) => ({ ...value, selection }));
       return true;
     }
-    if (sessionRef.current) commitSession();
+    if (sessionRef.current) commitSession('new-session');
     const latest = d.current();
     if (latest.active !== layerId) d.selectLayer(layerId);
     setSession(beginTextSession(layer, { layerId, selection }));
@@ -307,7 +316,7 @@ export function useTypeTool(deps: TypeToolDeps) {
       d.setNotice(d.blocked);
       return false;
     }
-    if (sessionRef.current) commitSession();
+    if (sessionRef.current) commitSession('new-session');
     const tool = d.tool as TypeToolId;
     const vertical = tool === 'vertical-text' || tool === 'vertical-text-mask';
     const mask = tool === 'text-mask' || tool === 'vertical-text-mask';

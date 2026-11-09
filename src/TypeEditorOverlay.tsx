@@ -86,7 +86,8 @@ export function TypeEditorOverlay({ typeTool, frameWidth, frameHeight, toCanvas,
     const down = (event: PointerEvent) => {
       lastPointerTarget.current = event.target;
       const target = event.target as Element | null;
-      if (toolRef.current.sessionRef.current && !kept(target)) toolRef.current.commitSession();
+      // Menus, panels and other UI commit without changing the tool.
+      if (toolRef.current.sessionRef.current && !kept(target)) toolRef.current.commitSession('focus-out');
     };
     // Native caret moves (arrows, word jumps, Shift-selection, Ctrl+A).
     const selectionChange = () => {
@@ -102,7 +103,7 @@ export function TypeEditorOverlay({ typeTool, frameWidth, frameHeight, toCanvas,
     // Keyboard focus leaving to an unrelated control (Tab) commits.
     const focusIn = (event: FocusEvent) => {
       const target = event.target as Element | null;
-      if (toolRef.current.sessionRef.current && target !== textarea.current && !kept(target)) toolRef.current.commitSession();
+      if (toolRef.current.sessionRef.current && target !== textarea.current && !kept(target)) toolRef.current.commitSession('focus-out');
     };
     document.addEventListener('pointerdown', down, true);
     document.addEventListener('selectionchange', selectionChange);
@@ -198,7 +199,7 @@ export function TypeEditorOverlay({ typeTool, frameWidth, frameHeight, toCanvas,
         return;
       }
       // Clicking outside the type commits it (Photoshop behaviour).
-      typeTool.commitSession();
+      typeTool.commitSession('click-outside');
       return;
     }
     const hitLayer = typeTool.hitTextLayer(point);
@@ -277,7 +278,7 @@ export function TypeEditorOverlay({ typeTool, frameWidth, frameHeight, toCanvas,
     const key = event.key;
     const stop = () => { event.preventDefault(); event.stopPropagation(); };
     if (key === 'Escape') { stop(); typeTool.cancelSession(); return; }
-    if (key === 'Enter' && (command || event.nativeEvent.location === 3)) { stop(); typeTool.commitSession(); return; }
+    if (key === 'Enter' && (command || event.nativeEvent.location === 3)) { stop(); typeTool.commitSession('shortcut'); return; }
     if (command && !event.altKey && key.toLowerCase() === 'z') { stop(); if (event.shiftKey) typeTool.redo(); else typeTool.undo(); return; }
     if (command && key.toLowerCase() === 'y') { stop(); typeTool.redo(); return; }
     if (command && !event.shiftKey && ['b', 'i', 'u'].includes(key.toLowerCase())) {
@@ -365,7 +366,7 @@ export function TypeEditorOverlay({ typeTool, frameWidth, frameHeight, toCanvas,
     window.setTimeout(() => {
       const activeElement = document.activeElement as HTMLElement | null;
       if (activeElement === textarea.current || kept(activeElement)) return;
-      if (typeTool.sessionRef.current) typeTool.commitSession();
+      if (typeTool.sessionRef.current) typeTool.commitSession('focus-out');
     }, 0);
   };
 
