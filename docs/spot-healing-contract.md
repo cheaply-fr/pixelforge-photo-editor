@@ -30,6 +30,32 @@ metadata, invalid coordinates and oversized arrays fail closed at document
 validation. Undo, reload, project export/import and cloud drafts therefore
 replay the same operation without baking over the source asset.
 
+## Type (toolbar audit I-18, 2026-11)
+
+New strokes record an optional `type`; strokes without one (all strokes made
+before types existed) replay as `proximity`, byte-for-byte. The Type menu is
+persisted as `retouchOptions.spotHealingType` (default `content-aware`). All
+three are bounded local approximations of Photoshop's options:
+
+- **Proximity Match** (`proximity`): the original per-position median of a
+  16-sample ring just outside the brush, described above.
+- **Content-Aware** (`content-aware`): the whole stroke footprint (the union
+  of its dabs) is the hole. For each covered pixel, eight rays (axes and
+  diagonals) travel to the first visible pixel outside the footprint, up to
+  1.5 × the brush size; the hits are averaged with inverse-square distance
+  weights. Opposite hits interpolate across the hole, so gradients and edges
+  crossing the stroke continue through it. A mark that extends beyond the
+  stroke can still bleed into its ends.
+- **Create Texture** (`texture`): the Content-Aware tone plus high-frequency
+  detail (a donor pixel minus its 5 × 5 mean) from a donor area one diameter
+  away, in the first of the eight directions whose shifted footprint overlaps
+  the hole least.
+
+Coverage, opacity, selection snapshots and alpha preservation are unchanged.
+Evidence: `tests/audit-retouch.test.mjs` (gradient continuation, texture
+spread, legacy replay, selection confinement) and
+`tests/browser/audit-retouch-healing.spec.ts` on desktop and mobile.
+
 The contract is intentionally explicit about its limitation: broad objects,
 complex textures, perspective edges and semantic removal remain staged for a
 future patch/content-aware model and must not be described as AI removal.

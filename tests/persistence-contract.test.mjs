@@ -189,7 +189,7 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
   ]);
   assert.equal(radial.settings.secondaryBrushPreset, 'round-soft');
   assert.throws(
-    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'diamond' } }),
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'spiral' } }),
     /Saved document is not supported/,
   );
   assert.throws(

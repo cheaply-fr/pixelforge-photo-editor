@@ -28,3 +28,21 @@ and GPU/worker tiled painting remain later scale milestones. Coverage lives in
 `tests/browser/pattern-stamp.spec.ts` (desktop and mobile projects), including
 determinism, edge clipping, alpha compositing, settings persistence,
 undo/redo, reload and locked-layer rejection.
+
+## Pattern from selection and Aligned (toolbar audit I-17, 2026-11)
+
+"Define pattern from selection" (Pattern Stamp options; enabled with an active
+selection) crops the selected pixels of the active raster layer to the
+selection bounds, multiplies their alpha by the selection coverage and stores
+the result as a small PNG in `Settings.imagePatterns` (at most eight patterns,
+128 px per side; larger selections are box-filtered down; `src/imagePatterns.ts`).
+This is the one case where Pattern Stamp keeps image data: the tile lives only
+in the local draft and project file, never in a remote request. The new
+pattern becomes the source (`retouchOptions.patternImage`) and is listed in the
+Pattern menu next to the procedural patterns; picking a procedural pattern or a
+saved preset clears it. Image tiles ignore Tile size and the colour wells.
+
+`retouchOptions.patternAligned` (default on) keeps the existing canvas-wide
+tile phase; with it off each stroke restarts the tile at the stroke's start
+point. Impressionist is not implemented. Evidence: `tests/audit-retouch.test.mjs`
+and `tests/browser/audit-retouch-stamps.spec.ts` (desktop and mobile).

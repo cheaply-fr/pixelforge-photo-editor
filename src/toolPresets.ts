@@ -95,7 +95,7 @@ export type ToolSettingValues = {
   mixerBrush: MixerBrushSettings;
   historyBrush: HistoryBrushSettings;
   artHistoryBrush: ArtHistoryBrushSettings;
-  gradientMode: 'linear' | 'radial' | 'reflected';
+  gradientMode: 'linear' | 'radial' | 'reflected' | 'angle' | 'diamond';
   gradientEnd: 'transparent' | 'background';
   gradientMidpoint: string;
   gradientMidpointPosition: number;
@@ -207,7 +207,7 @@ export const TOOL_SETTING_FIELDS: { readonly [K in ToolSettingKey]: ToolSettingF
   artHistoryBrush: option<ArtHistoryBrushSettings>('Art History settings', { ...DEFAULT_ART_HISTORY_BRUSH }, (value) =>
     validArtHistoryBrushSettings(value) ? effectiveArtHistoryBrush(value) : undefined,
   ),
-  gradientMode: option<'linear' | 'radial' | 'reflected'>('Gradient type', 'linear', oneOf(['linear', 'radial', 'reflected'] as const)),
+  gradientMode: option<'linear' | 'radial' | 'reflected' | 'angle' | 'diamond'>('Gradient type', 'linear', oneOf(['linear', 'radial', 'reflected', 'angle', 'diamond'] as const)),
   gradientEnd: option<'transparent' | 'background'>('Gradient end', 'transparent', oneOf(['transparent', 'background'] as const)),
   gradientMidpoint: option('Midpoint colour', 'none', (value) => (value === 'none' ? 'none' : hex(value))),
   gradientMidpointPosition: option('Midpoint position', 50, num(1, 99)),

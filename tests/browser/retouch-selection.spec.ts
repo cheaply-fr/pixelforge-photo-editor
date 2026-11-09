@@ -253,6 +253,7 @@ test('Pattern Stamp and Color Replace stay inside the selection', async ({ page 
   await selectRect(page, 300, 300, 900, 500);
   await selectTool(page, 'Color Replace');
   await page.getByLabel('Size', { exact: true }).fill('40');
+  await page.getByLabel('Color Replace mode', { exact: true }).selectOption('normal');
   await setColor(page, 'Drawing color', '#ff0000');
   await stroke(page, 100, 1100, 400);
   expect(await pixel(page, 600, 400)).toEqual(RED);

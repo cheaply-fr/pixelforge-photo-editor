@@ -46,7 +46,7 @@ export type GradientColorStop = {
 };
 
 export type GradientStopPlan = {
-  mode: 'linear' | 'radial' | 'reflected';
+  mode: 'linear' | 'radial' | 'reflected' | 'angle' | 'diamond';
   /** Drawing (foreground) colour. */
   color: string;
   /** Background colour, used only when `end` is `background`. */

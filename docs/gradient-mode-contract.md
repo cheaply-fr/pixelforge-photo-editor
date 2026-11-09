@@ -1,6 +1,7 @@
 # Gradient mode contract
 
-The Gradient tool supports persisted **Linear**, **Radial** and **Reflected** geometry. The
+The Gradient tool supports persisted **Linear**, **Radial**, **Angle**, **Reflected** and
+**Diamond** geometry (Angle and Diamond are described below). The
 **Gradient end** setting can keep the default transparent endpoint or use the current
 background colour. All three modes preserve the original raster asset until one
 undoable pointer-up commit and remain local to the browser. Radial mode uses the
@@ -25,6 +26,21 @@ and uses its legacy midpoint behaviour. This contract does not claim Photoshop's
 full gradient-map or Adobe algorithm parity. A separate deterministic RGB Noise
 control is bounded to 0%-100%, skips transparent pixels, preserves alpha, and
 defaults to zero for older drafts.
+
+## Angle and Diamond (toolbar audit I-23, 2026-11)
+
+`gradientMode` also accepts `angle` and `diamond` (older drafts keep their
+value; unknown values still fail validation). Canvas 2D has no native
+equivalent, so both are rendered per pixel from a 256-entry lookup row drawn
+with the same colour stops as Linear, so stops, midpoint, Reverse and the
+transparent end behave identically (`src/gradientShapes.ts`). Angle sweeps a
+full turn counter-clockwise on screen around the drag start, beginning at the
+drag direction (a hard seam lies along it). Diamond uses `|u| + |v|` over the
+drag length, where u and v are the offsets along and across the drag, so the
+square is rotated to the drag with a corner at its end. Noise, Dither, Mode,
+Opacity, selection confinement and the reduced live preview apply as for the
+other types. Evidence: `tests/audit-retouch.test.mjs` and
+`tests/browser/audit-retouch-paint.spec.ts` on desktop and mobile.
 
 ## Selection confinement
 

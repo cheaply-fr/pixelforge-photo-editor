@@ -31,6 +31,20 @@ tests across settings migration, pressure fallback and independent mapping,
 hardness, eraser undo/redo/reload, clone edge clipping, healing bounds, pointer
 release pressure, and touch cancellation.
 
+### Clone/Healing Aligned and Sample (toolbar audit I-16, 2026-11)
+
+`Settings.retouchOptions.cloneAligned` (default on) and `cloneSample`
+(`current` default, `below`, `all`) apply to Clone Stamp and the Healing Brush.
+Aligned keeps the document-space source-minus-destination offset of the first
+stroke after a source is chosen for every later stroke, until a new
+Option/Alt-click; with Aligned off each stroke starts again at the chosen
+source point (the earlier behaviour). Current & Below and All Layers read the
+visible composite of the layers from the bottom up to the active layer, or of
+every layer, rendered once at pointer-down into the active layer's pixel space;
+Current Layer reads only the active layer as before. Older drafts omit the
+options and use the defaults. Evidence: `tests/browser/audit-retouch-stamps.spec.ts`
+(desktop and mobile).
+
 ## Persisted tool state
 
 Extend `Settings` with validated, backward-compatible values:
