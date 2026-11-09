@@ -25,6 +25,17 @@ export type StrokePathScope = (typeof STROKE_PATH_SCOPES)[number];
 
 /** Upper bound for dab positions in one command, across all contours. */
 export const STROKE_PATH_MAX_SAMPLES = 20_000;
+
+/**
+ * Sample budget when Paint Symmetry replicates every dab `copies` times: the
+ * painted dab total (samples × copies) stays within `STROKE_PATH_MAX_SAMPLES`,
+ * so spacing widens (reported as `limited`) instead of the command painting
+ * up to 128× more dabs. One copy keeps the unchanged budget.
+ */
+export function strokePathMaxSamplesForCopies(copies: number): number {
+  const count = Number.isFinite(copies) ? Math.max(1, Math.floor(copies)) : 1;
+  return Math.max(1, Math.floor(STROKE_PATH_MAX_SAMPLES / count));
+}
 /** Upper bound for flattened polyline vertices, across all contours. */
 export const STROKE_PATH_MAX_FLAT_POINTS = 250_000;
 /** Recursion depth for cubic flattening (2^12 pieces per segment at most). */

@@ -185,8 +185,8 @@ and priorities are in
   bright-pixel streaks around an editable centre (#211, `767e965`); a local
   approximation, not a light simulation.
 - **Layer → Stroke Path with Brush…:** Brush/Pencil/Eraser/Smudge along a
-  path with simulated-pressure tapers (#212, `513779d`). Paint symmetry
-  (#210) is not applied to it (W4-1).
+  path with simulated-pressure tapers (#212, `513779d`); it honours Paint
+  Symmetry for Brush, Pencil and Eraser (W4-1, `paint-symmetry-contract.md`).
 
 Deployment runs per PR and the open items (W3-n, W4-n) are in the rubric's
 "Fix wave 2 — merged and deployed", "Fix wave 3", "Fix wave 3 — merged" and

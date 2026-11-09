@@ -334,7 +334,7 @@ with release evidence and priorities is in
 | Gradient options | **Shipped** — Replace mode, blend modes, opacity; live preview while dragging | #194; #201 (reduced-resolution preview on layers > 1.5 MP) |
 | Perspective Warp, Vanishing Point, Puppet Warp | **Shipped** — canvas-space handles on layers stored at content bounds | #207, merged `257e744` |
 | Brush colour dynamics, brush preset library | **Shipped** — Hue / Saturation / Brightness / FG-BG jitter; built-in space-art presets plus saved presets on the device | #209, merged `7516d33`. Open: custom tip shapes (no Glint tip), brush blend mode (W4-2, W4-3) |
-| Paint Symmetry (Brush, Pencil, Eraser) | **Shipped** — vertical, horizontal, dual, diagonal, radial and mandala modes with an editable centre | #210, merged `0ad0e69`. Open: Stroke Path with Brush, Mixer/History/Clone/Heal (W4-1, W4-4) |
+| Paint Symmetry (Brush, Pencil, Eraser) | **Shipped** — vertical, horizontal, dual, diagonal, radial and mandala modes with an editable centre | #210, merged `0ad0e69`. Extended to Stroke Path with Brush, Mixer, History, Art History, Clone and Healing (W4-1, W4-4); Spot Healing and Patch excluded |
 | Stroke Path with Brush | **Shipped** — Brush/Pencil/Eraser/Smudge along path curves with simulated-pressure tapers | #212, merged `513779d` |
 
 Deployment runs per PR and every open item are in the rubric's
