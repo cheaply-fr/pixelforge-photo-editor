@@ -74,7 +74,8 @@ test('each tool shows only its own options', () => {
   assert.deepEqual(toolSidebar('text').sections, ['text']);
   assert.deepEqual(toolSidebar('move').sections, ['layer-alignment']);
   assert.deepEqual(toolSidebar('rotate-view').sections, ['rotate-view']);
-  assert.deepEqual(toolSidebar('crop').sections, []);
+  assert.deepEqual(toolSidebar('crop').sections, ['tool-options']);
+  assert.deepEqual(toolSidebar('slice').sections, []);
   for (const tool of SELECTION_TOOLS) assert.ok(toolAreaShows(tool, 'selection-options'), tool);
   for (const tool of allTools.filter((tool) => !SELECTION_TOOLS.includes(tool)))
     assert.equal(toolAreaShows(tool, 'selection-options'), false, tool);

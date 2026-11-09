@@ -28,6 +28,7 @@ const MARKERS: Record<string, Marker> = {
   Move: { role: 'button', name: 'Align left' },
   Select: { role: 'combobox', name: 'Selection mode' },
   Clone: { name: 'Option/Alt-click the canvas to set' },
+  Crop: { role: 'combobox', name: 'Crop aspect ratio' },
 };
 
 const marker = (page: Page, key: string) => {
@@ -52,7 +53,8 @@ test('each tool shows only its own options; other tools and large panels are abs
     ['Horizontal Type', 'Text'],
     ['Gradient', 'Gradient'],
     ['Move', 'Move'],
-    ['Crop', null],
+    ['Crop', 'Crop'],
+    ['Hand', null],
     ['Select', 'Select'],
     ['Clone', 'Clone'],
   ];

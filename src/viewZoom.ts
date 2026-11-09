@@ -79,6 +79,32 @@ export function fitViewZoom(input: {
   return clampViewZoom(Math.min(fit, input.maxFit ?? 100));
 }
 
+/**
+ * Smallest zoom at which the image covers the whole stage (Photoshop's Fill
+ * Screen): one axis fits exactly and the other overflows and scrolls.
+ */
+export function fillViewZoom(input: {
+  imageWidth: number;
+  imageHeight: number;
+  stageWidth: number;
+  stageHeight: number;
+}): number {
+  const { imageWidth, imageHeight } = input;
+  if (!(imageWidth > 0 && imageHeight > 0)) return 100;
+  const width = Math.max(1, input.stageWidth),
+    height = Math.max(1, input.stageHeight);
+  return clampViewZoom(Math.max(width / imageWidth, height / imageHeight) * 100);
+}
+
+/**
+ * Scrubby Zoom: dragging right zooms in and left zooms out, doubling the
+ * zoom for every `pixelsPerDoubling` CSS pixels of horizontal travel.
+ */
+export function scrubbyViewZoom(startZoom: number, dx: number, pixelsPerDoubling = 160): number {
+  if (!Number.isFinite(dx)) return clampViewZoom(startZoom);
+  return clampViewZoom(clampViewZoom(startZoom) * 2 ** (dx / Math.max(1, pixelsPerDoubling)));
+}
+
 /** Readable label: whole numbers when exact, otherwise up to two decimals. */
 export function formatViewZoom(zoom: number): string {
   const rounded = Math.round(clampViewZoom(zoom) * 100) / 100;

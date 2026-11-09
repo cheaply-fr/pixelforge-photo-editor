@@ -47,6 +47,8 @@ const LEGACY_TOOL_OPTIONS_TOOLS = [
   'add-anchor', 'delete-anchor', 'convert-point', 'path-select',
   // Added with their tools (docs/shape-tools-contract.md).
   'rounded-rectangle', 'custom-shape',
+  // Navigation, sampling, measurement and crop options (docs/navigation-tool-options-contract.md).
+  'zoom', 'eyedropper', 'color-sampler', 'ruler', 'note', 'count', 'crop', 'perspective-crop',
 ];
 
 test('every palette tool has exactly one registry entry and nothing else is mapped', () => {
