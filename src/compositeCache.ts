@@ -3,11 +3,13 @@
  *
  * Layers composite bottom-to-top, so the result after layer `k` depends only
  * on layers `0..k` (plus whole folders and clipping bases they reference).
- * Most edits touch the active layer, so the renderer snapshots the composite
- * just below it once and later renders start from that snapshot when every
- * layer below is unchanged. One frame-sized surface is retained per render
- * context; keys use layer JSON and asset *content* fingerprints, never IDs
- * alone, so a reused asset ID can not alias stale pixels.
+ * The renderer snapshots the composite at a few checkpoints (below the active
+ * layer, below the lowest layer the render changed, and anchors in between)
+ * and later renders start from the highest snapshot whose layers
+ * are all unchanged. A device-aware number of frame-sized surfaces is
+ * retained per render context; keys use layer JSON and asset *content*
+ * fingerprints, never IDs alone, so a reused asset ID can not alias stale
+ * pixels.
  */
 import { assetFingerprint } from './layerFilterCache.ts';
 import { isAssetShape, type AnyAsset } from './tiledAssets.ts';
@@ -302,12 +304,149 @@ type Snapshot<S> = {
   groups: string[];
 };
 
+type Entry<S> = Snapshot<S> & { used: number };
+
+/**
+ * Where to snapshot during one render, as ascending layer indexes (a
+ * snapshot at `i` holds layers 0..i). A folder is drawn once at its first
+ * member, so a target inside a folder moves below that member.
+ *
+ * - With live overrides (a stroke preview), only below the first override.
+ * - Otherwise below the active layer (the next edit usually targets it) and
+ *   below the lowest layer this render changed (`changedIndex`, from the
+ *   previous render's keys): a delete, reorder or visibility toggle edits
+ *   there, its undo changes the same place again, and a delete moves the
+ *   active layer elsewhere.
+ * - Spare `slots` become anchors, each bisecting the largest stretch of
+ *   layers without a snapshot, so an edit anywhere (for example deleting a
+ *   layer that was only selected, which never renders) resumes from the
+ *   nearest snapshot below it instead of from layer 0.
+ */
+export function compositeCheckpointTargets(
+  frame: { layers: readonly { id: string; groupId?: string }[]; active?: string },
+  options: {
+    overrides?: Readonly<Record<string, unknown>>;
+    changedIndex?: number;
+    slots?: number;
+  } = {},
+): number[] {
+  const count = frame.layers.length;
+  const below = (index: number): number => {
+    const groupId = frame.layers[index]?.groupId;
+    if (groupId) {
+      const first = frame.layers.findIndex((layer) => layer.groupId === groupId);
+      if (first >= 0 && first < index) index = first;
+    }
+    return index - 1;
+  };
+  const usable = (index: number) => index >= 0 && index <= count - 2;
+  const targets = new Set<number>();
+  const overrides = options.overrides;
+  if (overrides && frame.layers.some((layer) => Object.hasOwn(overrides, layer.id)))
+    targets.add(compositeCheckpoint(frame, overrides));
+  else {
+    targets.add(compositeCheckpoint(frame));
+    const slots = Math.max(1, Math.min(8, Math.trunc(options.slots ?? 1)));
+    const changed = options.changedIndex;
+    // One slot keeps the historical single snapshot below the active layer.
+    if (slots > 1 && changed !== undefined && Number.isSafeInteger(changed) && changed >= 0 && changed < count)
+      targets.add(below(changed));
+    // Each anchor bisects the largest stretch of layers without a snapshot
+    // (the lowest one on ties), so anchors never coincide with a target.
+    const points = [...targets].filter(usable).sort((a, b) => a - b);
+    for (let anchor = points.length; anchor < slots; anchor += 1) {
+      const bounds = [-1, ...points, count - 1];
+      let widest = -1;
+      for (let index = 0; index + 1 < bounds.length; index += 1)
+        if (bounds[index + 1] - bounds[index] > 1 && (widest < 0 || bounds[index + 1] - bounds[index] > bounds[widest + 1] - bounds[widest]))
+          widest = index;
+      if (widest < 0) break;
+      points.push(Math.floor((bounds[widest] + bounds[widest + 1]) / 2));
+      points.sort((a, b) => a - b);
+    }
+    return points;
+  }
+  return [...targets].filter(usable).sort((a, b) => a - b);
+}
+
+/** Byte budget and count cap for one render context's prefix snapshots. */
+export type CompositeSnapshotBudget = { bytes: number; maxSnapshots: number };
+
+/** Desktops: three 2646 x 4096 snapshots (43 MB each); four from 8 GB. */
+export const COMPOSITE_SNAPSHOT_DESKTOP: CompositeSnapshotBudget = { bytes: 160 * 1024 * 1024, maxSnapshots: 4 };
+export const COMPOSITE_SNAPSHOT_LARGE_DESKTOP: CompositeSnapshotBudget = { bytes: 256 * 1024 * 1024, maxSnapshots: 4 };
+/** Phones, tablets and 4 GB devices keep at most two. */
+export const COMPOSITE_SNAPSHOT_MOBILE: CompositeSnapshotBudget = { bytes: 96 * 1024 * 1024, maxSnapshots: 2 };
+/** Devices reporting 2 GB or less keep the single historical snapshot. */
+export const COMPOSITE_SNAPSHOT_LOW_MEMORY: CompositeSnapshotBudget = { bytes: 0, maxSnapshots: 1 };
+
+/** Device-aware snapshot budget (the same coarse hints as the layer cache). */
+export function compositeSnapshotBudgetForDevice(
+  hints: { deviceMemory?: number; mobile?: boolean } = {},
+): CompositeSnapshotBudget {
+  const memory =
+    typeof hints.deviceMemory === 'number' && Number.isFinite(hints.deviceMemory) && hints.deviceMemory > 0
+      ? hints.deviceMemory
+      : undefined;
+  if (memory !== undefined && memory <= 2) return COMPOSITE_SNAPSHOT_LOW_MEMORY;
+  if (hints.mobile === true || (memory !== undefined && memory <= 4)) return COMPOSITE_SNAPSHOT_MOBILE;
+  if (memory !== undefined && memory >= 8) return COMPOSITE_SNAPSHOT_LARGE_DESKTOP;
+  return COMPOSITE_SNAPSHOT_DESKTOP;
+}
+
+export function detectCompositeSnapshotBudget(): CompositeSnapshotBudget {
+  const browser = (globalThis as { navigator?: Navigator & { deviceMemory?: number } }).navigator;
+  if (!browser) return COMPOSITE_SNAPSHOT_DESKTOP;
+  return compositeSnapshotBudgetForDevice({
+    deviceMemory: browser.deviceMemory,
+    mobile: /Android|iPhone|iPad|Mobile/i.test(browser.userAgent || ''),
+  });
+}
+
+/**
+ * Canvas-sized snapshots that fit the budget at this frame size: at least
+ * one (the historical behaviour), at most `maxSnapshots`.
+ */
+export function compositeSnapshotCapacity(w: number, h: number, budget: CompositeSnapshotBudget): number {
+  const bytes = Math.max(1, Math.trunc(w)) * Math.max(1, Math.trunc(h)) * 4;
+  return Math.max(1, Math.min(budget.maxSnapshots, Math.floor(budget.bytes / bytes)));
+}
+
+const SINGLE_SNAPSHOT: CompositeSnapshotBudget = { bytes: 0, maxSnapshots: 1 };
+
 export class CompositeCache<S = unknown> {
-  private entry: Snapshot<S> | undefined;
+  private entries: Entry<S>[] = [];
   private final: { key: string; w: number; h: number; surface: S } | undefined;
+  private previous: { w: number; h: number; keys: readonly string[] } | undefined;
+  private tick = 0;
+  readonly budget: CompositeSnapshotBudget;
   hits = 0;
   misses = 0;
   finalHits = 0;
+  /** Layers the latest outermost render took from a snapshot (0: none). */
+  lastReusedLayers = 0;
+
+  /** Without a budget one snapshot is kept, as before multiple checkpoints. */
+  constructor(budget: CompositeSnapshotBudget = SINGLE_SNAPSHOT) {
+    this.budget = budget;
+  }
+
+  /** Snapshots kept at this frame size. */
+  capacity(w: number, h: number): number {
+    return compositeSnapshotCapacity(w, h, this.budget);
+  }
+
+  /**
+   * Record the per-layer keys of a render about to run and return the index
+   * of the lowest layer that differs from the previous render's keys
+   * (`keys.length` when none differs; 0 after a size change or at first).
+   */
+  noteKeys(w: number, h: number, keys: readonly string[]): number {
+    const previous = this.previous;
+    this.previous = { w, h, keys };
+    if (!previous || previous.w !== w || previous.h !== h) return 0;
+    return sharedPrefix(previous.keys, keys);
+  }
 
   /**
    * The finished composite of the last full render whose equivalence key
@@ -329,42 +468,140 @@ export class CompositeCache<S = unknown> {
     this.final = final;
   }
 
-  /** The snapshot usable for these keys, if every layer it contains is unchanged. */
+  private valid(entry: Entry<S>, w: number, h: number, keys: readonly string[]): boolean {
+    return (
+      entry.w === w &&
+      entry.h === h &&
+      entry.index < keys.length &&
+      sharedPrefix(entry.keys, keys) >= entry.index + 1
+    );
+  }
+
+  /**
+   * The highest snapshot usable for these keys (every layer it contains is
+   * unchanged). Several may match; the highest skips the most layers.
+   */
   match(w: number, h: number, keys: readonly string[]): Snapshot<S> | undefined {
-    const entry = this.entry;
-    if (!entry || entry.w !== w || entry.h !== h || entry.index >= keys.length) {
+    let best: Entry<S> | undefined;
+    for (const entry of this.entries)
+      if ((!best || entry.index > best.index) && this.valid(entry, w, h, keys)) best = entry;
+    if (!best) {
       this.misses += 1;
       return undefined;
     }
-    if (sharedPrefix(entry.keys, keys) < entry.index + 1) {
-      this.misses += 1;
-      return undefined;
-    }
+    best.used = ++this.tick;
     this.hits += 1;
-    return entry;
+    return best;
   }
 
-  /** The retained surface (reused for the next snapshot), if any. */
-  reusable(w: number, h: number): S | undefined {
-    return this.entry && this.entry.w === w && this.entry.h === h ? this.entry.surface : undefined;
+  /**
+   * The entry the next store (of a snapshot at `index`) replaces when the
+   * cache is full: one of another frame size first, then one that no longer
+   * matches `keys` (least recently used first). Among usable snapshots, the
+   * one nearest another snapshot goes, so the rest stay spread over the stack
+   * (a low snapshot serves edits anywhere above it); ties go to the least
+   * recently used.
+   */
+  private victim(w: number, h: number, keys?: readonly string[], index?: number): Entry<S> | undefined {
+    if (this.entries.length < this.capacity(w, h)) return undefined;
+    const rank = (entry: Entry<S>) =>
+      entry.w !== w || entry.h !== h ? 0 : keys && !this.valid(entry, w, h, keys) ? 1 : 2;
+    const usable = this.entries.filter((entry) => rank(entry) === 2);
+    const points = [...usable.map((entry) => entry.index), ...(index === undefined ? [] : [index])];
+    const crowding = (entry: Entry<S>) => {
+      if (rank(entry) !== 2) return 0;
+      let nearest = Number.POSITIVE_INFINITY;
+      let self = false;
+      for (const point of points) {
+        if (point === entry.index && !self) {
+          self = true;
+          continue;
+        }
+        nearest = Math.min(nearest, Math.abs(point - entry.index));
+      }
+      return nearest;
+    };
+    let victim: Entry<S> | undefined;
+    for (const entry of this.entries) {
+      if (!victim) {
+        victim = entry;
+        continue;
+      }
+      const order =
+        rank(entry) - rank(victim) || crowding(entry) - crowding(victim) || entry.used - victim.used;
+      if (order < 0) victim = entry;
+    }
+    return victim;
   }
 
-  store(snapshot: Snapshot<S>): void {
-    this.entry = snapshot;
+  /**
+   * A retained surface to draw the next snapshot (at `index`) into: that of
+   * the entry the next `store` replaces, or undefined when a new surface is
+   * needed.
+   */
+  reusable(w: number, h: number, keys?: readonly string[], index?: number): S | undefined {
+    const same =
+      index === undefined
+        ? undefined
+        : this.entries.find((entry) => entry.w === w && entry.h === h && entry.index === index);
+    const victim = same ?? this.victim(w, h, keys, index);
+    return victim && victim.w === w && victim.h === h ? victim.surface : undefined;
+  }
+
+  /**
+   * Keep a snapshot. It replaces the entry whose surface it reuses, else an
+   * entry at the same index, else the `reusable` victim when full.
+   */
+  store(snapshot: Snapshot<S>, keys?: readonly string[]): void {
+    let index = this.entries.findIndex((entry) => entry.surface === snapshot.surface);
+    if (index < 0)
+      index = this.entries.findIndex(
+        (entry) => entry.w === snapshot.w && entry.h === snapshot.h && entry.index === snapshot.index,
+      );
+    if (index < 0) {
+      const victim = this.victim(snapshot.w, snapshot.h, keys, snapshot.index);
+      index = victim ? this.entries.indexOf(victim) : -1;
+    }
+    const entry: Entry<S> = { ...snapshot, used: ++this.tick };
+    if (index >= 0) this.entries[index] = entry;
+    else this.entries.push(entry);
+    // Entries left from another frame size, or a smaller budget at this one.
+    while (this.entries.length > this.capacity(snapshot.w, snapshot.h)) {
+      const victim = this.victim(snapshot.w, snapshot.h, keys, snapshot.index);
+      if (!victim || victim === entry) break;
+      this.entries.splice(this.entries.indexOf(victim), 1);
+    }
   }
 
   clear(): void {
-    this.entry = undefined;
+    this.entries = [];
     this.final = undefined;
+    this.previous = undefined;
   }
 
+  /** The highest retained snapshot (diagnostics and tests). */
   get retained(): { index: number; w: number; h: number } | undefined {
-    return this.entry ? { index: this.entry.index, w: this.entry.w, h: this.entry.h } : undefined;
+    let top: Entry<S> | undefined;
+    for (const entry of this.entries) if (!top || entry.index > top.index) top = entry;
+    return top ? { index: top.index, w: top.w, h: top.h } : undefined;
+  }
+
+  /** Indexes of every retained snapshot, ascending (diagnostics and tests). */
+  get snapshotIndexes(): number[] {
+    return this.entries.map((entry) => entry.index).sort((a, b) => a - b);
   }
 }
 
-/** Per-render composite cache outcome, published as a diagnostics mark. */
-export type CompositeReuse = { final: boolean; clippedHits?: number };
+/**
+ * Per-render composite cache outcome, published as a diagnostics mark:
+ * whether the finished composite was reused, how many clipped or masked
+ * frame-space results came from their cache, and how many layers (from the
+ * bottom) came from a prefix snapshot.
+ */
+export type CompositeReuse = { final: boolean; clippedHits?: number; reusedLayers?: number };
+
+const optionalCount = (value: unknown) =>
+  value === undefined || (Number.isSafeInteger(value) && (value as number) >= 0);
 
 export function validCompositeReuse(value: unknown): value is CompositeReuse {
   return (
@@ -372,9 +609,8 @@ export function validCompositeReuse(value: unknown): value is CompositeReuse {
     typeof value === 'object' &&
     !Array.isArray(value) &&
     typeof (value as Record<string, unknown>).final === 'boolean' &&
-    ((value as Record<string, unknown>).clippedHits === undefined ||
-      (Number.isSafeInteger((value as Record<string, unknown>).clippedHits) &&
-        ((value as Record<string, unknown>).clippedHits as number) >= 0))
+    optionalCount((value as Record<string, unknown>).clippedHits) &&
+    optionalCount((value as Record<string, unknown>).reusedLayers)
   );
 }
 
@@ -385,7 +621,9 @@ export function validCompositeReuse(value: unknown): value is CompositeReuse {
 export function markCompositeReuse(reuse: CompositeReuse): void {
   try {
     if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
-      performance.mark('pixelforge.composite-cache', { detail: { final: reuse.final, clippedHits: reuse.clippedHits ?? 0 } });
+      performance.mark('pixelforge.composite-cache', {
+        detail: { final: reuse.final, clippedHits: reuse.clippedHits ?? 0, reusedLayers: reuse.reusedLayers ?? 0 },
+      });
   } catch {
     // Diagnostics must never affect rendering.
   }

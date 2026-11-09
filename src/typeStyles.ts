@@ -1,7 +1,8 @@
-import { FONTS, TEXT_ALIGNS, TEXT_ORIENTATIONS, type Layer, type TextAlign, type TextOrientation } from './document.ts';
+import { isSelectableFontFamily } from './fontLibrary.ts';
+import { TEXT_ALIGNS, TEXT_ORIENTATIONS, type Layer, type TextAlign, type TextOrientation } from './document.ts';
 
 export type TypeStyle = {
-  fontFamily: (typeof FONTS)[number];
+  fontFamily: string;
   fontSize: number;
   color: string;
   bold: boolean;
@@ -33,7 +34,7 @@ export function validTypeStyle(value: unknown): value is TypeStyle {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const style = value as Partial<TypeStyle>;
   return (
-    FONTS.includes(style.fontFamily as (typeof FONTS)[number]) &&
+    isSelectableFontFamily(style.fontFamily) &&
     finite(style.fontSize) && style.fontSize >= 1 && style.fontSize <= 1000 &&
     typeof style.color === 'string' && /^#[a-f\d]{6}$/i.test(style.color) &&
     typeof style.bold === 'boolean' && finite(style.boxWidth) && style.boxWidth >= 1 && style.boxWidth <= 100000 &&

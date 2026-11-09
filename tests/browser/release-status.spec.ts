@@ -4,11 +4,23 @@ import { test, expect, type Page } from '@playwright/test';
 test.use({ serviceWorkers: 'block' });
 
 const application = 'pixelforge-photo-editor';
-const commit = 'a'.repeat(40);
+// Mocked metadata names the commit of the build under test, so it describes
+// this tab's own build (a different commit would be a newer deploy, which
+// release-version.spec.ts and the update-notice test cover).
+let commit = '';
 
 async function waitForEditor(page: Page) {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+}
+
+/** Version baked into the build under test (it writes the same one to /release.json). */
+async function bakedVersion(page: Page): Promise<string> {
+  const response = await page.request.get('/release.json');
+  expect(response.ok()).toBe(true);
+  const { version } = await response.json();
+  expect(typeof version).toBe('string');
+  return version;
 }
 
 async function expectVisibleState(page: Page, state: string) {
@@ -22,6 +34,9 @@ async function expectVisibleState(page: Page, state: string) {
 }
 
 test.beforeEach(async ({ page }) => {
+  const response = await page.request.get('/release.json');
+  commit = (await response.json()).commit;
+  expect(commit).toMatch(/^[a-f0-9]{40}$/);
   await page.route(
     'https://marketplace.cheaply.fr/marketplace/api/photoeditor**',
     (route) => route.fulfill({ json: { authenticated: false } }),
@@ -49,7 +64,7 @@ test('shows degraded health when release and readiness commits disagree', async 
     route.fulfill({ json: { application, version: '9.4.2', commit } }),
   );
   await page.route('**/api/readyz.json**', (route) =>
-    route.fulfill({ json: { ready: true, application, version: '9.4.2', commit: 'b'.repeat(40) } }),
+    route.fulfill({ json: { ready: true, application, version: '9.4.2', commit: commit === 'b'.repeat(40) ? 'c'.repeat(40) : 'b'.repeat(40) } }),
   );
   await waitForEditor(page);
   await expect(page.getByTestId('release-status')).toHaveAttribute(
@@ -59,16 +74,18 @@ test('shows degraded health when release and readiness commits disagree', async 
 });
 
 test('falls back to baked version and local editing when metadata is unavailable', async ({ page }) => {
+  const version = await bakedVersion(page);
   await page.route('**/release.json**', (route) => route.abort());
   await page.route('**/api/readyz.json**', (route) => route.abort());
   await waitForEditor(page);
   await expect(page.getByTestId('release-status')).toHaveAttribute(
-    'aria-label', 'v0.1.0. Offline · local editing',
+    'aria-label', `v${version}. Offline · local editing`,
   );
   await expectVisibleState(page, 'Offline · local editing');
 });
 
 test('polling recovers offline health when the server becomes available', async ({ page }) => {
+  const version = await bakedVersion(page);
   await page.clock.install();
   let online = false;
   let probes = 0;
@@ -83,7 +100,7 @@ test('polling recovers offline health when the server becomes available', async 
     : route.abort());
   await waitForEditor(page);
   await expect(page.getByTestId('release-status')).toHaveAttribute(
-    'aria-label', 'v0.1.0. Offline · local editing',
+    'aria-label', `v${version}. Offline · local editing`,
   );
   online = true;
   await page.clock.fastForward(30_000);
