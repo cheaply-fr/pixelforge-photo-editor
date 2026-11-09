@@ -74,7 +74,7 @@ test('compact category slots show one family representative and active variant',
   const retouch = TOOL_CATEGORIES.find((category) => category.id === 'retouch');
   assert.deepEqual(compactCategoryTools(retouch), ['clone', 'heal', 'smudge', 'dodge', 'history-brush']);
   const measure = TOOL_CATEGORIES.find((category) => category.id === 'measure');
-  assert.deepEqual(compactCategoryTools(measure), ['eyedropper', 'color-sampler', 'ruler', 'note', 'count']);
+  assert.deepEqual(compactCategoryTools(measure), ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count']);
   const selection = TOOL_CATEGORIES.find((category) => category.id === 'selection');
   assert.deepEqual(compactCategoryTools(selection), ['selection-brush', 'quick-selection']);
   const draw = TOOL_CATEGORIES.find((category) => category.id === 'draw');

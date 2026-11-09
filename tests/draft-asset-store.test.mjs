@@ -709,3 +709,34 @@ test('a tiled write-ahead snapshot stores tile keys only and recovers from the s
     delete globalThis.sessionStorage;
   }
 });
+
+test('audio annotation clips are stored once as content-addressed records and survive reload', async () => {
+  const bytes = new Uint8Array(3000).map((_, index) => (index * 7) & 255);
+  const url = `data:audio/wav;base64,${btoa(String.fromCharCode(...bytes))}`;
+  const clip = { url, mime: 'audio/wav', bytes: bytes.byteLength, durationMs: 1500 };
+  const marker = (id) => ({ id, kind: 'audio', x: 0, y: 0, clip: 'a-voice', durationMs: 1500, label: 'Voice memo' });
+  const base = draftWithSteps(2);
+  const input = {
+    ...base,
+    audio: { 'a-voice': clip },
+    history: [
+      { ...base.history[0], measurements: [marker('m-1')] },
+      { ...base.history[1], measurements: [marker('m-1'), marker('m-2')] },
+    ],
+  };
+  await saveDraft(draftA, input, 0);
+  const pointer = db.stores.drafts.get(draftA);
+  assert.ok(!JSON.stringify(pointer).includes('data:audio'), 'the manifest holds only the clip hash');
+  const hash = await hashDraftAsset(url);
+  assert.deepEqual(pointer.audioRefs, { 'a-voice': { hash, mime: 'audio/wav', bytes: 3000, durationMs: 1500 } });
+  assert.ok(db.stores.draftBlobs.has(draftAssetKey(draftA, hash)));
+  assert.equal(db.assetKeys(draftA).length, 3, 'two images + one shared clip');
+  setDraftDatabaseForTesting(db);
+  const reloaded = await readDraft(draftA);
+  assert.deepEqual(reloaded.audio, { 'a-voice': clip });
+  assert.equal(reloaded.history[1].measurements.length, 2);
+  // Deleting the markers lets the next save collect the clip record.
+  await saveDraft(draftA, { ...input, history: input.history.map((frame) => ({ ...frame, measurements: [] })) }, 1);
+  assert.ok(!db.stores.draftBlobs.has(draftAssetKey(draftA, hash)));
+  assert.equal((await readDraft(draftA)).audio, undefined);
+});

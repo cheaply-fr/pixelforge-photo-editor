@@ -28,6 +28,7 @@ import {
   type Adjustments,
 } from './document.ts';
 import { validPhotoAdjustments } from './photoAdjustments.ts';
+import { normalizeAudioClips, stripAudioAnnotations, type AudioClip, type AudioClips } from './audioAnnotations.ts';
 import { effectiveImageSize } from './imageSize.ts';
 import {
   effectiveBrushPressureSettings,
@@ -116,6 +117,7 @@ export type Tool =
   | 'color-sampler'
   | 'ruler'
   | 'note'
+  | 'audio-note'
   | 'count'
   | 'fill'
   | 'gradient'
@@ -329,6 +331,12 @@ export type Draft = {
   settings: Settings;
   /** Optional editable metadata retained in local/project JSON only. */
   metadata?: DocumentMetadata;
+  /**
+   * Audio Annotation clips (clip id → data URL), shared by every history
+   * frame that references them. Local drafts and portable projects only;
+   * cloud payloads strip them (docs/audio-annotation-contract.md).
+   */
+  audio?: AudioClips;
   migrated?: true;
 };
 export const CURRENT_DRAFT_VERSION = 2 as const;
@@ -336,7 +344,10 @@ export const CURRENT_DRAFT_VERSION = 2 as const;
 /** Remove local-only File Info before a document is sent to a cloud API. */
 export function stripPrivateMetadata(value: Draft): Draft {
   const { metadata: _metadata, ...cloudValue } = value;
-  return cloudValue;
+  // Voice recordings are personal data and stay on this device as well.
+  return value.audio !== undefined || value.history.some((frame) => frame.measurements?.some((item) => item.kind === 'audio'))
+    ? stripAudioAnnotations(cloudValue)
+    : cloudValue;
 }
 
 /**
@@ -395,6 +406,7 @@ function validSettings(settings: unknown): settings is Settings {
       'color-sampler',
       'ruler',
       'note',
+      'audio-note',
       'count',
       'fill',
       'gradient',
@@ -737,19 +749,24 @@ export function validateDraft(
     }),
   }));
   history.forEach((frame) => validateFrame(frame, value.assets));
+  // Audio clips are optional: invalid, unreferenced or over-limit clips are
+  // dropped together with the markers that pointed at them.
+  const { audio, history: annotatedHistory } = normalizeAudioClips(value.audio, history);
   if (assetBytes(value.assets) > PROJECT_ASSET_BYTES_CEILING)
     throw new Error(
       `Project assets exceed ${formatMebibytes(PROJECT_ASSET_BYTES_CEILING)} MB`,
     );
+  const { audio: _untrustedAudio, ...rest } = value;
   return {
-    ...value,
+    ...rest,
     version: CURRENT_DRAFT_VERSION,
-    history,
+    history: annotatedHistory,
+    ...(Object.keys(audio).length ? { audio } : {}),
     settings: settings as Settings,
     ...(metadata !== undefined
       ? { metadata }
       : {}),
-    assets: referencedAssets(history, value.assets),
+    assets: referencedAssets(annotatedHistory, value.assets),
   };
 }
 
@@ -827,6 +844,23 @@ async function hashDraftAssets(
   );
   lastSaveStats.hashedAssets = entries.filter(([, , hashed]) => hashed).length;
   return { hashes: new Map(entries.map(([id, hash]) => [id, hash])), tiles };
+}
+
+const audioClipHashes = new WeakMap<AudioClip, string>();
+/** Clip id → SHA-256 of its data URL, hashed once per immutable clip object. */
+async function hashDraftAudio(audio: AudioClips | undefined): Promise<Map<string, string>> {
+  return new Map(
+    await Promise.all(
+      Object.entries(audio || {}).map(async ([id, clip]) => {
+        let hash = audioClipHashes.get(clip);
+        if (!hash) {
+          hash = await hashDraftAsset(clip.url);
+          audioClipHashes.set(clip, hash);
+        }
+        return [id, hash] as const;
+      }),
+    ),
+  );
 }
 
 /** Diagnostics for the most recent successful local save (tests and profiling). */
@@ -1119,6 +1153,7 @@ export function estimatedPendingDraftBytes(value: Draft): number {
   let total = 0;
   for (const asset of Object.values(used))
     total += isPngAsset(asset) ? asset.url.length : 0;
+  for (const clip of Object.values(value.audio || {})) total += clip.url.length;
   return total;
 }
 
@@ -1481,17 +1516,21 @@ export async function saveDraft(
     const db = await openDatabase();
     const { hashes, tiles } = await hashDraftAssets(safeValue.assets);
     const hashedAssets = lastSaveStats.hashedAssets;
+    const audioHashes = await hashDraftAudio(safeValue.audio);
     const manifest = createDraftManifest(
       safeValue,
       revision,
       hashes,
       undefined,
       new Map([...tiles].map(([key, tile]) => [key, tile.hash])),
+      audioHashes,
     );
     const needed = new Map<string, string | Blob>();
     for (const [assetId, asset] of Object.entries(safeValue.assets))
       if (isPngAsset(asset)) needed.set(hashes.get(assetId)!, asset.url);
     for (const tile of tiles.values()) needed.set(tile.hash, tile.blob);
+    for (const [clipId, clip] of Object.entries(safeValue.audio || {}))
+      needed.set(audioHashes.get(clipId)!, clip.url);
     const stats = await commitDraftManifest(
       db,
       id,
