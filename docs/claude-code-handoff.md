@@ -183,11 +183,14 @@ Known remaining families and release work:
    format 4 (#213, W3-1 done; local full-layer stroke commit ≈ 0.5 s vs
    2–3.4 s at 2646×4096). At write time `/release.json` reported `c11b8cb`
    (contains #209–#213; release identity only, no per-feature live
-   acceptance); recheck before relying on it. Open follow-ups are the "Fix wave 4" table:
-   symmetry for Stroke Path and for Mixer/History/Clone/Heal, custom brush
-   tips (no Glint tip), brush blend mode, tiled follow-ups (dirty-rect hints,
-   `.pixelforge` v4 tiles, decoded-tile cache, dirty-region previews,
-   off-main-thread encoding). Local e2e isolation (W4-10): Playwright no
+   acceptance); recheck before relying on it. Fix wave 5 (#218–#245, see
+   the rubric's "Fix wave 5 — merged and deployed") shipped most of the
+   "Fix wave 4" table plus the poster-painting fixes: layers inserted above
+   the selection, Type tool overhaul, font library, Tool presets, Smudge
+   options, contextual sidebar with a layer action bar, per-deploy version
+   (`0.1.<run>`). Still open: custom brush tips (no Glint tip),
+   `.pixelforge` v4 tiles, dirty-region previews and off-main-thread tile
+   encoding. Local e2e isolation (W4-10): Playwright no
    longer reuses a server already on its port unless
    `PLAYWRIGHT_REUSE_SERVER=1`; set `PLAYWRIGHT_PORT` per worktree and
    `PLAYWRIGHT_OUTPUT_DIR` per concurrent run (see `playwright.settings.mjs`).
