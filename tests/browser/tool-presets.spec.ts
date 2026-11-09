@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 // Tool presets (docs/tool-presets-contract.md): device-local, per-tool option
 // snapshots with Reset Tool / Reset All Tools, on desktop and mobile.
@@ -40,7 +41,11 @@ async function savePreset(page: Page, name: string, options: { includeColor?: bo
   await expect(footer(page)).toContainText(`Tool preset “${name}” saved on this device`);
 }
 
-const historyPosition = (page: Page) => page.getByLabel('History position', { exact: true }).textContent();
+const historyPosition = async (page: Page) => {
+  // The History timeline lives behind the sidebar's More panels strip.
+  await openPanel(page, 'History');
+  return page.getByLabel('History position', { exact: true }).textContent();
+};
 
 test('save a Brush preset, change options, apply it back, then Reset Tool', async ({ page }) => {
   await selectTool(page, 'Brush');
