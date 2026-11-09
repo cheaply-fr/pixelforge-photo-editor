@@ -1286,12 +1286,26 @@ export function applyTextAntiAlias(data: Uint8ClampedArray, mode: TextAntiAlias)
 }
 
 const fontLoadTimeoutMs = 1500;
+/** Font requests for a text layer's base style and every character run. */
+export function textLayerRunFontRequests(
+  layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'bold' | 'rich' | 'text'>,
+): { fontFamily: string; bold: boolean; text: string }[] {
+  const requests = [{ fontFamily: layer.fontFamily, bold: layer.bold, text: layer.text }];
+  for (const run of layer.rich?.runs ?? [])
+    if (run.style?.fontFamily)
+      requests.push({
+        fontFamily: run.style.fontFamily,
+        bold: (run.style.fontWeight ?? (layer.bold ? 700 : 400)) >= 600,
+        text: layer.text,
+      });
+  return requests;
+}
 /**
  * Wait (bounded) for every font family a text layer uses so Canvas measures
  * and draws the real face rather than a fallback. Unknown or blocked fonts
  * resolve after the timeout and render with browser fallback.
  */
-export async function ensureTextLayerFonts(
+export async function waitForTextLayerFaces(
   layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'fontSize' | 'bold' | 'rich' | 'text'>,
 ): Promise<boolean> {
   const fonts = (globalThis as { document?: { fonts?: FontFaceSet } }).document?.fonts;
@@ -4029,7 +4043,10 @@ export async function renderFrame(
     if (isRasterContentLayer(layer) && rasterSource)
       context.drawImage(rasterSource, 0, 0);
     if (layer.kind === 'text') {
-      await ensureTextLayerFonts(layer);
+      // Register library font files used by the layer and its character runs
+      // (fontLoader.ts), then wait for every face before measuring.
+      await ensureTextLayerFonts(textLayerRunFontRequests(layer));
+      await waitForTextLayerFaces(layer);
       const binding = normalizeTextPathBinding(layer.textPath),
         pathLayer = binding
           ? frame.layers.find((candidate): candidate is Extract<Layer, { kind: 'path' }> => candidate.id === binding.pathLayerId && candidate.kind === 'path')
