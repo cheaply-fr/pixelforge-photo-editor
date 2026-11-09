@@ -11,8 +11,10 @@ import {
 } from './document';
 import { sanitizeClippingRelations } from './layerClipping';
 import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
+import { sharedFontLoader } from './fontLoader';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
+import { presentCanvasImage } from './canvasPresentation';
 import {
   createPreviewScheduler,
   type PreviewRequest,
@@ -153,11 +155,9 @@ export function useDocument(onError: (message: string) => void) {
           if (sequence !== renderSequence.current) return;
           if (overrides) markGesturePreview(renderPath, firstCompleted, value.layers.length);
           const target = canvas.current;
-          if (target) {
-            target.width = value.w;
-            target.height = value.h;
-            target.getContext('2d')!.drawImage(image, 0, 0);
-          }
+          // Present the finished image in one synchronous step, resizing the
+          // backing store only when the document size changed.
+          if (target) presentCanvasImage(target, image, value.w, value.h);
         } finally {
           closeImageSource(image);
         }
@@ -180,6 +180,17 @@ export function useDocument(onError: (message: string) => void) {
   useEffect(() => {
     renderNowRef.current = renderNow;
   }, [renderNow]);
+  // A library font that timed out or failed rendered with the fallback;
+  // redraw once it arrives so the canvas shows the chosen font.
+  useEffect(() => {
+    const fellBack = new Set<string>();
+    return sharedFontLoader().subscribe((family, state) => {
+      if (state === 'failed') fellBack.add(family);
+      if (state !== 'loaded' || !fellBack.delete(family)) return;
+      const value = history.current[index.current];
+      if (value?.layers.some((layer) => layer.kind === 'text' && layer.fontFamily === family)) void renderNowRef.current(value);
+    });
+  }, []);
   /**
    * Render immediately. Any explicit render (commit, undo, cancel, document
    * install) supersedes a scheduled live preview, so a gesture preview can
@@ -351,10 +362,8 @@ export function useDocument(onError: (message: string) => void) {
         assets.current = draft.assets;
         history.current = draft.history;
         index.current = draft.index;
-        const target = canvas.current!;
-        target.width = draft.history[draft.index].w;
-        target.height = draft.history[draft.index].h;
-        target.getContext('2d')!.drawImage(image, 0, 0);
+        const installed = draft.history[draft.index];
+        presentCanvasImage(canvas.current!, image, installed.w, installed.h);
       } finally {
         closeImageSource(image);
       }

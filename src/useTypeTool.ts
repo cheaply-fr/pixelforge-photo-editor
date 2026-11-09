@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   commonLayer,
-  ensureTextLayerFonts,
+  loadTextLayerFonts,
   measureTextLayerLayout,
   prepareTextContext,
   type Frame,
@@ -150,7 +150,7 @@ export function useTypeTool(deps: TypeToolDeps) {
     const layer = sessionRef.current?.layer;
     if (!fontKey || !layer) return;
     let live = true;
-    void ensureTextLayerFonts(layer).then((loaded) => {
+    void loadTextLayerFonts(layer).then((loaded) => {
       if (live && loaded) setFontTick((value) => value + 1);
     });
     return () => { live = false; };

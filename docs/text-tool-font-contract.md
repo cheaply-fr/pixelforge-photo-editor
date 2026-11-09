@@ -23,3 +23,12 @@ Pure persistence/validation coverage is in
 `tests/persistence-contract.test.mjs`. Desktop and mobile acceptance covers
 the Text tool selection, new-layer font assignment and reload persistence in
 `tests/browser/type-style-presets.spec.ts`.
+
+## Font library update
+
+The Text tool, Layers panel and Update All Text Layers family controls now
+list the system families plus the self-hosted library (grouped by category,
+with a searchable "Browse fonts" picker). Draft settings, type-style presets
+and batch updates accept system or library families; text layers themselves
+accept any bounded family name for portability. See
+[`font-library-contract.md`](./font-library-contract.md).

@@ -103,6 +103,7 @@ import {
   sharedClippedLayerCache,
   surfaceBytes,
   type ByteLruCache,
+  type ClippedLayerResult,
 } from './layerFilterCache.ts';
 import {
   transformArtboard,
@@ -165,7 +166,7 @@ import { validSelectedLayerIds } from './layerSelection.ts';
 import { strokeWindow, strokeWindowReach } from './strokeWindow.ts';
 import {
   COMPOSITE_CACHE_MIN_LAYERS,
-  compositeCheckpoint,
+  compositeCheckpointTargets,
   compositeEquivalenceKey,
   clippedLayerCacheKey,
   alphaBounds,
@@ -213,21 +214,34 @@ import {
 } from './richText.ts';
 import {
   TILED_ASSET_MIN_PIXELS,
+  clearDecodedTileCache,
   dataUrlBytes,
+  decodedTileCacheDelta,
   drawTiledAsset,
   isTiledAsset,
+  markDecodedTileCacheStats,
+  seedDecodedTiles,
+  sharedDecodedTileCache,
   tileCanvas,
   tileRect,
   tiledAssetFingerprint,
   validTiledAsset,
   verifyTileDecodes,
   type PngAsset,
+  type TileCommitHint,
+  type TileEncodeStats,
   type TiledAsset,
 } from './tiledAssets.ts';
 
+import { SYSTEM_FONTS, isFontFamilyName } from './fontLibrary.ts';
+import { ensureTextLayerFonts, frameFontRequests } from './fontLoader.ts';
+
 /** Version 2 stores immutable raster assets once; history contains editable layer metadata. */
 export const BLENDS = GROUP_BLEND_MODES;
-export const FONTS = ['Arial', 'Georgia', 'Courier New', 'Verdana'] as const;
+/** Built-in system families; the self-hosted library is in fontLibrary.ts. */
+export const FONTS = SYSTEM_FONTS;
+/** Any portable family name (system, library or unknown-but-preserved). */
+export type FontFamilyName = string;
 export const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
 export type TextAlign = (typeof TEXT_ALIGNS)[number];
 /** Canvas text flow modes. Older drafts omit orientation and remain horizontal. */
@@ -358,7 +372,8 @@ export type Layer = Common &
         text: string;
         color: string;
         fontSize: number;
-        fontFamily: (typeof FONTS)[number];
+        /** Family name; unknown families stay editable and render with a fallback. */
+        fontFamily: FontFamilyName;
         bold: boolean;
         /** Width of the editable text box used for alignment. */
         boxWidth: number;
@@ -1272,11 +1287,38 @@ export function applyTextAntiAlias(data: Uint8ClampedArray, mode: TextAntiAlias)
 
 const fontLoadTimeoutMs = 1500;
 /**
+ * Load every font a text layer uses: register library font files for its
+ * base style and character runs (fontLoader.ts), then wait (bounded) until
+ * the browser has each face. Resolves false when a face is still missing.
+ */
+export async function loadTextLayerFonts(
+  layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'fontSize' | 'bold' | 'rich' | 'text'>,
+): Promise<boolean> {
+  const registered = await ensureTextLayerFonts(textLayerRunFontRequests(layer));
+  const faces = await waitForTextLayerFaces(layer);
+  return registered && faces;
+}
+
+/** Font requests for a text layer's base style and every character run. */
+export function textLayerRunFontRequests(
+  layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'bold' | 'rich' | 'text'>,
+): { fontFamily: string; bold: boolean; text: string }[] {
+  const requests = [{ fontFamily: layer.fontFamily, bold: layer.bold, text: layer.text }];
+  for (const run of layer.rich?.runs ?? [])
+    if (run.style?.fontFamily)
+      requests.push({
+        fontFamily: run.style.fontFamily,
+        bold: (run.style.fontWeight ?? (layer.bold ? 700 : 400)) >= 600,
+        text: layer.text,
+      });
+  return requests;
+}
+/**
  * Wait (bounded) for every font family a text layer uses so Canvas measures
  * and draws the real face rather than a fallback. Unknown or blocked fonts
  * resolve after the timeout and render with browser fallback.
  */
-export async function ensureTextLayerFonts(
+export async function waitForTextLayerFaces(
   layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'fontSize' | 'bold' | 'rich' | 'text'>,
 ): Promise<boolean> {
   const fonts = (globalThis as { document?: { fonts?: FontFaceSet } }).document?.fonts;
@@ -1861,7 +1903,7 @@ export function validateFrame(
         (layer.fit !== undefined && !TEXT_FIT.includes(layer.fit as TextFit)) ||
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         !number(layer.fontSize, 1, 1000) ||
-        !FONTS.includes(layer.fontFamily as (typeof FONTS)[number]) ||
+        !isFontFamilyName(layer.fontFamily) ||
         typeof layer.bold !== 'boolean' ||
         !number(layer.boxWidth ?? 640, 1, 16000) ||
         !TEXT_ALIGNS.includes((layer.textAlign ?? 'left') as TextAlign) ||
@@ -2106,6 +2148,23 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
   }
   return used;
 }
+let lastTileCommit: TileEncodeStats | undefined;
+/**
+ * Counters of the latest tiled commit, also published as the best-effort
+ * performance mark `pixelforge.tile-commit` (detail: `TileEncodeStats`).
+ */
+export function lastTileCommitStats(): TileEncodeStats | undefined {
+  return lastTileCommit && { ...lastTileCommit };
+}
+function markTileCommit(stats: TileEncodeStats): void {
+  lastTileCommit = stats;
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
+      performance.mark('pixelforge.tile-commit', { detail: { ...stats } });
+  } catch {
+    // Diagnostics must never affect editing.
+  }
+}
 /**
  * Store a canvas as a new immutable asset and return its id (or the id of an
  * existing asset with identical content). Canvases of at least
@@ -2113,14 +2172,26 @@ export function referencedAssets(history: Frame[], assets: Assets): Assets {
  * pixels some live asset already holds are shared, so an edit encodes only
  * the tiles it changed. Smaller canvases, and callers that need a data URL
  * (`tiled: false`, e.g. the reference overlay `<img>`), get one PNG data URL.
+ *
+ * `hint` (paint gestures): the canvas equals `hint.base` outside
+ * `hint.dirty`, so only the tiles the rectangle touches are read back and
+ * hashed. A hint whose base is not a tiled asset of the same size is ignored
+ * (full scan); see `tileAssetFromBands`.
  */
 export function addAsset(
   assets: Assets,
   canvas: HTMLCanvasElement,
-  options: { tiled?: boolean } = {},
+  options: { tiled?: boolean; hint?: TileCommitHint } = {},
 ): string {
   if (options.tiled !== false && canvas.width * canvas.height >= TILED_ASSET_MIN_PIXELS) {
-    const { asset } = tileCanvas(canvas);
+    const { asset, stats } = tileCanvas(canvas, undefined, options.hint);
+    // Test/diagnostic hook: also run the full scan and record whether the
+    // hinted result has exactly the same tiles (by key and by object).
+    if (stats.hinted && (globalThis as { __PIXELFORGE_VERIFY_TILE_HINTS__?: boolean }).__PIXELFORGE_VERIFY_TILE_HINTS__ === true) {
+      const reference = tileCanvas(canvas).asset;
+      stats.fullScanMatch = reference.tiles.every((tile, index) => tile === asset.tiles[index]);
+    }
+    markTileCommit(stats);
     const fingerprint = tiledAssetFingerprint(asset);
     const existing = Object.keys(assets).find((id) => {
       const candidate = assets[id];
@@ -2210,6 +2281,9 @@ export function clearDecodedAssetCache(): void {
   for (const entry of decoded.values()) retireDecoded(entry);
   decoded.clear();
   decodedPixels = 0;
+  // Decoded tiles are drawn synchronously when read, so closing them now
+  // cannot affect a render in flight (it decodes the tile again instead).
+  clearDecodedTileCache();
 }
 /** Close evicted ImageBitmaps after the render that might have used them ends. */
 export function releaseRetiredDecodedAssets(): void {
@@ -2366,7 +2440,20 @@ export function primeDecodedAsset(
     Promise.resolve(snapshot as unknown as HTMLImageElement),
     asset.w * asset.h,
   );
+  // The snapshot is private and never changes: seed its tiles after the
+  // commit render, so undo/redo to versions sharing them skips their decode.
+  if (isTiledAsset(asset)) scheduleTileSeed(asset, snapshot);
   return true;
+}
+/** Seed decoded tiles from a primed source once the current task is done. */
+function scheduleTileSeed(asset: TiledAsset, source: ImageBitmapSource): void {
+  if (typeof createImageBitmap !== 'function') return;
+  const run = () => void seedDecodedTiles(asset, source).catch(() => undefined);
+  const scope = globalThis as {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  };
+  if (typeof scope.requestIdleCallback === 'function') scope.requestIdleCallback(run, { timeout: 2000 });
+  else setTimeout(run, 0);
 }
 /**
  * Worker-side seeding: accept already decoded pixels for an asset whose
@@ -2392,6 +2479,7 @@ export function primeDecodedAssetPixels(
     createImageBitmap(image) as unknown as Promise<HTMLImageElement>,
     asset.w * asset.h,
   );
+  if (isTiledAsset(asset)) scheduleTileSeed(asset, image);
   return true;
 }
 /**
@@ -2430,12 +2518,15 @@ async function decodeNewAsset(asset: Asset): Promise<HTMLImageElement> {
  */
 async function decodeTiled(asset: TiledAsset): Promise<HTMLImageElement> {
   if (typeof document === 'undefined' && typeof OffscreenCanvas === 'function') {
+    // Worker: counters reach the page with the render result.
     const canvas = new OffscreenCanvas(asset.w, asset.h);
     await drawTiledAsset(asset, canvas.getContext('2d')!);
     return canvas.transferToImageBitmap() as unknown as HTMLImageElement;
   }
   const canvas = surface(asset.w, asset.h);
+  const before = sharedDecodedTileCache().stats();
   await drawTiledAsset(asset, canvas.getContext('2d')!);
+  markDecodedTileCacheStats(decodedTileCacheDelta(before, sharedDecodedTileCache().stats()), 'main');
   Object.defineProperties(canvas, {
     naturalWidth: { value: asset.w, configurable: true },
     naturalHeight: { value: asset.h, configurable: true },
@@ -2794,6 +2885,66 @@ function compositeFrameSurface(
   context.putImageData(backdrop, 0, 0);
 }
 
+/**
+ * Composite a cached frame-space result that was cropped to its visible
+ * pixels (`ClippedLayerResult`): only the cropped rectangle is drawn, or, for
+ * software modes, read and blended. Outside it the result is transparent,
+ * which leaves the backdrop unchanged in every blend mode. Cached and freshly
+ * computed results both go through this path, so they composite identically.
+ */
+function compositePlacedResult(
+  context: CanvasRenderingContext2D,
+  result: ClippedLayerResult,
+  width: number,
+  height: number,
+  opacity: number,
+  blend: Layer['blend'],
+) {
+  const image = result.surface as HTMLCanvasElement | undefined;
+  if (!image || opacity <= 0) return;
+  if (isNativeCanvasBlendMode(blend)) {
+    context.save();
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.globalAlpha = opacity;
+    context.globalCompositeOperation = blend;
+    context.filter = 'none';
+    context.drawImage(image, result.x, result.y);
+    context.restore();
+    return;
+  }
+  const x = Math.max(0, result.x),
+    y = Math.max(0, result.y),
+    w = Math.min(width, result.x + image.width) - x,
+    h = Math.min(height, result.y + image.height) - y;
+  if (w <= 0 || h <= 0) return;
+  const source = surface(w, h),
+    sourceContext = source.getContext('2d')!;
+  sourceContext.drawImage(image, result.x - x, result.y - y);
+  const sourcePixels = sourceContext.getImageData(0, 0, w, h).data,
+    backdrop = context.getImageData(x, y, w, h);
+  blendPixelsInPlace(backdrop.data, sourcePixels, opacity, blend);
+  context.putImageData(backdrop, x, y);
+}
+
+/**
+ * Crop a frame-space surface to its visible pixels for the frame-result
+ * cache. `pixels` are the surface's RGBA bytes when the caller already read
+ * them.
+ */
+function cropFrameResult(
+  source: HTMLCanvasElement,
+  width: number,
+  height: number,
+  pixels?: Uint8ClampedArray,
+): { result: ClippedLayerResult; bytes: number } {
+  const data = pixels ?? source.getContext('2d')!.getImageData(0, 0, width, height).data;
+  const bounds = alphaBounds(data, width, height);
+  if (!bounds) return { result: { surface: undefined, x: 0, y: 0 }, bytes: 64 };
+  const cropped = surface(bounds.w, bounds.h);
+  cropped.getContext('2d')!.drawImage(source, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+  return { result: { surface: cropped, x: bounds.x, y: bounds.y }, bytes: surfaceBytes(bounds.w, bounds.h) };
+}
+
 /** True when a layer's blend cannot be expressed by Canvas compositing. */
 const softwareBlend = (layer: Pick<Layer, 'blend'>) =>
   !isNativeCanvasBlendMode(layer.blend);
@@ -2931,6 +3082,12 @@ export async function renderFrame(
   const nestedDepth = options?.nestedDepth ?? 0;
   if (nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
     throw new Error('Nested Smart Object depth exceeds the local safety limit');
+  // Library fonts load on demand: wait for every face a text layer needs
+  // before Canvas measures or draws it. A family that failed or timed out
+  // renders with the fallback, and that composite is not cached so the next
+  // render after the font arrives redraws it (docs/font-library-contract.md).
+  if (!(await ensureTextLayerFonts(frameFontRequests(frame))) && options?.compositeCache)
+    options = { ...options, compositeCache: undefined };
   // The prefix composite cache applies to the outermost render only; nested
   // folder, clipping and decorated-layer renders never see it.
   const compositeCache =
@@ -2954,8 +3111,9 @@ export async function renderFrame(
   const reportProgress = (layerIndex: number) =>
     options?.onProgress?.(layerIndex + 1, frame.layers.length);
   let startIndex = 0,
-    checkpoint = -1,
+    checkpoints: ReadonlySet<number> = new Set(),
     keys: string[] | undefined;
+  if (compositeCache) compositeCache.lastReusedLayers = 0;
   // Without live overrides, the finished composite of the previous render is
   // reused when nothing that affects pixels changed (adding or deleting an
   // empty layer, renaming, reselecting). Otherwise it is refreshed below.
@@ -2971,13 +3129,25 @@ export async function renderFrame(
   }
   if (compositeCache) {
     keys = compositeLayerKeys(frame, assets, overrides);
-    checkpoint = compositeCheckpoint(frame, overrides);
+    const live = !!overrides && Object.keys(overrides).length > 0;
+    // Stroke previews never move the "changed" checkpoint: their live keys
+    // differ on every render, and the committed render compares against the
+    // last committed one.
+    const changedIndex = live ? undefined : compositeCache.noteKeys(frame.w, frame.h, keys);
+    checkpoints = new Set(
+      compositeCheckpointTargets(frame, {
+        overrides,
+        changedIndex,
+        slots: compositeCache.capacity(frame.w, frame.h),
+      }),
+    );
     const hit = compositeCache.match(frame.w, frame.h, keys);
     if (hit) {
       // Every layer the snapshot holds is unchanged: start above it.
       context.drawImage(hit.surface, 0, 0);
       for (const id of hit.groups) renderedGroups.add(id);
       startIndex = hit.index + 1;
+      compositeCache.lastReusedLayers = startIndex;
       reportProgress(hit.index);
     }
   }
@@ -2985,20 +3155,24 @@ export async function renderFrame(
     if (layerIndex < startIndex) continue;
     if (options?.isCancelled?.())
       throw new DOMException('Document rendering cancelled', 'AbortError');
-    if (compositeCache && keys && layerIndex === checkpoint + 1 && checkpoint >= startIndex) {
-      // Layers 0..checkpoint are complete: keep a copy for the next render.
-      const snapshot = compositeCache.reusable(frame.w, frame.h) ?? surface(frame.w, frame.h),
+    if (compositeCache && keys && layerIndex > startIndex && checkpoints.has(layerIndex - 1)) {
+      // Layers 0..layerIndex-1 are complete: keep a copy for later renders.
+      const checkpoint = layerIndex - 1,
+        snapshot = compositeCache.reusable(frame.w, frame.h, keys, checkpoint) ?? surface(frame.w, frame.h),
         snapshotContext = snapshot.getContext('2d')!;
       snapshotContext.clearRect(0, 0, frame.w, frame.h);
       snapshotContext.drawImage(out, 0, 0);
-      compositeCache.store({
-        w: frame.w,
-        h: frame.h,
-        keys: keys.slice(0, checkpoint + 1),
-        index: checkpoint,
-        surface: snapshot,
-        groups: [...renderedGroups],
-      });
+      compositeCache.store(
+        {
+          w: frame.w,
+          h: frame.h,
+          keys: keys.slice(0, checkpoint + 1),
+          index: checkpoint,
+          surface: snapshot,
+          groups: [...renderedGroups],
+        },
+        keys,
+      );
     }
     if (
       options?.yieldEveryLayers &&
@@ -3059,11 +3233,7 @@ export async function renderFrame(
     const clippedCached = clippedKey ? sharedClippedLayerCache().get(clippedKey) : undefined;
     if (clippedBase && clippedCached) {
       // Same source, base and assets as an earlier render: reuse the result.
-      if (clippedCached.surface) {
-        const placed = surface(frame.w, frame.h);
-        placed.getContext('2d')!.drawImage(clippedCached.surface, clippedCached.x, clippedCached.y);
-        compositeFrameSurface(context, placed, frame.w, frame.h, layer.opacity, layer.blend);
-      }
+      compositePlacedResult(context, clippedCached, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -3122,23 +3292,13 @@ export async function renderFrame(
         clippedPixels = applyClippingAlpha(sourcePixels.data, basePixels.data);
       sourcePixels.data.set(clippedPixels);
       sourceContext.putImageData(sourcePixels, 0, 0);
-      if (clippedKey && !options?.isCancelled?.()) {
-        // Keep the result cropped to its visible pixels for later renders.
-        const bounds = alphaBounds(clippedPixels, frame.w, frame.h);
-        let cropped: HTMLCanvasElement | undefined;
-        if (bounds) {
-          cropped = surface(bounds.w, bounds.h);
-          cropped
-            .getContext('2d')!
-            .drawImage(sourceSurface, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
-        }
-        sharedClippedLayerCache().set(
-          clippedKey,
-          { surface: cropped, x: bounds?.x ?? 0, y: bounds?.y ?? 0 },
-          bounds ? surfaceBytes(bounds.w, bounds.h) : 64,
-        );
-      }
-      compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
+      if (clippedKey) {
+        // Keep the result cropped to its visible pixels for later renders,
+        // and composite that same crop now so cached and fresh renders match.
+        const cropped = cropFrameResult(sourceSurface, frame.w, frame.h, clippedPixels);
+        if (!options?.isCancelled?.()) sharedClippedLayerCache().set(clippedKey, cropped.result, cropped.bytes);
+        compositePlacedResult(context, cropped.result, frame.w, frame.h, layer.opacity, layer.blend);
+      } else compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -3757,10 +3917,13 @@ export async function renderFrame(
     ) {
       // Styles on a masked layer follow layer alpha x mask, so they run on
       // the masked frame-space surface. When the local stage is cached, the
-      // styled result is cached too, keyed by everything this branch reads.
+      // styled result is cached too, keyed by everything this branch reads,
+      // in the frame-result cache cropped to its visible pixels (a full
+      // 2646 x 4096 surface per masked styled layer, or per Outer Glow /
+      // Drop Shadow pass, filled the layer budget with mostly empty pixels).
       const maskedStyleKey =
         stylesInFrame && localFilterCache && filteredKey && assets[layer.mask]
-          ? `${filteredKey}|frame-styles:${stableSerialize({
+          ? `masked:${filteredKey}|frame-styles:${stableSerialize({
               w: frame.w,
               h: frame.h,
               matrix: layer.matrix,
@@ -3770,9 +3933,9 @@ export async function renderFrame(
               styles: layer.styles,
             })}`
           : undefined;
-      const cachedMaskedStyle = maskedStyleKey ? localFilterCache!.get(maskedStyleKey) : undefined;
+      const cachedMaskedStyle = maskedStyleKey ? sharedClippedLayerCache().get(maskedStyleKey) : undefined;
       if (cachedMaskedStyle) {
-        compositeFrameSurface(context, cachedMaskedStyle, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+        compositePlacedResult(context, cachedMaskedStyle, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
         reportProgress(layerIndex);
         continue;
       }
@@ -3825,8 +3988,12 @@ export async function renderFrame(
       const styledMasked = stylesInFrame
         ? applyRasterLayerStyles(masked, frame.w, frame.h, layer.styles)
         : masked;
-      if (maskedStyleKey) localFilterCache!.set(maskedStyleKey, styledMasked, surfaceBytes(frame.w, frame.h));
-      compositeFrameSurface(context, styledMasked, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+      if (maskedStyleKey) {
+        const cropped = cropFrameResult(styledMasked as HTMLCanvasElement, frame.w, frame.h);
+        if (!options?.isCancelled?.()) sharedClippedLayerCache().set(maskedStyleKey, cropped.result, cropped.bytes);
+        compositePlacedResult(context, cropped.result, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+      } else
+        compositeFrameSurface(context, styledMasked, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -3889,7 +4056,9 @@ export async function renderFrame(
     if (isRasterContentLayer(layer) && rasterSource)
       context.drawImage(rasterSource, 0, 0);
     if (layer.kind === 'text') {
-      await ensureTextLayerFonts(layer);
+      // Register library font files used by the layer and its character runs
+      // (fontLoader.ts), then wait for every face before measuring.
+      await loadTextLayerFonts(layer);
       const binding = normalizeTextPathBinding(layer.textPath),
         pathLayer = binding
           ? frame.layers.find((candidate): candidate is Extract<Layer, { kind: 'path' }> => candidate.id === binding.pathLayerId && candidate.kind === 'path')
