@@ -9,7 +9,7 @@ const TOOL_FAMILIES = [
   ['Crop', 'Perspective Crop', 'Slice', 'Slice Select', 'Frame'],
   ['Gradient', 'Fill'],
   ['Brush', 'Pencil', 'Color Replace', 'Mixer Brush'],
-  ['Shape', 'Ellipse', 'Line', 'Polygon'],
+  ['Shape', 'Rounded Rectangle', 'Ellipse', 'Line', 'Polygon', 'Custom Shape'],
   ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Count'],
   ['Eraser', 'Background Eraser', 'Magic Eraser'],
   ['Dodge', 'Burn', 'Sponge'],
