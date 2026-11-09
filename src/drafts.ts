@@ -20,7 +20,6 @@ import {
   effectiveAdjustments,
   effectiveTextLayer,
   neutral,
-  FONTS,
   validId,
   type Assets,
   type Frame,
@@ -97,6 +96,7 @@ import {
 } from './metadata.ts';
 import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
 import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts';
+import { isSelectableFontFamily } from './fontLibrary.ts';
 import { BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from './brushSize.ts';
 import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
 import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
@@ -281,7 +281,7 @@ export type Settings = {
   text: string;
   fontSize: number;
   /** Local/system font used when the Text tool creates a new editable layer. */
-  fontFamily?: (typeof FONTS)[number];
+  fontFamily?: string;
   /** Preview scale used by the Text tool's bounded local font picker. */
   fontPreviewSize?: FontPreviewSize;
   /** Optional local default for new or existing editable text layers. */
@@ -428,7 +428,7 @@ function validSettings(settings: unknown): settings is Settings {
     ].includes(candidate.tool as Tool) ||
     typeof candidate.text !== 'string' ||
     candidate.text.length > 10000 ||
-    (candidate.fontFamily !== undefined && !FONTS.includes(candidate.fontFamily as (typeof FONTS)[number])) ||
+    (candidate.fontFamily !== undefined && !isSelectableFontFamily(candidate.fontFamily)) ||
     (candidate.fontPreviewSize !== undefined && normalizeFontPreviewSize(candidate.fontPreviewSize) !== candidate.fontPreviewSize) ||
     (candidate.exportFormat !== undefined &&
       !EXPORT_FORMATS.includes(candidate.exportFormat)) ||
