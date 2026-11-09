@@ -57,8 +57,8 @@ test('Arrange commands move selected layers as a stable block and persist throug
   await drawShape(page, 0.3, 0.2, 0.08, 0.06);
   await drawShape(page, 0.55, 0.3, 0.08, 0.06);
 
-  const shape1 = page.getByRole('button', { name: 'Select layer Shape 1', exact: true });
-  const shape2 = page.getByRole('button', { name: 'Select layer Shape 2', exact: true });
+  const shape1 = page.getByRole('button', { name: 'Select layer Rectangle 1', exact: true });
+  const shape2 = page.getByRole('button', { name: 'Select layer Rectangle 2', exact: true });
   await shape1.click();
   await shape2.click({ modifiers: ['Shift'] });
 
@@ -71,9 +71,9 @@ test('Arrange commands move selected layers as a stable block and persist throug
   let frame = out.history[out.index];
   expect(frame.layers.map((layer) => layer.name)).toEqual([
     'Background',
-    'Shape 3',
-    'Shape 1',
-    'Shape 2',
+    'Rectangle 3',
+    'Rectangle 1',
+    'Rectangle 2',
   ]);
   expect(frame.selectedLayerIds).toHaveLength(2);
 
@@ -83,9 +83,9 @@ test('Arrange commands move selected layers as a stable block and persist throug
   frame = out.history[out.index];
   expect(frame.layers.map((layer) => layer.name)).toEqual([
     'Background',
-    'Shape 1',
-    'Shape 2',
-    'Shape 3',
+    'Rectangle 1',
+    'Rectangle 2',
+    'Rectangle 3',
   ]);
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -96,9 +96,9 @@ test('Arrange commands move selected layers as a stable block and persist throug
   frame = out.history[out.index];
   expect(frame.layers.map((layer) => layer.name)).toEqual([
     'Background',
-    'Shape 3',
-    'Shape 1',
-    'Shape 2',
+    'Rectangle 3',
+    'Rectangle 1',
+    'Rectangle 2',
   ]);
   expect(frame.selectedLayerIds).toHaveLength(2);
 });
@@ -107,7 +107,7 @@ test('Arrange menu disables boundary and locked moves, while grouped blocks rema
   await drawShape(page, 0.1, 0.1, 0.08, 0.06);
   await drawShape(page, 0.35, 0.2, 0.08, 0.06);
 
-  const top = page.getByRole('button', { name: 'Select layer Shape 2', exact: true });
+  const top = page.getByRole('button', { name: 'Select layer Rectangle 2', exact: true });
   await top.click();
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   let menu = layerMenu(page);
@@ -116,7 +116,7 @@ test('Arrange menu disables boundary and locked moves, while grouped blocks rema
   await expect(menu.getByRole('menuitem', { name: 'Send to Back', exact: true })).toBeEnabled();
   await menu.getByRole('menuitem', { name: 'Send to Back', exact: true }).click();
 
-  const bottom = page.getByRole('button', { name: 'Select layer Shape 2', exact: true });
+  const bottom = page.getByRole('button', { name: 'Select layer Rectangle 2', exact: true });
   await bottom.click();
   await page.getByLabel('Lock layer', { exact: true }).check();
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
@@ -132,14 +132,14 @@ test('Arrange menu disables boundary and locked moves, while grouped blocks rema
   await expect(menu.getByRole('menuitem', { name: 'Send Backward', exact: true })).toBeDisabled();
   await menu.getByRole('menuitem', { name: 'Bring Forward', exact: true }).click();
   const moved = await project(page);
-  expect(moved.history[moved.index].layers.find((layer) => layer.name === 'Shape 2')?.groupId).toBeTruthy();
+  expect(moved.history[moved.index].layers.find((layer) => layer.name === 'Rectangle 2')?.groupId).toBeTruthy();
 });
 
 test('Arrange commands retain platform modifier selection semantics', async ({ page }) => {
   await drawShape(page, 0.1, 0.1, 0.08, 0.06);
   await drawShape(page, 0.35, 0.2, 0.08, 0.06);
-  const shape1 = page.getByRole('button', { name: 'Select layer Shape 1', exact: true });
-  const shape2 = page.getByRole('button', { name: 'Select layer Shape 2', exact: true });
+  const shape1 = page.getByRole('button', { name: 'Select layer Rectangle 1', exact: true });
+  const shape2 = page.getByRole('button', { name: 'Select layer Rectangle 2', exact: true });
   await shape1.click();
   await shape2.click({ modifiers: [additiveModifier] });
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
@@ -150,8 +150,8 @@ test('Arrange commands retain platform modifier selection semantics', async ({ p
   const frame = out.history[out.index];
   expect(frame.selectedLayerIds).toHaveLength(2);
   expect(frame.layers.map((layer) => layer.name)).toEqual([
-    'Shape 1',
-    'Shape 2',
+    'Rectangle 1',
+    'Rectangle 2',
     'Background',
   ]);
 });

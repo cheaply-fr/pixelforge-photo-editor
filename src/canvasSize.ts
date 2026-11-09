@@ -19,6 +19,7 @@ import {
   effectiveImageSize,
 } from './imageSize.ts';
 import { pathBounds } from './paths.ts';
+import { shapeOutlineColor } from './shapeAppearance.ts';
 
 export const CANVAS_ANCHORS = [
   'top-left',
@@ -489,9 +490,9 @@ export function layerLocalBounds(layer: Layer, assets: Assets): PixelBounds {
       height: Math.max(0, bounds.height + stroke),
     };
   }
-  // Filled rectangle/ellipse layers do not call stroke in the renderer.
+  // Filled rectangle/ellipse layers only stroke when they carry a strokeColor.
   const stroke =
-    layer.kind !== 'line' && layer.fill ? 0 : Math.max(1, layer.stroke || 1);
+    layer.kind !== 'line' && !shapeOutlineColor(layer) ? 0 : Math.max(1, layer.stroke || 1);
   return {
     x: -stroke / 2,
     y: -stroke / 2,

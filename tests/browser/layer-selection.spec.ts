@@ -54,9 +54,9 @@ test('multi-select supports shift ranges, modifier toggles, persistence and menu
   await drawShape(page, 0.08, 0.1, 0.08, 0.06);
   await drawShape(page, 0.3, 0.2, 0.08, 0.06);
   await drawShape(page, 0.55, 0.3, 0.08, 0.06);
-  const shape1 = page.getByRole('button', { name: 'Select layer Shape 1', exact: true });
-  const shape2 = page.getByRole('button', { name: 'Select layer Shape 2', exact: true });
-  const shape3 = page.getByRole('button', { name: 'Select layer Shape 3', exact: true });
+  const shape1 = page.getByRole('button', { name: 'Select layer Rectangle 1', exact: true });
+  const shape2 = page.getByRole('button', { name: 'Select layer Rectangle 2', exact: true });
+  const shape3 = page.getByRole('button', { name: 'Select layer Rectangle 3', exact: true });
   await shape1.click();
   await shape3.click({ modifiers: ['Shift'] });
   await expect(shape1).toHaveAttribute('data-selected', 'true');
@@ -89,8 +89,8 @@ test('duplicate, group, isolate and delete operate on the selected layer set wit
 }) => {
   await drawShape(page, 0.1, 0.1, 0.08, 0.06);
   await drawShape(page, 0.35, 0.2, 0.08, 0.06);
-  await page.getByRole('button', { name: 'Select layer Shape 1', exact: true }).click();
-  await page.getByRole('button', { name: 'Select layer Shape 2', exact: true }).click({ modifiers: ['Shift'] });
+  await page.getByRole('button', { name: 'Select layer Rectangle 1', exact: true }).click();
+  await page.getByRole('button', { name: 'Select layer Rectangle 2', exact: true }).click({ modifiers: ['Shift'] });
   await page.getByRole('button', { name: 'Duplicate layer', exact: true }).click();
   let out = await project(page);
   let frame = out.history[out.index];

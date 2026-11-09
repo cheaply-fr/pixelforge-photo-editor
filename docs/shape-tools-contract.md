@@ -30,9 +30,9 @@ Photoshop parity.
   the flattened PSD/PDF export; Copy CSS emits a cubic `clip-path`; Copy SVG
   emits cubic corners. Path booleans (Combine Shapes) use a 12-segment
   flattened polygon per corner (`roundedRectPoints`).
-- The tool draws a **filled** rectangle in the foreground colour (unlike the
-  historical outline default of Rectangle/Ellipse/Polygon). Tool options
-  expose a Corner radius slider (0–500 px, persisted as `shapeCornerRadius`).
+- The tool uses the shared Fill / Stroke options below (default: filled in
+  the foreground colour, no stroke). Tool options also expose a Corner radius
+  slider (0–500 px, persisted as `shapeCornerRadius`).
   Layer properties expose an editable Corner radius field for every
   rectangle layer, including ones drawn with the Rectangle tool.
 - Shift constrains the drag to a square; Alt/Option draws from the centre.
@@ -45,12 +45,14 @@ Photoshop parity.
   Each is authored as an M/L/C/Z command list and normalized so the hull of
   its anchors and handles spans exactly the unit box; scaled shapes therefore
   never draw outside the dragged box.
-- Tool options show the library as a radio group of SVG thumbnails (native
-  radio inputs with accessible names, 36 px targets, 44 px on mobile). When
+- Tool options show the library as a radio group of SVG thumbnails (a
+  `radiogroup` named "Custom shape" of native radio inputs with accessible
+  names and a checked state, 36 px targets, 44 px on mobile). When
   the user has saved Pen path presets, a "Saved path as custom shape" select
   can use a closed saved path instead; it is fitted to the drag box.
-- Dragging creates an ordinary editable **path layer** (fill = foreground
-  colour, no stroke, local nodes, translation matrix) named after the shape.
+- Dragging creates an ordinary editable **path layer** (fill and stroke from
+  the shared options below, local nodes, translation matrix) named after the
+  shape.
   Direct Selection, Copy SVG/CSS, vector masks, booleans and Stroke Path work
   on it like any path layer. Shift keeps the shape's designed proportions;
   Alt/Option draws from the centre.
@@ -71,3 +73,48 @@ Photoshop parity.
   Shift square with clamped oversized radius, Custom Shape path layer bounds
   and fill pixels, undo removes it, Shift aspect and Alt centring, U cycling
   and flyout entries.
+
+## Shared Fill / Stroke options
+
+All six U-family tools share one set of Tool options, persisted in the draft
+as `settings.shapeAppearance` (`src/shapeAppearance.ts`). Missing keys load
+the defaults, so older drafts keep working; malformed values reject the draft
+like other settings.
+
+- **Fill**: Foreground colour (default), Background colour, Custom colour or
+  None. **Stroke**: None (default), Foreground, Background or Custom colour.
+  **Stroke width**: 1–100 px (default 4). The brush Size slider is not shown
+  for shape tools; the old "stroke = Size/3" rule is gone.
+- Default: **filled with the foreground colour, no stroke** for Rectangle,
+  Rounded Rectangle, Ellipse, Polygon and Custom Shape alike. Previously
+  Rectangle, Ellipse and Polygon drew outlines while Rounded Rectangle and
+  Custom Shape filled; all tools now behave the same.
+- Fill None + Stroke draws an outline-only shape; Fill + Stroke draws both.
+  Fill None + Stroke None draws nothing and the status bar says so.
+- Line has no interior: it uses the Stroke colour (the foreground colour when
+  Stroke is None) at the Stroke width.
+- **W×H create**: "New" width × height (1–16,000 px, default 200 × 200) and
+  **Create** add a shape of exactly that size centred on the canvas as one
+  undoable step.
+- Every shape tool previews the real layer (fill, stroke and width) while
+  dragging. Shift constrains proportions and Alt/Option draws from the centre
+  for every tool except Line.
+
+Parametric rectangle, ellipse and polygon layers keep `fill` + `color` +
+`stroke` (width) and gain an optional `strokeColor` (`#rrggbb`). When present,
+an outline is drawn in it on top of any fill; when absent, an unfilled shape is
+outlined in `color` exactly as older drafts were, and a filled shape has no
+outline. `strokeColor` is rejected on line layers. Layer properties expose a
+**Layer stroke** toggle, colour and width for filled shapes. Copy SVG, Copy
+CSS, Combine Shapes and canvas bounds use the same rule (a filled shape
+without `strokeColor` now exports no border/stroke, matching the canvas).
+
+Layers are named after their tool: "Rectangle N", "Rounded Rectangle N",
+"Ellipse N", "Line N", "Polygon N", or the custom shape's name, and the status
+bar reports "<name> added".
+
+Evidence: `tests/audit-vector.test.mjs` (defaults, resolution, validation,
+naming, centring, draft round-trip) and
+`tests/browser/audit-vector-shapes.spec.ts` (desktop and mobile: filled
+defaults and names, fill/stroke rendering and reload persistence, W×H create
+with undo, Layer stroke edit, custom shape radio group).

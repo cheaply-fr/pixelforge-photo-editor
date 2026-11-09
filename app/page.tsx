@@ -509,6 +509,8 @@ import { snapMagneticPoint } from '../src/magneticLasso';
 import { boundSelectionPolygon, ellipsePolygon } from '../src/selectionPolygon';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
+import { DEFAULT_PEN_OPTIONS, PATH_TOOL_HINTS, normalizePenOptions, pathToolOptions, penAutoEditMode, penLayerName, penLayerNotice, penPathStyle, rubberBandNodes, type PathOptionTool, type PenOptions } from '../src/penOptions';
+import { DEFAULT_SHAPE_APPEARANCE, SHAPE_CREATE_MAX, SHAPE_STROKE_WIDTH_MAX, centeredShapeBox, isShapeToolId, lineShapeAppearance, normalizeShapeAppearance, parametricShapeAppearance, parametricShapePathStyle, pathShapeAppearance, shapeLayerName, type ShapeAppearanceSettings, type ShapePaintSource, type ShapeToolId } from '../src/shapeAppearance';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { skySelectionMask, subjectSelectionMask } from '../src/assistedSelection';
@@ -791,7 +793,6 @@ import {
   hitTestWholePath,
   isPathAnchorEdit,
   pathAnchorEditNotice,
-  penAnchorEditMode,
   pullPathNodeHandles,
   translatePath,
 } from '../src/pathEditTools';
@@ -3419,6 +3420,8 @@ export default function Home() {
     [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
     [shapeCornerRadius, setShapeCornerRadius] = useState(16),
     [customShapeId, setCustomShapeId] = useState<string>(DEFAULT_CUSTOM_SHAPE_ID),
+    [shapeAppearance, setShapeAppearance] = useState<ShapeAppearanceSettings>(() => ({ ...DEFAULT_SHAPE_APPEARANCE })),
+    [penOptions, setPenOptions] = useState<PenOptions>(() => ({ ...DEFAULT_PEN_OPTIONS })),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -4587,6 +4590,8 @@ export default function Home() {
     polygonInnerRadius,
     shapeCornerRadius,
     customShapeId,
+    shapeAppearance,
+    penOptions,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -4708,6 +4713,8 @@ export default function Home() {
     setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
     setShapeCornerRadius(Math.max(0, Math.min(CORNER_RADIUS_MAX, Number(s.shapeCornerRadius ?? 16))));
     setCustomShapeId(validCustomShapeChoice(s.customShapeId) ? s.customShapeId : DEFAULT_CUSTOM_SHAPE_ID);
+    setShapeAppearance(normalizeShapeAppearance(s.shapeAppearance));
+    setPenOptions(normalizePenOptions(s.penOptions));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -5024,7 +5031,7 @@ export default function Home() {
     customShapePathPreset()?.label ?? customShapeEntry(customShapeId)?.label ?? 'Custom Shape';
   /** Shift keeps proportions (a square, or the shape's own aspect); Alt drags from the centre. */
   const newShapeDragBox = (
-    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    shapeTool: Exclude<ShapeToolId, 'line'>,
     start: { x: number; y: number },
     end: { x: number; y: number },
     modifiers: { shiftKey: boolean; altKey: boolean },
@@ -5043,36 +5050,107 @@ export default function Home() {
     }
     return shapeDragBox(start, end, { proportional: modifiers.shiftKey, fromCenter: modifiers.altKey, aspect });
   };
-  /** Build the editable layer a Rounded Rectangle or Custom Shape drag creates. */
+  /**
+   * Build the editable layer any U-family shape tool creates. Every tool
+   * uses the shared Fill / Stroke / Stroke width options (default: filled
+   * with the foreground colour, no stroke); `undefined` when both are None.
+   */
   const newShapeLayer = (
-    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    shapeTool: ShapeToolId,
     box: { left: number; top: number; width: number; height: number },
     name: string,
   ): Layer | undefined => {
     const width = Math.max(1, Math.min(16000, Math.round(box.width))),
       height = Math.max(1, Math.min(16000, Math.round(box.height))),
       matrix: Matrix = [1, 0, 0, 1, Math.round(box.left), Math.round(box.top)];
-    if (shapeTool === 'rounded-rectangle')
+    if (shapeTool === 'line') {
+      const line = lineShapeAppearance(shapeAppearance, color, backgroundColor);
+      return { ...commonLayer(name), kind: 'line', width, height, ...line, matrix };
+    }
+    if (shapeTool === 'custom-shape') {
+      const style = pathShapeAppearance(shapeAppearance, color, backgroundColor);
+      if (!style) return undefined;
+      try {
+        const preset = customShapePathPreset();
+        const path = preset
+          ? fitPathToBox(preset.path, width, height, color)
+          : customShapePath(customShapeEntry(customShapeId) ? customShapeId : DEFAULT_CUSTOM_SHAPE_ID, width, height, color);
+        return { ...commonLayer(name), kind: 'path', path: validatePath({ ...path, ...style }), matrix };
+      } catch {
+        return undefined;
+      }
+    }
+    const look = parametricShapeAppearance(shapeAppearance, color, backgroundColor);
+    if (!look) return undefined;
+    if (shapeTool === 'ellipse') return { ...commonLayer(name), kind: 'ellipse', width, height, ...look, matrix };
+    if (shapeTool === 'polygon')
       return {
         ...commonLayer(name),
-        kind: 'rectangle',
+        kind: 'polygon',
         width,
         height,
-        stroke: Math.max(1, size / 3),
-        color,
-        fill: true,
-        cornerRadius: shapeCornerRadius,
+        ...look,
+        sides: polygonSides,
+        variant: polygonVariant,
+        innerRadius: polygonInnerRadius,
         matrix,
       };
-    try {
-      const preset = customShapePathPreset();
-      const path = preset
-        ? fitPathToBox(preset.path, width, height, color)
-        : customShapePath(customShapeEntry(customShapeId) ? customShapeId : DEFAULT_CUSTOM_SHAPE_ID, width, height, color);
-      return { ...commonLayer(name), kind: 'path', path, matrix };
-    } catch {
-      return undefined;
+    return {
+      ...commonLayer(name),
+      kind: 'rectangle',
+      width,
+      height,
+      ...look,
+      ...(shapeTool === 'rounded-rectangle' ? { cornerRadius: shapeCornerRadius } : {}),
+      matrix,
+    };
+  };
+  /** Add a finished shape layer, or explain why nothing was drawn. */
+  const addShapeLayer = (shapeTool: ShapeToolId, box: { left: number; top: number; width: number; height: number }) => {
+    const f = current();
+    const name = shapeLayerName(shapeTool, f.layers.length, customShapeLabel());
+    const layer = newShapeLayer(shapeTool, box, name);
+    if (!layer) {
+      void paint(f);
+      setNotice('Choose a fill or a stroke colour before drawing a shape');
+      return false;
     }
+    if (!addLayer(layer)) return false;
+    setNotice((value) => (value === 'Layer added' ? `${name} added` : value));
+    return true;
+  };
+  /** Fill or Stroke paint row in the shape Tool options. */
+  const shapePaintRow = (kind: 'fill' | 'stroke') => {
+    const colorKey = kind === 'fill' ? 'fillColor' : 'strokeColor';
+    return (
+      <div className="select-row shape-paint-row">
+        <span>{kind === 'fill' ? 'Fill' : 'Stroke'}</span>
+        <select
+          aria-label={`Shape ${kind}`}
+          value={shapeAppearance[kind]}
+          onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, [kind]: event.target.value as ShapePaintSource }))}
+        >
+          <option value="foreground">Foreground colour</option>
+          <option value="background">Background colour</option>
+          <option value="custom">Custom colour</option>
+          <option value="none">None</option>
+        </select>
+        {shapeAppearance[kind] === 'custom' && (
+          <input
+            type="color"
+            aria-label={`Shape ${kind} colour`}
+            value={shapeAppearance[colorKey]}
+            onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, [colorKey]: event.target.value }))}
+          />
+        )}
+      </div>
+    );
+  };
+  /** Tool options "Create W×H": a shape of the numeric size centred on the canvas. */
+  const createNumericShape = () => {
+    if (!isShapeToolId(tool)) return;
+    const f = current();
+    addShapeLayer(tool, centeredShapeBox(f.w, f.h, shapeAppearance.createWidth, shapeAppearance.createHeight));
   };
   const defineCustomShape = () => {
     const label = window.prompt('Name this custom shape', 'Custom shape');
@@ -5216,13 +5294,7 @@ export default function Home() {
         y: point.y + layer.stroke / 2,
       }));
     }
-    return booleanPathFromPoints(points.map(map), {
-      fill: layer.fill,
-      stroke: true,
-      strokeWidth: layer.stroke,
-      fillColor: layer.color,
-      strokeColor: layer.color,
-    });
+    return booleanPathFromPoints(points.map(map), parametricShapePathStyle(layer));
   };
   const combineSelectedShapes = (operation: PathBooleanOperation) => {
     const f = current(), selected = selectedLayersForFrame(f);
@@ -8739,6 +8811,8 @@ export default function Home() {
         polygonInnerRadius,
         shapeCornerRadius,
         customShapeId,
+        shapeAppearance,
+        penOptions,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -8871,6 +8945,8 @@ export default function Home() {
     polygonInnerRadius,
     shapeCornerRadius,
     customShapeId,
+    shapeAppearance,
+    penOptions,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -10072,11 +10148,7 @@ export default function Home() {
           ? transformPath({
               nodes: roundedRectNodes(layer.width, layer.height, layer.cornerRadius),
               closed: true,
-              fill: layer.fill,
-              stroke: true,
-              strokeWidth: layer.stroke,
-              fillColor: layer.color,
-              strokeColor: layer.color,
+              ...parametricShapePathStyle(layer),
             }, layer.matrix)
           : booleanOperand(layer),
         f.w,
@@ -12000,11 +12072,12 @@ export default function Home() {
     context.setLineDash([]);
     context.restore();
   };
-  const previewPenPath = (g: Gesture) => {
+  /** `pointer` adds the Rubber Band segment from the last anchor to the pointer. */
+  const previewPenPath = (g: Gesture, pointer?: { x: number; y: number }) => {
     const points = g.points || [];
     if (!points.length) return;
     const preview: PathModel = {
-      nodes: points,
+      nodes: rubberBandNodes(points, pointer),
       closed: false,
       fill: false,
       stroke: true,
@@ -12030,8 +12103,8 @@ export default function Home() {
         drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
     });
   };
-  const previewCurvaturePath = (g: Gesture) => {
-    const points = g.points || [];
+  const previewCurvaturePath = (g: Gesture, pointer?: { x: number; y: number }) => {
+    const points = pointer && g.points?.length ? appendCurvaturePoint(g.points, pointer) : g.points || [];
     if (points.length < 2) return previewPenPath(g);
     const preview = buildCurvaturePath(points, {
       strokeWidth: Math.max(1, size / 3),
@@ -12049,17 +12122,14 @@ export default function Home() {
       return;
     }
     try {
-      const path = buildFreeformPath(g.points, {
-        strokeWidth: Math.max(1, size / 3),
-        fillColor: color,
-        strokeColor: color,
-      });
+      const style = penPathStyle(penOptions.mode, false, Math.max(1, size / 3), color);
+      const path = validatePath({ ...buildFreeformPath(g.points, style), ...style });
       const added = addLayer({
-        ...commonLayer('Freeform Path ' + g.frame.layers.length),
+        ...commonLayer(penLayerName('freeform-pen', penOptions.mode, g.frame.layers.length)),
         kind: 'path',
         path,
       });
-      if (added) setNotice('Editable freeform path layer added');
+      if (added) setNotice(penLayerNotice('freeform-pen', penOptions.mode));
     } catch {
       setNotice('Could not create a freeform path');
     }
@@ -12071,21 +12141,14 @@ export default function Home() {
       return;
     }
     try {
-      const path = buildCurvaturePath(
-        g.points,
-        {
-          strokeWidth: Math.max(1, size / 3),
-          fillColor: color,
-          strokeColor: color,
-        },
-        closed,
-      );
+      const style = penPathStyle(penOptions.mode, closed, Math.max(1, size / 3), color);
+      const path = validatePath({ ...buildCurvaturePath(g.points, style, closed), ...style });
       const added = addLayer({
-        ...commonLayer('Curvature Path ' + g.frame.layers.length),
+        ...commonLayer(penLayerName('curvature-pen', penOptions.mode, g.frame.layers.length)),
         kind: 'path',
         path,
       });
-      if (added) setNotice('Editable curvature path layer added');
+      if (added) setNotice(penLayerNotice('curvature-pen', penOptions.mode));
     } catch {
       void paint(g.frame);
       setNotice('Could not create a curvature path');
@@ -12356,19 +12419,15 @@ export default function Home() {
           const path: PathModel = {
             nodes,
             closed: true,
-            fill: true,
-            stroke: true,
-            strokeWidth: Math.max(1, size / 3),
-            fillColor: color,
-            strokeColor: color,
+            ...penPathStyle(penOptions.mode, true, Math.max(1, size / 3), color),
           };
           if (validatePath(path)) {
             const added = addLayer({
-              ...commonLayer('Path ' + g.frame.layers.length),
+              ...commonLayer(penLayerName('pen', penOptions.mode, g.frame.layers.length)),
               kind: 'path',
               path,
             });
-            if (added) setNotice('Editable path layer added');
+            if (added) setNotice(penLayerNotice('pen', penOptions.mode));
           }
         }
       } else {
@@ -12422,15 +12481,13 @@ export default function Home() {
           0.0001,
         );
         // Shared with the dedicated Add/Delete Anchor Point and Convert
-        // Point tools (src/pathEditTools.ts). A click that edits nothing
-        // falls through and starts a new path, as it always has.
-        const edit = editPathAnchor(
-          validatePath(activeLayer.path),
-          localPath,
-          12 / scale,
-          penAnchorEditMode(e),
-        );
-        if (isPathAnchorEdit(edit)) {
+        // Point tools (src/pathEditTools.ts). Auto Add/Delete makes an
+        // unmodified click on an anchor delete it and on a segment add one;
+        // a click that edits nothing falls through and starts a new path.
+        const editPath = validatePath(activeLayer.path);
+        const editMode = penAutoEditMode(editPath, localPath, 12 / scale, e, penOptions.autoAddDelete);
+        const edit = editMode ? editPathAnchor(editPath, localPath, 12 / scale, editMode) : null;
+        if (edit && isPathAnchorEdit(edit)) {
           if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: edit.path } : item) }))
             setNotice(pathAnchorEditNotice(edit));
           return;
@@ -14591,6 +14648,15 @@ export default function Home() {
     // handle. Alt mirrors the handle to the incoming side, matching the
     // familiar Photoshop tangent workflow while keeping click-only paths
     // perfectly backward compatible.
+    // Rubber Band: while no button is held, preview the next segment from
+    // the last anchor to the pointer (Pen) or the next smooth curve
+    // (Curvature Pen). Placing anchors still happens on press.
+    if (penOptions.rubberBand && (g.tool === 'pen' || g.tool === 'curvature-pen') && e.buttons === 0 && g.points?.length) {
+      const bounded = { x: Math.max(0, Math.min(g.frame.w, p.x)), y: Math.max(0, Math.min(g.frame.h, p.y)) };
+      if (g.tool === 'curvature-pen') previewCurvaturePath(g, bounded);
+      else previewPenPath(g, bounded);
+      return;
+    }
     if (g.tool === 'pen' && (e.shiftKey || e.altKey) && g.points?.length) {
       const node = g.points[g.points.length - 1];
       node.outHandle = { x: p.x, y: p.y };
@@ -15014,9 +15080,14 @@ export default function Home() {
       previewGesture(g);
       g.smoothedLast = destination;
       g.last = local;
-    } else if (g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') {
-      const box = newShapeDragBox(g.tool, g.start, p, e);
-      const layer = newShapeLayer(g.tool, box, 'Shape preview');
+    } else if (isShapeToolId(g.tool)) {
+      // Every shape tool previews the real layer it will create, so Fill,
+      // Stroke and Stroke width show while dragging, plus a dashed drag box.
+      const shapeTool = g.tool;
+      const box = shapeTool === 'line'
+        ? { left: Math.min(p.x, g.start.x), top: Math.min(p.y, g.start.y), width: Math.abs(p.x - g.start.x), height: Math.abs(p.y - g.start.y) }
+        : newShapeDragBox(shapeTool, g.start, p, e);
+      const layer = newShapeLayer(shapeTool, box, 'Shape preview');
       void paint(layer ? { ...g.frame, layers: [...g.frame.layers, layer] } : g.frame).then(() => {
         if (gesture.current !== g) return;
         const context = canvas.current!.getContext('2d')!;
@@ -15024,101 +15095,14 @@ export default function Home() {
         context.strokeStyle = '#fff';
         context.lineWidth = 1;
         context.setLineDash([6, 4]);
-        context.strokeRect(box.left, box.top, box.width, box.height);
+        if (shapeTool === 'line') {
+          context.beginPath();
+          context.moveTo(box.left, box.top);
+          context.lineTo(box.left + box.width, box.top + box.height);
+          context.stroke();
+        } else context.strokeRect(box.left, box.top, box.width, box.height);
         context.restore();
       });
-    } else if (
-      g.tool === 'rectangle' ||
-      g.tool === 'ellipse' ||
-      g.tool === 'line' ||
-      g.tool === 'polygon'
-    ) {
-      const width = Math.abs(p.x - g.start.x),
-        height = Math.abs(p.y - g.start.y);
-      const layer: Layer =
-        g.tool === 'line'
-          ? {
-              ...commonLayer('Line'),
-              kind: 'line',
-              width: Math.max(1, width),
-              height: Math.max(1, height),
-              stroke: Math.max(1, size / 3),
-              color,
-              matrix: [
-                1,
-                0,
-                0,
-                1,
-                Math.min(p.x, g.start.x),
-                Math.min(p.y, g.start.y),
-              ],
-            }
-          : ({
-              ...commonLayer(g.tool === 'polygon' ? 'Polygon' : 'Shape'),
-              kind:
-                g.tool === 'ellipse'
-                  ? 'ellipse'
-                  : g.tool === 'polygon'
-                    ? 'polygon'
-                    : 'rectangle',
-              width: Math.max(1, width),
-              height: Math.max(1, height),
-              stroke: Math.max(1, size / 3),
-              color,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : { fill: false }),
-              matrix: [
-                1,
-                0,
-                0,
-                1,
-                Math.min(p.x, g.start.x),
-                Math.min(p.y, g.start.y),
-              ],
-            } as Layer);
-      const context = canvas.current!.getContext('2d')!;
-      context.save();
-      context.strokeStyle = color;
-      context.lineWidth = Math.max(1, size / 3);
-      context.setLineDash([8, 5]);
-      context.beginPath();
-      if (g.tool === 'line') {
-        context.moveTo(g.start.x, g.start.y);
-        context.lineTo(p.x, p.y);
-      } else if (g.tool === 'polygon') {
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          cx = left + width / 2,
-          cy = top + height / 2,
-          rx = Math.max(1, width / 2),
-          ry = Math.max(1, height / 2);
-        for (let i = 0; i < 5; i += 1) {
-          const angle = -Math.PI / 2 + (i * Math.PI * 2) / 5,
-            x = cx + Math.cos(angle) * rx,
-            y = cy + Math.sin(angle) * ry;
-          if (i === 0) context.moveTo(x, y);
-          else context.lineTo(x, y);
-        }
-        context.closePath();
-      } else if (g.tool === 'ellipse') {
-        context.ellipse(
-          Math.min(p.x, g.start.x) + width / 2,
-          Math.min(p.y, g.start.y) + height / 2,
-          width / 2,
-          height / 2,
-          0,
-          0,
-          Math.PI * 2,
-        );
-      } else
-        context.rect(
-          Math.min(p.x, g.start.x),
-          Math.min(p.y, g.start.y),
-          width,
-          height,
-        );
-      context.stroke();
-      context.restore();
-      void paint({ ...g.frame, layers: [...g.frame.layers, layer] });
     } else if (g.tool === 'select' || g.tool === 'ellipse-select') {
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
@@ -15739,62 +15723,12 @@ export default function Home() {
               ? 'Mask Brush revealed masked pixels'
               : 'Mask Eraser concealed pixels',
         );
-    } else if ((g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') && g.moved) {
-      const box = newShapeDragBox(g.tool, g.start, p, e);
-      const layer = newShapeLayer(
+    } else if (isShapeToolId(g.tool) && g.moved) {
+      addShapeLayer(
         g.tool,
-        box,
-        `${g.tool === 'custom-shape' ? customShapeLabel() : 'Rounded Rectangle'} ${f.layers.length}`,
-      );
-      if (layer) addLayer(layer);
-      else void paint(current());
-    } else if (
-      (g.tool === 'rectangle' ||
-        g.tool === 'ellipse' ||
-        g.tool === 'line' ||
-        g.tool === 'polygon') &&
-      g.moved
-    ) {
-      const width = Math.max(1, Math.round(Math.abs(p.x - g.start.x))),
-        height = Math.max(1, Math.round(Math.abs(p.y - g.start.y))),
-        matrix = [
-          1,
-          0,
-          0,
-          1,
-          Math.min(p.x, g.start.x),
-          Math.min(p.y, g.start.y),
-        ] as Matrix;
-      addLayer(
         g.tool === 'line'
-          ? {
-              ...commonLayer('Line ' + f.layers.length),
-              kind: 'line',
-              width,
-              height,
-              stroke: Math.max(1, size / 3),
-              color,
-              matrix,
-            }
-          : ({
-              ...commonLayer(
-                (g.tool === 'polygon' ? 'Polygon ' : 'Shape ') +
-                  f.layers.length,
-              ),
-              kind:
-                g.tool === 'ellipse'
-                  ? 'ellipse'
-                  : g.tool === 'polygon'
-                    ? 'polygon'
-                    : 'rectangle',
-              width,
-              height,
-              stroke: Math.max(1, size / 3),
-              color,
-              fill: false,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : {}),
-              matrix,
-            } as Layer),
+          ? { left: Math.min(p.x, g.start.x), top: Math.min(p.y, g.start.y), width: Math.abs(p.x - g.start.x), height: Math.abs(p.y - g.start.y) }
+          : newShapeDragBox(g.tool, g.start, p, e),
       );
     } else if (
       (g.tool === 'select' || g.tool === 'ellipse-select') &&
@@ -20204,6 +20138,42 @@ export default function Home() {
                   </button>
                 </label>
               )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && (
+                <p className="adjust-note" data-testid="path-tool-hint">{PATH_TOOL_HINTS[tool as PathOptionTool]}</p>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('mode') && (
+                <label className="select-row">
+                  <span>Pen mode</span>
+                  <select
+                    aria-label="Pen mode"
+                    value={penOptions.mode}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, mode: event.target.value === 'path' ? 'path' : 'shape' }))}
+                  >
+                    <option value="shape">Shape (filled layer)</option>
+                    <option value="path">Path (work path, no fill)</option>
+                  </select>
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('autoAddDelete') && (
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={penOptions.autoAddDelete}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, autoAddDelete: event.target.checked }))}
+                  />
+                  Auto Add/Delete
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('rubberBand') && (
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={penOptions.rubberBand}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, rubberBand: event.target.checked }))}
+                  />
+                  Rubber Band
+                </label>
+              )}
               {PATH_TOOL_OPTION_TOOLS.includes(tool) && customPathPresets.length > 0 && (
                 <label className="select-row">
                   <span>Saved path preset</span>
@@ -20251,15 +20221,14 @@ export default function Home() {
               )}
               {tool === 'rounded-rectangle' && (
                 <p className="adjust-note">
-                  Draws a filled rectangle in the foreground colour. The radius is clamped to half the
-                  shorter side and stays editable in Layer properties. Shift draws a square; Alt draws
-                  from the centre.
+                  The radius is clamped to half the shorter side and stays editable in Layer
+                  properties. Shift draws a square; Alt draws from the centre.
                 </p>
               )}
               {tool === 'custom-shape' && (
                 <fieldset className="custom-shape-picker">
                   <legend>Custom shape</legend>
-                  <div className="custom-shape-grid">
+                  <div className="custom-shape-grid" role="radiogroup" aria-label="Custom shape">
                     {CUSTOM_SHAPE_LIBRARY.map((entry) => (
                       <label
                         key={entry.id}
@@ -20298,8 +20267,8 @@ export default function Home() {
                     </label>
                   )}
                   <p className="adjust-note">
-                    Drag to draw {customShapeLabel()} as an editable path filled with the foreground
-                    colour. Shift keeps its proportions; Alt draws from the centre.
+                    Drag to draw {customShapeLabel()} as an editable path with the Fill and Stroke
+                    options below. Shift keeps its proportions; Alt draws from the centre.
                   </p>
                 </fieldset>
               )}
@@ -20337,7 +20306,48 @@ export default function Home() {
                   suffix="%"
                 />
               )}
-              {tool !== 'magic-eraser' && tool !== 'fill' && tool !== 'magic-wand' && (
+              {isShapeToolId(tool) && (
+                <fieldset className="shape-appearance" aria-label="Shape fill and stroke">
+                  {tool !== 'line' && shapePaintRow('fill')}
+                  {shapePaintRow('stroke')}
+                  <Slider
+                    label="Stroke width"
+                    value={shapeAppearance.strokeWidth}
+                    min={1}
+                    max={SHAPE_STROKE_WIDTH_MAX}
+                    set={(strokeWidth) => setShapeAppearance((value) => ({ ...value, strokeWidth }))}
+                    suffix=" px"
+                  />
+                  <div className="select-row shape-create-row">
+                    <span>New</span>
+                    <input
+                      type="number"
+                      aria-label="New shape width"
+                      min={1}
+                      max={SHAPE_CREATE_MAX}
+                      value={shapeAppearance.createWidth}
+                      onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, createWidth: Number(event.target.value) || value.createWidth }))}
+                    />
+                    <span aria-hidden="true">×</span>
+                    <input
+                      type="number"
+                      aria-label="New shape height"
+                      min={1}
+                      max={SHAPE_CREATE_MAX}
+                      value={shapeAppearance.createHeight}
+                      onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, createHeight: Number(event.target.value) || value.createHeight }))}
+                    />
+                    <button type="button" className="secondary" onClick={createNumericShape}>Create</button>
+                  </div>
+                  <p className="adjust-note">
+                    {tool === 'line'
+                      ? 'Lines use the Stroke colour (the foreground colour when Stroke is None) at the Stroke width.'
+                      : 'Default: filled with the foreground colour, no stroke. Create adds a shape of this size centred on the canvas.'}
+                  </p>
+                </fieldset>
+              )}
+              {tool !== 'magic-eraser' && tool !== 'fill' && tool !== 'magic-wand' && !isShapeToolId(tool) &&
+                (!PATH_TOOL_OPTION_TOOLS.includes(tool) || pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('strokeWidth')) && (
                 <BrushSizeControl value={size} set={setSize} />
               )}
               {(tool === 'magic-wand' || tool === 'fill') && (
@@ -21326,6 +21336,10 @@ export default function Home() {
                 />
               </label>
               <div className="select-row font-select-row" data-type-keep=""><span>Font</span><FontFamilySelect label="Text tool font" value={typeSource !== 'defaults' && typeView.character.fontFamily !== 'mixed' ? typeView.character.fontFamily : fontFamily} onChange={chooseTextToolFont} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <p className="adjust-note" data-testid="font-control-note">
+                Font sets the font for new type and restyles the selected type layer (or the selected
+                characters while editing).
+              </p>
               <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
               {fontAvailability === 'fallback' && (
                 <output data-testid="font-fallback-warning" className="adjust-note">
