@@ -667,8 +667,10 @@ import {
   ZOOM_STEPS,
   anchorScrollDelta,
   clampViewZoom,
+  fillViewZoom,
   fitViewZoom,
   formatViewZoom,
+  scrubbyViewZoom,
   nearestZoomStepIndex,
   stepViewZoom,
   validViewZoom,
@@ -917,6 +919,7 @@ import {
   planRectangularCrop,
   planSlices,
   warpPerspectiveRgba,
+  type CropPoint,
   type CropQuad,
   type PerspectiveCropPlan,
   type RectangularCropPlan,
@@ -934,16 +937,50 @@ import {
   setArtboardVisibility,
 } from '../src/artboards';
 import { fitLayerToArtboard, type FrameFit } from '../src/artboardFit';
-import { sliceAtPoint } from '../src/slices';
+import { adjustSliceRect, hitTestSliceHandle, sliceAtPoint, type SliceHandle } from '../src/slices';
 import {
+  EYEDROPPER_SAMPLE_SIZES,
+  averageSample,
+  countGroupOf,
+  countGroupTotals,
   formatMeasurement,
   measurementAngle,
   measurementDistance,
   newMeasurementId,
-  nextCountIndex,
+  nextCountIndexInGroup,
+  photoshopAngle,
+  rgbHex,
+  rotationAboutPoint,
+  rulerReadout,
+  straightenRotation,
+  type EyedropperSampleSize,
   type MeasurementAnnotation,
   type MeasurementPoint,
 } from '../src/measurements';
+import {
+  CROP_OVERLAYS,
+  CROP_RATIO_PRESETS,
+  COUNT_LABEL_SIZE_MAX,
+  COUNT_LABEL_SIZE_MIN,
+  CROP_DIMENSION_MAX,
+  CROP_RESOLUTION_MAX,
+  DEFAULT_NAVIGATION_TOOL_SETTINGS,
+  normalizeNavigationToolSettings,
+  updateNavigationToolSetting,
+  type CropOverlay,
+  type CropRatioPreset,
+  type NavigationToolSettings,
+} from '../src/navigationOptions';
+import {
+  constrainCropEnd,
+  cropAspectRatio,
+  inscribedCropAfterRotation,
+  nearestQuadCorner,
+  orderQuadCorners,
+  planCropTrim,
+  rectangleQuad,
+  scaleMeasurements,
+} from '../src/cropOptions';
 import {
   audioAnnotations,
   audioClipBytes,
@@ -1444,10 +1481,31 @@ function fittedDraftZoom(element: HTMLElement | null, draft: Draft) {
   const frame = draft.history[draft.index];
   return frame ? fittedZoom(element, frame.w, frame.h) : undefined;
 }
+/**
+ * Tools whose Tool options section is titled with the tool name and holds
+ * no brush Size (docs/navigation-tool-options-contract.md).
+ */
+const NAMED_OPTION_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
+  'zoom',
+  'eyedropper',
+  'color-sampler',
+  'ruler',
+  'note',
+  'audio-note',
+  'count',
+  'crop',
+  'perspective-crop',
+]);
+/** Tools whose press is a click unless the pointer travels a few pixels. */
+const CLICK_OR_DRAG_TOOLS: ReadonlySet<Tool> = new Set<Tool>(['zoom', 'note', 'perspective-crop', 'slice-select']);
 const toolSelectionNotice = (tool: Tool, label: string) =>
   tool === 'magnetic-lasso'
     ? 'Magnetic Lasso: drag along an edge, release to close'
-    : `${label} tool selected`;
+    : tool === 'perspective-crop'
+      ? 'Perspective Crop: drag a rectangle or click four corners, then drag the corner handles; Enter applies'
+      : tool === 'frame'
+        ? 'Frame (artboard): drag to add a named artboard viewport'
+        : `${label} tool selected`;
 const flyoutToolLabel = (tool: Tool, label: string) =>
   tool === 'lasso' ? 'Freeform Lasso' : label;
 const flyoutToolKey = (tool: Tool, key: string) =>
@@ -2054,6 +2112,18 @@ type Gesture = {
   lastPressure?: number;
   pointerType?: string;
   moved: boolean;
+  /** Scrubby Zoom: zoom and client point at pointer-down. */
+  zoomStart?: number;
+  zoomOut?: boolean;
+  /** Note tool: the note being dragged. */
+  noteId?: string;
+  /** Perspective Crop: the corner handle being dragged. */
+  quadCorner?: number;
+  /** Crop: the drag draws a Straighten line instead of a crop box. */
+  cropStraighten?: boolean;
+  /** Slice Select: grabbed handle and the slice at pointer-down. */
+  sliceHandle?: SliceHandle;
+  sliceOrigin?: SliceRect;
 };
 
 /** Layer pixels and selection coverage a gradient drag renders over. */
@@ -4072,6 +4142,80 @@ export default function Home() {
     start: MeasurementPoint;
     end: MeasurementPoint;
   } | null>(null);
+  // Navigation / sampling / measurement / crop tool options
+  // (docs/navigation-tool-options-contract.md), persisted with the draft.
+  const [navigationTools, setNavigationTools] = useState<NavigationToolSettings>(() => ({
+    ...DEFAULT_NAVIGATION_TOOL_SETTINGS,
+  }));
+  const setNavigationTool = <K extends keyof NavigationToolSettings>(key: K, value: NavigationToolSettings[K]) =>
+    setNavigationTools((settings) => updateNavigationToolSetting(settings, key, value));
+  /** Crop aspect constraint (width / height) for a frame, or null for Free. */
+  const currentCropRatio = (f: { w: number; h: number }) =>
+    cropAspectRatio(navigationTools.cropRatio, {
+      canvasWidth: f.w,
+      canvasHeight: f.h,
+      width: navigationTools.cropWidth,
+      height: navigationTools.cropHeight,
+    });
+  /** In-app note editor (replaces window.prompt); `id` edits an existing note. */
+  const [noteEditor, setNoteEditor] = useState<{
+    id?: string;
+    x: number;
+    y: number;
+    text: string;
+    color: string;
+  } | null>(null);
+  // Focus the note text when the editor opens (not on every keystroke).
+  const noteTextRef = useRef<HTMLTextAreaElement>(null);
+  const noteEditorKey = noteEditor ? `${noteEditor.id ?? 'new'}:${noteEditor.x}:${noteEditor.y}` : '';
+  useEffect(() => {
+    if (!noteEditorKey) return;
+    // After the opening press finishes (its mousedown would take focus back).
+    const handle = requestAnimationFrame(() => noteTextRef.current?.focus());
+    return () => cancelAnimationFrame(handle);
+  }, [noteEditorKey]);
+  /** Live position of a note while it is dragged. */
+  const [noteDrag, setNoteDrag] = useState<{ id: string; x: number; y: number } | null>(null);
+  /** Live composite values under each Color Sampler marker. */
+  const [samplerLive, setSamplerLive] = useState<Record<string, { color: string; alpha: number }>>({});
+  /** Perspective Crop corner clicks collected before the fourth. */
+  const [perspectiveClicks, setPerspectiveClicks] = useState<CropPoint[]>([]);
+  /** Crop Straighten: the next crop drag draws a horizon line. */
+  const [cropStraightenArmed, setCropStraightenArmed] = useState(false);
+  // Switching tools drops half-finished click sequences and editors
+  // (adjusted during render, React's pattern for state derived from props).
+  const [navigationToolSeen, setNavigationToolSeen] = useState(tool);
+  if (navigationToolSeen !== tool) {
+    setNavigationToolSeen(tool);
+    setPerspectiveClicks([]);
+    setCropStraightenArmed(false);
+    if (tool !== 'note') setNoteEditor(null);
+  }
+  // Color Sampler readouts are live: once a render settles, re-read the
+  // composite under every sampler (the stored value is the placement value).
+  const readSamplerValues = (value: Frame) => {
+    const context = canvas.current?.getContext('2d');
+    if (!context) return;
+    const next: Record<string, { color: string; alpha: number }> = {};
+    for (const item of value.measurements || []) {
+      if (item.kind !== 'sample') continue;
+      const x = Math.min(value.w - 1, Math.max(0, Math.floor(item.x))),
+        y = Math.min(value.h - 1, Math.max(0, Math.floor(item.y)));
+      const data = context.getImageData(x, y, 1, 1).data;
+      next[item.id] = { color: rgbHex({ r: data[0], g: data[1], b: data[2] }), alpha: data[3] };
+    }
+    setSamplerLive(next);
+  };
+  const readSamplerValuesRef = useRef(readSamplerValues);
+  useLayoutEffect(() => {
+    readSamplerValuesRef.current = readSamplerValues;
+  });
+  useEffect(() => {
+    if (tool !== 'color-sampler' || !frame || doc.rendering) return;
+    if (!frame.measurements?.some((item) => item.kind === 'sample')) return;
+    const handle = requestAnimationFrame(() => readSamplerValuesRef.current(frame));
+    return () => cancelAnimationFrame(handle);
+  }, [tool, frame, doc.rendering]);
 
   /**
    * Menus use a small roving-focus model rather than relying on browser tab
@@ -4614,6 +4758,7 @@ export default function Home() {
     gradientNoise,
     gradientBlend,
     gradientOpacity,
+    navigationTools,
     gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -4729,6 +4874,7 @@ export default function Home() {
     setSecondaryBrushPreset(normalizeSecondaryBrushPreset(s.secondaryBrushPreset));
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
+    setNavigationTools(normalizeNavigationToolSettings(s.navigationTools));
     setGradientEnd(s.gradientEnd ?? 'transparent');
     setGradientMidpoint(s.gradientMidpoint ?? 'none');
     setGradientMidpointPosition(s.gradientMidpointPosition ?? 50);
@@ -5366,6 +5512,30 @@ export default function Home() {
     )
       setNotice('Selected layers isolated; undo restores visibility');
   };
+  /**
+   * Delete Cropped Pixels: plain raster layers placed on whole pixels are
+   * trimmed to the canvas (a lossless copy). Type, shape, smart object,
+   * scaled/rotated and metadata-bearing layers keep their content.
+   */
+  const deleteCroppedPixels = async (next: Frame): Promise<Frame> => {
+    const layers = await Promise.all(
+      next.layers.map(async (layer) => {
+        if (layer.kind !== 'raster' || !canExpandRasterLayer(layer)) return layer;
+        const asset = assets.current[layer.asset];
+        if (!asset) return layer;
+        const plan = planCropTrim(layer.matrix, asset.w, asset.h, next.w, next.h);
+        if (!plan) return layer;
+        if (plan.empty) {
+          return { ...layer, asset: addAsset(assets.current, surface(1, 1)), matrix: [1, 0, 0, 1, 0, 0] as Matrix };
+        }
+        const image = await decodeAsset(asset),
+          trimmed = surface(plan.crop.width, plan.crop.height);
+        trimmed.getContext('2d')!.drawImage(image, -plan.crop.x, -plan.crop.y);
+        return { ...layer, asset: addAsset(assets.current, trimmed), matrix: plan.matrix as Matrix };
+      }),
+    );
+    return { ...next, layers };
+  };
   const cancelCropPreview = () => {
     if (!cropPreview) return;
     cropPreviewId.current += 1;
@@ -5383,33 +5553,59 @@ export default function Home() {
       setNotice('Crop preview expired because the document changed');
       return;
     }
-    if (!preview.changed) {
+    // W × H mode resamples the crop to a fixed size; a resolution (ppi) is
+    // written to the image size metadata when one is set.
+    const options = navigationTools;
+    const sized = options.cropRatio === 'size';
+    const outputWidth = sized ? options.cropWidth : preview.width,
+      outputHeight = sized ? options.cropHeight : preview.height;
+    const resolution = options.cropResolution > 0 ? options.cropResolution : undefined;
+    if (
+      !preview.changed &&
+      outputWidth === preview.width &&
+      outputHeight === preview.height &&
+      (!resolution || effectiveImageSize(f.imageSize).resolution === resolution)
+    ) {
       setCropPreview(null);
       setNotice('Crop already matches the canvas; document unchanged');
+      return;
+    }
+    if (outputWidth * outputHeight > 16_000_000) {
+      setNotice('Crop output exceeds 16 megapixels; choose a smaller W × H');
       return;
     }
     const expectedPreviewId = cropPreviewId.current;
     setCropApplying(true);
     try {
-      const next = await transformFrameWithMasks(
+      const sx = outputWidth / preview.width,
+        sy = outputHeight / preview.height;
+      let next = await transformFrameWithMasks(
         f,
-        [1, 0, 0, 1, -preview.left, -preview.top],
+        [sx, 0, 0, sy, -preview.left * sx, -preview.top * sy],
         assets.current,
-        preview.width,
-        preview.height,
+        outputWidth,
+        outputHeight,
       );
+      if (options.cropDeletePixels) next = await deleteCroppedPixels(next);
+      if (resolution)
+        next = { ...next, imageSize: { ...effectiveImageSize(next.imageSize), resolution } };
       if (current() !== f || cropPreviewId.current !== expectedPreviewId) {
         void paint(current());
         setNotice('Crop cancelled because the preview or document changed');
         return;
       }
+      const cropped = cropMeasurements(f.measurements, preview);
       const changed = commit({
         ...next,
-        measurements: cropMeasurements(f.measurements, preview),
+        measurements: sized ? scaleMeasurements(cropped, sx, sy) : cropped,
       });
       if (changed) {
         setCropPreview(null);
-        setNotice(`Crop applied: ${preview.width} × ${preview.height} px`);
+        setNotice(
+          `Crop applied: ${outputWidth} × ${outputHeight} px` +
+            (sized ? ` (resampled from ${preview.width} × ${preview.height})` : '') +
+            (options.cropDeletePixels ? ' · cropped pixels deleted' : ''),
+        );
       }
     } catch {
       setNotice('Could not apply crop preview');
@@ -5720,6 +5916,534 @@ export default function Home() {
     if (commit({ ...f, measurements: [...(f.measurements || []), annotation] }))
       return true;
     return false;
+  };
+  /** Remove matching annotations in one undoable step. */
+  const removeMeasurements = (
+    matches: (item: MeasurementAnnotation) => boolean,
+    done: string,
+    nothing: string,
+  ) => {
+    const f = current(),
+      all = f.measurements || [],
+      kept = all.filter((item) => !matches(item));
+    if (kept.length === all.length) {
+      setNotice(nothing);
+      return;
+    }
+    if (commit({ ...f, measurements: kept })) setNotice(done);
+  };
+  const latestRuler = (f: Frame) => {
+    const found = [...(f.measurements || [])].reverse().find((item) => item.kind === 'ruler');
+    return found?.kind === 'ruler' ? found : undefined;
+  };
+  /**
+   * Ruler → Straighten Layer: rotate the active layer about the ruler's
+   * midpoint so the ruler line becomes horizontal, and clear the ruler (as
+   * Photoshop does). One undoable step; a layer mask turns with the layer.
+   */
+  const straightenLayerToRuler = async () => {
+    const f = current(),
+      ruler = latestRuler(f),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!ruler) {
+      setNotice('Draw a ruler line along the edge that should be level first');
+      return;
+    }
+    if (!layer || layer.kind === 'adjustment' || layerIsLocked(f, layer)) {
+      setNotice('Select an unlocked pixel, type, shape or smart object layer to straighten');
+      return;
+    }
+    const degrees = straightenRotation(ruler.start, ruler.end);
+    if (Math.abs(degrees) < 0.05) {
+      setNotice('The ruler is already level');
+      return;
+    }
+    const rotation = rotationAboutPoint(
+      degrees,
+      (ruler.start.x + ruler.end.x) / 2,
+      (ruler.start.y + ruler.end.y) / 2,
+    ) as Matrix;
+    let mask = isMaskableLayer(layer) ? layer.mask : undefined;
+    try {
+      if (mask && assets.current[mask]) {
+        const image = await decodeAsset(assets.current[mask]),
+          turned = surface(f.w, f.h),
+          context = turned.getContext('2d')!;
+        context.setTransform(...rotation);
+        context.drawImage(image, 0, 0);
+        mask = addAsset(assets.current, turned);
+      }
+    } catch {
+      setNotice('Could not rotate this layer mask');
+      return;
+    }
+    if (current() !== f) {
+      setNotice('Straighten cancelled because the document changed');
+      return;
+    }
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id
+            ? { ...item, matrix: multiply(rotation, item.matrix), ...(mask && isMaskableLayer(item) ? { mask } : {}) }
+            : item,
+        ),
+        measurements: (f.measurements || []).filter((item) => item.kind !== 'ruler'),
+      })
+    )
+      setNotice(`Layer straightened: rotated ${degrees > 0 ? 'clockwise' : 'counter-clockwise'} ${Math.abs(degrees).toFixed(1)}°`);
+  };
+  /**
+   * Crop → Straighten: rotate every layer about the canvas centre so the
+   * drawn line is level (one undoable step), then stage a crop of the
+   * largest rectangle without transparent corners.
+   */
+  const straightenDocument = async (f: Frame, start: CropPoint, end: CropPoint) => {
+    const degrees = straightenRotation(start, end);
+    if (Math.abs(degrees) < 0.05) {
+      setNotice('That line is already level; nothing to straighten');
+      return;
+    }
+    try {
+      const rotation = rotationAboutPoint(degrees, f.w / 2, f.h / 2) as Matrix;
+      const next = await transformFrameWithMasks(f, rotation, assets.current, f.w, f.h);
+      if (current() !== f) {
+        setNotice('Straighten cancelled because the document changed');
+        return;
+      }
+      if (!commit({ ...next, measurements: f.measurements })) return;
+      const inner = inscribedCropAfterRotation(f.w, f.h, degrees);
+      const plan = planRectangularCrop(f.w, f.h, { x: inner.left, y: inner.top }, {
+        x: inner.left + inner.width,
+        y: inner.top + inner.height,
+      });
+      cropPreviewId.current += 1;
+      setCropPreview({ frame: current(), ...plan });
+      setNotice(
+        `Straightened ${Math.abs(degrees).toFixed(1)}° · crop preview ${plan.width} × ${plan.height} px removes the empty corners; Enter applies`,
+      );
+    } catch {
+      setNotice('Could not straighten the document');
+    }
+  };
+  const saveNoteEditor = () => {
+    const editor = noteEditor;
+    if (!editor) return;
+    const text = editor.text.trim().slice(0, 500);
+    if (!text) {
+      setNotice('Type a note before saving, or Cancel');
+      return;
+    }
+    const f = current();
+    if (editor.id) {
+      const exists = (f.measurements || []).some((item) => item.id === editor.id);
+      if (
+        exists &&
+        commit({
+          ...f,
+          measurements: (f.measurements || []).map((item) =>
+            item.id === editor.id && item.kind === 'note' ? { ...item, text, color: editor.color } : item,
+          ),
+        })
+      ) {
+        setNoteEditor(null);
+        setNotice('Note updated');
+      }
+      return;
+    }
+    if (
+      appendMeasurement({
+        id: newMeasurementId(),
+        kind: 'note',
+        x: editor.x,
+        y: editor.y,
+        text,
+        color: editor.color,
+      })
+    ) {
+      setNoteEditor(null);
+      setNotice('Note added to the draft');
+    } else setNotice('Note could not be saved (check for control characters)');
+  };
+  const deleteNote = (id: string) => {
+    setNoteEditor(null);
+    removeMeasurements((item) => item.id === id, 'Note deleted', 'Note already removed');
+  };
+  /** Draft text of the Count group name field until it is committed. */
+  const [countGroupDraft, setCountGroupDraft] = useState<string | null>(null);
+  const commitCountGroupDraft = () => {
+    if (countGroupDraft === null) return;
+    const name = countGroupDraft.trim().replace(/\s+/g, ' ').slice(0, 40);
+    setCountGroupDraft(null);
+    if (name) setNavigationTool('countGroup', name);
+  };
+  /**
+   * Tool options for Zoom, Eyedropper, Color Sampler, Ruler, Note, Count,
+   * Crop and Perspective Crop (docs/navigation-tool-options-contract.md).
+   */
+  const renderNavigationToolOptions = () => {
+    const options = navigationTools;
+    const measurements = frame?.measurements || [];
+    if (tool === 'zoom')
+      return (
+        <div className="nav-tool-options" data-testid="zoom-options">
+          <label className="select-row">
+            <span>Zoom mode</span>
+            <select
+              aria-label="Zoom mode"
+              value={options.zoomMode}
+              onChange={(event) => setNavigationTool('zoomMode', event.target.value as NavigationToolSettings['zoomMode'])}
+            >
+              <option value="in">Zoom In</option>
+              <option value="out">Zoom Out</option>
+            </select>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              aria-label="Scrubby Zoom"
+              checked={options.scrubbyZoom}
+              onChange={(event) => setNavigationTool('scrubbyZoom', event.target.checked)}
+            />
+            Scrubby Zoom
+          </label>
+          <div className="option-buttons">
+            <button type="button" onClick={actualPixels}>100%</button>
+            <button type="button" onClick={fitToScreen}>Fit Screen</button>
+            <button type="button" onClick={fillScreen}>Fill Screen</button>
+          </div>
+          <p className="adjust-note">
+            Click zooms {options.zoomMode === 'in' ? 'in' : 'out'}; Alt-click zooms {options.zoomMode === 'in' ? 'out' : 'in'}.
+            {options.scrubbyZoom ? ' Drag right to zoom in, left to zoom out.' : ''} Ctrl/⌘+0 fits, Ctrl/⌘+1 shows 100%.
+          </p>
+        </div>
+      );
+    if (tool === 'eyedropper')
+      return (
+        <div className="nav-tool-options" data-testid="eyedropper-options">
+          <label className="select-row">
+            <span>Sample size</span>
+            <select
+              aria-label="Sample size"
+              value={options.eyedropperSize}
+              onChange={(event) => setNavigationTool('eyedropperSize', Number(event.target.value) as EyedropperSampleSize)}
+            >
+              {EYEDROPPER_SAMPLE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size === 1 ? 'Point Sample' : `${size} by ${size} Average`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="select-row">
+            <span>Sample</span>
+            <select
+              aria-label="Eyedropper sample"
+              value={options.eyedropperSample}
+              onChange={(event) => setNavigationTool('eyedropperSample', event.target.value as NavigationToolSettings['eyedropperSample'])}
+            >
+              <option value="all">All Layers</option>
+              <option value="current">Current Layer</option>
+            </select>
+          </label>
+          <p className="adjust-note">Click sets the foreground color; Alt-click sets the background color.</p>
+        </div>
+      );
+    if (tool === 'color-sampler') {
+      const samples = measurements.filter((item) => item.kind === 'sample');
+      return (
+        <div className="nav-tool-options" data-testid="color-sampler-options">
+          {samples.length ? (
+            <ol className="measure-list" aria-label="Color samplers">
+              {samples.map((item, index) => {
+                if (item.kind !== 'sample') return null;
+                const live = samplerLive[item.id] ?? { color: item.color, alpha: item.alpha };
+                const rgb = [1, 3, 5].map((offset) => parseInt(live.color.slice(offset, offset + 2), 16));
+                return (
+                  <li key={item.id} data-testid="color-sampler-row">
+                    <i className="measure-swatch" style={{ background: live.color }} aria-hidden="true" />
+                    <b>#{index + 1}</b>
+                    <span>
+                      R {rgb[0]} G {rgb[1]} B {rgb[2]} · {live.color.toUpperCase()} · α {live.alpha}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Delete color sampler ${index + 1}`}
+                      title="Delete sampler"
+                      onClick={() =>
+                        removeMeasurements((entry) => entry.id === item.id, `Color sampler ${index + 1} deleted`, 'Sampler already removed')
+                      }
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="adjust-note">Click the image to place color samplers; their values update as you edit.</p>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={!samples.length}
+            onClick={() => removeMeasurements((item) => item.kind === 'sample', 'All color samplers cleared', 'No color samplers to clear')}
+          >
+            Clear All
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'ruler') {
+      const ruler = frame ? latestRuler(frame) : undefined;
+      const line = measurementPreview ?? (ruler ? { start: ruler.start, end: ruler.end } : null);
+      const readout = line ? rulerReadout(line.start, line.end) : null;
+      return (
+        <div className="nav-tool-options" data-testid="ruler-options">
+          <dl className="measure-readout" data-testid="ruler-readout" aria-live="polite">
+            <div><dt>Length</dt><dd>{readout ? `${readout.length.toFixed(1)} px` : '—'}</dd></div>
+            <div><dt>Angle</dt><dd>{readout ? `${readout.angle.toFixed(1)}°` : '—'}</dd></div>
+            <div><dt>Δx</dt><dd>{readout ? `${readout.dx.toFixed(1)} px` : '—'}</dd></div>
+            <div><dt>Δy</dt><dd>{readout ? `${readout.dy.toFixed(1)} px` : '—'}</dd></div>
+          </dl>
+          <div className="option-buttons">
+            <button type="button" disabled={!ruler} onClick={() => void straightenLayerToRuler()}>
+              Straighten Layer
+            </button>
+            <button
+              type="button"
+              disabled={!ruler}
+              onClick={() => removeMeasurements((item) => item.kind === 'ruler', 'Ruler cleared', 'No ruler to clear')}
+            >
+              Clear
+            </button>
+          </div>
+          <p className="adjust-note">
+            Angles follow Photoshop: a line rising to the right is positive. Δy is measured downwards in image pixels.
+          </p>
+        </div>
+      );
+    }
+    if (tool === 'note') {
+      const notes = measurements.filter((item) => item.kind === 'note');
+      return (
+        <div className="nav-tool-options" data-testid="note-options">
+          <label className="select-row">
+            <span>Note color</span>
+            <input
+              type="color"
+              aria-label="Note color"
+              value={options.noteColor}
+              onChange={(event) => setNavigationTool('noteColor', event.target.value)}
+            />
+          </label>
+          <p className="adjust-note">
+            Click the image to add a note. Click a note to edit, recolor or delete it; drag it to move it.
+          </p>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!notes.length}
+            onClick={() => removeMeasurements((item) => item.kind === 'note', 'All notes cleared', 'No notes to clear')}
+          >
+            Clear notes ({notes.length})
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'count') {
+      const totals = countGroupTotals(measurements);
+      const groupCount = totals.find((entry) => entry.group === options.countGroup)?.count ?? 0;
+      return (
+        <div className="nav-tool-options" data-testid="count-options">
+          <label className="select-row">
+            <span>Count group</span>
+            <input
+              className="text-input"
+              aria-label="Count group name"
+              list="count-group-names"
+              maxLength={40}
+              value={countGroupDraft ?? options.countGroup}
+              onChange={(event) => setCountGroupDraft(event.target.value)}
+              onBlur={commitCountGroupDraft}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  commitCountGroupDraft();
+                }
+              }}
+            />
+          </label>
+          <datalist id="count-group-names">
+            {totals.map((entry) => (
+              <option key={entry.group} value={entry.group}>{entry.group}</option>
+            ))}
+          </datalist>
+          <label className="select-row">
+            <span>Group color</span>
+            <input
+              type="color"
+              aria-label="Count group color"
+              value={options.countColor}
+              onChange={(event) => setNavigationTool('countColor', event.target.value)}
+            />
+          </label>
+          <Slider
+            label="Label size"
+            value={options.countLabelSize}
+            min={COUNT_LABEL_SIZE_MIN}
+            max={COUNT_LABEL_SIZE_MAX}
+            set={(value) => setNavigationTool('countLabelSize', Math.round(value))}
+            suffix=" px"
+          />
+          {totals.length > 0 && (
+            <ul className="measure-list" aria-label="Count groups">
+              {totals.map((entry) => (
+                <li key={entry.group}>
+                  <i className="measure-swatch" style={{ background: entry.color ?? '#ff5c35' }} aria-hidden="true" />
+                  <span>{entry.group}</span>
+                  <b>{entry.count}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={!groupCount}
+            onClick={() =>
+              removeMeasurements(
+                (item) => item.kind === 'count' && countGroupOf(item) === options.countGroup,
+                `Count cleared for ${options.countGroup}`,
+                'No count markers in this group',
+              )
+            }
+          >
+            Clear count
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'crop') {
+      const ratioLabels: Record<CropRatioPreset, string> = {
+        free: 'Ratio (free)',
+        original: 'Original ratio',
+        '1:1': '1 : 1 (square)',
+        '4:5': '4 : 5 (8 : 10)',
+        '5:7': '5 : 7',
+        '2:3': '2 : 3 (4 : 6)',
+        '3:4': '3 : 4',
+        '16:9': '16 : 9',
+        ratio: 'Custom ratio',
+        size: 'W × H px (resample)',
+      };
+      const custom = options.cropRatio === 'ratio' || options.cropRatio === 'size';
+      return (
+        <div className="nav-tool-options" data-testid="crop-options">
+          <label className="select-row">
+            <span>Ratio</span>
+            <select
+              aria-label="Crop aspect ratio"
+              value={options.cropRatio}
+              onChange={(event) => setNavigationTool('cropRatio', event.target.value as CropRatioPreset)}
+            >
+              {CROP_RATIO_PRESETS.map((preset) => (
+                <option key={preset} value={preset}>{ratioLabels[preset]}</option>
+              ))}
+            </select>
+          </label>
+          {custom && (
+            <div className="select-row crop-size-row">
+              <span>{options.cropRatio === 'size' ? 'W × H px' : 'W : H'}</span>
+              <IntegerField
+                label="Crop width"
+                value={options.cropWidth}
+                min={1}
+                max={CROP_DIMENSION_MAX}
+                set={(value) => setNavigationTool('cropWidth', value)}
+              />
+              <i aria-hidden="true">×</i>
+              <IntegerField
+                label="Crop height"
+                value={options.cropHeight}
+                min={1}
+                max={CROP_DIMENSION_MAX}
+                set={(value) => setNavigationTool('cropHeight', value)}
+              />
+            </div>
+          )}
+          <div className="select-row">
+            <span>Resolution (ppi, 0 keeps)</span>
+            <IntegerField
+              label="Crop resolution"
+              value={options.cropResolution}
+              min={0}
+              max={CROP_RESOLUTION_MAX}
+              set={(value) => setNavigationTool('cropResolution', value)}
+            />
+          </div>
+          <label className="select-row">
+            <span>Overlay</span>
+            <select
+              aria-label="Crop overlay"
+              value={options.cropOverlay}
+              onChange={(event) => setNavigationTool('cropOverlay', event.target.value as CropOverlay)}
+            >
+              {CROP_OVERLAYS.map((overlay) => (
+                <option key={overlay} value={overlay}>
+                  {overlay === 'thirds' ? 'Rule of thirds' : overlay === 'grid' ? 'Grid' : 'None'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              aria-label="Delete cropped pixels"
+              checked={options.cropDeletePixels}
+              onChange={(event) => setNavigationTool('cropDeletePixels', event.target.checked)}
+            />
+            Delete Cropped Pixels
+          </label>
+          <div className="option-buttons">
+            <button
+              type="button"
+              aria-pressed={cropStraightenArmed}
+              onClick={() => {
+                setCropStraightenArmed((armed) => !armed);
+                setNotice(cropStraightenArmed ? 'Straighten cancelled' : 'Straighten: drag along a line that should be level');
+              }}
+            >
+              Straighten
+            </button>
+          </div>
+          <p className="adjust-note">
+            {options.cropDeletePixels
+              ? 'Raster layers placed on whole pixels are trimmed to the crop; type, shapes, smart objects and transformed layers keep their content.'
+              : 'Pixels outside the crop stay on their layers and can be moved back into view.'}
+          </p>
+        </div>
+      );
+    }
+    if (tool === 'perspective-crop')
+      return (
+        <div className="nav-tool-options" data-testid="perspective-crop-options">
+          <p className="adjust-note">
+            {perspectiveCropPreview
+              ? 'Drag the corner handles on the canvas or edit the corner fields, then Apply or press Enter.'
+              : perspectiveClicks.length
+                ? `Corner ${perspectiveClicks.length} of 4 placed; click the remaining corners.`
+                : 'Drag a rectangle, or click four corners of the surface, then drag the corner handles.'}
+          </p>
+          {perspectiveClicks.length > 0 && !perspectiveCropPreview && (
+            <button type="button" className="secondary" onClick={() => setPerspectiveClicks([])}>
+              Reset corners
+            </button>
+          )}
+        </div>
+      );
+    return null;
   };
   // Audio Annotation (docs/audio-annotation-contract.md): markers are frame
   // measurements (undoable, never rendered); clips are draft-level.
@@ -8836,6 +9560,7 @@ export default function Home() {
         gradientNoise,
         gradientBlend,
         gradientOpacity,
+        navigationTools,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -8970,6 +9695,7 @@ export default function Home() {
     gradientNoise,
     gradientBlend,
     gradientOpacity,
+    navigationTools,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -12788,7 +13514,12 @@ export default function Home() {
       // released its pointer; the tool still runs at the recorded point.
     }
     if (tool === 'slice-select') {
-      const selected = sliceAtPoint(f.slices, p.x, p.y);
+      // The selected slice's edges and corners (a few screen pixels either
+      // side) resize it; its interior, or any slice's interior, moves it.
+      const tolerance = (8 * 100) / Math.max(1, viewZoomRef.current);
+      const activeSlice = f.slices?.find((item) => item.id === f.activeSliceId);
+      const activeHandle = activeSlice ? hitTestSliceHandle(activeSlice, p.x, p.y, tolerance) : null;
+      const selected = activeHandle && activeSlice ? { ...activeSlice } : sliceAtPoint(f.slices, p.x, p.y);
       if (!selected) {
         setSlicePreview(null);
         setSlicePreviewMode('draft');
@@ -12802,6 +13533,15 @@ export default function Home() {
       setSliceName(selected.name);
       void paint(current());
       setNotice(`Slice selected: ${selected.name} · ${selected.width} × ${selected.height} px`);
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: current(),
+        moved: false,
+        sliceHandle: activeHandle ?? 'move',
+        sliceOrigin: { ...selected },
+      };
       return;
     }
     if (tool === 'frame') {
@@ -13043,7 +13783,23 @@ export default function Home() {
       return;
     }
     if (tool === 'zoom') {
-      const out = e.altKey;
+      // The Zoom out mode flips the click direction; Alt flips it back.
+      const out = (navigationTools.zoomMode === 'out') !== e.altKey;
+      if (navigationTools.scrubbyZoom) {
+        // Scrubby Zoom: a horizontal drag zooms continuously; a click still steps.
+        gesture.current = {
+          tool,
+          start: p,
+          last: p,
+          frame: f,
+          moved: false,
+          lastClientX: e.clientX,
+          lastClientY: e.clientY,
+          zoomStart: viewZoomRef.current,
+          zoomOut: out,
+        };
+        return;
+      }
       const next = zoomBy(out ? -1 : 1, { x: e.clientX, y: e.clientY });
       setNotice(`Zoomed ${out ? 'out' : 'in'} to ${formatViewZoom(next)}`);
       return;
@@ -13068,22 +13824,77 @@ export default function Home() {
     if (tool === 'eyedropper' && current().reference?.sample && current().reference?.visible) {
       const sampled = await sampleReference(p.x, p.y);
       if (sampled) {
-        setColor(sampled);
-        setNotice('Color sampled from reference image');
+        if (e.altKey) setBackgroundColor(sampled);
+        else setColor(sampled);
+        setNotice(e.altKey ? 'Background color sampled from reference image' : 'Color sampled from reference image');
       } else setNotice('No reference pixel here; reference not sampled');
       return;
     }
     if (tool === 'eyedropper') {
-      const pixel = canvas
-        .current!.getContext('2d')!
-        .getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
-      setColor(
-        '#' +
-          [pixel[0], pixel[1], pixel[2]]
-            .map((value) => value.toString(16).padStart(2, '0'))
-            .join(''),
+      // Sample Size averages a square around the click (alpha-weighted);
+      // Sample chooses the rendered image or the active layer's own pixels.
+      const sampleSize = navigationTools.eyedropperSize;
+      const half = Math.floor(sampleSize / 2);
+      const readSquare = (source: CanvasImageSource, x: number, y: number, width: number, height: number) => {
+        const square = surface(sampleSize, sampleSize),
+          context = square.getContext('2d', { willReadFrequently: true })!;
+        const left = Math.floor(x) - half,
+          top = Math.floor(y) - half;
+        context.drawImage(source, -left, -top);
+        // Pixels beyond the source edge stay transparent and count as clipped.
+        const data = context.getImageData(0, 0, sampleSize, sampleSize).data;
+        const clipLeft = Math.max(0, -left),
+          clipTop = Math.max(0, -top),
+          clipRight = Math.min(sampleSize, width - left),
+          clipBottom = Math.min(sampleSize, height - top);
+        if (clipRight <= clipLeft || clipBottom <= clipTop) return null;
+        const clipped = new Uint8ClampedArray((clipRight - clipLeft) * (clipBottom - clipTop) * 4);
+        for (let row = clipTop; row < clipBottom; row += 1)
+          clipped.set(
+            data.subarray((row * sampleSize + clipLeft) * 4, (row * sampleSize + clipRight) * 4),
+            (row - clipTop) * (clipRight - clipLeft) * 4,
+          );
+        return averageSample(
+          clipped,
+          clipRight - clipLeft,
+          clipBottom - clipTop,
+          half - clipLeft,
+          half - clipTop,
+          sampleSize,
+        );
+      };
+      let sampled: ReturnType<typeof averageSample> | null = null;
+      let from = 'image';
+      if (navigationTools.eyedropperSample === 'current') {
+        if (!isRasterContentLayer(layer) || !assets.current[layer.asset]) {
+          setNotice('Sample: Current Layer needs a raster layer; choose All Layers or a pixel layer');
+          return;
+        }
+        const at = inversePoint(layer.matrix, p);
+        if (!at) {
+          setNotice('This layer transform cannot be sampled');
+          return;
+        }
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]);
+          sampled = readSquare(image, at.x, at.y, image.naturalWidth, image.naturalHeight);
+        } catch {
+          setNotice('Could not read the current layer');
+          return;
+        }
+        from = 'current layer';
+      } else if (canvas.current) sampled = readSquare(canvas.current, p.x, p.y, f.w, f.h);
+      if (!sampled || sampled.a === 0) {
+        setNotice(`No visible pixel to sample on the ${from}`);
+        return;
+      }
+      const hex = rgbHex(sampled);
+      if (e.altKey) setBackgroundColor(hex);
+      else setColor(hex);
+      setNotice(
+        `${e.altKey ? 'Background color' : 'Color'} sampled from ${from}` +
+          `${sampleSize > 1 ? ` (${sampleSize} × ${sampleSize} average)` : ''}`,
       );
-      setNotice('Color sampled from image');
       return;
     }
     if (tool === 'color-sampler') {
@@ -13116,19 +13927,20 @@ export default function Home() {
       return;
     }
     if (tool === 'note') {
-      const text = window.prompt('Note for this image', '');
-      if (text?.trim()) {
-        if (
-          appendMeasurement({
-            id: newMeasurementId(),
-            kind: 'note',
-            x: p.x,
-            y: p.y,
-            text: text.trim().slice(0, 500),
-          })
-        )
-          setNotice('Note added to the draft');
-      } else setNotice('Note cancelled');
+      // In-app editor instead of window.prompt (which can be blocked): a
+      // click on a note opens it, a drag moves it, elsewhere starts a new one.
+      const tolerance = (12 * 100) / Math.max(1, viewZoomRef.current);
+      const hit = [...(f.measurements || [])]
+        .reverse()
+        .find(
+          (item) => item.kind === 'note' && Math.hypot(item.x - p.x, item.y - p.y) <= tolerance,
+        );
+      if (hit) {
+        gesture.current = { tool, start: p, last: p, frame: f, moved: false, noteId: hit.id };
+        return;
+      }
+      setNoteEditor({ x: p.x, y: p.y, text: '', color: navigationTools.noteColor });
+      setNotice('Type the note, then Save');
       return;
     }
     if (tool === 'audio-note') {
@@ -13137,7 +13949,9 @@ export default function Home() {
       return;
     }
     if (tool === 'count') {
-      const index = nextCountIndex(f.measurements || []);
+      // Markers are numbered per count group and carry the group's colour.
+      const group = navigationTools.countGroup;
+      const index = nextCountIndexInGroup(f.measurements || [], group);
       if (
         appendMeasurement({
           id: newMeasurementId(),
@@ -13145,9 +13959,11 @@ export default function Home() {
           x: p.x,
           y: p.y,
           index,
+          group,
+          color: navigationTools.countColor,
         })
       )
-        setNotice(`Count marker ${index} added`);
+        setNotice(`Count marker ${index} added to ${group}`);
       return;
     }
     if (tool === 'hand') {
@@ -14305,6 +15121,25 @@ export default function Home() {
       tool === 'perspective-crop' ||
       tool === 'slice'
     ) {
+      if (tool === 'perspective-crop' && perspectiveCropPreview) {
+        // Corner handles of the staged quad are dragged directly.
+        const corner = nearestQuadCorner(
+          perspectiveCropPreview.quad,
+          p,
+          (14 * 100) / Math.max(1, viewZoomRef.current),
+        );
+        if (corner !== null) {
+          gesture.current = { tool, start: p, last: p, frame: f, moved: false, quadCorner: corner };
+          setNotice('Perspective crop: drag the corner, release to keep it');
+          return;
+        }
+      }
+      if (tool === 'crop' && cropStraightenArmed) {
+        gesture.current = { tool, start: p, last: p, frame: f, moved: false, cropStraighten: true };
+        setMeasurementPreview({ start: p, end: p });
+        setNotice('Straighten: drag along a line that should be horizontal');
+        return;
+      }
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
     }
@@ -14478,6 +15313,14 @@ export default function Home() {
         : p;
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
+    // Click-or-drag tools only start a drag after a few screen pixels, so a
+    // jittery tap still counts as a click.
+    if (
+      !g.moved &&
+      CLICK_OR_DRAG_TOOLS.has(g.tool) &&
+      Math.hypot(p.x - g.start.x, p.y - g.start.y) * (viewZoomRef.current / 100) < 3
+    )
+      return;
     g.moved = true;
     if (g.strands) {
       // Silk strands: collect the sample and redraw only the overlay preview.
@@ -14638,10 +15481,55 @@ export default function Home() {
       g.last = p;
       return;
     }
-    if (g.tool === 'ruler') {
+    if (g.tool === 'ruler' || (g.tool === 'crop' && g.cropStraighten)) {
       g.moved = true;
       g.last = p;
       setMeasurementPreview({ start: g.start, end: p });
+      return;
+    }
+    if (g.tool === 'zoom' && g.zoomStart !== undefined) {
+      const dx = e.clientX - (g.lastClientX ?? e.clientX);
+      setZoomAround(scrubbyViewZoom(g.zoomStart, dx), {
+        x: g.lastClientX ?? e.clientX,
+        y: g.lastClientY ?? e.clientY,
+      });
+      return;
+    }
+    if (g.tool === 'note' && g.noteId) {
+      g.last = p;
+      setNoteDrag({
+        id: g.noteId,
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      });
+      return;
+    }
+    if (g.tool === 'slice-select' && g.sliceOrigin && g.sliceHandle) {
+      const next = adjustSliceRect(g.sliceOrigin, g.sliceHandle, p.x - g.start.x, p.y - g.start.y, g.frame.w, g.frame.h);
+      g.last = p;
+      if (
+        next.x === g.sliceOrigin.x && next.y === g.sliceOrigin.y &&
+        next.width === g.sliceOrigin.width && next.height === g.sliceOrigin.height
+      ) return;
+      g.moved = true;
+      setSlicePreview({ frame: g.frame, ...next });
+      return;
+    }
+    if (g.tool === 'perspective-crop' && g.quadCorner !== undefined && perspectiveCropPreview) {
+      const quad = perspectiveCropPreview.quad.map((corner) => ({ ...corner })) as CropQuad;
+      quad[g.quadCorner] = {
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      };
+      g.last = p;
+      g.moved = true;
+      // A fold or concave drag is ignored; the last convex quad stays staged.
+      try {
+        const next = planPerspectiveCrop(perspectiveCropPreview.frame.w, perspectiveCropPreview.frame.h, { quad });
+        setPerspectiveCropPreview({ frame: perspectiveCropPreview.frame, ...next });
+      } catch {
+        // keep the previous quad
+      }
       return;
     }
     // Holding Shift while dragging a Pen point creates an outgoing cubic
@@ -15198,36 +16086,31 @@ export default function Home() {
       });
     } else if (g.tool === 'crop') {
       const c = canvas.current!,
-        x = c.getContext('2d')!;
+        x = c.getContext('2d')!,
+        end = constrainCropEnd(g.start, p, currentCropRatio(g.frame), g.frame.w, g.frame.h);
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         x.save();
         x.strokeStyle = '#ffffff';
         x.lineWidth = 2;
         x.setLineDash([10, 6]);
-        x.strokeRect(g.start.x, g.start.y, p.x - g.start.x, p.y - g.start.y);
+        x.strokeRect(g.start.x, g.start.y, end.x - g.start.x, end.y - g.start.y);
         x.restore();
       });
     } else if (g.tool === 'perspective-crop') {
       const c = canvas.current!,
         x = c.getContext('2d')!;
+      // A drag stages a plain rectangle; its corners are adjusted afterwards.
+      const quad = rectangleQuad(g.start, p, g.frame.w, g.frame.h);
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          right = Math.max(g.start.x, p.x),
-          bottom = Math.max(g.start.y, p.y),
-          insetX = Math.max(0, (right - left) * 0.08),
-          insetY = Math.max(0, (bottom - top) * 0.08);
         x.save();
         x.strokeStyle = '#ffb099';
         x.lineWidth = 2;
         x.setLineDash([10, 6]);
         x.beginPath();
-        x.moveTo(left + insetX, top);
-        x.lineTo(right - insetX, top + insetY);
-        x.lineTo(right, bottom - insetY);
-        x.lineTo(left, bottom);
+        x.moveTo(quad[0].x, quad[0].y);
+        for (const corner of quad.slice(1)) x.lineTo(corner.x, corner.y);
         x.closePath();
         x.stroke();
         x.restore();
@@ -15372,7 +16255,8 @@ export default function Home() {
         : undefined;
     if (latest !== f || (g.layer && latestLayer !== g.layer)) {
       if (g.strands) clearStrandPreview();
-      if (g.tool === 'ruler') setMeasurementPreview(null);
+      if (g.tool === 'ruler' || g.cropStraighten) setMeasurementPreview(null);
+      if (g.noteId) setNoteDrag(null);
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(latest);
       setNotice('Gesture cancelled because the document changed');
@@ -15382,7 +16266,9 @@ export default function Home() {
       if (g.strands) clearStrandPreview();
       if (g.tool === 'rotate-view')
         setViewRotation(normalizeViewRotation(g.viewRotationStart ?? 0));
-      if (g.tool === 'ruler') setMeasurementPreview(null);
+      if (g.tool === 'ruler' || g.cropStraighten) setMeasurementPreview(null);
+      if (g.noteId) setNoteDrag(null);
+      if (g.sliceOrigin) setSlicePreview({ frame: f, ...g.sliceOrigin });
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(current());
       setNotice('Gesture cancelled');
@@ -15390,6 +16276,70 @@ export default function Home() {
     }
     if (g.tool === 'rotate-view') {
       setNotice(`Rotate View: ${normalizeViewRotation(viewRotation)}°`);
+      return;
+    }
+    if (g.tool === 'zoom') {
+      if (g.moved) {
+        setNotice(`Scrubby Zoom: ${formatViewZoom(viewZoomRef.current)}`);
+        return;
+      }
+      const next = zoomBy(g.zoomOut ? -1 : 1, { x: e.clientX, y: e.clientY });
+      setNotice(`Zoomed ${g.zoomOut ? 'out' : 'in'} to ${formatViewZoom(next)}`);
+      return;
+    }
+    if (g.tool === 'note' && g.noteId) {
+      setNoteDrag(null);
+      const note = f.measurements?.find((item) => item.id === g.noteId);
+      if (!note || note.kind !== 'note') return;
+      if (!g.moved) {
+        setNoteEditor({ id: note.id, x: note.x, y: note.y, text: note.text, color: note.color ?? navigationTools.noteColor });
+        setNotice('Note opened: edit, recolour or delete it');
+        return;
+      }
+      const x = Math.max(0, Math.min(f.w, p.x)),
+        y = Math.max(0, Math.min(f.h, p.y));
+      if (
+        commit({
+          ...f,
+          measurements: (f.measurements || []).map((item) => (item.id === note.id ? { ...note, x, y } : item)),
+        })
+      )
+        setNotice('Note moved');
+      return;
+    }
+    if (g.tool === 'slice-select') {
+      if (!g.sliceOrigin || !g.sliceHandle) return;
+      const next = adjustSliceRect(g.sliceOrigin, g.sliceHandle, p.x - g.start.x, p.y - g.start.y, f.w, f.h);
+      const origin = g.sliceOrigin;
+      if (next.x === origin.x && next.y === origin.y && next.width === origin.width && next.height === origin.height)
+        return;
+      if (
+        commit({
+          ...f,
+          slices: (f.slices || []).map((item) => (item.id === origin.id ? { ...item, ...next } : item)),
+          activeSliceId: origin.id,
+        })
+      ) {
+        setSlicePreview({ frame: current(), ...next });
+        setSlicePreviewMode('selected');
+        setNotice(
+          `Slice ${g.sliceHandle === 'move' ? 'moved' : 'resized'}: ${next.name} · ${next.width} × ${next.height} px at ${next.x}, ${next.y}`,
+        );
+      } else setSlicePreview({ frame: f, ...origin });
+      return;
+    }
+    if (g.tool === 'perspective-crop' && g.quadCorner !== undefined) {
+      setNotice('Perspective crop corner moved · press Enter or Apply');
+      return;
+    }
+    if (g.tool === 'crop' && g.cropStraighten) {
+      setMeasurementPreview(null);
+      setCropStraightenArmed(false);
+      if (!g.moved || measurementDistance(g.start, p) < 2) {
+        setNotice('Straighten needs a drag along the horizon');
+        return;
+      }
+      await straightenDocument(f, g.start, p);
       return;
     }
     if (g.tool === 'quick-selection' && g.quickSelectionSource) {
@@ -15520,7 +16470,7 @@ export default function Home() {
         })
       )
         setNotice(
-          `Ruler: ${formatMeasurement(pixels, measurementAngle(g.start, p))}`,
+          `Ruler: ${formatMeasurement(pixels, photoshopAngle(g.start, p))}`,
         );
       return;
     }
@@ -15769,7 +16719,12 @@ export default function Home() {
       else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       try {
-        const plan = planRectangularCrop(f.w, f.h, g.start, p);
+        const plan = planRectangularCrop(
+          f.w,
+          f.h,
+          g.start,
+          constrainCropEnd(g.start, p, currentCropRatio(f), f.w, f.h),
+        );
         // Keep the source frame and history untouched until the user confirms
         // the crop.  This makes accidental touch drags recoverable and keeps
         // export/undo semantics identical to every other committed edit.
@@ -15784,29 +16739,46 @@ export default function Home() {
         setNotice('Crop needs at least one pixel inside the image');
       }
     } else if (g.tool === 'perspective-crop' && g.moved) {
+      setPerspectiveClicks([]);
       try {
-        const left = Math.max(0, Math.min(g.start.x, p.x)),
-          top = Math.max(0, Math.min(g.start.y, p.y)),
-          right = Math.min(f.w, Math.max(g.start.x, p.x)),
-          bottom = Math.min(f.h, Math.max(g.start.y, p.y)),
-          insetX = Math.max(1, (right - left) * 0.08),
-          insetY = Math.max(1, (bottom - top) * 0.08),
-          quad: CropQuad = [
-            { x: left + insetX, y: top },
-            { x: right - insetX, y: top + insetY },
-            { x: right, y: bottom - insetY },
-            { x: left, y: bottom },
-          ],
+        // A drag stages an axis-aligned rectangle; drag its corner handles
+        // (or edit the corner fields) to match the perspective.
+        const quad = rectangleQuad(g.start, p, f.w, f.h),
           plan = planPerspectiveCrop(f.w, f.h, { quad });
         perspectiveCropPreviewId.current += 1;
         setPerspectiveCropPreview({ frame: f, ...plan });
         void paint(f);
         setNotice(
-          `Perspective crop preview: ${plan.width} × ${plan.height} px · edit corners or press Enter to apply`,
+          `Perspective crop preview: ${plan.width} × ${plan.height} px · drag the corners, then press Enter to apply`,
         );
       } catch {
         void paint(f);
         setNotice('Perspective crop needs a convex selection inside the image');
+      }
+    } else if (g.tool === 'perspective-crop') {
+      // Four clicks define the corners, in any order.
+      const clicked = [
+        ...perspectiveClicks,
+        { x: Math.max(0, Math.min(f.w, p.x)), y: Math.max(0, Math.min(f.h, p.y)) },
+      ];
+      if (perspectiveCropPreview)
+        setNotice('Drag a corner handle to adjust the crop, or Cancel to start again');
+      else if (clicked.length < 4) {
+        setPerspectiveClicks(clicked);
+        setNotice(`Perspective crop: corner ${clicked.length} of 4 placed`);
+      } else {
+        setPerspectiveClicks([]);
+        try {
+          const plan = planPerspectiveCrop(f.w, f.h, { quad: orderQuadCorners(clicked) });
+          perspectiveCropPreviewId.current += 1;
+          setPerspectiveCropPreview({ frame: f, ...plan });
+          void paint(f);
+          setNotice(
+            `Perspective crop preview: ${plan.width} × ${plan.height} px · drag the corners, then press Enter to apply`,
+          );
+        } catch {
+          setNotice('Those four corners do not form a convex shape; click four new corners');
+        }
       }
     } else if (g.tool === 'slice' && g.moved) {
       try {
@@ -16261,6 +17233,24 @@ export default function Home() {
       const next = fitZoom();
       setNotice(`Fit to screen (${formatViewZoom(next)})`);
     },
+    fillScreen = () => {
+      const element = stage.current;
+      if (!element || !frame) return;
+      const style = window.getComputedStyle(element);
+      const next = setZoomAround(
+        fillViewZoom({
+          imageWidth: frame.w,
+          imageHeight: frame.h,
+          stageWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+          stageHeight: element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+        }),
+      );
+      setNotice(`Fill screen (${formatViewZoom(next)})`);
+    },
+    actualPixels = () => {
+      setZoomAround(100);
+      setNotice('Actual size (100%)');
+    },
     openFile = () => file.current?.click();
   const setWorkspaceScreenMode = (next: ScreenMode) => {
     setScreenMode(next);
@@ -16560,6 +17550,28 @@ export default function Home() {
         if (k === 'l' && e.shiftKey && command) {
           e.preventDefault();
           void autoCorrect('tone');
+          return;
+        }
+        // Ctrl/Cmd+0 fits, Ctrl/Cmd+1 shows 100% and Ctrl/Cmd +/- step the
+        // zoom; preventDefault keeps the browser's own page zoom out of it.
+        if (!e.altKey && !e.shiftKey && (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) {
+          e.preventDefault();
+          fitToScreen();
+          return;
+        }
+        if (!e.altKey && !e.shiftKey && (e.key === '1' || e.code === 'Digit1' || e.code === 'Numpad1')) {
+          e.preventDefault();
+          actualPixels();
+          return;
+        }
+        if (!e.altKey && (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd')) {
+          e.preventDefault();
+          zoomBy(1);
+          return;
+        }
+        if (!e.altKey && (e.key === '-' || e.code === 'NumpadSubtract')) {
+          e.preventDefault();
+          zoomBy(-1);
           return;
         }
         const browserImagePaste = k === 'v' && !e.shiftKey && !hasClipboard;
@@ -17294,10 +18306,7 @@ export default function Home() {
     else if (command === 'zoom-in') zoomBy(1);
     else if (command === 'zoom-out') zoomBy(-1);
     else if (command === 'fit') fitToScreen();
-    else if (command === 'actual') {
-      setZoomAround(100);
-      setNotice('Actual size (100%)');
-    }
+    else if (command === 'actual') actualPixels();
   };
   const runActionRecipe = async (id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
@@ -18827,7 +19836,7 @@ export default function Home() {
                               toolFlyoutAnchor?.dataset.toolId === id
                             : undefined
                         }
-                        title={`${label}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
+                        title={`${label}${id === 'frame' ? ' (artboard)' : ''}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
@@ -18927,6 +19936,9 @@ export default function Home() {
             <small>Background</small>
           </label>
         </aside>
+        {/* The zoom pill sits on this non-scrolling shell so it stays pinned to
+            the visible stage while the canvas scrolls (audit B-03). */}
+        <div className="stage-shell">
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
           {isTypeTool(tool) && (
             <TypeOptionsBar
@@ -18974,116 +19986,6 @@ export default function Home() {
                 type="button"
                 data-testid="crop-cancel"
                 onClick={cancelCropPreview}
-              >
-                Cancel
-              </button>
-            </fieldset>
-          )}
-          {perspectiveCropPreview && (
-            <fieldset
-              className="crop-preview-controls perspective-crop-controls"
-              aria-label="Perspective crop controls"
-              data-testid="perspective-crop-controls"
-            >
-              <span>
-                Perspective crop · {perspectiveCropPreview.width} ×{' '}
-                {perspectiveCropPreview.height} px
-              </span>
-              <div className="perspective-crop-fields">
-                {(
-                  [
-                    'Top left',
-                    'Top right',
-                    'Bottom right',
-                    'Bottom left',
-                  ] as const
-                ).map((label, index) => (
-                    <span key={label}>
-                      <label>
-                        {label} X
-                        <input
-                          aria-label={`${label} X`}
-                          type="number"
-                          min="0"
-                          max={perspectiveCropPreview.frame.w}
-                          value={Math.round(perspectiveCropPreview.quad[index].x)}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            if (!Number.isFinite(value)) return;
-                          const quad = perspectiveCropPreview.quad.map(
-                            (point) => ({ ...point }),
-                          ) as CropQuad;
-                            quad[index] = { ...quad[index], x: value };
-                            updatePerspectiveCropPreview({ quad });
-                          }}
-                        />
-                      </label>
-                      <label>
-                        {label} Y
-                        <input
-                          aria-label={`${label} Y`}
-                          type="number"
-                          min="0"
-                          max={perspectiveCropPreview.frame.h}
-                          value={Math.round(perspectiveCropPreview.quad[index].y)}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            if (!Number.isFinite(value)) return;
-                          const quad = perspectiveCropPreview.quad.map(
-                            (point) => ({ ...point }),
-                          ) as CropQuad;
-                            quad[index] = { ...quad[index], y: value };
-                            updatePerspectiveCropPreview({ quad });
-                          }}
-                        />
-                      </label>
-                    </span>
-                ))}
-                <label>
-                  Output width
-                  <input
-                    aria-label="Perspective output width"
-                    type="number"
-                    min="1"
-                    max="16000"
-                    value={perspectiveCropPreview.width}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value))
-                        updatePerspectiveCropPreview({ width: value });
-                    }}
-                  />
-                </label>
-                <label>
-                  Output height
-                  <input
-                    aria-label="Perspective output height"
-                    type="number"
-                    min="1"
-                    max="16000"
-                    value={perspectiveCropPreview.height}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value))
-                        updatePerspectiveCropPreview({ height: value });
-                    }}
-                  />
-                </label>
-              </div>
-              <button
-                type="button"
-                data-testid="perspective-crop-apply"
-                disabled={perspectiveCropApplying}
-                onClick={() => void applyPerspectiveCropPreview()}
-              >
-                {perspectiveCropApplying
-                  ? 'Applying…'
-                  : 'Apply perspective crop'}
-              </button>
-              <button
-                type="button"
-                data-testid="perspective-crop-cancel"
-                onClick={cancelPerspectiveCropPreview}
               >
                 Cancel
               </button>
@@ -19185,69 +20087,6 @@ export default function Home() {
               </button>
             </fieldset>
           )}
-          {frame?.artboards?.length ? (
-            <fieldset className="artboard-controls" aria-label="Artboard controls" data-testid="artboard-controls">
-              <label>
-                <span>Active artboard</span>
-                <select
-                  aria-label="Active artboard"
-                  value={frame.activeArtboardId || frame.artboards[0].id}
-                  onChange={(event) => selectArtboard(event.target.value)}
-                >
-                  {frame.artboards.map((item) => (
-                    <option key={item.id} value={item.id} disabled={!item.visible}>
-                      {item.name} ({item.w} × {item.h} px)
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="artboard-visibility-list" aria-label="Artboard visibility">
-                {frame.artboards.map((item) => (
-                  <label key={item.id} className="artboard-visibility-option">
-                    <input
-                      type="checkbox"
-                      aria-label={`Show ${item.name} artboard`}
-                      checked={item.visible}
-                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
-                    />
-                    <span>{item.name}</span>
-                  </label>
-                ))}
-              </div>
-              <label>
-                <span>Fit active layer</span>
-                <select
-                  aria-label="Artboard fit mode"
-                  defaultValue="cover"
-                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
-                >
-                  <option value="cover">Cover</option>
-                  <option value="contain">Contain</option>
-                  <option value="stretch">Stretch</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                data-testid="artboard-fit-active"
-                onClick={() => fitActiveLayerToArtboard('cover')}
-              >
-                Fit active layer to artboard
-              </button>
-              <button
-                type="button"
-                data-testid="artboard-replace-fit"
-                disabled={
-                  !frame.active ||
-                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
-                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
-                }
-                onClick={() => chooseSmartObjectFile(true, true)}
-              >
-                Replace smart object and fit
-              </button>
-              <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
-            </fieldset>
-          ) : null}
           {audioPlayer.element}
           {tool === 'audio-note' && audioDraft && frame && (
             <AudioRecordPanel
@@ -19502,26 +20341,42 @@ export default function Home() {
                           y2={item.end.y}
                         />
                         <text x={labelX} y={labelY}>
-                          {formatMeasurement(item.pixels, item.angle)}
+                          {formatMeasurement(item.pixels, photoshopAngle(item.start, item.end))}
                         </text>
                       </g>
                     );
                   }
                   // Audio markers are interactive HTML (AudioAnnotationMarkers).
                   if (item.kind === 'audio') return null;
-                  if (item.kind === 'note')
+                  if (item.kind === 'note') {
+                    const at = noteDrag?.id === item.id ? noteDrag : item;
                     return (
-                      <g key={item.id} className="measurement-note">
-                        <circle cx={item.x} cy={item.y} r="7" />
-                        <text x={item.x + 11} y={item.y + 4}>
+                      <g
+                        key={item.id}
+                        className="measurement-note"
+                        data-testid="note-marker"
+                        data-note-id={item.id}
+                        data-x={Math.round(at.x)}
+                        data-y={Math.round(at.y)}
+                      >
+                        <circle cx={at.x} cy={at.y} r="7" style={item.color ? { fill: item.color } : undefined} />
+                        <text x={at.x + 11} y={at.y + 4}>
                           {item.text}
                         </text>
                       </g>
                     );
+                  }
+                  // Count label size is a view option; the circle scales with it.
+                  const countSize = navigationTools.countLabelSize;
                   return (
-                    <g key={item.id} className="measurement-count">
-                      <circle cx={item.x} cy={item.y} r="11" />
-                      <text x={item.x} y={item.y + 4}>
+                    <g key={item.id} className="measurement-count" data-group={countGroupOf(item)}>
+                      <circle
+                        cx={item.x}
+                        cy={item.y}
+                        r={Math.round(countSize * 0.92)}
+                        style={item.color ? { fill: item.color } : undefined}
+                      />
+                      <text x={item.x} y={item.y + countSize / 3} style={{ fontSize: `${countSize}px` }}>
                         {item.index}
                       </text>
                     </g>
@@ -19553,7 +20408,7 @@ export default function Home() {
                           measurementPreview.start,
                           measurementPreview.end,
                         ),
-                        measurementAngle(
+                        photoshopAngle(
                           measurementPreview.start,
                           measurementPreview.end,
                         ),
@@ -19608,34 +20463,31 @@ export default function Home() {
                   width={cropPreview.width}
                   height={cropPreview.height}
                 />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left + cropPreview.width / 3}
-                  y1={cropPreview.top}
-                  x2={cropPreview.left + cropPreview.width / 3}
-                  y2={cropPreview.top + cropPreview.height}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left + (cropPreview.width * 2) / 3}
-                  y1={cropPreview.top}
-                  x2={cropPreview.left + (cropPreview.width * 2) / 3}
-                  y2={cropPreview.top + cropPreview.height}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left}
-                  y1={cropPreview.top + cropPreview.height / 3}
-                  x2={cropPreview.left + cropPreview.width}
-                  y2={cropPreview.top + cropPreview.height / 3}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left}
-                  y1={cropPreview.top + (cropPreview.height * 2) / 3}
-                  x2={cropPreview.left + cropPreview.width}
-                  y2={cropPreview.top + (cropPreview.height * 2) / 3}
-                />
+                {(() => {
+                  // Overlay option: rule of thirds, an 8 × 8 grid, or none.
+                  const parts = navigationTools.cropOverlay === 'grid' ? 8 : navigationTools.cropOverlay === 'thirds' ? 3 : 0;
+                  return Array.from({ length: Math.max(0, parts - 1) }, (_, index) => {
+                    const t = (index + 1) / parts;
+                    return (
+                      <Fragment key={index}>
+                        <line
+                          className="crop-preview-guide"
+                          x1={cropPreview.left + cropPreview.width * t}
+                          y1={cropPreview.top}
+                          x2={cropPreview.left + cropPreview.width * t}
+                          y2={cropPreview.top + cropPreview.height}
+                        />
+                        <line
+                          className="crop-preview-guide"
+                          x1={cropPreview.left}
+                          y1={cropPreview.top + cropPreview.height * t}
+                          x2={cropPreview.left + cropPreview.width}
+                          y2={cropPreview.top + cropPreview.height * t}
+                        />
+                      </Fragment>
+                    );
+                  });
+                })()}
               </svg>
             )}
             {perspectiveCropPreview && (
@@ -19667,6 +20519,81 @@ export default function Home() {
                   />
                 ))}
               </svg>
+            )}
+            {frame && perspectiveClicks.length > 0 && !perspectiveCropPreview && (
+              <svg
+                className="crop-preview-overlay perspective-crop-overlay"
+                data-testid="perspective-crop-clicks"
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-label={`Perspective crop: ${perspectiveClicks.length} of 4 corners placed`}
+              >
+                <polyline
+                  className="perspective-crop-border"
+                  points={perspectiveClicks.map((corner) => `${corner.x},${corner.y}`).join(' ')}
+                />
+                {perspectiveClicks.map((corner, index) => (
+                  <circle key={index} className="perspective-crop-handle" cx={corner.x} cy={corner.y} r="7" />
+                ))}
+              </svg>
+            )}
+            {frame && noteEditor && (
+              <form
+                className="note-editor"
+                aria-label={noteEditor.id ? 'Edit note' : 'New note'}
+                data-testid="note-editor"
+                data-side={noteEditor.x > frame.w * 0.6 ? 'left' : 'right'}
+                style={{ left: `${(noteEditor.x / frame.w) * 100}%`, top: `${(noteEditor.y / frame.h) * 100}%` }}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveNoteEditor();
+                }}
+              >
+                <textarea
+                  aria-label="Note text"
+                  ref={noteTextRef}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setNoteEditor(null);
+                      setNotice('Note cancelled');
+                    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                      event.preventDefault();
+                      saveNoteEditor();
+                    }
+                  }}
+                  rows={3}
+                  maxLength={500}
+                  value={noteEditor.text}
+                  onChange={(event) => setNoteEditor({ ...noteEditor, text: event.target.value })}
+                />
+                <div className="note-editor-actions">
+                  <input
+                    type="color"
+                    aria-label="Note marker color"
+                    value={noteEditor.color}
+                    onChange={(event) => setNoteEditor({ ...noteEditor, color: event.target.value })}
+                  />
+                  {noteEditor.id && (
+                    <button type="button" onClick={() => deleteNote(noteEditor.id!)}>
+                      Delete
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNoteEditor(null);
+                      setNotice('Note cancelled');
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="primary">
+                    Save
+                  </button>
+                </div>
+              </form>
             )}
             {slicePreview && (
               <svg
@@ -19777,7 +20704,8 @@ export default function Home() {
               </svg>
             )}
           </div>
-          <div className="zoom">
+        </section>
+          <div className="zoom" data-testid="zoom-control">
             <button
               aria-label="Zoom out"
               onClick={() => zoomBy(-1)}
@@ -19802,7 +20730,72 @@ export default function Home() {
               <ZoomIn />
             </button>
           </div>
-        </section>
+          {/* Pinned to the visible stage like the zoom pill; hidden while a
+              crop, slice or frame preview bar or the type bar uses that spot. */}
+          {frame?.artboards?.length && !cropPreview && !slicePreview && !framePreview && !isTypeTool(tool) ? (
+            <fieldset className="artboard-controls" aria-label="Artboard controls" data-testid="artboard-controls">
+              <label>
+                <span>Active artboard</span>
+                <select
+                  aria-label="Active artboard"
+                  value={frame.activeArtboardId || frame.artboards[0].id}
+                  onChange={(event) => selectArtboard(event.target.value)}
+                >
+                  {frame.artboards.map((item) => (
+                    <option key={item.id} value={item.id} disabled={!item.visible}>
+                      {item.name} ({item.w} × {item.h} px)
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="artboard-visibility-list" aria-label="Artboard visibility">
+                {frame.artboards.map((item) => (
+                  <label key={item.id} className="artboard-visibility-option">
+                    <input
+                      type="checkbox"
+                      aria-label={`Show ${item.name} artboard`}
+                      checked={item.visible}
+                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
+                    />
+                    <span>{item.name}</span>
+                  </label>
+                ))}
+              </div>
+              <label>
+                <span>Fit active layer</span>
+                <select
+                  aria-label="Artboard fit mode"
+                  defaultValue="cover"
+                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
+                >
+                  <option value="cover">Cover</option>
+                  <option value="contain">Contain</option>
+                  <option value="stretch">Stretch</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                data-testid="artboard-fit-active"
+                onClick={() => fitActiveLayerToArtboard('cover')}
+              >
+                Fit active layer to artboard
+              </button>
+              <button
+                type="button"
+                data-testid="artboard-replace-fit"
+                disabled={
+                  !frame.active ||
+                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
+                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
+                }
+                onClick={() => chooseSmartObjectFile(true, true)}
+              >
+                Replace smart object and fit
+              </button>
+              <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
+            </fieldset>
+          ) : null}
+        </div>
         <aside
           className="inspector"
           ref={inspectorRef}
@@ -19839,7 +20832,7 @@ export default function Home() {
                 action="Exit"
                 onClick={exitQuickMask}
               />
-              <label>
+              <label className="check-row">
                 <input
                   type="checkbox"
                   checked={quickMaskReveal}
@@ -19860,6 +20853,118 @@ export default function Home() {
             data-testid="tool-options-area"
             tabIndex={-1}
           >
+            {/* Perspective Crop corners are edited here, docked off the canvas so
+                the panel never covers a corner handle (audit B-06). */}
+          {perspectiveCropPreview && (
+            <fieldset
+              className="panel perspective-crop-controls"
+              aria-label="Perspective crop controls"
+              data-testid="perspective-crop-controls"
+            >
+              <span>
+                Perspective crop · {perspectiveCropPreview.width} ×{' '}
+                {perspectiveCropPreview.height} px
+              </span>
+              <div className="perspective-crop-fields">
+                {(
+                  [
+                    'Top left',
+                    'Top right',
+                    'Bottom right',
+                    'Bottom left',
+                  ] as const
+                ).map((label, index) => (
+                    <span key={label}>
+                      <label>
+                        {label} X
+                        <input
+                          aria-label={`${label} X`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.w}
+                          value={Math.round(perspectiveCropPreview.quad[index].x)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
+                            quad[index] = { ...quad[index], x: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                      <label>
+                        {label} Y
+                        <input
+                          aria-label={`${label} Y`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.h}
+                          value={Math.round(perspectiveCropPreview.quad[index].y)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
+                            quad[index] = { ...quad[index], y: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                    </span>
+                ))}
+                <label>
+                  Output width
+                  <input
+                    aria-label="Perspective output width"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.width}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ width: value });
+                    }}
+                  />
+                </label>
+                <label>
+                  Output height
+                  <input
+                    aria-label="Perspective output height"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.height}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ height: value });
+                    }}
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                data-testid="perspective-crop-apply"
+                disabled={perspectiveCropApplying}
+                onClick={() => void applyPerspectiveCropPreview()}
+              >
+                {perspectiveCropApplying
+                  ? 'Applying…'
+                  : 'Apply perspective crop'}
+              </button>
+              <button
+                type="button"
+                data-testid="perspective-crop-cancel"
+                onClick={cancelPerspectiveCropPreview}
+              >
+                Cancel
+              </button>
+            </fieldset>
+          )}
             {/* Tool presets (#233) sit above the active tool's options. */}
             {presetTool && (
               <ToolPresetsControl
@@ -19913,7 +21018,7 @@ export default function Home() {
                 <button type="button" aria-label="Rotate view right 15 degrees" onClick={() => rotateViewBy(15)}>
                   <RotateCw />
                 </button>
-                <button type="button" className="secondary" aria-label="Reset view rotation" onClick={resetViewRotation}>
+                <button type="button" className="secondary view-reset" aria-label="Reset view rotation" onClick={resetViewRotation}>
                   Reset view
                 </button>
               </div>
@@ -19929,10 +21034,11 @@ export default function Home() {
             <SidebarSection
               id="tool-options"
               icon={Brush}
-              title="Tool options"
+              title={NAMED_OPTION_TOOLS.has(tool) ? `${activeToolLabel} options` : 'Tool options'}
               collapsed={collapsedSections.has('tool-options')}
               onToggle={toggleSidebarSection}
             >
+              {NAMED_OPTION_TOOLS.has(tool) && renderNavigationToolOptions()}
               {tool === 'audio-note' && (
                 <AudioAnnotationList
                   items={audioAnnotations(frame)}
@@ -20346,7 +21452,7 @@ export default function Home() {
                   </p>
                 </fieldset>
               )}
-              {tool !== 'magic-eraser' && tool !== 'fill' && tool !== 'magic-wand' && !isShapeToolId(tool) &&
+              {tool !== 'magic-eraser' && tool !== 'fill' && tool !== 'magic-wand' && !isShapeToolId(tool) && !NAMED_OPTION_TOOLS.has(tool) &&
                 (!PATH_TOOL_OPTION_TOOLS.includes(tool) || pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('strokeWidth')) && (
                 <BrushSizeControl value={size} set={setSize} />
               )}
@@ -23358,6 +24464,42 @@ function Slider({
         onChange={(e) => set(+e.target.value)}
       />
     </label>
+  );
+}
+
+/**
+ * Whole-number field that keeps the typed text while it is being edited and
+ * only passes valid values in [min, max] on; blur restores the last value.
+ */
+function IntegerField({
+  label,
+  value,
+  min,
+  max,
+  set,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  set: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      aria-label={label}
+      min={min}
+      max={max}
+      step={1}
+      value={draft ?? String(value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const parsed = Number(event.target.value);
+        if (event.target.value.trim() !== '' && Number.isInteger(parsed) && parsed >= min && parsed <= max) set(parsed);
+      }}
+      onBlur={() => setDraft(null)}
+    />
   );
 }
 

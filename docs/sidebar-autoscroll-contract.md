@@ -32,9 +32,10 @@ focus away from where the user is working.
   tool without deciding where its controls live fails `npm run typecheck`.
   A `null` entry means the tool has no inline sidebar controls (canvas overlay,
   status-bar controls) and **must** carry a reason in `TOOLS_WITHOUT_SECTION`
-  (typed over exactly the `null` tools). Today: Hand, Zoom, Eyedropper, Color
-  Sampler, Ruler, Note, Count, Fill, Crop, Perspective Crop, Slice, Slice
-  Select and Frame.
+  (typed over exactly the `null` tools). Today: Hand, Fill, Slice, Slice
+  Select and Frame. Zoom, Eyedropper, Color Sampler, Ruler, Note, Count, Crop
+  and Perspective Crop reveal Tool options
+  ([navigation tool options](./navigation-tool-options-contract.md)).
 * The page renders the tool options area from `TOOL_SIDEBAR` in
   `src/sidebarPanels.ts`, whose first section per tool must equal
   `TOOL_SECTIONS[tool]` (checked by `tests/sidebar-panels.test.mjs`), so

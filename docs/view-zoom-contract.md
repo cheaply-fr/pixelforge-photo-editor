@@ -22,6 +22,18 @@ a view setting only. It never changes document pixels, history or exports.
   under the pointer fixed when the image overflows the stage. Keyboard,
   menu, button and slider zooms keep the stage centre fixed. An image smaller
   than the stage is centred.
+- `Ctrl/⌘+0` fits and `Ctrl/⌘+1` shows 100% (as do `Ctrl/⌘ +/−` step the
+  zoom); the editor calls `preventDefault` so the browser's page zoom never
+  takes these keys.
+- The Zoom tool options offer Zoom In / Zoom Out mode (Alt-click inverts
+  it), 100%, Fit Screen, Fill Screen (`fillViewZoom`: the smallest zoom at
+  which the image covers the stage, one axis overflowing) and an opt-in
+  Scrubby Zoom (`scrubbyViewZoom`: dragging right doubles the zoom every 160
+  CSS px, left halves it). Mode and Scrubby Zoom persist with the draft
+  settings (see [navigation tool options](./navigation-tool-options-contract.md)).
+- The zoom control is pinned to the visible stage: it sits on a
+  non-scrolling `.stage-shell` around the scrolling `.stage`, so it never
+  floats mid-canvas or scrolls out of view.
 - At 200% and above the canvas uses `image-rendering: pixelated` so pixels
   read as crisp squares.
 - The slider value is a preset index; its `aria-valuetext` and the visible
@@ -40,6 +52,10 @@ including `null` or a string, rejects the settings.
   clamping, validation, fit geometry, labels, anchored scroll maths.
 - `tests/persistence-contract.test.mjs`: `viewZoom` round-trips and malformed
   values are rejected while legacy drafts stay valid.
+- `tests/navigation-tool-options.test.mjs`: Fill Screen and Scrubby Zoom
+  maths; `tests/browser/audit-nav-zoom-view.spec.ts` (desktop and mobile):
+  pinned zoom control while scrolled at ≥ 200%, Zoom options, Alt inversion,
+  Scrubby drag, persistence and `Ctrl+0`/`Ctrl+1` with `defaultPrevented`.
 - `tests/browser/pixel-zoom.spec.ts` (desktop and mobile): fitted open,
   Actual size at 1 CSS px per image px, a 2646×4096 canvas fitted, shown at
   100% and scrolled to both corners, 1%/3200% clamps and crisp pixels,

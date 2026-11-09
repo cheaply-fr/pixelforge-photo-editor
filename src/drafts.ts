@@ -114,6 +114,7 @@ import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
 import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
 import { validRetouchOptions, type RetouchOptions } from './retouchOptions.ts';
 import { normalizeImagePatterns, type ImagePattern } from './imagePatterns.ts';
+import { validNavigationToolSettings, type NavigationToolSettings } from './navigationOptions.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -318,6 +319,8 @@ export type Settings = {
   artHistoryBrush?: ArtHistoryBrushSettings;
   /** Index into the local undo history used as the History Brush source. */
   historySourceIndex?: number;
+  /** Zoom, Eyedropper, Count, Note and Crop options (docs/navigation-tool-options-contract.md). */
+  navigationTools?: Partial<NavigationToolSettings>;
   exportFormat?: ExportFormat;
   exportQuality?: number;
   /** Optional lossy-export target in bytes; absent means manual quality mode. */
@@ -600,6 +603,7 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
   if (candidate.historySourceIndex !== undefined &&
     (!Number.isInteger(candidate.historySourceIndex) || candidate.historySourceIndex < 0 || candidate.historySourceIndex > 23)) return false;
+  if (candidate.navigationTools !== undefined && !validNavigationToolSettings(candidate.navigationTools)) return false;
   return (
     ranges.every(
       ([value, min, max]) =>
