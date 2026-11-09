@@ -647,15 +647,20 @@ import {
   hitTestPathNode,
   movePathHandle,
   movePathNode,
-  insertPathNode,
-  nearestPathSegment,
-  removePathNode,
-  setPathNodeSmooth,
   validatePath,
   type PathHandleKind,
   type PathNode,
   type PathModel,
 } from '../src/paths';
+import {
+  editPathAnchor,
+  hitTestWholePath,
+  isPathAnchorEdit,
+  pathAnchorEditNotice,
+  penAnchorEditMode,
+  pullPathNodeHandles,
+  translatePath,
+} from '../src/pathEditTools';
 import {
   DEFAULT_SMUDGE_SETTINGS,
   applySmudgeDabs,
@@ -1192,6 +1197,12 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'pen', label: 'Pen', icon: toolIcon('pen'), key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: toolIcon('freeform-pen'), key: 'P' },
   { id: 'curvature-pen', label: 'Curvature Pen', icon: toolIcon('curvature-pen'), key: 'P' },
+  // Photoshop gives the anchor-editing pens no shortcut; an empty key hides
+  // the shortcut badge rather than advertising a P press that skips them.
+  { id: 'add-anchor', label: 'Add Anchor Point', icon: toolIcon('add-anchor'), key: '' },
+  { id: 'delete-anchor', label: 'Delete Anchor Point', icon: toolIcon('delete-anchor'), key: '' },
+  { id: 'convert-point', label: 'Convert Point', icon: toolIcon('convert-point'), key: '' },
+  { id: 'path-select', label: 'Path Selection', icon: toolIcon('path-select'), key: 'A' },
   {
     id: 'direct-select',
     label: 'Direct Selection',
@@ -1301,11 +1312,11 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   y: ['history-brush', 'art-history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
+  a: ['path-select', 'direct-select'],
 };
-/** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
-const TOOL_ALIASES: Record<string, Tool> = {
-  a: 'direct-select',
-};
+/** Existing PixelForge aliases retained while the primary keys follow Photoshop.
+ * A used to alias Direct Selection; it is now the Path/Direct Selection family. */
+const TOOL_ALIASES: Record<string, Tool> = {};
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
   ['Vivid', 'saturate(1.45) contrast(1.08)', '#244d96', '#ef854a'],
@@ -1685,6 +1696,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
 
 /** Tools whose one gesture spans several presses (click-to-place, tap-to-arm). */
 const MULTI_PRESS_GESTURE_TOOLS: readonly Tool[] = ['polygonal-lasso', 'magnetic-lasso', 'pen', 'curvature-pen'];
+/** Image-pixel distance a path tool press must travel before it is a drag. */
+const PATH_TOOL_DRAG_SLOP = 2;
+/** Pen-family and path-selection tools that share the path Tool options. */
+const PATH_TOOL_OPTION_TOOLS: readonly Tool[] = [
+  'pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point',
+  'path-select', 'direct-select',
+];
 /**
  * Tools whose result depends on the whole pointer path, not just its latest
  * position: each browser-coalesced sample of a move is applied to them (see
@@ -10866,6 +10884,28 @@ export default function Home() {
       ),
     );
   };
+  /** Replace the edited path on a path layer or on its vector mask. */
+  const withEditedPath = (layer: Layer, path: PathModel, vectorMask: boolean): Layer =>
+    vectorMask
+      ? { ...layer, vectorMask: 'vectorMask' in layer && layer.vectorMask ? { ...layer.vectorMask, path } : undefined } as Layer
+      : { ...layer, path } as Layer;
+  /**
+   * Path for an in-progress Path Selection or Convert Point drag, or null
+   * while the pointer is still within the click slop of its press point.
+   */
+  const pathToolDragResult = (g: Gesture, pointer: { x: number; y: number }): PathModel | null => {
+    if (!g.pathOrigin || !g.layer) return null;
+    if (Math.hypot(pointer.x - g.start.x, pointer.y - g.start.y) < PATH_TOOL_DRAG_SLOP) return null;
+    const startLocal = inversePoint(g.layer.matrix, g.start);
+    const local = inversePoint(g.layer.matrix, pointer);
+    if (!startLocal || !local) return null;
+    if (g.tool === 'path-select')
+      return translatePath(g.pathOrigin, local.x - startLocal.x, local.y - startLocal.y);
+    if (g.pathIndex === undefined) return null;
+    return g.pathHandle
+      ? movePathHandle(g.pathOrigin, g.pathIndex, g.pathHandle, local.x, local.y)
+      : pullPathNodeHandles(g.pathOrigin, g.pathIndex, local);
+  };
   const drawPathOverlay = (
     path: PathModel,
     matrix: Matrix = [1, 0, 0, 1, 0, 0],
@@ -11200,28 +11240,19 @@ export default function Home() {
           Math.hypot(activeLayer.matrix[2], activeLayer.matrix[3]),
           0.0001,
         );
-        const path = validatePath(activeLayer.path);
-        const nodeIndex = hitTestPathNode(path, localPath, 12 / scale);
-        if (nodeIndex !== null && (e.altKey || e.shiftKey)) {
-          const next = e.altKey
-            ? removePathNode(path, nodeIndex)
-            : setPathNodeSmooth(
-                path,
-                nodeIndex,
-                !(path.nodes[nodeIndex].inHandle || path.nodes[nodeIndex].outHandle),
-              );
-          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
-            setNotice(e.altKey ? 'Path anchor deleted' : 'Path anchor converted');
+        // Shared with the dedicated Add/Delete Anchor Point and Convert
+        // Point tools (src/pathEditTools.ts). A click that edits nothing
+        // falls through and starts a new path, as it always has.
+        const edit = editPathAnchor(
+          validatePath(activeLayer.path),
+          localPath,
+          12 / scale,
+          penAnchorEditMode(e),
+        );
+        if (isPathAnchorEdit(edit)) {
+          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: edit.path } : item) }))
+            setNotice(pathAnchorEditNotice(edit));
           return;
-        }
-        if (!e.altKey && !e.shiftKey) {
-          const hit = nearestPathSegment(path, localPath, 12 / scale);
-          if (hit) {
-            const next = insertPathNode(path, hit.segmentIndex, hit.t);
-            if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
-              setNotice('Path anchor added');
-            return;
-          }
         }
       }
     }
@@ -11645,6 +11676,81 @@ export default function Home() {
         }
       })();
       await g.pending;
+      return;
+    }
+    if (
+      tool === 'path-select' ||
+      tool === 'add-anchor' ||
+      tool === 'delete-anchor' ||
+      tool === 'convert-point'
+    ) {
+      // Path Selection and the dedicated anchor tools edit the active path
+      // layer or the active layer's vector mask, like Direct Selection.
+      const vectorMaskTarget = isVectorMaskableLayer(layer) ? layer.vectorMask : undefined;
+      const editablePath = vectorMaskTarget?.path || (layer.kind === 'path' ? layer.path : undefined);
+      if (layerIsLocked(f, layer) || !layer.visible || !editablePath) {
+        setNotice(
+          tool === 'path-select'
+            ? 'Select a visible, unlocked path layer or vector-mask layer before selecting a path'
+            : 'Select a visible, unlocked path layer or vector-mask layer before editing anchors',
+        );
+        return;
+      }
+      const localPoint = inversePoint(layer.matrix, p);
+      if (!localPoint) {
+        setNotice('This path transform cannot be edited');
+        return;
+      }
+      const scale = Math.max(
+        Math.hypot(layer.matrix[0], layer.matrix[1]),
+        Math.hypot(layer.matrix[2], layer.matrix[3]),
+        0.0001,
+      );
+      const origin = validatePath(editablePath);
+      const vectorMask = Boolean(vectorMaskTarget);
+      if (tool === 'add-anchor' || tool === 'delete-anchor') {
+        const edit = editPathAnchor(origin, localPoint, 12 / scale, tool === 'add-anchor' ? 'add' : 'delete');
+        if (!isPathAnchorEdit(edit)) {
+          setNotice(edit.reason);
+          return;
+        }
+        const nextLayer = withEditedPath(layer, edit.path, vectorMask);
+        if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? nextLayer : item) }))
+          setNotice(pathAnchorEditNotice(edit, vectorMask));
+        return;
+      }
+      let pathIndex: number | undefined;
+      let pathHandle: PathHandleKind | undefined;
+      if (tool === 'convert-point') {
+        // An anchor wins over a nearby handle: click converts it and a drag
+        // pulls out symmetric handles. Dragging a handle moves it alone.
+        const nodeIndex = hitTestPathNode(origin, localPoint, 12 / scale);
+        const handle = nodeIndex === null ? hitTestPathHandle(origin, localPoint, 10 / scale) : null;
+        if (nodeIndex === null && !handle) {
+          setNotice('Click an anchor to convert it, or drag a handle to break it');
+          return;
+        }
+        pathIndex = nodeIndex ?? handle!.index;
+        pathHandle = handle?.kind;
+      } else if (!hitTestWholePath(origin, localPoint, 10 / scale)) {
+        setNotice('Click on a path to select it');
+        return;
+      }
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        layer,
+        pathIndex,
+        pathHandle,
+        pathOrigin: origin,
+        pathVectorMask: vectorMask,
+        moved: false,
+      };
+      drawPathOverlay(origin, layer.matrix, pathIndex ?? null);
+      if (tool === 'path-select')
+        setNotice(vectorMask ? 'Vector mask path selected: drag to move it' : 'Path selected: drag to move it');
       return;
     }
     if (tool === 'direct-select') {
@@ -13196,6 +13302,19 @@ export default function Home() {
       previewPenPath(g);
       return;
     }
+    if ((g.tool === 'path-select' || g.tool === 'convert-point') && g.pathOrigin && g.layer) {
+      const moved = pathToolDragResult(g, p);
+      if (!moved) return;
+      const nextLayer = withEditedPath(g.layer, moved, Boolean(g.pathVectorMask));
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id ? nextLayer : item),
+      }).then(() => {
+        if (gesture.current === g) drawPathOverlay(moved, g.layer!.matrix, g.pathIndex ?? null);
+      });
+      g.last = p;
+      return;
+    }
     if (
       g.tool === 'direct-select' &&
       (g.pathVectorMask || g.layer?.kind === 'path') &&
@@ -14103,6 +14222,33 @@ export default function Home() {
         );
       return;
     }
+    if ((g.tool === 'path-select' || g.tool === 'convert-point') && g.pathOrigin && g.layer) {
+      const dragged = pathToolDragResult(g, p);
+      const vectorMask = Boolean(g.pathVectorMask);
+      let next: PathModel | null = dragged;
+      let message = '';
+      if (dragged) {
+        message = g.tool === 'path-select'
+          ? vectorMask ? 'Vector mask path moved' : 'Path moved'
+          : g.pathHandle
+            ? vectorMask ? 'Vector mask handle moved independently' : 'Path handle moved independently'
+            : vectorMask ? 'Vector mask anchor converted to smooth' : 'Path anchor converted to smooth';
+      } else if (g.tool === 'convert-point' && g.pathIndex !== undefined && !g.pathHandle) {
+        const edit = editPathAnchor(g.pathOrigin, g.pathOrigin.nodes[g.pathIndex], 0, 'convert');
+        if (isPathAnchorEdit(edit)) {
+          next = edit.path;
+          message = pathAnchorEditNotice(edit, vectorMask);
+        }
+      }
+      if (!next) {
+        void paint(f);
+        return;
+      }
+      const nextLayer = withEditedPath(g.layer, next, vectorMask);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? nextLayer : item) }))
+        setNotice(message);
+      return;
+    }
     if (
       g.tool === 'direct-select' &&
       (g.pathVectorMask || g.layer?.kind === 'path') &&
@@ -14906,6 +15052,8 @@ export default function Home() {
           gesture.current?.tool === 'freeform-pen' ||
           gesture.current?.tool === 'curvature-pen' ||
           gesture.current?.tool === 'direct-select' ||
+          gesture.current?.tool === 'path-select' ||
+          gesture.current?.tool === 'convert-point' ||
           gesture.current?.tool === 'selection-brush' ||
           gesture.current?.tool === 'quick-selection' ||
           gesture.current?.tool === 'patch')
@@ -17113,15 +17261,11 @@ export default function Home() {
                               toolFlyoutAnchor?.dataset.toolId === id
                             : undefined
                         }
-                        title={
-                          flyout
-                            ? `${label} (${key}) · press and hold for subtools`
-                            : `${label} (${key})`
-                        }
+                        title={`${label}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
-                        <kbd>{key}</kbd>
+                        {key && <kbd>{key}</kbd>}
                         {subtools.length > 1 && (
                           <span
                             className="tool-subtool-arrow"
@@ -18706,7 +18850,7 @@ export default function Home() {
                   </button>
                 </label>
               )}
-              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && customPathPresets.length > 0 && (
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && customPathPresets.length > 0 && (
                 <label className="select-row">
                   <span>Saved path preset</span>
                   <select
@@ -18731,7 +18875,7 @@ export default function Home() {
                   </button>
                 </label>
               )}
-              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && (
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && (
                 <button
                   type="button"
                   className="secondary"
