@@ -19,12 +19,14 @@ const TOOL_FAMILIES = [
   ['Smudge', 'Blur', 'Sharpen'],
   ['Mask Brush', 'Mask Eraser', 'Adjustment Brush'],
   ['Pen', 'Freeform Pen', 'Curvature Pen'],
+  ['Text', 'Vertical Type', 'Horizontal Type Mask', 'Vertical Type Mask'],
 ] as const;
 
 const FLYOUT_LABELS: Readonly<Record<string, string>> = {
   Select: 'Rectangular Marquee',
   'Elliptical marquee': 'Elliptical Marquee',
   Lasso: 'Freeform Lasso',
+  Text: 'Horizontal Type',
   'Freeform Pen': 'Freeform Pen',
   'Curvature Pen': 'Curvature Pen',
 };

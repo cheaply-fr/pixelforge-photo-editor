@@ -120,3 +120,25 @@ export function alphaBounds(
     : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
 }
 
+
+/** Outcome of validating text typed for a Type Mask tool entry. */
+export type TypeMaskEntryResult =
+  | { ok: true; text: string }
+  | { ok: false; error: string };
+
+/**
+ * Validate the temporary text typed with the Horizontal/Vertical Type Mask
+ * tools. Unlike the Type menu command there is no source layer: the entry is
+ * discarded after it becomes a selection, so blank or oversized text must be
+ * rejected before any canvas is allocated.
+ */
+export function typeMaskEntryText(value: unknown): TypeMaskEntryResult {
+  if (typeof value !== 'string') return { ok: false, error: 'Type some text for the mask' };
+  // Normalise Windows/old-Mac line endings so the rendered lines match the
+  // text layer renderer, which splits on "\n" only.
+  const text = value.replace(/\r\n?/g, '\n');
+  if (text.trim().length === 0) return { ok: false, error: 'Type some text for the mask' };
+  if (text.length > TEXT_MASK_MAX_TEXT)
+    return { ok: false, error: `Type mask text is limited to ${TEXT_MASK_MAX_TEXT} characters` };
+  return { ok: true, text };
+}

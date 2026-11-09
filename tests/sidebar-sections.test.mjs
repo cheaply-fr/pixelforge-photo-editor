@@ -66,7 +66,7 @@ test('every tool resolves to a registered section or to a documented no-section 
 test('Tool options renders for exactly the legacy tool set', () => {
   const now = allTools.filter((tool) => toolShowsSection(tool, 'tool-options')).sort();
   assert.deepEqual(now, [...LEGACY_TOOL_OPTIONS_TOOLS].sort());
-  assert.deepEqual(allTools.filter((tool) => toolShowsSection(tool, 'text')), ['text']);
+  assert.deepEqual(allTools.filter((tool) => toolShowsSection(tool, 'text')), ['text', 'vertical-text', 'text-mask', 'vertical-text-mask']);
   assert.deepEqual(allTools.filter((tool) => toolShowsSection(tool, 'rotate-view')), ['rotate-view']);
 });
 

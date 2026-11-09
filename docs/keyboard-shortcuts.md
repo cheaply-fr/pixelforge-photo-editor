@@ -24,7 +24,7 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `E` | Eraser |
 | `O` | Cycle Dodge, Burn and Sponge (Shift reverses) |
 | `R` | Cycle Rotate View, Smudge, Blur and Sharpen (Shift reverses) |
-| `T` | Text |
+| `T` | Horizontal Type, Vertical Type, Horizontal Type Mask, Vertical Type Mask (repeat to cycle, Shift reverses) |
 | `U` | Cycle Rectangle and Ellipse |
 | `M` | Cycle rectangular, elliptical, single-row and single-column marquee |
 | `L` | Lasso |

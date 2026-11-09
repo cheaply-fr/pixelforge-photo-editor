@@ -209,6 +209,7 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import TypeMaskEntryDialog from '../src/TypeMaskEntryDialog';
 import SaveSelectionDialog from '../src/SaveSelectionDialog';
 import EditFillDialog from '../src/EditFillDialog';
 import { editFillColor, type EditFillOptions } from '../src/editFill';
@@ -516,6 +517,8 @@ import {
   compactCategoryTools,
   flyoutForTool,
   flyoutTools,
+  TYPE_TOOLS,
+  typeToolMode,
 } from '../src/toolPalette';
 import { toolIcon } from '../src/toolIcons';
 import {
@@ -1166,6 +1169,9 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
     key: 'A',
   },
   { id: 'text', label: 'Text', icon: toolIcon('text'), key: 'T' },
+  { id: 'vertical-text', label: 'Vertical Type', icon: toolIcon('vertical-text'), key: 'T' },
+  { id: 'text-mask', label: 'Horizontal Type Mask', icon: toolIcon('text-mask'), key: 'T' },
+  { id: 'vertical-text-mask', label: 'Vertical Type Mask', icon: toolIcon('vertical-text-mask'), key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: toolIcon('rectangle'), key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: toolIcon('ellipse'), key: 'U' },
   { id: 'line', label: 'Line', icon: toolIcon('line'), key: 'U' },
@@ -1224,6 +1230,8 @@ const toolSelectionNotice = (tool: Tool, label: string) =>
 const flyoutToolLabel = (tool: Tool, label: string) =>
   tool === 'select'
     ? 'Rectangular Marquee'
+    : tool === 'text'
+      ? 'Horizontal Type'
     : tool === 'ellipse-select'
       ? 'Elliptical Marquee'
     : tool === 'lasso'
@@ -1268,6 +1276,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   y: ['history-brush', 'art-history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
+  t: [...TYPE_TOOLS],
 };
 /** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
 const TOOL_ALIASES: Record<string, Tool> = {
@@ -3361,6 +3370,8 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  // Pending Type Mask tool entry: a click point and orientation awaiting text.
+  const [typeMaskEntry, setTypeMaskEntry] = useState<{ x: number; y: number; orientation: TextMaskOrientation } | null>(null);
   const [saveSelectionOpen, setSaveSelectionOpen] = useState(false);
   const [editFillOpen, setEditFillOpen] = useState(false);
   const [strokePathDialog, setStrokePathDialog] = useState<{ pathLayerId?: string; targetLayerId?: string } | null>(null);
@@ -5327,6 +5338,34 @@ export default function Home() {
     editLayer({ textPath: binding });
     setNotice('Text attached to editable path');
   };
+  /** Text layer fields a Type tool click creates (also used as a mask source). */
+  const typeToolLayer = (
+    f: Frame,
+    p: { x: number; y: number },
+    orientation: TextMaskOrientation,
+    content: string,
+  ): Extract<Layer, { kind: 'text' }> => ({
+    ...commonLayer('Type mask'),
+    kind: 'text',
+    text: content,
+    fontSize,
+    fontFamily,
+    bold: true,
+    color,
+    boxWidth: Math.max(1, f.w - p.x),
+    textAlign: 'left',
+    lineHeight: 1.2,
+    letterSpacing: 0,
+    orientation,
+    matrix: [1, 0, 0, 1, p.x, p.y],
+  });
+  const commitTypeMaskEntry = (content: string) => {
+    const entry = typeMaskEntry;
+    setTypeMaskEntry(null);
+    if (!entry) return;
+    const f = current();
+    void selectTypeMask(f, typeToolLayer(f, entry, entry.orientation, content), entry.orientation);
+  };
   const pasteLoremIpsum = () => {
     const f = current();
     if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
@@ -5497,6 +5536,18 @@ export default function Home() {
       setNotice('Select a visible, unlocked text layer before creating a type mask');
       return;
     }
+    await selectTypeMask(f, layer, orientation);
+  };
+  /**
+   * Shared Type Mask renderer for the Type menu commands and the Type Mask
+   * tools. `layer` may be a temporary text layer that is never committed to
+   * the document; only the composed selection becomes history.
+   */
+  const selectTypeMask = async (
+    f: Frame,
+    layer: Extract<Layer, { kind: 'text' }>,
+    orientation: TextMaskOrientation,
+  ) => {
     const [a, b, c, d, e, g] = layer.matrix;
     if (
       ![a, b, c, d, e, g].every((value) => Number.isFinite(value) && Math.abs(value) <= 1000000) ||
@@ -12600,23 +12651,23 @@ export default function Home() {
       );
       return;
     }
-    if (tool === 'text') {
+    const typeMode = typeToolMode(tool);
+    if (typeMode?.mask) {
+      // Type Mask tools stage temporary text; nothing changes until commit.
+      setTypeMaskEntry({ x: p.x, y: p.y, orientation: typeMode.orientation });
+      return;
+    }
+    if (typeMode) {
       const added = addLayer({
-        ...commonLayer('Text ' + f.layers.length),
-        kind: 'text',
-        text: text || 'Your text',
-        fontSize,
-        fontFamily,
-        bold: true,
-        color,
-        boxWidth: Math.max(1, f.w - p.x),
-        textAlign: 'left',
-        lineHeight: 1.2,
-        letterSpacing: 0,
-        orientation: 'horizontal',
-        matrix: [1, 0, 0, 1, p.x, p.y],
+        ...typeToolLayer(f, p, typeMode.orientation, text || 'Your text'),
+        name: 'Text ' + f.layers.length,
       });
-      if (added) setNotice('Editable text layer added');
+      if (added)
+        setNotice(
+          typeMode.orientation === 'vertical'
+            ? 'Editable vertical text layer added'
+            : 'Editable text layer added',
+        );
       return;
     }
     if (tool === 'select' || tool === 'ellipse-select' || tool === 'lasso') {
@@ -16320,6 +16371,17 @@ export default function Home() {
             setEditFillOpen(false);
             void fillActiveLayer(options);
           }}
+        />
+      )}
+      {typeMaskEntry && (
+        <TypeMaskEntryDialog
+          orientation={typeMaskEntry.orientation}
+          initial={text || 'Your text'}
+          close={() => {
+            setTypeMaskEntry(null);
+            setNotice('Type Mask cancelled; selection unchanged');
+          }}
+          apply={commitTypeMaskEntry}
         />
       )}
       {selectionFeathering && (

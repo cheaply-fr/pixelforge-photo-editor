@@ -6,6 +6,10 @@ text remains an editable layer: the command renders a temporary orientation
 clone through the local Canvas 2D renderer and stores only the resulting alpha
 in the existing `Selection.mask` PNG asset.
 
+The Horizontal and Vertical Type Mask **tools** reuse this pipeline with a
+temporary text entry instead of an existing layer and add no layer; see
+[`type-tools-contract.md`](./type-tools-contract.md).
+
 The command is available only for a visible, unlocked, non-empty text layer.
 Group visibility and locks are honoured. Canvas dimensions, content length and
 affine transforms are validated before allocation (maximum 16 million pixels

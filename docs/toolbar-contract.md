@@ -37,6 +37,9 @@ three implemented selection tools, while `L` retains the legacy lasso family.
 The Pen, Freeform Pen and Curvature Pen variants likewise occupy one `P`
 family slot with a visible arrow and icon-bearing flyout; the active variant
 replaces that representative slot and the remembered choice survives reload.
+The `T` family (Horizontal Type, Vertical Type, Horizontal Type Mask and
+Vertical Type Mask) shares one Draw & Type slot and flyout in the same way;
+see [`type-tools-contract.md`](./type-tools-contract.md).
 Measurement tools remain independent slots so Eyedropper, Color Sampler, Ruler,
 Note and Count are visible without being incorrectly collapsed into one family.
 

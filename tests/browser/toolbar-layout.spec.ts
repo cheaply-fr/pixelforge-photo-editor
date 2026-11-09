@@ -95,6 +95,7 @@ test('family tools show Photoshop-style submenu arrows while singleton tools sta
     'Crop tool',
     'Brush tool',
     'Clone tool',
+    'Text tool',
   ]) {
     const button = page.getByRole('button', { name: label, exact: true });
     await expect(button.locator('.tool-subtool-arrow')).toHaveCount(1);
@@ -104,7 +105,7 @@ test('family tools show Photoshop-style submenu arrows while singleton tools sta
     );
   }
 
-  for (const label of ['Move tool', 'Text tool']) {
+  for (const label of ['Move tool']) {
     await expect(
       page.getByRole('button', { name: label, exact: true }).locator(
         '.tool-subtool-arrow',

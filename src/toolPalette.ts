@@ -15,7 +15,8 @@ export type PaletteToolId =
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
   | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
-  | 'magnetic-lasso' | 'selection-brush' | 'quick-selection' | 'magic-wand';
+  | 'magnetic-lasso' | 'selection-brush' | 'quick-selection' | 'magic-wand'
+  | 'vertical-text' | 'text-mask' | 'vertical-text-mask';
 
 export type ToolCategory = {
   id: string;
@@ -33,8 +34,27 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
-  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
+  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'vertical-text', 'text-mask', 'vertical-text-mask', 'rectangle', 'ellipse', 'line', 'polygon'] },
 ] as const;
+
+/**
+ * Photoshop's T family: Horizontal Type, Vertical Type, Horizontal Type Mask
+ * and Vertical Type Mask. The mask variants never leave a text layer behind;
+ * they commit a selection instead.
+ */
+export const TYPE_TOOLS = ['text', 'vertical-text', 'text-mask', 'vertical-text-mask'] as const satisfies readonly PaletteToolId[];
+export type TypeToolId = (typeof TYPE_TOOLS)[number];
+
+/** Flow orientation and output kind for one T-family tool. */
+export function typeToolMode(tool: string): { orientation: 'horizontal' | 'vertical'; mask: boolean } | undefined {
+  switch (tool) {
+    case 'text': return { orientation: 'horizontal', mask: false };
+    case 'vertical-text': return { orientation: 'vertical', mask: false };
+    case 'text-mask': return { orientation: 'horizontal', mask: true };
+    case 'vertical-text-mask': return { orientation: 'vertical', mask: true };
+    default: return undefined;
+  }
+}
 
 /** Photoshop's repeated-key families. Singletons are intentionally omitted. */
 export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> = {
@@ -53,6 +73,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   y: ['history-brush', 'art-history-brush'],
   r: ['smudge', 'blur', 'sharpen'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
+  t: TYPE_TOOLS,
 };
 
 /** Pointer/touch flyouts use Photoshop's visible tool families. Selection
@@ -79,6 +100,8 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   // variant replaces the representative slot while the remaining variants
   // stay reachable from the flyout and P cycling.
   pen: ['pen', 'freeform-pen', 'curvature-pen'],
+  // Photoshop's T flyout: both type orientations and both type masks.
+  type: TYPE_TOOLS,
 };
 
 /**
@@ -144,6 +167,9 @@ export const TOOL_ICONS = {
   'curvature-pen': 'Spline',
   'direct-select': 'SplinePointer',
   text: 'Type',
+  'vertical-text': 'ArrowDownAZ',
+  'text-mask': 'SquareDashedText',
+  'vertical-text-mask': 'TypeOutline',
   rectangle: 'RectangleHorizontal',
   ellipse: 'Circle',
   line: 'Minus',
