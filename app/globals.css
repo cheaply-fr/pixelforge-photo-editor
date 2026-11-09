@@ -83,7 +83,7 @@
 .layer-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:10px 0; }
 .layer-actions button { padding:8px 5px; border:1px solid #374151; border-radius:6px; background:#252d39; font-size:11px; }
 .layer-actions button:disabled { opacity:.4; cursor:not-allowed; }
-.layer-list { display:flex; flex-direction:column; gap:4px; max-height:240px; overflow:auto; }
+.layer-list { display:flex; flex-direction:column; gap:4px; max-height:240px; overflow:auto; padding-block:3px; }
 .layer-row { display:flex; text-align:left; align-items:center; gap:10px; padding:9px; background:#202834; border:1px solid transparent; border-radius:6px; width:100%; }
 .layer-row.selected { border-color:#8b5cf6; background:#342c4b; }
 .layer-row.multi-selected { border-color:#4a6285; background:#202d3f; }
@@ -91,6 +91,37 @@
 .layer-row.clipped { position:relative; margin-left:16px; width:calc(100% - 16px); min-width:0; gap:6px; box-shadow:inset 2px 0 0 #6d8eb8; }
 .layer-row.clipped > span:last-child { min-width:0; }
 .layer-clip-glyph { flex:none; color:#9fb6d6; font-size:14px; line-height:1; }
+/* Layers panel rows: drag handle, select button, delete and menu buttons. */
+.layer-row-item { position:relative; display:flex; align-items:center; gap:2px; min-width:0; user-select:none; -webkit-user-select:none; }
+.layer-row-item > .layer-row { flex:1 1 auto; min-width:0; }
+.layer-row-item.clipped { margin-left:16px; }
+.layer-row-item > .layer-row.clipped { margin-left:0; width:auto; }
+.layer-row-item.dragging, .group-row.dragging { opacity:.45; }
+.layer-drag-handle { flex:none; display:grid; place-items:center; width:16px; align-self:stretch; color:#6f7a8c; cursor:grab; touch-action:none; }
+.layer-list.drag-active .layer-drag-handle { cursor:grabbing; }
+.layer-row-action { flex:none; display:grid; place-items:center; width:26px; height:26px; padding:0; border:1px solid transparent; border-radius:5px; background:transparent; color:#aeb6c4; opacity:0; }
+.layer-row-item:hover .layer-row-action, .layer-row-item:focus-within .layer-row-action, .layer-row-action[aria-expanded="true"] { opacity:1; }
+.layer-row-action:hover, .layer-row-action:focus-visible { border-color:#4a5568; background:#2a3342; color:#fff; }
+.layer-row-delete:hover { color:#ff9b87; }
+.layer-row-action.refused { color:#6b7280; }
+@media (hover:none), (pointer:coarse) {
+  .layer-row-action { opacity:1; width:30px; height:30px; }
+  .layer-drag-handle { width:24px; min-height:30px; color:#8d97a8; }
+}
+.layer-row-item.drop-above::before, .layer-row-item.drop-below::after, .group-row.drop-above::before { content:''; position:absolute; left:0; right:0; height:2px; border-radius:2px; background:#a78bfa; box-shadow:0 0 0 1px #1a1d24; pointer-events:none; z-index:2; }
+.layer-row-item.drop-above::before, .group-row.drop-above::before { top:-3px; }
+.layer-row-item.drop-below::after { bottom:-3px; }
+.group-row { position:relative; }
+.group-row.drop-into { outline:2px solid #a78bfa; outline-offset:-1px; background:#3a2f55; }
+.layer-row-item.drop-refused::before, .layer-row-item.drop-refused::after, .group-row.drop-refused::before { background:#ef6b5b; }
+.group-row.drop-into.drop-refused { outline-color:#ef6b5b; }
+.layer-drop-hint { position:fixed; z-index:60; max-width:206px; padding:4px 8px; border:1px solid #6d5aa8; border-radius:6px; background:#211c33f2; color:#ede6ff; font-size:11px; pointer-events:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-shadow:0 6px 20px #0008; }
+.layer-drop-hint.refused { border-color:#a8483d; background:#33201ef2; color:#ffd9d3; }
+.layer-row-menu { position:fixed; z-index:70; width:216px; max-height:calc(100vh - 16px); overflow:auto; display:flex; flex-direction:column; padding:6px; border:1px solid #3a4150; border-radius:8px; background:#191c23f7; box-shadow:0 16px 40px #000a; }
+.layer-row-menu [role="menuitem"] { min-height:30px; padding:6px 10px; border:0; border-radius:5px; background:transparent; color:#e5e7eb; text-align:left; font-size:12px; }
+.layer-row-menu [role="menuitem"].separated { margin-top:5px; box-shadow:0 -1px 0 #2d3340; border-top-left-radius:0; border-top-right-radius:0; }
+.layer-row-menu [role="menuitem"]:hover:not(:disabled), .layer-row-menu [role="menuitem"]:focus-visible { background:#2d3550; color:#fff; }
+.layer-row-menu [role="menuitem"]:disabled { opacity:.4; cursor:not-allowed; }
 .layer-selection-toolbar { display:grid; gap:6px; padding:7px 0; color:#969ba6; font-size:9px; }
 .layer-search-field { margin:8px 0; }
 .layer-search-field input[type=search] { font-size:11px; }
@@ -133,6 +164,10 @@
 .quick-mask-panel p { color:#aeb8c8; font-size:11px; line-height:1.5; margin:9px 0 0; }
 .canvas-wrap { position:relative; }
 .canvas-wrap .quick-mask-overlay { position:absolute; inset:0; opacity:.5; pointer-events:none; }
+.canvas-wrap .strand-preview-overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.strand-controls { display:grid; gap:inherit; border:0; margin:0; padding:0; min-width:0; }
+.strand-seed-row { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
+.strand-seed-row .select-row { flex:1 1 8rem; }
 .canvas-wrap .measurement-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .canvas-wrap .clone-source-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .clone-source-overlay circle, .clone-source-overlay line { fill:none; stroke:#fff; stroke-width:1.5; vector-effect:non-scaling-stroke; filter:drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000); }
@@ -387,6 +422,17 @@
 .type-preset-list li button:first-child { flex:1; justify-content:start; }
 .type-target { margin:0; }
 @media(max-width:680px){ .type-options-bar { top:2px; left:8px; right:8px; transform:none; max-width:none; padding:2px 6px; } .type-commit-group { order:-1; margin:0; padding:0 6px 0 0; border-left:0; border-right:1px solid #34363e; } }
+/* Custom Shape tool library picker (docs/shape-tools-contract.md). */
+.custom-shape-picker{min-width:0;margin:10px 0 0;padding:0;border:0}.custom-shape-picker legend{margin-bottom:6px;padding:0;color:#93969e;font-size:9px}
+.custom-shape-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:5px}
+.custom-shape-grid label{position:relative;display:grid;place-items:center;min-width:36px;min-height:36px;padding:5px;border:1px solid #30333a;border-radius:7px;background:#202228;color:#b8bbc3;cursor:pointer}
+.custom-shape-grid input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.custom-shape-grid svg{width:22px;height:22px;fill:currentColor;pointer-events:none}
+.custom-shape-grid label:hover{border-color:#564037;color:#ff967b}
+.custom-shape-grid label.selected{border-color:var(--accent);background:#2a211f;color:#ff9d84}
+.custom-shape-grid label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:680px){.custom-shape-grid{grid-template-columns:repeat(auto-fill,minmax(44px,1fr))}.custom-shape-grid label{min-width:44px;min-height:44px}}
+.tool-rounded-rectangle,.tool-custom-shape{cursor:crosshair}
 /* Font library: compact family chooser, searchable picker and Glyphs panel (docs/font-library-contract.md). */
 .font-family-select{display:flex;align-items:center;gap:5px;min-width:0;flex:1}.font-family-select>select{flex:1;min-width:0}.font-browse-button{flex:none;min-width:34px;height:31px;padding:0 7px;border:1px solid #34363e;border-radius:7px;background:#202228;color:#ddd;font-size:11px;font-weight:650}.font-browse-button:hover:not(:disabled),.font-browse-button:focus-visible{border-color:var(--accent);color:#ff9a80}.font-browse-button:disabled{opacity:.4}
 .font-picker-dialog{width:min(560px,94vw)}.font-picker-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,190px);gap:8px;margin:4px 0 6px}.font-picker-controls .text-input{height:36px;font-size:12px}.font-picker-count,.glyphs-count{display:block;margin:2px 0 6px;color:#9299a6;font-size:10px}
@@ -399,3 +445,18 @@
 .glyphs-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:4px;max-height:min(46vh,340px);overflow:auto;overscroll-behavior:contain;padding:2px}.glyph-cell{height:46px;display:grid;place-items:center;border:1px solid #343943;border-radius:7px;background:#1b1e24;color:#eef0f4;font-size:24px;line-height:1;touch-action:manipulation}.glyph-cell:hover,.glyph-cell:focus-visible{border-color:var(--accent);background:#2a2526}.glyphs-attribution{margin:8px 0 0;line-height:1.35}
 @media(max-width:520px){.font-picker-controls,.glyphs-controls{grid-template-columns:1fr}.font-picker-choose{grid-template-columns:minmax(0,110px) minmax(0,1fr)}}
 .font-select-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;font-size:10px}.font-select-row>span:first-child{flex:none;color:#93969e}
+/* Thin, auto-hiding scrollbars (docs/scrollbar-contract.md). The base layer lets utilities such as .no-scrollbar still win. */
+@layer base{
+:root{--scrollbar-thumb:rgb(255 255 255 / .24);--scrollbar-thumb-hover:rgb(255 255 255 / .42);--scrollbar-thumb-active:rgb(255 255 255 / .56)}
+::-webkit-scrollbar{width:8px;height:8px;background:transparent}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-button{display:none;width:0;height:0}
+::-webkit-scrollbar-thumb{min-height:28px;min-width:28px;border:2px solid transparent;border-radius:8px;background-color:transparent;background-clip:padding-box}
+:hover::-webkit-scrollbar-thumb,[data-scroll-hover]::-webkit-scrollbar-thumb,[data-scrolling]::-webkit-scrollbar-thumb,:focus-visible::-webkit-scrollbar-thumb{background-color:var(--scrollbar-thumb)}
+::-webkit-scrollbar-thumb:hover{background-color:var(--scrollbar-thumb-hover)}
+::-webkit-scrollbar-thumb:active{background-color:var(--scrollbar-thumb-active)}
+@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:transparent transparent}:hover,[data-scroll-hover],[data-scrolling],:focus-visible{scrollbar-color:var(--scrollbar-thumb) transparent}}
+@media (forced-colors:active){::-webkit-scrollbar-thumb{background-color:CanvasText}*{scrollbar-color:auto}}
+}
+/* Tool labels are controls, not text: a drag across the rail must not select them. */
+.toolbar,.tool-flyout{-webkit-user-select:none;user-select:none}

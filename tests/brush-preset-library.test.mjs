@@ -48,7 +48,7 @@ class MemoryStorage {
 
 test('built-in space presets are valid, distinct and match their intent', () => {
   const ids = BUILT_IN_BRUSH_PRESETS.map((item) => item.id);
-  assert.deepEqual(BUILT_IN_BRUSH_PRESETS.map((item) => item.label), ['Star field', 'Soft glow', 'Dust / nebula', 'Smoke wisp']);
+  assert.deepEqual(BUILT_IN_BRUSH_PRESETS.map((item) => item.label), ['Star field', 'Soft glow', 'Dust / nebula', 'Smoke wisp', 'Silk smoke']);
   assert.equal(new Set(ids).size, ids.length);
   for (const item of BUILT_IN_BRUSH_PRESETS) {
     assert.match(item.id, /^builtin-/);

@@ -314,6 +314,17 @@ import {
   validClippingRelationship,
 } from '../src/layerClipping';
 import { insertCopiesAboveSources, insertLayerAboveActive } from '../src/layerInsertion';
+import {
+  classifyDroppedFile,
+  layerDeleteNotice,
+  layerDeleteReason,
+  layerDropNotice,
+  placementMatrixAt,
+  planLayerDelete,
+  planLayerDrop,
+  type LayerDragSource,
+  type LayerDropTarget,
+} from '../src/layerDragReorder';
 import CurveEditor, { type CurveChangeOptions } from '../src/CurveEditor';
 import {
   curveInterpolation,
@@ -433,7 +444,8 @@ import { pathContours, transformPath } from '../src/paths';
 import { pathToSvg } from '../src/svgExport';
 import { cloneLayerCss } from '../src/cssExport';
 import { traceAlphaContours } from '../src/alphaContours';
-import { shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
+import { CORNER_RADIUS_MAX, clampCornerRadius, roundedRectNodes, roundedRectPoints, shapeDragBox, shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
+import { CUSTOM_SHAPE_LIBRARY, DEFAULT_CUSTOM_SHAPE_ID, PATH_PRESET_SHAPE_PREFIX, validCustomShapeChoice, customShapeAspect, customShapeEntry, customShapePath, customShapeThumbnailPath, fitPathToBox } from '../src/customShapeLibrary';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -516,9 +528,30 @@ import {
 import { precedingCoalescedSamples } from '../src/pointerSamples';
 import {
   BRUSH_PRESSURE_CURVES,
+  mapBrushPressure,
   normalizeBrushPressureCurve,
   type BrushPressureCurve,
 } from '../src/brushPressure';
+import {
+  BRUSH_STRANDS_COUNT_MAX,
+  BRUSH_STRANDS_COUNT_MIN,
+  BRUSH_STRANDS_MAX_INPUT_POINTS,
+  BRUSH_STRANDS_SEED_MAX,
+  BRUSH_STRANDS_TWISTS_MAX,
+  BRUSH_STRANDS_WIDTH_MAX,
+  BRUSH_STRANDS_WIDTH_MIN,
+  DEFAULT_BRUSH_STRANDS,
+  buildStrands,
+  drawStrands,
+  normalizeBrushStrands,
+  smoothStrandPath,
+  strandBounds,
+  strandPathOptions,
+  thinStrandInput,
+  type BrushStrandSettings,
+  type Strand,
+  type StrandInputPoint,
+} from '../src/brushStrands';
 import {
   BRUSH_PRESETS,
   brushPresetById,
@@ -588,6 +621,7 @@ import {
 } from '../src/brushDynamics';
 import {
   DEFAULT_PAINT_SYMMETRY,
+  IDENTITY_AFFINE,
   affineMaxScale,
   applyAffine,
   invertAffine,
@@ -654,17 +688,23 @@ import {
 import {
   hitTestPathHandle,
   hitTestPathNode,
+  pathBounds,
   movePathHandle,
   movePathNode,
-  insertPathNode,
-  nearestPathSegment,
-  removePathNode,
-  setPathNodeSmooth,
   validatePath,
   type PathHandleKind,
   type PathNode,
   type PathModel,
 } from '../src/paths';
+import {
+  editPathAnchor,
+  hitTestWholePath,
+  isPathAnchorEdit,
+  pathAnchorEditNotice,
+  penAnchorEditMode,
+  pullPathNodeHandles,
+  translatePath,
+} from '../src/pathEditTools';
 import {
   DEFAULT_SMUDGE_SETTINGS,
   applySmudgeDabs,
@@ -1209,6 +1249,12 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'pen', label: 'Pen', icon: toolIcon('pen'), key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: toolIcon('freeform-pen'), key: 'P' },
   { id: 'curvature-pen', label: 'Curvature Pen', icon: toolIcon('curvature-pen'), key: 'P' },
+  // Photoshop gives the anchor-editing pens no shortcut; an empty key hides
+  // the shortcut badge rather than advertising a P press that skips them.
+  { id: 'add-anchor', label: 'Add Anchor Point', icon: toolIcon('add-anchor'), key: '' },
+  { id: 'delete-anchor', label: 'Delete Anchor Point', icon: toolIcon('delete-anchor'), key: '' },
+  { id: 'convert-point', label: 'Convert Point', icon: toolIcon('convert-point'), key: '' },
+  { id: 'path-select', label: 'Path Selection', icon: toolIcon('path-select'), key: 'A' },
   {
     id: 'direct-select',
     label: 'Direct Selection',
@@ -1220,9 +1266,11 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'text-mask', label: 'Horizontal Type Mask', icon: toolIcon('text-mask'), key: 'T' },
   { id: 'vertical-text-mask', label: 'Vertical Type Mask', icon: toolIcon('vertical-text-mask'), key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: toolIcon('rectangle'), key: 'U' },
+  { id: 'rounded-rectangle', label: 'Rounded Rectangle', icon: toolIcon('rounded-rectangle'), key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: toolIcon('ellipse'), key: 'U' },
   { id: 'line', label: 'Line', icon: toolIcon('line'), key: 'U' },
   { id: 'polygon', label: 'Polygon', icon: toolIcon('polygon'), key: 'U' },
+  { id: 'custom-shape', label: 'Custom Shape', icon: toolIcon('custom-shape'), key: 'U' },
   { id: 'select', label: 'Select', icon: toolIcon('select'), key: 'M' },
   { id: 'ellipse-select', label: 'Elliptical marquee', icon: toolIcon('ellipse-select'), key: 'M' },
   { id: 'row-select', label: 'Single Row marquee', icon: toolIcon('row-select'), key: 'M' },
@@ -1308,7 +1356,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'ellipse', 'line', 'polygon'],
+  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   m: MARQUEE_TOOLS,
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
@@ -1321,11 +1369,11 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   y: ['history-brush', 'art-history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
+  a: ['path-select', 'direct-select'],
 };
-/** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
-const TOOL_ALIASES: Record<string, Tool> = {
-  a: 'direct-select',
-};
+/** Existing PixelForge aliases retained while the primary keys follow Photoshop.
+ * A used to alias Direct Selection; it is now the Path/Direct Selection family. */
+const TOOL_ALIASES: Record<string, Tool> = {};
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
   ['Vivid', 'saturate(1.45) contrast(1.08)', '#244d96', '#ef854a'],
@@ -1711,6 +1759,13 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
 
 /** Tools whose one gesture spans several presses (click-to-place, tap-to-arm). */
 const MULTI_PRESS_GESTURE_TOOLS: readonly Tool[] = ['polygonal-lasso', 'magnetic-lasso', 'pen', 'curvature-pen'];
+/** Image-pixel distance a path tool press must travel before it is a drag. */
+const PATH_TOOL_DRAG_SLOP = 2;
+/** Pen-family and path-selection tools that share the path Tool options. */
+const PATH_TOOL_OPTION_TOOLS: readonly Tool[] = [
+  'pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point',
+  'path-select', 'direct-select',
+];
 /**
  * Tools whose result depends on the whole pointer path, not just its latest
  * position: each browser-coalesced sample of a move is applied to them (see
@@ -1771,6 +1826,16 @@ type Gesture = {
   blendStroke?: BrushBlendStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
+  /**
+   * Brush Silk strands stroke: layer-local pointer samples. Moves only redraw
+   * a lightweight overlay preview; the strands are painted into the layer
+   * buffer once, on release.
+   */
+  strands?: {
+    settings: BrushStrandSettings;
+    points: StrandInputPoint[];
+    frameRequest?: number;
+  };
   /**
    * Asset id `buffer` was drawn from when its writes are tracked
    * (`src/canvasDirty.ts`), so the commit hashes only the touched tiles.
@@ -2779,6 +2844,59 @@ const stampGestureSegment = (
     }
   return changed;
 };
+/**
+ * Paint a finished Silk strands stroke into the gesture buffer (each Paint
+ * Symmetry copy too), confined to the selection and composited in the brush
+ * blend mode exactly like ordinary dabs. Returns whether anything was drawn.
+ */
+const paintGestureStrands = (
+  g: Gesture,
+  strands: readonly Strand[],
+  color: string,
+  opacity: number,
+) => {
+  const bounds = strandBounds(strands);
+  if (!bounds || !g.buffer || opacity <= 0) return false;
+  const copies: readonly SymmetryAffine[] =
+      g.paintSymmetry && g.paintSymmetry.length > 1 ? g.paintSymmetry : [IDENTITY_AFFINE],
+    buffer = g.buffer,
+    stroke = g.selectionStroke,
+    blend = g.blendStroke,
+    target = blend ? blend.paint : stroke ? stroke.raw : buffer,
+    context = target.getContext('2d')!;
+  for (const copy of copies) {
+    context.save();
+    context.transform(copy[0], copy[1], copy[2], copy[3], copy[4], copy[5]);
+    drawStrands(context, strands, color, opacity);
+    context.restore();
+  }
+  for (const copy of copies) {
+    const corners = [
+      applyAffine(copy, { x: bounds.x, y: bounds.y }),
+      applyAffine(copy, { x: bounds.x + bounds.width, y: bounds.y }),
+      applyAffine(copy, { x: bounds.x, y: bounds.y + bounds.height }),
+      applyAffine(copy, { x: bounds.x + bounds.width, y: bounds.y + bounds.height }),
+    ];
+    const rect = brushSegmentRect(
+      { x: Math.min(...corners.map((c) => c.x)), y: Math.min(...corners.map((c) => c.y)) },
+      { x: Math.max(...corners.map((c) => c.x)), y: Math.max(...corners.map((c) => c.y)) },
+      2, buffer.width, buffer.height);
+    if (blend) blendStrokeRect(blend, buffer, stroke?.mask, rect);
+    else if (stroke) confineStrokeRect(stroke, buffer, rect);
+    // Straight onto the buffer: report the touched area for the dirty-tile commit.
+    else if (rect) noteCanvasWrite(buffer, rect.x, rect.y, rect.width, rect.height);
+  }
+  return true;
+};
+/** Path samples the live Silk strands preview uses at most per redraw. */
+const STRAND_PREVIEW_MAX_SAMPLES = 1200;
+/** CSS blend for the Silk strands overlay so the preview matches the brush mode. */
+const STRAND_PREVIEW_CSS_BLENDS = new Set([
+  'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn',
+  'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity',
+]);
+const strandPreviewBlend = (mode: BrushBlendMode): React.CSSProperties['mixBlendMode'] =>
+  STRAND_PREVIEW_CSS_BLENDS.has(mode) ? (mode as React.CSSProperties['mixBlendMode']) : 'normal';
 /** Pattern Stamp counterpart of `stampGestureSegment`. */
 const patternGestureSegment = (
   g: Gesture,
@@ -2948,6 +3066,8 @@ export default function Home() {
     selectionFile = useRef<HTMLInputElement>(null),
     batchImageFile = useRef<HTMLInputElement>(null),
     quickMaskOverlayCanvas = useRef<HTMLCanvasElement>(null),
+    strandOverlay = useRef<HTMLCanvasElement>(null),
+    strandOverlayClear = useRef<{ timer: number; revision: number } | null>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
     menuButtonRefs = useRef<Record<MenuName, HTMLButtonElement | null>>(
@@ -3052,10 +3172,13 @@ export default function Home() {
     [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
     [polygonSides, setPolygonSides] = useState(5),
     [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
+    [shapeCornerRadius, setShapeCornerRadius] = useState(16),
+    [customShapeId, setCustomShapeId] = useState<string>(DEFAULT_CUSTOM_SHAPE_ID),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
     [brushDynamics, setBrushDynamics] = useState<BrushDynamics>(() => ({ ...DEFAULT_BRUSH_DYNAMICS })),
+    [brushStrands, setBrushStrands] = useState<BrushStrandSettings>(() => ({ ...DEFAULT_BRUSH_STRANDS })),
     [paintSymmetry, setPaintSymmetry] = useState<PaintSymmetrySettings>(() => ({ ...DEFAULT_PAINT_SYMMETRY })),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
@@ -3374,7 +3497,7 @@ export default function Home() {
     [generativeFillOpen, setGenerativeFillOpen] = useState(false),
     [promptToEditOpen, setPromptToEditOpen] = useState(false),
     [generateImageOpen, setGenerateImageOpen] = useState(false),
-    [drag, setDrag] = useState(false),
+    [drag, setDrag] = useState<false | 'layer' | 'open'>(false),
     [resizing, setResizing] = useState<{
       width: number;
       height: number;
@@ -3700,6 +3823,97 @@ export default function Home() {
         ? { frame: g.frame, overrides: { [g.layer.id]: g.buffer } }
         : null,
     );
+  /**
+   * Silk strands for the current gesture, in the layer's pixel space. The
+   * live preview uses a coarser path on very long strokes.
+   */
+  const buildGestureStrands = (g: Gesture, preview = false): Strand[] => {
+    if (!g.strands || !g.layer) return [];
+    const matrix = g.layer.matrix,
+      settings = normalizeBrushStrands({
+        ...g.strands.settings,
+        width: Math.min(BRUSH_STRANDS_WIDTH_MAX, Math.max(BRUSH_STRANDS_WIDTH_MIN, localSize(matrix, g.strands.settings.width))),
+      }),
+      path = smoothStrandPath(g.strands.points, {
+        ...strandPathOptions(settings),
+        ...(preview ? { maxSamples: STRAND_PREVIEW_MAX_SAMPLES } : {}),
+      });
+    return buildStrands(path, settings, {
+      strandWidth: localSize(matrix, size),
+      sizeAt: pressureSize ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
+      opacityAt: pressureOpacity ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
+    });
+  };
+  /** Wipe the Silk strands overlay preview. */
+  const clearStrandPreview = () => {
+    const overlay = strandOverlay.current;
+    if (strandOverlayClear.current) window.clearTimeout(strandOverlayClear.current.timer);
+    strandOverlayClear.current = null;
+    if (!overlay) return;
+    overlay.getContext('2d')?.clearRect(0, 0, overlay.width, overlay.height);
+    overlay.dataset.strands = '0';
+  };
+  /**
+   * Keep the preview until the committed document has rendered, so the
+   * strands never blink out between release and the new composite.
+   */
+  const clearStrandPreviewAfterRender = (revisionBefore: number) => {
+    if (strandOverlayClear.current) window.clearTimeout(strandOverlayClear.current.timer);
+    // The render effect below clears it; the timer is only a fallback.
+    strandOverlayClear.current = { timer: window.setTimeout(clearStrandPreview, 4000), revision: revisionBefore };
+  };
+  /**
+   * Draw the in-progress Silk strands on the overlay canvas (screen
+   * resolution, bounded) instead of re-rendering the layer stack.
+   */
+  const drawStrandPreview = (g: Gesture) => {
+    const overlay = strandOverlay.current,
+      element = canvas.current;
+    if (!overlay || !element || !g.layer || !g.strands) return;
+    const ratio = window.devicePixelRatio || 1,
+      cssWidth = element.clientWidth || g.frame.w,
+      cssHeight = element.clientHeight || g.frame.h,
+      fit = Math.min(1, 4096 / Math.max(cssWidth * ratio, cssHeight * ratio, 1)),
+      width = Math.max(1, Math.round(cssWidth * ratio * fit)),
+      height = Math.max(1, Math.round(cssHeight * ratio * fit));
+    if (overlay.width !== width) overlay.width = width;
+    if (overlay.height !== height) overlay.height = height;
+    const context = overlay.getContext('2d');
+    if (!context) return;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const strands = buildGestureStrands(g, true),
+      sx = width / g.frame.w,
+      sy = height / g.frame.h,
+      [a, b, c, d, e, f] = g.layer.matrix,
+      copies: readonly SymmetryAffine[] =
+        g.paintSymmetry && g.paintSymmetry.length > 1 ? g.paintSymmetry : [IDENTITY_AFFINE];
+    for (const copy of copies) {
+      context.setTransform(sx * a, sy * b, sx * c, sy * d, sx * e, sy * f);
+      context.transform(copy[0], copy[1], copy[2], copy[3], copy[4], copy[5]);
+      drawStrands(context, strands, color, (brushOpacity / 100) * (brushFlow / 100));
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    overlay.dataset.strands = String(strands.length);
+  };
+  /** At most one overlay redraw per animation frame. */
+  const scheduleStrandPreview = (g: Gesture) => {
+    if (!g.strands || g.strands.frameRequest !== undefined) return;
+    if (strandOverlayClear.current) {
+      window.clearTimeout(strandOverlayClear.current.timer);
+      strandOverlayClear.current = null;
+    }
+    g.strands.frameRequest = requestAnimationFrame(() => {
+      if (!g.strands) return;
+      g.strands.frameRequest = undefined;
+      if (gesture.current === g && !g.released) drawStrandPreview(g);
+    });
+  };
+  // Clear a committed Silk strands preview once the new composite has rendered.
+  useEffect(() => {
+    const pending = strandOverlayClear.current;
+    if (pending && !doc.rendering && revision !== pending.revision) clearStrandPreview();
+  }, [doc.rendering, revision]);
   /** Decoded layer pixels and selection coverage a gradient drag renders over. */
   const prepareGradientBase = async (
     frame: Frame,
@@ -3942,10 +4156,13 @@ export default function Home() {
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
+    shapeCornerRadius,
+    customShapeId,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    brushStrands,
     paintSymmetry,
     brushTexture,
     brushDual,
@@ -4054,10 +4271,13 @@ export default function Home() {
     setPolygonVariant(s.polygonVariant ?? 'polygon');
     setPolygonSides(Math.max(3, Math.min(32, Math.round(s.polygonSides ?? 5))));
     setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
+    setShapeCornerRadius(Math.max(0, Math.min(CORNER_RADIUS_MAX, Number(s.shapeCornerRadius ?? 16))));
+    setCustomShapeId(validCustomShapeChoice(s.customShapeId) ? s.customShapeId : DEFAULT_CUSTOM_SHAPE_ID);
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
     setBrushDynamics(normalizeBrushDynamics(s.brushDynamics));
+    setBrushStrands(normalizeBrushStrands(s.brushStrands));
     setPaintSymmetry(normalizePaintSymmetry(s.paintSymmetry));
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
@@ -4128,6 +4348,7 @@ export default function Home() {
     setBrushSmoothing,
     setBrushScatter,
     setBrushDynamics,
+    setBrushStrands,
     setBrushTexture,
     setBrushDual,
     setBrushBristle,
@@ -4219,6 +4440,8 @@ export default function Home() {
     setBrushSmoothing(preset.brushSmoothing);
     setBrushScatter(preset.brushScatter);
     setBrushDynamics(normalizeBrushDynamics(preset.brushDynamics));
+    // Presets saved before Silk strands existed paint ordinary dabs.
+    setBrushStrands(normalizeBrushStrands(preset.brushStrands));
     setBrushTexture(preset.brushTexture);
     setBrushDual(preset.brushDual);
     setSecondaryBrushPreset(preset.secondaryBrushPreset);
@@ -4281,6 +4504,7 @@ export default function Home() {
         brushSmoothing,
         brushScatter,
         brushDynamics,
+        brushStrands,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -4346,6 +4570,65 @@ export default function Home() {
     setCustomShapePresets((currentPresets) => currentPresets.filter((item) => item.id !== selectedCustomShapePresetId));
     setSelectedCustomShapePresetId('');
     setNotice(`Shape preset “${preset.label}” removed from this device`);
+  };
+  /** Path preset referenced by a `path-preset:<id>` Custom Shape choice. */
+  const customShapePathPreset = (choice = customShapeId) =>
+    choice.startsWith(PATH_PRESET_SHAPE_PREFIX)
+      ? customPathPresets.find((preset) => `${PATH_PRESET_SHAPE_PREFIX}${preset.id}` === choice)
+      : undefined;
+  const customShapeLabel = () =>
+    customShapePathPreset()?.label ?? customShapeEntry(customShapeId)?.label ?? 'Custom Shape';
+  /** Shift keeps proportions (a square, or the shape's own aspect); Alt drags from the centre. */
+  const newShapeDragBox = (
+    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    modifiers: { shiftKey: boolean; altKey: boolean },
+  ) => {
+    let aspect = 1;
+    if (shapeTool === 'custom-shape') {
+      const preset = customShapePathPreset();
+      if (preset) {
+        try {
+          const bounds = pathBounds(preset.path);
+          aspect = bounds.width > 0 && bounds.height > 0 ? bounds.width / bounds.height : 1;
+        } catch {
+          aspect = 1;
+        }
+      } else aspect = customShapeAspect(customShapeId);
+    }
+    return shapeDragBox(start, end, { proportional: modifiers.shiftKey, fromCenter: modifiers.altKey, aspect });
+  };
+  /** Build the editable layer a Rounded Rectangle or Custom Shape drag creates. */
+  const newShapeLayer = (
+    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    box: { left: number; top: number; width: number; height: number },
+    name: string,
+  ): Layer | undefined => {
+    const width = Math.max(1, Math.min(16000, Math.round(box.width))),
+      height = Math.max(1, Math.min(16000, Math.round(box.height))),
+      matrix: Matrix = [1, 0, 0, 1, Math.round(box.left), Math.round(box.top)];
+    if (shapeTool === 'rounded-rectangle')
+      return {
+        ...commonLayer(name),
+        kind: 'rectangle',
+        width,
+        height,
+        stroke: Math.max(1, size / 3),
+        color,
+        fill: true,
+        cornerRadius: shapeCornerRadius,
+        matrix,
+      };
+    try {
+      const preset = customShapePathPreset();
+      const path = preset
+        ? fitPathToBox(preset.path, width, height, color)
+        : customShapePath(customShapeEntry(customShapeId) ? customShapeId : DEFAULT_CUSTOM_SHAPE_ID, width, height, color);
+      return { ...commonLayer(name), kind: 'path', path, matrix };
+    } catch {
+      return undefined;
+    }
   };
   const defineCustomShape = () => {
     const label = window.prompt('Name this custom shape', 'Custom shape');
@@ -4470,12 +4753,7 @@ export default function Home() {
     });
     let points: BooleanPoint[];
     if (layer.kind === 'rectangle') {
-      points = [
-        { x: 0, y: 0 },
-        { x: layer.width, y: 0 },
-        { x: layer.width, y: layer.height },
-        { x: 0, y: layer.height },
-      ];
+      points = roundedRectPoints(layer.width, layer.height, layer.cornerRadius, 12);
     } else if (layer.kind === 'ellipse') {
       points = Array.from({ length: 64 }, (_, index) => {
         const angle = (index * Math.PI * 2) / 64;
@@ -7923,10 +8201,13 @@ export default function Home() {
         polygonVariant,
         polygonSides,
         polygonInnerRadius,
+        shapeCornerRadius,
+        customShapeId,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
         brushDynamics,
+        brushStrands,
         paintSymmetry,
         brushTexture,
         brushDual,
@@ -8047,10 +8328,13 @@ export default function Home() {
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
+    shapeCornerRadius,
+    customShapeId,
     brushSpacing,
     brushSmoothing,
     brushScatter,
     brushDynamics,
+    brushStrands,
     paintSymmetry,
     brushTexture,
     brushDual,
@@ -9206,7 +9490,22 @@ export default function Home() {
       return;
     }
     try {
-      const svg = pathToSvg(booleanOperand(layer), f.w, f.h);
+      // Rounded rectangles keep true cubic corners in SVG; booleans flatten them.
+      const svg = pathToSvg(
+        layer.kind === 'rectangle' && clampCornerRadius(layer.cornerRadius, layer.width, layer.height) > 0
+          ? transformPath({
+              nodes: roundedRectNodes(layer.width, layer.height, layer.cornerRadius),
+              closed: true,
+              fill: layer.fill,
+              stroke: true,
+              strokeWidth: layer.stroke,
+              fillColor: layer.color,
+              strokeColor: layer.color,
+            }, layer.matrix)
+          : booleanOperand(layer),
+        f.w,
+        f.h,
+      );
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(svg);
       setNotice('SVG copied from the editable vector layer');
@@ -9862,51 +10161,40 @@ export default function Home() {
     }
   };
   const remove = () => {
-    const f = current(),
-      selected = selectedLayersForFrame(f),
-      ids = new Set(selected.map((layer) => layer.id));
-    if (!selected.length) {
-      setNotice('Select at least one layer before deleting');
+    const f = current();
+    // Shared by the Layer menu, the inspector button and the Layers panel
+    // (row trash button, Delete key, context menu): see layerDragReorder.ts
+    // for the clipping and selection-follow rules.
+    const plan = planLayerDelete(f, selectedIdsForFrame(f));
+    if (!plan.ok) {
+      setNotice(layerDeleteReason(plan.reason));
       return false;
     }
-    if (selected.some((layer) => layerIsLocked(f, layer))) {
-      setNotice('Unlock all selected layers before deleting');
-      return false;
-    }
-    if (selected.length >= f.layers.length) {
-      setNotice('Keep at least one layer in the document');
-      return false;
-    }
-    const layers = f.layers.filter((layer) => !ids.has(layer.id)),
-      active = layers.find((layer) => layer.id === f.active)?.id || layers.at(-1)!.id,
-      selectedLayerIds = selectedIdsForFrame(f).filter((id) => !ids.has(id));
-    const usedGroups = new Set(
-      layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
-    );
-    if (
-      !commit({
-        ...f,
-        layers,
-        groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
-        ...(f.artboards
-          ? {
-              artboards: sanitizeArtboardLayerMembership(
-                f.artboards,
-                layers.map((layer) => layer.id),
-              ),
-            }
-          : {}),
-        active,
-        selectedLayerIds,
-      })
-    )
-      return false;
-    setNotice(
-      selected.length === 1
-        ? 'Layer deleted. Undo restores it.'
-        : `${selected.length} layers deleted. Undo restores them.`,
-    );
+    if (!commit(plan.frame)) return false;
+    setNotice(layerDeleteNotice(plan));
     return true;
+  };
+  /**
+   * Layers panel drag-and-drop: one history step per drop. Returns the moved
+   * layer IDs (for the panel's live announcement) or false when refused.
+   */
+  const moveLayersFromPanel = (source: LayerDragSource, target: LayerDropTarget): string[] | false => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return false;
+    }
+    const f = current();
+    const plan = planLayerDrop(f, source, target);
+    if (!plan.ok) {
+      if (plan.reason === 'locked') setNotice('Unlock the layers before moving them');
+      else if (plan.reason === 'locked-folder') setNotice('Unlock the folder before changing its layers');
+      else if (plan.reason !== 'no-change' && plan.reason !== 'onto-self')
+        setNotice('Those layers could not be moved there');
+      return false;
+    }
+    if (!commit(plan.frame)) return false;
+    setNotice(layerDropNotice(plan));
+    return plan.movedIds;
   };
   const reorder = (direction: number) => {
     const f = current(),
@@ -10441,6 +10729,99 @@ export default function Home() {
     }
   };
   /**
+   * Files dropped on the editor while a document is open. Browser-decodable
+   * images are placed as new raster layers in one undo step, each centred at
+   * the drop point (or the document centre), directly above the selected
+   * layer (canvas drops) or at the Layers panel's drop line (`target`).
+   * Projects open as projects; PSD/PSB and Shift-drops open as a document,
+   * as before. Unsupported files get a status message.
+   */
+  const dropFiles = async (
+    files: readonly File[],
+    options: { point?: { x: number; y: number }; target?: LayerDropTarget; open?: boolean } = {},
+  ) => {
+    if (!files.length) return;
+    const first = files[0];
+    const firstInfo = describeImportFormat(first.name, first.type);
+    const firstKind = classifyDroppedFile(first.name, first.type, firstInfo.tryDecode, firstInfo.format);
+    if (firstKind === 'project') {
+      await importProject(first);
+      return;
+    }
+    if (options.open || !frame || firstKind === 'document') {
+      await load(first);
+      return;
+    }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before adding image layers');
+      return;
+    }
+    const images: Array<{ file: File; info: ReturnType<typeof describeImportFormat> }> = [];
+    let skipped = 0;
+    for (const item of files) {
+      const info = describeImportFormat(item.name, item.type);
+      if (classifyDroppedFile(item.name, item.type, info.tryDecode, info.format) === 'image')
+        images.push({ file: item, info });
+      else skipped += 1;
+    }
+    if (!images.length) {
+      setNotice(
+        files.length === 1
+          ? `${first.name.slice(0, 80)} cannot be added as a layer. ${firstInfo.disclosure || ''}`.trim()
+          : 'None of the dropped files can be added as layers',
+      );
+      return;
+    }
+    const original = current();
+    if (original.layers.length + images.length > MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
+      return;
+    }
+    let next: Frame = original;
+    const added: string[] = [];
+    const nextAssets = { ...assets.current };
+    try {
+      for (const { file: item, info } of images) {
+        if (item.size > 64 * 1024 * 1024) throw new Error(`${item.name} exceeds 64 MB`);
+        const decoded = await decodeImportedRaster(item, info);
+        if (current() !== original)
+          throw new Error('Document changed during import. Please try again.');
+        const layer: Layer = {
+          ...commonLayer(item.name.slice(0, 160)),
+          kind: 'raster',
+          asset: addAsset(nextAssets, decoded),
+          matrix: placementMatrixAt(options.point, decoded.width, decoded.height, original.w, original.h),
+        };
+        // Each file goes above the previous one, so they stack in drop order.
+        next = insertLayerAboveActive(next, layer).frame;
+        added.push(layer.id);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The dropped image could not be opened');
+      return;
+    }
+    if (options.target) {
+      const plan = planLayerDrop(next, { kind: 'layers', ids: added }, options.target);
+      if (plan.ok) next = plan.frame;
+      else if (plan.reason !== 'no-change' && plan.reason !== 'onto-self') {
+        setNotice(
+          plan.reason === 'locked-folder'
+            ? 'Unlock the folder before adding layers to it'
+            : 'The images could not be added at that position',
+        );
+        return;
+      }
+      next = { ...next, active: added.at(-1)!, selectedLayerIds: added };
+    }
+    if (!commit(next, false, nextAssets)) return;
+    const count = added.length === 1 ? 'Image layer added' : `${added.length} image layers added`;
+    setNotice(
+      skipped
+        ? `${count}; ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped`
+        : `${count}. Undo removes ${added.length === 1 ? 'it' : 'them'}`,
+    );
+  };
+  /**
    * Paste an image from the operating-system clipboard as a new raster layer
    * through the asynchronous Clipboard API (Edit → Paste Image from
    * Clipboard, or the keyboard fallback below). Bytes stay local.
@@ -10938,6 +11319,28 @@ export default function Home() {
       ),
     );
   };
+  /** Replace the edited path on a path layer or on its vector mask. */
+  const withEditedPath = (layer: Layer, path: PathModel, vectorMask: boolean): Layer =>
+    vectorMask
+      ? { ...layer, vectorMask: 'vectorMask' in layer && layer.vectorMask ? { ...layer.vectorMask, path } : undefined } as Layer
+      : { ...layer, path } as Layer;
+  /**
+   * Path for an in-progress Path Selection or Convert Point drag, or null
+   * while the pointer is still within the click slop of its press point.
+   */
+  const pathToolDragResult = (g: Gesture, pointer: { x: number; y: number }): PathModel | null => {
+    if (!g.pathOrigin || !g.layer) return null;
+    if (Math.hypot(pointer.x - g.start.x, pointer.y - g.start.y) < PATH_TOOL_DRAG_SLOP) return null;
+    const startLocal = inversePoint(g.layer.matrix, g.start);
+    const local = inversePoint(g.layer.matrix, pointer);
+    if (!startLocal || !local) return null;
+    if (g.tool === 'path-select')
+      return translatePath(g.pathOrigin, local.x - startLocal.x, local.y - startLocal.y);
+    if (g.pathIndex === undefined) return null;
+    return g.pathHandle
+      ? movePathHandle(g.pathOrigin, g.pathIndex, g.pathHandle, local.x, local.y)
+      : pullPathNodeHandles(g.pathOrigin, g.pathIndex, local);
+  };
   const drawPathOverlay = (
     path: PathModel,
     matrix: Matrix = [1, 0, 0, 1, 0, 0],
@@ -11428,28 +11831,19 @@ export default function Home() {
           Math.hypot(activeLayer.matrix[2], activeLayer.matrix[3]),
           0.0001,
         );
-        const path = validatePath(activeLayer.path);
-        const nodeIndex = hitTestPathNode(path, localPath, 12 / scale);
-        if (nodeIndex !== null && (e.altKey || e.shiftKey)) {
-          const next = e.altKey
-            ? removePathNode(path, nodeIndex)
-            : setPathNodeSmooth(
-                path,
-                nodeIndex,
-                !(path.nodes[nodeIndex].inHandle || path.nodes[nodeIndex].outHandle),
-              );
-          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
-            setNotice(e.altKey ? 'Path anchor deleted' : 'Path anchor converted');
+        // Shared with the dedicated Add/Delete Anchor Point and Convert
+        // Point tools (src/pathEditTools.ts). A click that edits nothing
+        // falls through and starts a new path, as it always has.
+        const edit = editPathAnchor(
+          validatePath(activeLayer.path),
+          localPath,
+          12 / scale,
+          penAnchorEditMode(e),
+        );
+        if (isPathAnchorEdit(edit)) {
+          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: edit.path } : item) }))
+            setNotice(pathAnchorEditNotice(edit));
           return;
-        }
-        if (!e.altKey && !e.shiftKey) {
-          const hit = nearestPathSegment(path, localPath, 12 / scale);
-          if (hit) {
-            const next = insertPathNode(path, hit.segmentIndex, hit.t);
-            if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
-              setNotice('Path anchor added');
-            return;
-          }
         }
       }
     }
@@ -11873,6 +12267,81 @@ export default function Home() {
         }
       })();
       await g.pending;
+      return;
+    }
+    if (
+      tool === 'path-select' ||
+      tool === 'add-anchor' ||
+      tool === 'delete-anchor' ||
+      tool === 'convert-point'
+    ) {
+      // Path Selection and the dedicated anchor tools edit the active path
+      // layer or the active layer's vector mask, like Direct Selection.
+      const vectorMaskTarget = isVectorMaskableLayer(layer) ? layer.vectorMask : undefined;
+      const editablePath = vectorMaskTarget?.path || (layer.kind === 'path' ? layer.path : undefined);
+      if (layerIsLocked(f, layer) || !layer.visible || !editablePath) {
+        setNotice(
+          tool === 'path-select'
+            ? 'Select a visible, unlocked path layer or vector-mask layer before selecting a path'
+            : 'Select a visible, unlocked path layer or vector-mask layer before editing anchors',
+        );
+        return;
+      }
+      const localPoint = inversePoint(layer.matrix, p);
+      if (!localPoint) {
+        setNotice('This path transform cannot be edited');
+        return;
+      }
+      const scale = Math.max(
+        Math.hypot(layer.matrix[0], layer.matrix[1]),
+        Math.hypot(layer.matrix[2], layer.matrix[3]),
+        0.0001,
+      );
+      const origin = validatePath(editablePath);
+      const vectorMask = Boolean(vectorMaskTarget);
+      if (tool === 'add-anchor' || tool === 'delete-anchor') {
+        const edit = editPathAnchor(origin, localPoint, 12 / scale, tool === 'add-anchor' ? 'add' : 'delete');
+        if (!isPathAnchorEdit(edit)) {
+          setNotice(edit.reason);
+          return;
+        }
+        const nextLayer = withEditedPath(layer, edit.path, vectorMask);
+        if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? nextLayer : item) }))
+          setNotice(pathAnchorEditNotice(edit, vectorMask));
+        return;
+      }
+      let pathIndex: number | undefined;
+      let pathHandle: PathHandleKind | undefined;
+      if (tool === 'convert-point') {
+        // An anchor wins over a nearby handle: click converts it and a drag
+        // pulls out symmetric handles. Dragging a handle moves it alone.
+        const nodeIndex = hitTestPathNode(origin, localPoint, 12 / scale);
+        const handle = nodeIndex === null ? hitTestPathHandle(origin, localPoint, 10 / scale) : null;
+        if (nodeIndex === null && !handle) {
+          setNotice('Click an anchor to convert it, or drag a handle to break it');
+          return;
+        }
+        pathIndex = nodeIndex ?? handle!.index;
+        pathHandle = handle?.kind;
+      } else if (!hitTestWholePath(origin, localPoint, 10 / scale)) {
+        setNotice('Click on a path to select it');
+        return;
+      }
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        layer,
+        pathIndex,
+        pathHandle,
+        pathOrigin: origin,
+        pathVectorMask: vectorMask,
+        moved: false,
+      };
+      drawPathOverlay(origin, layer.matrix, pathIndex ?? null);
+      if (tool === 'path-select')
+        setNotice(vectorMask ? 'Vector mask path selected: drag to move it' : 'Path selected: drag to move it');
       return;
     }
     if (tool === 'direct-select') {
@@ -13086,6 +13555,8 @@ export default function Home() {
     }
     if (
       tool === 'rectangle' ||
+      tool === 'rounded-rectangle' ||
+      tool === 'custom-shape' ||
       tool === 'ellipse' ||
       tool === 'line' ||
       tool === 'polygon' ||
@@ -13125,6 +13596,10 @@ export default function Home() {
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
       // Paint Symmetry is fixed for the stroke at pointer-down.
       g.paintSymmetry = paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix);
+      if (tool === 'brush' && brushStrands.enabled) {
+        g.strands = { settings: brushStrands, points: [{ x: local.x, y: local.y, pressure: pressure(e) }] };
+        scheduleStrandPreview(g);
+      }
       g.pending = (async () => {
         try {
           const image = await decodeAsset(assets.current[rasterAsset!]),
@@ -13146,7 +13621,8 @@ export default function Home() {
           g.blendStroke = beginBrushBlendStroke(buffer, tool, brushBlendMode, g.selectionStroke);
           let from = local;
           let stabilized = local;
-          for (const point of g.queued || [
+          // A Silk strands stroke paints nothing until release.
+          for (const point of g.strands ? [] : g.queued || [
             { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
           ]) {
             const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
@@ -13182,9 +13658,10 @@ export default function Home() {
           }
           g.smoothedLast = stabilized;
           g.queued = undefined;
-          void paint(f, { [layer.id]: buffer });
+          if (!g.strands) void paint(f, { [layer.id]: buffer });
         } catch {
           gesture.current = null;
+          if (g.strands) clearStrandPreview();
           setNotice('Could not prepare paint layer');
         }
       })();
@@ -13255,6 +13732,15 @@ export default function Home() {
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
     g.moved = true;
+    if (g.strands) {
+      // Silk strands: collect the sample and redraw only the overlay preview.
+      const points = g.strands.points;
+      points.push({ x: local.x, y: local.y, pressure: g.lastPressure });
+      if (points.length > BRUSH_STRANDS_MAX_INPUT_POINTS * 2) g.strands.points = thinStrandInput(points);
+      scheduleStrandPreview(g);
+      g.last = local;
+      return;
+    }
     if (
       (g.tool === 'mask-brush' ||
         g.tool === 'mask-eraser' ||
@@ -13409,6 +13895,19 @@ export default function Home() {
       g.moved = true;
       g.last = p;
       previewPenPath(g);
+      return;
+    }
+    if ((g.tool === 'path-select' || g.tool === 'convert-point') && g.pathOrigin && g.layer) {
+      const moved = pathToolDragResult(g, p);
+      if (!moved) return;
+      const nextLayer = withEditedPath(g.layer, moved, Boolean(g.pathVectorMask));
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id ? nextLayer : item),
+      }).then(() => {
+        if (gesture.current === g) drawPathOverlay(moved, g.layer!.matrix, g.pathIndex ?? null);
+      });
+      g.last = p;
       return;
     }
     if (
@@ -13806,6 +14305,19 @@ export default function Home() {
       previewGesture(g);
       g.smoothedLast = destination;
       g.last = local;
+    } else if (g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') {
+      const box = newShapeDragBox(g.tool, g.start, p, e);
+      const layer = newShapeLayer(g.tool, box, 'Shape preview');
+      void paint(layer ? { ...g.frame, layers: [...g.frame.layers, layer] } : g.frame).then(() => {
+        if (gesture.current !== g) return;
+        const context = canvas.current!.getContext('2d')!;
+        context.save();
+        context.strokeStyle = '#fff';
+        context.lineWidth = 1;
+        context.setLineDash([6, 4]);
+        context.strokeRect(box.left, box.top, box.width, box.height);
+        context.restore();
+      });
     } else if (
       g.tool === 'rectangle' ||
       g.tool === 'ellipse' ||
@@ -14169,6 +14681,7 @@ export default function Home() {
         ? latest.layers.find((layer) => layer.id === g.layer!.id)
         : undefined;
     if (latest !== f || (g.layer && latestLayer !== g.layer)) {
+      if (g.strands) clearStrandPreview();
       if (g.tool === 'ruler') setMeasurementPreview(null);
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(latest);
@@ -14176,6 +14689,7 @@ export default function Home() {
       return;
     }
     if (e.type === 'pointercancel') {
+      if (g.strands) clearStrandPreview();
       if (g.tool === 'rotate-view')
         setViewRotation(normalizeViewRotation(g.viewRotationStart ?? 0));
       if (g.tool === 'ruler') setMeasurementPreview(null);
@@ -14318,6 +14832,33 @@ export default function Home() {
         );
       return;
     }
+    if ((g.tool === 'path-select' || g.tool === 'convert-point') && g.pathOrigin && g.layer) {
+      const dragged = pathToolDragResult(g, p);
+      const vectorMask = Boolean(g.pathVectorMask);
+      let next: PathModel | null = dragged;
+      let message = '';
+      if (dragged) {
+        message = g.tool === 'path-select'
+          ? vectorMask ? 'Vector mask path moved' : 'Path moved'
+          : g.pathHandle
+            ? vectorMask ? 'Vector mask handle moved independently' : 'Path handle moved independently'
+            : vectorMask ? 'Vector mask anchor converted to smooth' : 'Path anchor converted to smooth';
+      } else if (g.tool === 'convert-point' && g.pathIndex !== undefined && !g.pathHandle) {
+        const edit = editPathAnchor(g.pathOrigin, g.pathOrigin.nodes[g.pathIndex], 0, 'convert');
+        if (isPathAnchorEdit(edit)) {
+          next = edit.path;
+          message = pathAnchorEditNotice(edit, vectorMask);
+        }
+      }
+      if (!next) {
+        void paint(f);
+        return;
+      }
+      const nextLayer = withEditedPath(g.layer, next, vectorMask);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? nextLayer : item) }))
+        setNotice(message);
+      return;
+    }
     if (
       g.tool === 'direct-select' &&
       (g.pathVectorMask || g.layer?.kind === 'path') &&
@@ -14377,6 +14918,28 @@ export default function Home() {
           ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       })) setNotice('Patch applied nondestructively');
+    } else if (g.tool === 'brush' && g.strands && g.buffer && g.layer) {
+      const strands = buildGestureStrands(g),
+        painted = strands.length > 0 &&
+          paintGestureStrands(g, strands, color, (brushOpacity / 100) * (brushFlow / 100));
+      if (!painted) {
+        clearStrandPreview();
+        void paint(f);
+        setNotice('Silk strands need a longer drag');
+        return;
+      }
+      const asset = addPaintedAsset(g.buffer, g.tileBase),
+        revisionBefore = revisionRef.current;
+      const changed = commit({
+        ...f,
+        layers: f.layers.map((l) =>
+          l.id === g.layer!.id ? ({ ...l, kind: 'raster', asset } as Layer) : l,
+        ),
+      });
+      if (changed) {
+        clearStrandPreviewAfterRender(revisionBefore);
+        setNotice(`Silk strands painted (${strands.length} strand${strands.length === 1 ? '' : 's'})`);
+      } else clearStrandPreview();
     } else if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
       g.buffer &&
@@ -14462,6 +15025,15 @@ export default function Home() {
               ? 'Mask Brush revealed masked pixels'
               : 'Mask Eraser concealed pixels',
         );
+    } else if ((g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') && g.moved) {
+      const box = newShapeDragBox(g.tool, g.start, p, e);
+      const layer = newShapeLayer(
+        g.tool,
+        box,
+        `${g.tool === 'custom-shape' ? customShapeLabel() : 'Rounded Rectangle'} ${f.layers.length}`,
+      );
+      if (layer) addLayer(layer);
+      else void paint(current());
     } else if (
       (g.tool === 'rectangle' ||
         g.tool === 'ellipse' ||
@@ -15131,6 +15703,8 @@ export default function Home() {
           gesture.current?.tool === 'freeform-pen' ||
           gesture.current?.tool === 'curvature-pen' ||
           gesture.current?.tool === 'direct-select' ||
+          gesture.current?.tool === 'path-select' ||
+          gesture.current?.tool === 'convert-point' ||
           gesture.current?.tool === 'selection-brush' ||
           gesture.current?.tool === 'quick-selection' ||
           gesture.current?.tool === 'patch')
@@ -15294,6 +15868,14 @@ export default function Home() {
       }
       if (command) {
         const k = e.key.toLowerCase();
+        // Photoshop-style Arrange: Ctrl+] / Ctrl+[ step the selected layers,
+        // Ctrl+Shift+] / Ctrl+Shift+[ send them to the front / back.
+        if (!e.altKey && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+          e.preventDefault();
+          const forward = e.code === 'BracketRight';
+          arrangeLayers(forward ? (e.shiftKey ? 'front' : 'forward') : e.shiftKey ? 'back' : 'backward');
+          return;
+        }
         if (k === 'l' && e.shiftKey && command) {
           e.preventDefault();
           void autoCorrect('tone');
@@ -16637,14 +17219,31 @@ export default function Home() {
       inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
       onDragOver={(e) => {
+        if (!Array.from(e.dataTransfer.types).includes('Files')) return;
         e.preventDefault();
-        setDrag(true);
+        // Shift (or no open document) opens the file as a new document, as
+        // before; otherwise images are placed as layers.
+        const mode = !frame || e.shiftKey ? 'open' : 'layer';
+        e.dataTransfer.dropEffect = 'copy';
+        if (drag !== mode) setDrag(mode);
       }}
-      onDragLeave={() => setDrag(false)}
+      onDragLeave={(e) => {
+        // Only clear when the pointer leaves the editor, not a child element.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(false);
+      }}
       onDrop={(e) => {
         e.preventDefault();
         setDrag(false);
-        void load(e.dataTransfer.files[0]);
+        const files = Array.from(e.dataTransfer.files);
+        if (!files.length) return;
+        // The Layers panel handles drops at its own drop line.
+        if ((e.target as Element).closest?.('[data-file-drop-zone="layers"]') && frame && !e.shiftKey) return;
+        const target = e.target as Node;
+        const onCanvas = Boolean(canvas.current && (canvas.current === target || canvas.current.contains(target)));
+        void dropFiles(files, {
+          open: e.shiftKey,
+          point: onCanvas && frame ? point(e) : undefined,
+        });
       }}
     >
       <input
@@ -17360,15 +17959,11 @@ export default function Home() {
                               toolFlyoutAnchor?.dataset.toolId === id
                             : undefined
                         }
-                        title={
-                          flyout
-                            ? `${label} (${key}) · press and hold for subtools`
-                            : `${label} (${key})`
-                        }
+                        title={`${label}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
-                        <kbd>{key}</kbd>
+                        {key && <kbd>{key}</kbd>}
                         {subtools.length > 1 && (
                           <span
                             className="tool-subtool-arrow"
@@ -17480,10 +18075,14 @@ export default function Home() {
             </div>
           )}
           {drag && (
-            <div className="drop">
+            <div className="drop" data-testid="drop-overlay" data-mode={drag}>
               <ImagePlus />
-              <b>Drop your photo here</b>
-              <span>JPG, PNG, WEBP and more</span>
+              <b>{drag === 'layer' ? 'Drop to add as layer' : 'Drop to open'}</b>
+              <span>
+                {drag === 'layer'
+                  ? 'Images are placed above the selected layer · hold Shift to open instead'
+                  : 'JPG, PNG, WEBP and more'}
+              </span>
             </div>
           )}
           {cropPreview && (
@@ -17873,6 +18472,16 @@ export default function Home() {
                 className="quick-mask-overlay"
                 data-testid="quick-mask-overlay"
                 aria-hidden="true"
+              />
+            )}
+            {frame && tool === 'brush' && brushStrands.enabled && (
+              <canvas
+                ref={strandOverlay}
+                className="strand-preview-overlay"
+                data-testid="strand-preview-overlay"
+                data-strands="0"
+                aria-hidden="true"
+                style={{ mixBlendMode: strandPreviewBlend(brushBlendMode) }}
               />
             )}
             {frame && (paintSymmetryAppliesToTool(tool) || tool === 'smudge') && (
@@ -18300,6 +18909,9 @@ export default function Home() {
               remove={remove}
               reorder={reorder}
               arrange={arrangeLayers}
+              moveLayers={moveLayersFromPanel}
+              setLayerSelection={setLayerSelection}
+              dropFiles={(files, target) => void dropFiles(files, { target })}
               groupActive={groupActiveLayer}
               ungroupActive={ungroupActiveLayer}
               editGroup={editGroup}
@@ -18984,7 +19596,7 @@ export default function Home() {
                   </button>
                 </label>
               )}
-              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && customPathPresets.length > 0 && (
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && customPathPresets.length > 0 && (
                 <label className="select-row">
                   <span>Saved path preset</span>
                   <select
@@ -19009,7 +19621,7 @@ export default function Home() {
                   </button>
                 </label>
               )}
-              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && (
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && (
                 <button
                   type="button"
                   className="secondary"
@@ -19018,6 +19630,70 @@ export default function Home() {
                 >
                   Stroke Path with Brush…
                 </button>
+              )}
+              {tool === 'rounded-rectangle' && (
+                <Slider
+                  label="Corner radius"
+                  value={shapeCornerRadius}
+                  min={0}
+                  max={500}
+                  set={setShapeCornerRadius}
+                  suffix=" px"
+                />
+              )}
+              {tool === 'rounded-rectangle' && (
+                <p className="adjust-note">
+                  Draws a filled rectangle in the foreground colour. The radius is clamped to half the
+                  shorter side and stays editable in Layer properties. Shift draws a square; Alt draws
+                  from the centre.
+                </p>
+              )}
+              {tool === 'custom-shape' && (
+                <fieldset className="custom-shape-picker">
+                  <legend>Custom shape</legend>
+                  <div className="custom-shape-grid">
+                    {CUSTOM_SHAPE_LIBRARY.map((entry) => (
+                      <label
+                        key={entry.id}
+                        title={entry.label}
+                        className={customShapeId === entry.id ? 'selected' : undefined}
+                      >
+                        <input
+                          type="radio"
+                          name="custom-shape-choice"
+                          value={entry.id}
+                          aria-label={entry.label}
+                          checked={customShapeId === entry.id}
+                          onChange={() => setCustomShapeId(entry.id)}
+                        />
+                        <svg viewBox="-1 -1 26 26" aria-hidden="true" focusable="false">
+                          <path d={customShapeThumbnailPath(entry.id)} fillRule={entry.fillRule} />
+                        </svg>
+                      </label>
+                    ))}
+                  </div>
+                  {customPathPresets.length > 0 && (
+                    <label className="select-row">
+                      <span>Saved path as shape</span>
+                      <select
+                        aria-label="Saved path as custom shape"
+                        value={customShapePathPreset() ? customShapeId : ''}
+                        onChange={(event) =>
+                          setCustomShapeId(event.target.value || DEFAULT_CUSTOM_SHAPE_ID)
+                        }
+                      >
+                        <option value="">Built-in library</option>
+                        {customPathPresets.map((preset) => (
+                          <option key={preset.id} value={`${PATH_PRESET_SHAPE_PREFIX}${preset.id}`}>{preset.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <p className="adjust-note">
+                    Drag to draw {customShapeLabel()} as an editable path filled with the foreground
+                    colour. Shift keeps its proportions; Alt draws from the centre.
+                  </p>
+                </fieldset>
               )}
               {tool === 'polygon' && (
                 <label className="select-row">
@@ -19311,6 +19987,103 @@ export default function Home() {
                             set={(count) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, count }))}
                             suffix=""
                           />
+                          {tool === 'brush' && (
+                            <fieldset className="strand-controls" aria-label="Silk strands options" data-testid="strand-controls">
+                              <label className="check-row">
+                                <input
+                                  aria-label="Silk strands"
+                                  type="checkbox"
+                                  checked={brushStrands.enabled}
+                                  onChange={(event) => {
+                                    const enabled = event.target.checked;
+                                    setBrushStrands((current) => ({ ...current, enabled }));
+                                  }}
+                                />
+                                Silk strands
+                              </label>
+                              {brushStrands.enabled && (
+                                <>
+                                  <p className="adjust-note" data-testid="strand-note">
+                                    One drag paints a twisting ribbon of fine strands. Size and pen pressure set strand
+                                    thickness; the strands are previewed while you drag and painted on release. A
+                                    bounded local approximation, not a smoke simulation.
+                                  </p>
+                                  <Slider
+                                    label="Strands"
+                                    value={brushStrands.count}
+                                    min={BRUSH_STRANDS_COUNT_MIN}
+                                    max={BRUSH_STRANDS_COUNT_MAX}
+                                    suffix=""
+                                    set={(count) => setBrushStrands((current) => normalizeBrushStrands({ ...current, count }))}
+                                  />
+                                  <Slider
+                                    label="Ribbon width"
+                                    value={brushStrands.width}
+                                    min={BRUSH_STRANDS_WIDTH_MIN}
+                                    max={BRUSH_STRANDS_WIDTH_MAX}
+                                    suffix=" px"
+                                    set={(width) => setBrushStrands((current) => normalizeBrushStrands({ ...current, width }))}
+                                  />
+                                  <Slider
+                                    label="Twists"
+                                    value={brushStrands.twists}
+                                    min={0}
+                                    max={BRUSH_STRANDS_TWISTS_MAX}
+                                    step={0.5}
+                                    suffix=" per stroke"
+                                    set={(twists) => setBrushStrands((current) => normalizeBrushStrands({ ...current, twists }))}
+                                  />
+                                  <Slider
+                                    label="Wobble"
+                                    value={brushStrands.wobble}
+                                    min={0}
+                                    max={100}
+                                    set={(wobble) => setBrushStrands((current) => normalizeBrushStrands({ ...current, wobble }))}
+                                  />
+                                  <Slider
+                                    label="Strand opacity jitter"
+                                    value={brushStrands.opacityJitter}
+                                    min={0}
+                                    max={100}
+                                    set={(opacityJitter) =>
+                                      setBrushStrands((current) => normalizeBrushStrands({ ...current, opacityJitter }))}
+                                  />
+                                  <div className="strand-seed-row">
+                                    <label className="select-row">
+                                      <span>Seed</span>
+                                      <input
+                                        aria-label="Strand seed"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={0}
+                                        max={BRUSH_STRANDS_SEED_MAX}
+                                        step={1}
+                                        value={brushStrands.seed}
+                                        onChange={(event) => {
+                                          const seed = Number(event.target.value);
+                                          if (event.target.value !== '' && Number.isFinite(seed))
+                                            setBrushStrands((current) => normalizeBrushStrands({ ...current, seed }));
+                                        }}
+                                      />
+                                    </label>
+                                    <button
+                                      type="button"
+                                      title="Pick a new random seed for the next stroke"
+                                      onClick={() =>
+                                        setBrushStrands((current) =>
+                                          normalizeBrushStrands({
+                                            ...current,
+                                            seed: (current.seed + 1 + Math.floor(Math.random() * BRUSH_STRANDS_SEED_MAX)) %
+                                              (BRUSH_STRANDS_SEED_MAX + 1),
+                                          }))}
+                                    >
+                                      New seed
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </fieldset>
+                          )}
                           <Slider
                             label="Count jitter"
                             value={brushDynamics.countJitter}
