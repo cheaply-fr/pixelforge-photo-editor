@@ -129,6 +129,161 @@ export function compositeCheckpoint(
   return target - 1;
 }
 
+/** Layer fields that never change pixels (labels and lock/UI state). */
+const PIXEL_NEUTRAL_LAYER_FIELDS = new Set(['name', 'locked', 'clippingTo']);
+const PIXEL_NEUTRAL_GROUP_FIELDS = new Set(['name', 'locked', 'collapsed']);
+
+const withoutFields = (value: object, fields: ReadonlySet<string>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(value).filter(([key]) => !fields.has(key)));
+
+/**
+ * One key for the *finished* composite of a frame, insensitive to edits that
+ * cannot change its pixels: inserting or deleting an inert layer (hidden,
+ * 0% opacity or a known-transparent plain raster such as a new paint layer),
+ * renaming or locking a layer or folder, and changing which layer is active
+ * or selected. Two frames with equal keys composite to identical pixels.
+ *
+ * Layers composite bottom-to-top and an inert layer leaves the composite
+ * below it unchanged, so the composite is a function of the ordered keys of
+ * the non-inert layers. A clipped layer is drawn through its clipping
+ * group's base (`resolveClipBase`, which validates adjacency), so it is keyed
+ * by that base rather than by its raw `clippingTo` link: inserting an empty
+ * layer inside a clipping group re-points links without changing pixels.
+ * A folder is drawn once at its first member and keyed by its non-inert
+ * members. `inert` must be true only for layers the renderer draws as
+ * nothing and that no other layer reads, except through keys included here.
+ */
+export function compositeEquivalenceKey(
+  frame: KeyFrame & { colorMode?: unknown },
+  assets: Readonly<Record<string, KeyAsset | undefined>>,
+  inert: (layer: KeyLayer) => boolean,
+  resolveClipBase: (layer: KeyLayer) => KeyLayer | undefined,
+): string {
+  const byId = new Map(frame.layers.map((layer) => [layer.id, layer]));
+  const own = new Map<string, string>();
+  const ownKey = (layer: KeyLayer): string => {
+    const cached = own.get(layer.id);
+    if (cached !== undefined) return cached;
+    const ids = new Set<string>();
+    layerAssetIds(layer, ids);
+    const prints = [...ids]
+      .sort()
+      .map((id) => {
+        const asset = assets[id];
+        return isAssetShape(asset) ? `${id}=${assetFingerprint(asset)}` : `${id}=?`;
+      })
+      .join(',');
+    const key = `${JSON.stringify(withoutFields(layer, PIXEL_NEUTRAL_LAYER_FIELDS))}#${prints}`;
+    own.set(layer.id, key);
+    return key;
+  };
+  const layerKey = (layer: KeyLayer): string => {
+    let key = ownKey(layer);
+    if (layer.clippingTo !== undefined) {
+      const base = resolveClipBase(layer);
+      if (base) key += `^${ownKey(base)}`;
+    }
+    const path = layer.textPath?.pathLayerId ? byId.get(layer.textPath.pathLayerId) : undefined;
+    if (path) key += `~${ownKey(path)}`;
+    return key;
+  };
+  const groups = new Map((frame.groups || []).map((group) => [group.id, group]));
+  const emitted = new Set<string>();
+  const parts: string[] = [];
+  for (const layer of frame.layers) {
+    if (layer.groupId) {
+      if (emitted.has(layer.groupId)) continue;
+      emitted.add(layer.groupId);
+      const group = groups.get(layer.groupId);
+      const members = frame.layers.filter((item) => item.groupId === layer.groupId && !inert(item));
+      parts.push(
+        `group:${JSON.stringify(group ? withoutFields(group, PIXEL_NEUTRAL_GROUP_FIELDS) : null)}[${members.map(layerKey).join('|')}]`,
+      );
+      continue;
+    }
+    if (inert(layer)) continue;
+    parts.push(layerKey(layer));
+  }
+  return `${frame.w}x${frame.h}:${JSON.stringify(frame.colorMode ?? null)}\n${parts.join('\n')}`;
+}
+
+const CLIPPED_SOURCE_NEUTRAL_FIELDS = new Set(['name', 'locked', 'clippingTo', 'groupId', 'opacity', 'blend']);
+const CLIPPED_BASE_NEUTRAL_FIELDS = new Set(['name', 'locked', 'clippingTo', 'groupId']);
+
+/**
+ * Content key of a clipped layer's result: the source layer (without the
+ * opacity and blend the outer compositor applies, its folder or name), its
+ * clipping group's base, a bound text path, the content of every asset they
+ * read, and the frame size and colour mode. Undefined (do not cache) when a
+ * live override feeds either layer.
+ */
+export function clippedLayerCacheKey(
+  frame: { w: number; h: number; colorMode?: unknown; layers: readonly KeyLayer[] },
+  source: KeyLayer,
+  base: KeyLayer,
+  assets: Readonly<Record<string, KeyAsset | undefined>>,
+  overrides?: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (overrides && (Object.hasOwn(overrides, source.id) || Object.hasOwn(overrides, base.id))) return undefined;
+  const contentKey = (layer: KeyLayer, neutral: ReadonlySet<string>) => {
+    const ids = new Set<string>();
+    layerAssetIds(layer, ids);
+    const prints = [...ids]
+      .sort()
+      .map((id) => {
+        const asset = assets[id];
+        return isAssetShape(asset) ? `${id}=${assetFingerprint(asset)}` : `${id}=?`;
+      })
+      .join(',');
+    let key = `${JSON.stringify(withoutFields(layer, neutral))}#${prints}`;
+    const pathId = layer.textPath?.pathLayerId;
+    if (pathId) {
+      const path = frame.layers.find((item) => item.id === pathId);
+      key += `~${path ? JSON.stringify(path) : '?'}`;
+    }
+    return key;
+  };
+  return `clip:${frame.w}x${frame.h}:${JSON.stringify(frame.colorMode ?? null)}
+${contentKey(source, CLIPPED_SOURCE_NEUTRAL_FIELDS)}
+${contentKey(base, CLIPPED_BASE_NEUTRAL_FIELDS)}`;
+}
+
+/**
+ * Bounds of the pixels with non-zero alpha in an RGBA buffer, or undefined
+ * when every pixel is transparent.
+ */
+export function alphaBounds(
+  pixels: Uint8ClampedArray,
+  width: number,
+  height: number,
+): { x: number; y: number; w: number; h: number } | undefined {
+  let minX = width,
+    minY = height,
+    maxX = -1,
+    maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width * 4;
+    let first = -1;
+    for (let x = 0; x < width; x += 1)
+      if (pixels[row + x * 4 + 3] !== 0) {
+        first = x;
+        break;
+      }
+    if (first < 0) continue;
+    let last = first;
+    for (let x = width - 1; x > first; x -= 1)
+      if (pixels[row + x * 4 + 3] !== 0) {
+        last = x;
+        break;
+      }
+    if (first < minX) minX = first;
+    if (last > maxX) maxX = last;
+    if (minY > y) minY = y;
+    maxY = y;
+  }
+  return maxX < 0 ? undefined : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
 /** Number of leading keys two key lists share. */
 export function sharedPrefix(a: readonly string[], b: readonly string[]): number {
   const limit = Math.min(a.length, b.length);
@@ -149,8 +304,30 @@ type Snapshot<S> = {
 
 export class CompositeCache<S = unknown> {
   private entry: Snapshot<S> | undefined;
+  private final: { key: string; w: number; h: number; surface: S } | undefined;
   hits = 0;
   misses = 0;
+  finalHits = 0;
+
+  /**
+   * The finished composite of the last full render whose equivalence key
+   * (see `compositeEquivalenceKey`) equals `key`, if any.
+   */
+  matchFinal(w: number, h: number, key: string): S | undefined {
+    const final = this.final;
+    if (!final || final.w !== w || final.h !== h || final.key !== key) return undefined;
+    this.finalHits += 1;
+    return final.surface;
+  }
+
+  /** The retained finished-composite surface (reused for the next one), if any. */
+  reusableFinal(w: number, h: number): S | undefined {
+    return this.final && this.final.w === w && this.final.h === h ? this.final.surface : undefined;
+  }
+
+  storeFinal(final: { key: string; w: number; h: number; surface: S }): void {
+    this.final = final;
+  }
 
   /** The snapshot usable for these keys, if every layer it contains is unchanged. */
   match(w: number, h: number, keys: readonly string[]): Snapshot<S> | undefined {
@@ -178,9 +355,38 @@ export class CompositeCache<S = unknown> {
 
   clear(): void {
     this.entry = undefined;
+    this.final = undefined;
   }
 
   get retained(): { index: number; w: number; h: number } | undefined {
     return this.entry ? { index: this.entry.index, w: this.entry.w, h: this.entry.h } : undefined;
+  }
+}
+
+/** Per-render composite cache outcome, published as a diagnostics mark. */
+export type CompositeReuse = { final: boolean; clippedHits?: number };
+
+export function validCompositeReuse(value: unknown): value is CompositeReuse {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).final === 'boolean' &&
+    ((value as Record<string, unknown>).clippedHits === undefined ||
+      (Number.isSafeInteger((value as Record<string, unknown>).clippedHits) &&
+        ((value as Record<string, unknown>).clippedHits as number) >= 0))
+  );
+}
+
+/**
+ * Publish whether a render reused the finished composite as a best-effort
+ * `pixelforge.composite-cache` performance mark (tests and profiling).
+ */
+export function markCompositeReuse(reuse: CompositeReuse): void {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
+      performance.mark('pixelforge.composite-cache', { detail: { final: reuse.final, clippedHits: reuse.clippedHits ?? 0 } });
+  } catch {
+    // Diagnostics must never affect rendering.
   }
 }

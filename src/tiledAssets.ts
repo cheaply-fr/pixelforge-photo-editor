@@ -139,36 +139,187 @@ export function clearTileIndexForTesting(): void {
   tileIndex.clear();
 }
 
-export type TileEncodeStats = { tiles: number; encoded: number; reused: number; empty: number };
+export type TileEncodeStats = {
+  tiles: number;
+  encoded: number;
+  reused: number;
+  empty: number;
+  /** Tiles read back and hashed (all of them on a full scan). */
+  hashed: number;
+  /** Tiles copied from the hint's base outside its dirty rectangle, unread. */
+  skipped: number;
+  /** True when a dirty-rectangle hint limited the readback. */
+  hinted: boolean;
+  /** Why a supplied hint was not used (the commit scanned the whole canvas). */
+  fallback?: TileHintFallback;
+  /**
+   * Diagnostics only (`__PIXELFORGE_VERIFY_TILE_HINTS__`): whether a full
+   * scan of the same canvas produced exactly the same tiles.
+   */
+  fullScanMatch?: boolean;
+};
+
+/**
+ * A fully transparent `w × h` tiled asset (every cell `null`): the hint base
+ * for a freshly created canvas whose only content is the hint's rectangle.
+ */
+export function emptyTiledAsset(w: number, h: number): TiledAsset {
+  const { cols, rows } = tileGrid(w, h);
+  return { w, h, tileSize: TILE_SIZE, tiles: Array.from({ length: cols * rows }, () => null) };
+}
+
+/**
+ * The smallest rectangle covering every non-empty tile of `asset` (pixels
+ * outside it are all transparent), or `null` when every tile is empty.
+ */
+export function tiledContentRegion(asset: TiledAsset): { x: number; y: number; width: number; height: number } | null {
+  let left = Infinity,
+    top = Infinity,
+    right = -Infinity,
+    bottom = -Infinity;
+  asset.tiles.forEach((tile, index) => {
+    if (!tile) return;
+    const rect = tileRect(asset.w, asset.h, index);
+    left = Math.min(left, rect.x);
+    top = Math.min(top, rect.y);
+    right = Math.max(right, rect.x + rect.w);
+    bottom = Math.max(bottom, rect.y + rect.h);
+  });
+  return right > left ? { x: left, y: top, width: right - left, height: bottom - top } : null;
+}
+
+/** Pixel rectangle (integer, half-open) in an asset's own pixel space. */
+export type TileDirtyRect = { x: number; y: number; w: number; h: number };
+
+/**
+ * Dirty-rectangle hint for a tiled commit: the canvas being stored equals
+ * `base` (the asset it was drawn from, at the same size) everywhere outside
+ * `dirty`. `dirty: null` means nothing changed. Tiles wholly outside the
+ * rectangle reuse `base`'s tiles without being read back or hashed.
+ */
+export type TileCommitHint = { base: unknown; dirty: TileDirtyRect | null };
+
+export type TileHintFallback = 'no-base' | 'base-size' | 'base-invalid' | 'dirty-invalid';
+
+/**
+ * Why `hint` cannot be used for a `w × h` commit, or `undefined` when it can.
+ * A hint is only usable when its base is a structurally valid tiled asset of
+ * exactly the same dimensions (no expansion, trim or crop happened since the
+ * canvas was drawn from it) and the rectangle is finite.
+ */
+export function tileHintFallback(w: number, h: number, hint: TileCommitHint): TileHintFallback | undefined {
+  const base = hint.base;
+  if (!isTiledAsset(base)) return 'no-base';
+  if (base.w !== w || base.h !== h) return 'base-size';
+  const { cols, rows } = tileGrid(w, h);
+  if (base.tiles.length !== cols * rows || !base.tiles.every((tile) => tile === null || validTile(tile)))
+    return 'base-invalid';
+  const dirty = hint.dirty;
+  if (dirty === null) return undefined;
+  if (
+    !dirty ||
+    typeof dirty !== 'object' ||
+    ![dirty.x, dirty.y, dirty.w, dirty.h].every(Number.isFinite) ||
+    dirty.w < 0 ||
+    dirty.h < 0
+  )
+    return 'dirty-invalid';
+  return undefined;
+}
+
+/**
+ * Tile cells (inclusive column/row ranges) a dirty rectangle touches in a
+ * `w × h` grid, or `null` when it covers no pixel of the asset.
+ */
+export function dirtyTileRange(
+  w: number,
+  h: number,
+  dirty: TileDirtyRect | null,
+): { col0: number; col1: number; row0: number; row1: number } | null {
+  if (!dirty) return null;
+  const left = Math.max(0, Math.floor(dirty.x)),
+    top = Math.max(0, Math.floor(dirty.y)),
+    right = Math.min(w, Math.ceil(dirty.x + dirty.w)),
+    bottom = Math.min(h, Math.ceil(dirty.y + dirty.h));
+  if (right <= left || bottom <= top) return null;
+  return {
+    col0: Math.floor(left / TILE_SIZE),
+    col1: Math.floor((right - 1) / TILE_SIZE),
+    row0: Math.floor(top / TILE_SIZE),
+    row1: Math.floor((bottom - 1) / TILE_SIZE),
+  };
+}
 
 /**
  * Build a tiled asset from pixels read in bands of up to 256 rows.
- * `readBand(y, rows)` returns `w × rows` straight-alpha RGBA bytes;
- * `encode(x, y, w, h)` returns the PNG Blob of that rectangle. Only tiles
- * whose key no live tile (or `base` tile) already has are encoded.
+ * `readBand(y, rows, x, width)` returns `width × rows` straight-alpha RGBA
+ * bytes starting at column `x` (a full scan always asks for `x = 0, width =
+ * w`); `encode(x, y, w, h)` returns the PNG Blob of that rectangle. Only
+ * tiles whose key no live tile (or `base` tile) already has are encoded.
+ *
+ * With a usable `hint` (see `tileHintFallback`) only the tile cells its dirty
+ * rectangle touches are read and hashed; every other cell is `hint.base`'s
+ * tile, by object. Because tiles are content addressed, the result equals
+ * the full scan whenever the hint is true (pixels outside the rectangle equal
+ * the base's). An unusable hint falls back to the full scan and says why in
+ * `stats.fallback`.
  */
 export function tileAssetFromBands(
   w: number,
   h: number,
-  readBand: (y: number, rows: number) => Uint8ClampedArray | Uint8Array,
+  readBand: (y: number, rows: number, x: number, width: number) => Uint8ClampedArray | Uint8Array,
   encode: (x: number, y: number, w: number, h: number) => Blob,
   base?: AnyAsset,
+  hint?: TileCommitHint,
 ): { asset: TiledAsset; stats: TileEncodeStats } {
   const { cols, rows } = tileGrid(w, h);
   const tiles: (AssetTile | null)[] = Array.from({ length: cols * rows }, () => null);
-  const stats: TileEncodeStats = { tiles: tiles.length, encoded: 0, reused: 0, empty: 0 };
+  const stats: TileEncodeStats = {
+    tiles: tiles.length,
+    encoded: 0,
+    reused: 0,
+    empty: 0,
+    hashed: 0,
+    skipped: 0,
+    hinted: false,
+  };
+  const fallback = hint ? tileHintFallback(w, h, hint) : undefined;
+  if (fallback) stats.fallback = fallback;
+  const hintBase = hint && !fallback ? (hint.base as TiledAsset) : undefined;
+  const range = hintBase ? dirtyTileRange(w, h, hint!.dirty) : undefined;
   const baseTiles = new Map<string, AssetTile>();
-  if (isTiledAsset(base)) for (const tile of base.tiles) if (tile) baseTiles.set(tile.key, tile);
-  for (let row = 0; row < rows; row += 1) {
+  for (const source of [base, hintBase])
+    if (isTiledAsset(source)) for (const tile of source.tiles) if (tile) baseTiles.set(tile.key, tile);
+  if (hintBase) {
+    stats.hinted = true;
+    hintBase.tiles.forEach((tile, index) => {
+      const col = index % cols,
+        row = Math.floor(index / cols);
+      if (range && col >= range.col0 && col <= range.col1 && row >= range.row0 && row <= range.row1) return;
+      stats.skipped += 1;
+      if (tile) {
+        tiles[index] = internTile(tile);
+        stats.reused += 1;
+      } else stats.empty += 1;
+    });
+  }
+  const col0 = hintBase ? (range?.col0 ?? 0) : 0,
+    col1 = hintBase ? (range?.col1 ?? -1) : cols - 1,
+    row0 = hintBase ? (range?.row0 ?? 0) : 0,
+    row1 = hintBase ? (range?.row1 ?? -1) : rows - 1;
+  const bandX = col0 * TILE_SIZE,
+    bandWidth = col1 >= col0 ? Math.min(w, (col1 + 1) * TILE_SIZE) - bandX : 0;
+  for (let row = row0; row <= row1 && bandWidth > 0; row += 1) {
     const y = row * TILE_SIZE,
       bandRows = Math.min(TILE_SIZE, h - y);
-    const bytes = readBand(y, bandRows);
-    if (bytes.byteLength !== w * bandRows * 4) throw new Error('Tile band has the wrong size');
-    const words = new Uint32Array(bytes.buffer, bytes.byteOffset, w * bandRows);
-    for (let col = 0; col < cols; col += 1) {
+    const bytes = readBand(y, bandRows, bandX, bandWidth);
+    if (bytes.byteLength !== bandWidth * bandRows * 4) throw new Error('Tile band has the wrong size');
+    const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bandWidth * bandRows);
+    for (let col = col0; col <= col1; col += 1) {
       const x = col * TILE_SIZE,
         tw = Math.min(TILE_SIZE, w - x);
-      const key = hashTilePixels(words, w, x, 0, tw, bandRows);
+      stats.hashed += 1;
+      const key = hashTilePixels(words, bandWidth, x - bandX, 0, tw, bandRows);
       if (key === null) {
         stats.empty += 1;
         continue;
@@ -230,12 +381,13 @@ function scratchCanvas(w: number, h: number): HTMLCanvasElement {
 export function tileCanvas(
   source: HTMLCanvasElement,
   base?: AnyAsset,
+  hint?: TileCommitHint,
 ): { asset: TiledAsset; stats: TileEncodeStats } {
   const context = (source as Canvas2D).getContext('2d')!;
   return tileAssetFromBands(
     source.width,
     source.height,
-    (y, rows) => context.getImageData(0, y, source.width, rows).data,
+    (y, rows, x, width) => context.getImageData(x, y, width, rows).data,
     (x, y, w, h) => {
       const target = scratchCanvas(w, h),
         ctx = target.getContext('2d')!;
@@ -245,6 +397,7 @@ export function tileCanvas(
       return new Blob([dataUrlBytes(target.toDataURL('image/png'))], { type: 'image/png' });
     },
     base,
+    hint,
   );
 }
 
@@ -276,37 +429,277 @@ export async function verifyTileDecodes(tile: AssetTile, w: number, h: number): 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Decoded-tile cache: assembling a version that shares tiles with one already
+// assembled (undo, redo, the next stroke's start) draws the shared tiles from
+// decoded bitmaps instead of decoding their PNG Blobs again.
+
+export const DECODED_TILE_CACHE_DESKTOP_BYTES = 96 * 1024 * 1024;
+export const DECODED_TILE_CACHE_LARGE_DESKTOP_BYTES = 192 * 1024 * 1024;
+export const DECODED_TILE_CACHE_MOBILE_BYTES = 32 * 1024 * 1024;
+export const DECODED_TILE_CACHE_LOW_MEMORY_BYTES = 12 * 1024 * 1024;
+
+export type DecodedTileCacheStats = {
+  /** Tiles drawn from a cached bitmap. */
+  hits: number;
+  /** Tiles that had to be decoded from their PNG Blob. */
+  misses: number;
+  stores: number;
+  /** Tiles stored from pixels the caller already held (no PNG decode). */
+  seeded: number;
+  evictions: number;
+  /** Tiles that could not be retained (budget 0, or larger than the budget). */
+  rejected: number;
+  entries: number;
+  bytes: number;
+  maxBytes: number;
+};
+
+type ClosableBitmap = CanvasImageSource & { width: number; height: number; close?: () => void };
+
 /**
- * Decode every tile and draw it into `context` (which must be `w × h` and
- * cleared). A tile whose decoded size differs from its cell fails the decode.
+ * Least-recently-used decoded tiles, bounded by their RGBA bytes. Keys are
+ * tile content keys plus the encoded size, so a structured clone of a tile
+ * (the render worker's copy) hits the same entry. Evicted bitmaps are closed
+ * immediately: callers draw a bitmap synchronously right after `get`, so no
+ * caller holds one across an `await`.
+ */
+export class DecodedTileCache {
+  private readonly entries = new Map<string, { bitmap: ClosableBitmap; bytes: number }>();
+  private totalBytes = 0;
+  private counters = { hits: 0, misses: 0, stores: 0, seeded: 0, evictions: 0, rejected: 0 };
+  readonly maxBytes: number;
+
+  constructor(maxBytes: number) {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+      throw new RangeError('Cache byte budget must be a non-negative safe integer');
+    this.maxBytes = maxBytes;
+  }
+
+  static key(tile: AssetTile): string {
+    return `${tile.key}:${tile.blob.size}`;
+  }
+
+  get(tile: AssetTile): ClosableBitmap | undefined {
+    const key = DecodedTileCache.key(tile);
+    const entry = this.entries.get(key);
+    if (!entry) {
+      this.counters.misses += 1;
+      return undefined;
+    }
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    this.counters.hits += 1;
+    return entry.bitmap;
+  }
+
+  has(tile: AssetTile): boolean {
+    return this.entries.has(DecodedTileCache.key(tile));
+  }
+
+  /**
+   * Retain `bitmap` for `tile`. Returns false (and leaves the bitmap to the
+   * caller) when it cannot be retained; on true the cache owns it.
+   */
+  set(tile: AssetTile, bitmap: ClosableBitmap, seeded = false): boolean {
+    const key = DecodedTileCache.key(tile),
+      bytes = bitmap.width * bitmap.height * 4;
+    if (this.entries.has(key)) return false;
+    if (bytes > this.maxBytes) {
+      this.counters.rejected += 1;
+      return false;
+    }
+    for (const [oldestKey, oldest] of this.entries) {
+      if (this.totalBytes + bytes <= this.maxBytes) break;
+      this.entries.delete(oldestKey);
+      this.totalBytes -= oldest.bytes;
+      this.counters.evictions += 1;
+      oldest.bitmap.close?.();
+    }
+    this.entries.set(key, { bitmap, bytes });
+    this.totalBytes += bytes;
+    this.counters.stores += 1;
+    if (seeded) this.counters.seeded += 1;
+    return true;
+  }
+
+  clear(): void {
+    for (const entry of this.entries.values()) entry.bitmap.close?.();
+    this.entries.clear();
+    this.totalBytes = 0;
+  }
+
+  stats(): DecodedTileCacheStats {
+    return { ...this.counters, entries: this.entries.size, bytes: this.totalBytes, maxBytes: this.maxBytes };
+  }
+}
+
+export type DecodedTileCacheDeviceHints = { deviceMemory?: number; mobile?: boolean };
+
+/** Device-aware byte budget (same tiers as the layer filter cache). */
+export function decodedTileCacheBudgetForDevice(hints: DecodedTileCacheDeviceHints = {}): number {
+  const memory =
+    typeof hints.deviceMemory === 'number' && Number.isFinite(hints.deviceMemory) && hints.deviceMemory > 0
+      ? hints.deviceMemory
+      : undefined;
+  if (memory !== undefined && memory <= 2) return DECODED_TILE_CACHE_LOW_MEMORY_BYTES;
+  if (hints.mobile === true || (memory !== undefined && memory <= 4)) return DECODED_TILE_CACHE_MOBILE_BYTES;
+  if (memory !== undefined && memory >= 8) return DECODED_TILE_CACHE_LARGE_DESKTOP_BYTES;
+  return DECODED_TILE_CACHE_DESKTOP_BYTES;
+}
+
+let sharedTileCache: DecodedTileCache | undefined;
+/** The per-context (main thread or worker) decoded-tile cache. */
+export function sharedDecodedTileCache(): DecodedTileCache {
+  if (!sharedTileCache) {
+    const browser = (globalThis as { navigator?: Navigator & { deviceMemory?: number } }).navigator;
+    sharedTileCache = new DecodedTileCache(
+      browser
+        ? decodedTileCacheBudgetForDevice({
+            deviceMemory: browser.deviceMemory,
+            mobile: /Android|iPhone|iPad|Mobile/i.test(browser.userAgent || ''),
+          })
+        : DECODED_TILE_CACHE_DESKTOP_BYTES,
+    );
+  }
+  return sharedTileCache;
+}
+/** Release every decoded tile (e.g. when a different document is installed). */
+export function clearDecodedTileCache(): void {
+  sharedTileCache?.clear();
+}
+
+/** Counter difference between two snapshots (current sizes from `after`). */
+export function decodedTileCacheDelta(
+  before: DecodedTileCacheStats,
+  after: DecodedTileCacheStats,
+): DecodedTileCacheStats {
+  const diff = (key: 'hits' | 'misses' | 'stores' | 'seeded' | 'evictions' | 'rejected') =>
+    Math.max(0, after[key] - before[key]);
+  return {
+    hits: diff('hits'),
+    misses: diff('misses'),
+    stores: diff('stores'),
+    seeded: diff('seeded'),
+    evictions: diff('evictions'),
+    rejected: diff('rejected'),
+    entries: after.entries,
+    bytes: after.bytes,
+    maxBytes: after.maxBytes,
+  };
+}
+
+export function validDecodedTileCacheStats(value: unknown): value is DecodedTileCacheStats {
+  if (!isRecord(value)) return false;
+  return ['hits', 'misses', 'stores', 'seeded', 'evictions', 'rejected', 'entries', 'bytes', 'maxBytes'].every(
+    (key) => Number.isSafeInteger(value[key]) && (value[key] as number) >= 0,
+  );
+}
+
+/**
+ * Publish decoded-tile counters as a best-effort performance mark
+ * (`pixelforge.decoded-tile-cache`, detail `{ ...stats, context }`).
+ */
+export function markDecodedTileCacheStats(stats: DecodedTileCacheStats, context: 'main' | 'worker'): void {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
+      performance.mark('pixelforge.decoded-tile-cache', { detail: { ...stats, context } });
+  } catch {
+    // Diagnostics must never affect rendering.
+  }
+}
+
+/**
+ * Seed the decoded-tile cache from pixels the caller already holds for a
+ * just-committed tiled asset (`source` is exactly the asset's pixels, e.g.
+ * the private snapshot `primeDecodedAsset` keeps), so assembling an older or
+ * newer version that shares these tiles does not decode them. Only tiles not
+ * cached yet are copied, and nothing is seeded when the asset's tiles would
+ * take more than half the budget (it would only evict other tiles).
+ */
+export async function seedDecodedTiles(
+  asset: TiledAsset,
+  source: ImageBitmapSource,
+  cache: DecodedTileCache = sharedDecodedTileCache(),
+): Promise<number> {
+  if (typeof createImageBitmap !== 'function' || !validTiledAsset(asset)) return 0;
+  const missing: number[] = [];
+  let bytes = 0;
+  asset.tiles.forEach((tile, index) => {
+    if (!tile || cache.has(tile)) return;
+    const rect = tileRect(asset.w, asset.h, index);
+    bytes += rect.w * rect.h * 4;
+    missing.push(index);
+  });
+  if (!missing.length || bytes > cache.maxBytes / 2) return 0;
+  let seeded = 0;
+  for (const index of missing) {
+    const tile = asset.tiles[index]!,
+      rect = tileRect(asset.w, asset.h, index);
+    if (cache.has(tile)) continue;
+    const bitmap = (await createImageBitmap(source, rect.x, rect.y, rect.w, rect.h)) as ClosableBitmap;
+    if (bitmap.width !== rect.w || bitmap.height !== rect.h || !cache.set(tile, bitmap, true)) bitmap.close?.();
+    else seeded += 1;
+  }
+  return seeded;
+}
+
+/**
+ * Draw every tile into `context` (which must be `w × h` and cleared), from
+ * the decoded-tile cache where possible and otherwise by decoding the tile
+ * Blob (which is then cached). A tile whose decoded size differs from its
+ * cell fails the decode and is never cached.
  */
 export async function drawTiledAsset(
   asset: TiledAsset,
   context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   concurrency = 8,
+  cache: DecodedTileCache | null = sharedDecodedTileCache(),
 ): Promise<void> {
   if (!validTiledAsset(asset)) throw new Error('Invalid or oversized project image');
-  const queue = asset.tiles.map((tile, index) => [tile, index] as const).filter(([tile]) => tile);
+  // Cells with equal keys (e.g. flat colour) decode once.
+  const pending = new Map<string, { tile: AssetTile; cells: number[] }>();
+  asset.tiles.forEach((tile, index) => {
+    if (!tile) return;
+    const queued = pending.get(DecodedTileCache.key(tile));
+    if (queued) {
+      queued.cells.push(index);
+      return;
+    }
+    // Cached tiles are drawn synchronously, before any decode starts.
+    const cached = cache?.get(tile);
+    if (cached) {
+      const rect = tileRect(asset.w, asset.h, index);
+      context.drawImage(cached, rect.x, rect.y);
+    } else pending.set(DecodedTileCache.key(tile), { tile, cells: [index] });
+  });
+  const queue = [...pending.values()];
   let failure: unknown;
   const lane = async () => {
     while (queue.length && failure === undefined) {
-      const [tile, index] = queue.shift()!;
-      const rect = tileRect(asset.w, asset.h, index);
+      const { tile, cells } = queue.shift()!;
       try {
-        const image = await decodeTileBlob(tile!.blob);
+        const image = await decodeTileBlob(tile.blob);
+        let retained = false;
         try {
-          if (image.width !== rect.w || image.height !== rect.h)
-            throw new Error('Project image dimensions do not match');
-          context.drawImage(image, rect.x, rect.y);
+          for (const index of cells) {
+            const rect = tileRect(asset.w, asset.h, index);
+            if (image.width !== rect.w || image.height !== rect.h)
+              throw new Error('Project image dimensions do not match');
+            context.drawImage(image, rect.x, rect.y);
+          }
+          // Only bitmaps can be cached (an <img> fallback has no close()).
+          retained = typeof image.close === 'function' && !!cache && !cache.has(tile) && cache.set(tile, image);
         } finally {
-          image.close?.();
+          if (!retained) image.close?.();
         }
       } catch (error) {
         failure ??= error;
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, queue.length)) }, lane));
+  if (queue.length)
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, queue.length)) }, lane));
   if (failure !== undefined) throw failure;
 }
 
