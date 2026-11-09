@@ -11,7 +11,7 @@ import type { Tool } from '../../src/drafts.ts';
 /** Toolbar accessible labels (`<label> tool`) for every registered tool. */
 const TOOL_LABELS: Record<Tool, string> = {
   move: 'Move', hand: 'Hand', zoom: 'Zoom', 'rotate-view': 'Rotate View',
-  eyedropper: 'Eyedropper', 'color-sampler': 'Color Sampler', ruler: 'Ruler', note: 'Note', count: 'Count',
+  eyedropper: 'Eyedropper', 'color-sampler': 'Color Sampler', ruler: 'Ruler', note: 'Note', 'audio-note': 'Audio Annotation', count: 'Count',
   fill: 'Fill', gradient: 'Gradient', clone: 'Clone', heal: 'Healing', 'spot-heal': 'Spot Healing',
   patch: 'Patch', 'red-eye': 'Red Eye', 'pattern-stamp': 'Pattern Stamp', crop: 'Crop',
   'perspective-crop': 'Perspective Crop', slice: 'Slice', 'slice-select': 'Slice Select', frame: 'Frame',
@@ -21,8 +21,9 @@ const TOOL_LABELS: Record<Tool, string> = {
   'mask-brush': 'Mask Brush', 'mask-eraser': 'Mask Eraser', 'adjustment-brush': 'Adjustment Brush',
   dodge: 'Dodge', burn: 'Burn', sponge: 'Sponge', smudge: 'Smudge', blur: 'Blur', sharpen: 'Sharpen',
   pen: 'Pen', 'freeform-pen': 'Freeform Pen', 'curvature-pen': 'Curvature Pen',
-  'direct-select': 'Direct Selection', text: 'Text', rectangle: 'Shape', ellipse: 'Ellipse',
-  line: 'Line', polygon: 'Polygon', select: 'Select', 'ellipse-select': 'Elliptical marquee',
+  'add-anchor': 'Add Anchor Point', 'delete-anchor': 'Delete Anchor Point', 'convert-point': 'Convert Point',
+  'path-select': 'Path Selection', 'direct-select': 'Direct Selection', text: 'Text', rectangle: 'Shape', ellipse: 'Ellipse',
+  line: 'Line', polygon: 'Polygon', 'rounded-rectangle': 'Rounded Rectangle', 'custom-shape': 'Custom Shape', select: 'Select', 'ellipse-select': 'Elliptical marquee',
   'row-select': 'Single Row marquee', 'column-select': 'Single Column marquee', lasso: 'Lasso',
   'polygonal-lasso': 'Polygonal Lasso', 'magnetic-lasso': 'Magnetic Lasso',
   'selection-brush': 'Selection Brush', 'quick-selection': 'Quick Selection', 'magic-wand': 'Magic Wand',

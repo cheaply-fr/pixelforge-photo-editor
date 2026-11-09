@@ -5,6 +5,7 @@ import {
   type CustomBrushPreset,
 } from './customBrushPresets.ts';
 import { DEFAULT_BRUSH_DYNAMICS, normalizeBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
+import { DEFAULT_BRUSH_STRANDS, normalizeBrushStrands } from './brushStrands.ts';
 
 /**
  * Device-local brush preset library: built-in space-art presets plus the
@@ -107,6 +108,29 @@ export const BUILT_IN_BRUSH_PRESETS: readonly BuiltInBrushPreset[] = Object.free
     brushSmoothing: 60,
     brushOpacity: 18,
     brushDynamics: dynamics({ sizeJitter: 60, opacityJitter: 25 }),
+  },
+  {
+    ...base,
+    id: 'builtin-silk-smoke',
+    label: 'Silk smoke',
+    description: 'One drag paints a twisting ribbon of fine, fading light strands for silky smoke',
+    size: 2,
+    hardness: 100,
+    spacing: 10,
+    pressureSize: true,
+    brushOpacity: 70,
+    brushBlendMode: 'screen',
+    brushDynamics: dynamics({}),
+    brushStrands: normalizeBrushStrands({
+      ...DEFAULT_BRUSH_STRANDS,
+      enabled: true,
+      count: 22,
+      width: 140,
+      twists: 1.5,
+      wobble: 40,
+      opacityJitter: 60,
+      seed: 7,
+    }),
   },
 ] satisfies BuiltInBrushPreset[]);
 

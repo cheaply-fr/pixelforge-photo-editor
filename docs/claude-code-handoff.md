@@ -218,6 +218,15 @@ origin is `https://photoeditor-cheaply.web.app`; the production domain is
 `docs/deployment.md` contains the exact provider/release contract. Its former
 `faresd` repository label is stale; current GitHub owner is `cheaply-fr`.
 
+Release versions are derived at build time, never committed: a `main` deploy
+is `<major>.<minor>.<GITHUB_RUN_NUMBER>` (for example `0.1.512`, from
+`package.json` major/minor and the **CI and deploy** run number), PR builds are
+`<version>-pr.<n>+<sha7>` and local builds `<version>-dev+<sha7>`. The same
+value is baked into the top-bar label and written to `/release.json` and
+`/api/readyz.json`; the deploy verifier requires it on both live URLs. See
+`docs/deployment.md` "Release versions" (`scripts/release-version.mjs`).
+Releases before this scheme all reported `0.1.0`.
+
 Use existing signed-in GitHub/Google sessions and repository permissions only
 as needed. This handoff intentionally contains **no passwords, API keys,
 tokens, cookies, recovery codes, personal account data or private images**.

@@ -24,7 +24,10 @@ commits a closed filled path. Both tools preserve the original anchors and
 handles for Direct Selection, reject malformed or overlong input, and cancel
 without a history entry on Escape or pointer cancellation.
 
-Direct Selection (`A`) selects a node on the active visible, unlocked path and
+Path Selection, Add/Delete Anchor Point and Convert Point are specified in
+[`path-edit-tools-contract.md`](path-edit-tools-contract.md).
+
+Direct Selection (`A`, after Path Selection) selects a node on the active visible, unlocked path and
 drags it in local coordinates through the layer matrix. A drag commits one
 history entry and therefore participates in undo/redo. Locked and hidden paths
 reject node edits. The Layers panel exposes path closure, fill/stroke toggles,

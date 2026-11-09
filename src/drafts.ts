@@ -4,6 +4,8 @@ import {
   assetBytes,
   formatMebibytes,
 } from './projectLimits.ts';
+import { validCornerRadius } from './vectorShapes.ts';
+import { validCustomShapeChoice } from './customShapeLibrary.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -20,13 +22,13 @@ import {
   effectiveAdjustments,
   effectiveTextLayer,
   neutral,
-  FONTS,
   validId,
   type Assets,
   type Frame,
   type Adjustments,
 } from './document.ts';
 import { validPhotoAdjustments } from './photoAdjustments.ts';
+import { normalizeAudioClips, stripAudioAnnotations, type AudioClip, type AudioClips } from './audioAnnotations.ts';
 import { effectiveImageSize } from './imageSize.ts';
 import {
   effectiveBrushPressureSettings,
@@ -97,12 +99,15 @@ import {
 } from './metadata.ts';
 import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
 import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts';
+import { isSelectableFontFamily } from './fontLibrary.ts';
 import { BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from './brushSize.ts';
 import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
 import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
 import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.ts';
+import { validSmudgeSettings, type SmudgeSettings } from './smudge.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
+import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -112,6 +117,7 @@ export type Tool =
   | 'color-sampler'
   | 'ruler'
   | 'note'
+  | 'audio-note'
   | 'count'
   | 'fill'
   | 'gradient'
@@ -148,11 +154,17 @@ export type Tool =
   | 'pen'
   | 'freeform-pen'
   | 'curvature-pen'
+  | 'add-anchor'
+  | 'delete-anchor'
+  | 'convert-point'
+  | 'path-select'
   | 'direct-select'
   | 'rectangle'
+  | 'rounded-rectangle'
   | 'ellipse'
   | 'line'
   | 'polygon'
+  | 'custom-shape'
   | 'select'
   | 'ellipse-select'
   | 'row-select'
@@ -179,6 +191,8 @@ export type Settings = {
   brushOpacity?: number;
   /** Brush/Pencil blend mode (Canvas-native modes); older drafts omit it and paint Normal. */
   brushBlendMode?: BrushBlendMode;
+  /** Brush Silk strands mode; older drafts omit it and paint ordinary dabs. */
+  brushStrands?: BrushStrandSettings;
   hardness?: number;
   /** Opt-in pen/touch pressure mapping for configured brush diameter. */
   pressureSize?: boolean;
@@ -202,6 +216,10 @@ export type Settings = {
   polygonSides?: number;
   /** Parametric star inner radius (0.1–0.9 of the outer radius). */
   polygonInnerRadius?: number;
+  /** Rounded Rectangle tool corner radius in px (0–8,000); clamped per drawn box. */
+  shapeCornerRadius?: number;
+  /** Custom Shape tool choice: a built-in library id or `path-preset:<id>`. */
+  customShapeId?: string;
   /** Spacing between brush dabs as a percent of diameter (1–1,000). */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -268,6 +286,11 @@ export type Settings = {
   spongeVibrance?: number;
   /** Bounded wet/load/mix controls persisted for the Mixer Brush. */
   mixerBrush?: MixerBrushSettings;
+  /**
+   * Smudge Strength, Mode, Finger Painting, Sample All Layers and pressure
+   * strength. Older drafts omit it; their Smudge "Flow" was `brushOpacity`.
+   */
+  smudge?: Partial<SmudgeSettings>;
   /** Bounded restore controls persisted for the History Brush. */
   historyBrush?: HistoryBrushSettings;
   /** Bounded painterly source-safe controls persisted for Art History Brush. */
@@ -281,7 +304,7 @@ export type Settings = {
   text: string;
   fontSize: number;
   /** Local/system font used when the Text tool creates a new editable layer. */
-  fontFamily?: (typeof FONTS)[number];
+  fontFamily?: string;
   /** Preview scale used by the Text tool's bounded local font picker. */
   fontPreviewSize?: FontPreviewSize;
   /** Optional local default for new or existing editable text layers. */
@@ -308,6 +331,12 @@ export type Draft = {
   settings: Settings;
   /** Optional editable metadata retained in local/project JSON only. */
   metadata?: DocumentMetadata;
+  /**
+   * Audio Annotation clips (clip id → data URL), shared by every history
+   * frame that references them. Local drafts and portable projects only;
+   * cloud payloads strip them (docs/audio-annotation-contract.md).
+   */
+  audio?: AudioClips;
   migrated?: true;
 };
 export const CURRENT_DRAFT_VERSION = 2 as const;
@@ -315,7 +344,10 @@ export const CURRENT_DRAFT_VERSION = 2 as const;
 /** Remove local-only File Info before a document is sent to a cloud API. */
 export function stripPrivateMetadata(value: Draft): Draft {
   const { metadata: _metadata, ...cloudValue } = value;
-  return cloudValue;
+  // Voice recordings are personal data and stay on this device as well.
+  return value.audio !== undefined || value.history.some((frame) => frame.measurements?.some((item) => item.kind === 'audio'))
+    ? stripAudioAnnotations(cloudValue)
+    : cloudValue;
 }
 
 /**
@@ -374,6 +406,7 @@ function validSettings(settings: unknown): settings is Settings {
       'color-sampler',
       'ruler',
       'note',
+      'audio-note',
       'count',
       'fill',
       'gradient',
@@ -410,11 +443,17 @@ function validSettings(settings: unknown): settings is Settings {
       'pen',
       'freeform-pen',
       'curvature-pen',
+      'add-anchor',
+      'delete-anchor',
+      'convert-point',
+      'path-select',
       'direct-select',
       'rectangle',
+      'rounded-rectangle',
       'ellipse',
       'line',
       'polygon',
+      'custom-shape',
       'select',
       'ellipse-select',
       'row-select',
@@ -428,7 +467,7 @@ function validSettings(settings: unknown): settings is Settings {
     ].includes(candidate.tool as Tool) ||
     typeof candidate.text !== 'string' ||
     candidate.text.length > 10000 ||
-    (candidate.fontFamily !== undefined && !FONTS.includes(candidate.fontFamily as (typeof FONTS)[number])) ||
+    (candidate.fontFamily !== undefined && !isSelectableFontFamily(candidate.fontFamily)) ||
     (candidate.fontPreviewSize !== undefined && normalizeFontPreviewSize(candidate.fontPreviewSize) !== candidate.fontPreviewSize) ||
     (candidate.exportFormat !== undefined &&
       !EXPORT_FORMATS.includes(candidate.exportFormat)) ||
@@ -510,6 +549,8 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
+  if (!validCornerRadius(candidate.shapeCornerRadius)) return false;
+  if (candidate.customShapeId !== undefined && !validCustomShapeChoice(candidate.customShapeId)) return false;
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
@@ -519,9 +560,11 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.gradientOpacity !== undefined && !validGradientOpacity(candidate.gradientOpacity)) return false;
   if (candidate.brushBlendMode !== undefined && !validBrushBlendMode(candidate.brushBlendMode)) return false;
   if (candidate.brushDynamics !== undefined && !validBrushDynamics(candidate.brushDynamics)) return false;
+  if (candidate.brushStrands !== undefined && !validBrushStrands(candidate.brushStrands)) return false;
   if (candidate.paintSymmetry !== undefined && !validPaintSymmetry(candidate.paintSymmetry)) return false;
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
+  if (candidate.smudge !== undefined && !validSmudgeSettings(candidate.smudge)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
   if (candidate.historySourceIndex !== undefined &&
@@ -706,19 +749,24 @@ export function validateDraft(
     }),
   }));
   history.forEach((frame) => validateFrame(frame, value.assets));
+  // Audio clips are optional: invalid, unreferenced or over-limit clips are
+  // dropped together with the markers that pointed at them.
+  const { audio, history: annotatedHistory } = normalizeAudioClips(value.audio, history);
   if (assetBytes(value.assets) > PROJECT_ASSET_BYTES_CEILING)
     throw new Error(
       `Project assets exceed ${formatMebibytes(PROJECT_ASSET_BYTES_CEILING)} MB`,
     );
+  const { audio: _untrustedAudio, ...rest } = value;
   return {
-    ...value,
+    ...rest,
     version: CURRENT_DRAFT_VERSION,
-    history,
+    history: annotatedHistory,
+    ...(Object.keys(audio).length ? { audio } : {}),
     settings: settings as Settings,
     ...(metadata !== undefined
       ? { metadata }
       : {}),
-    assets: referencedAssets(history, value.assets),
+    assets: referencedAssets(annotatedHistory, value.assets),
   };
 }
 
@@ -796,6 +844,23 @@ async function hashDraftAssets(
   );
   lastSaveStats.hashedAssets = entries.filter(([, , hashed]) => hashed).length;
   return { hashes: new Map(entries.map(([id, hash]) => [id, hash])), tiles };
+}
+
+const audioClipHashes = new WeakMap<AudioClip, string>();
+/** Clip id → SHA-256 of its data URL, hashed once per immutable clip object. */
+async function hashDraftAudio(audio: AudioClips | undefined): Promise<Map<string, string>> {
+  return new Map(
+    await Promise.all(
+      Object.entries(audio || {}).map(async ([id, clip]) => {
+        let hash = audioClipHashes.get(clip);
+        if (!hash) {
+          hash = await hashDraftAsset(clip.url);
+          audioClipHashes.set(clip, hash);
+        }
+        return [id, hash] as const;
+      }),
+    ),
+  );
 }
 
 /** Diagnostics for the most recent successful local save (tests and profiling). */
@@ -1088,6 +1153,7 @@ export function estimatedPendingDraftBytes(value: Draft): number {
   let total = 0;
   for (const asset of Object.values(used))
     total += isPngAsset(asset) ? asset.url.length : 0;
+  for (const clip of Object.values(value.audio || {})) total += clip.url.length;
   return total;
 }
 
@@ -1450,17 +1516,21 @@ export async function saveDraft(
     const db = await openDatabase();
     const { hashes, tiles } = await hashDraftAssets(safeValue.assets);
     const hashedAssets = lastSaveStats.hashedAssets;
+    const audioHashes = await hashDraftAudio(safeValue.audio);
     const manifest = createDraftManifest(
       safeValue,
       revision,
       hashes,
       undefined,
       new Map([...tiles].map(([key, tile]) => [key, tile.hash])),
+      audioHashes,
     );
     const needed = new Map<string, string | Blob>();
     for (const [assetId, asset] of Object.entries(safeValue.assets))
       if (isPngAsset(asset)) needed.set(hashes.get(assetId)!, asset.url);
     for (const tile of tiles.values()) needed.set(tile.hash, tile.blob);
+    for (const [clipId, clip] of Object.entries(safeValue.audio || {}))
+      needed.set(audioHashes.get(clipId)!, clip.url);
     const stats = await commitDraftManifest(
       db,
       id,

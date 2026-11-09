@@ -3,6 +3,11 @@ import Home from '../app/page';
 import HomePage from './HomePage';
 import Analytics from './Analytics';
 import '../app/globals.css';
+import { installScrollbarActivity, installScrollbarHover } from './scrollbarActivity';
+
+// Thin scrollbars appear only while hovered or scrolling (docs/scrollbar-contract.md).
+installScrollbarActivity(document);
+installScrollbarHover(document);
 
 const editor = location.pathname === '/editor' || location.hash.startsWith('#draft=');
 createRoot(document.getElementById('root')!).render(

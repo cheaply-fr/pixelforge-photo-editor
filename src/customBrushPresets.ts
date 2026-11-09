@@ -2,6 +2,8 @@ import { normalizeSecondaryBrushPreset, type SecondaryBrushPreset } from './brus
 import { BRUSH_SPACING_MAX } from './brush.ts';
 import { BRUSH_SCATTER_MAX, normalizeBrushDynamics, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
+import { normalizeBrushStrands, validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
+import { normalizeSmudgeSettings, validSmudgeSettings, type SmudgeSettings } from './smudge.ts';
 
 export const CUSTOM_BRUSH_PRESET_LIMIT = 32;
 
@@ -34,6 +36,14 @@ export type CustomBrushPreset = {
   brushOpacity?: number;
   /** Optional Brush/Pencil blend mode (Canvas-native modes only); presets saved before it existed load as Normal. */
   brushBlendMode?: BrushBlendMode;
+  /** Optional Silk strands settings (Brush only); presets saved before it existed paint ordinary dabs. */
+  brushStrands?: BrushStrandSettings;
+  /**
+   * Optional Smudge options (Strength, Mode, Finger Painting, Sample All
+   * Layers, pressure strength), captured when the preset is saved with Smudge
+   * active and applied whenever the preset is chosen; other presets omit it.
+   */
+  smudge?: SmudgeSettings;
 };
 
 const finite = (value: unknown, min: number, max: number): value is number =>
@@ -56,7 +66,9 @@ export function validCustomBrushPreset(value: unknown): value is CustomBrushPres
     finite(candidate.brushBristle, 0, 100) && finite(candidate.brushWetEdges ?? 0, 0, 100) && finite(candidate.brushBuildUp ?? 0, 0, 100) && finite(candidate.brushFlow, 1, 100) &&
     (candidate.brushDynamics === undefined || validBrushDynamics(candidate.brushDynamics)) &&
     (candidate.brushOpacity === undefined || finite(candidate.brushOpacity, 1, 100)) &&
-    (candidate.brushBlendMode === undefined || validBrushBlendMode(candidate.brushBlendMode))
+    (candidate.brushBlendMode === undefined || validBrushBlendMode(candidate.brushBlendMode)) &&
+    (candidate.brushStrands === undefined || validBrushStrands(candidate.brushStrands)) &&
+    (candidate.smudge === undefined || validSmudgeSettings(candidate.smudge))
   );
 }
 
@@ -71,7 +83,7 @@ export function normalizeCustomBrushPresets(value: unknown): CustomBrushPreset[]
       return true;
     })
     .slice(-CUSTOM_BRUSH_PRESET_LIMIT)
-    .map((item) => ({ ...item, label: item.label.trim().slice(0, 80), secondaryBrushPreset: normalizeSecondaryBrushPreset(item.secondaryBrushPreset), brushWetEdges: item.brushWetEdges ?? 0, brushBuildUp: item.brushBuildUp ?? 0, ...(item.brushDynamics === undefined ? {} : { brushDynamics: normalizeBrushDynamics(item.brushDynamics) }) }));
+    .map((item) => ({ ...item, label: item.label.trim().slice(0, 80), secondaryBrushPreset: normalizeSecondaryBrushPreset(item.secondaryBrushPreset), brushWetEdges: item.brushWetEdges ?? 0, brushBuildUp: item.brushBuildUp ?? 0, ...(item.brushDynamics === undefined ? {} : { brushDynamics: normalizeBrushDynamics(item.brushDynamics) }), ...(item.brushStrands === undefined ? {} : { brushStrands: normalizeBrushStrands(item.brushStrands) }), ...(item.smudge === undefined ? {} : { smudge: normalizeSmudgeSettings(item.smudge) }) }));
 }
 
 export function createCustomBrushPreset(

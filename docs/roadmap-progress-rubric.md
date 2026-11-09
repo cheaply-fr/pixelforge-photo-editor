@@ -341,6 +341,20 @@ From the limitations of #209–#213 and from local test runs. Status: all
 | W4-9 | **Off-main-thread tile encoding** (`OffscreenCanvas.convertToBlob`) once commits can be asynchronous | P3 | **Open** | #213 follow-up 5 |
 | W4-10 | **Local e2e hazard**: `playwright.config` reuses any server already on port 4173 outside CI (`reuseExistingServer`), so a run can test a preview server started from another worktree; concurrent `npm run test:e2e` runs in one worktree delete each other's `test-results`. Run one suite per worktree and stop stray previews first | P3 | **Open** (local tooling only; CI unaffected) | local runs for #209–#213 |
 
+### Brush Silk strands (branch `feat/brush-silk-strands`)
+
+A Brush mode that paints a twisting ribbon of fine, fading strands from one
+ordinary drag (silky smoke, wisps), replacing the scripted point-by-point
+workaround. Bounded local approximation, not a smoke simulation. Contract:
+"Silk strands" in `docs/brush-dynamics-contract.md`.
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Pure strand geometry: settings validation, seeded per-strand parameters, Catmull-Rom smoothing with filtered normals, twist/taper/wobble offsets, staggered windows, pressure, batched drawing | **Implemented locally** | `src/brushStrands.ts`; `tests/brush-strands.test.mjs` |
+| Brush options (Silk strands, Strands, Ribbon width, Twists, Wobble, Strand opacity jitter, Seed / New seed), built-in **Silk smoke** preset, draft / project / preset persistence | **Implemented locally** | `app/page.tsx`, `src/brushPresetLibrary.ts`, `src/customBrushPresets.ts`, `src/drafts.ts`; `tests/browser/brush-strands.spec.ts` (desktop + mobile) |
+| Overlay-only preview while dragging (no layer-stack render per move), one commit on release with selection, blend mode and Paint Symmetry | **Implemented locally** | `tests/browser/brush-strands.spec.ts` |
+| CI / deployment / live acceptance | Pending until the PR's protected `CI and deploy` run, merge and `/release.json` check | — |
+
 ### Properties sidebar auto-scroll (branch `feat/sidebar-autoscroll`)
 
 The right-hand properties sidebar now scrolls to the exact section that owns

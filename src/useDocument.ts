@@ -11,7 +11,9 @@ import {
 } from './document';
 import { sanitizeClippingRelations } from './layerClipping';
 import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
+import { sharedFontLoader } from './fontLoader';
 import type { Draft } from './drafts';
+import { referencedAudioClips, type AudioClip, type AudioClips } from './audioAnnotations';
 import { beginPerformanceSpan } from './performanceMarks';
 import { presentCanvasImage } from './canvasPresentation';
 import {
@@ -73,6 +75,8 @@ function markGesturePreview(
 export function useDocument(onError: (message: string) => void) {
   const canvas = useRef<HTMLCanvasElement>(null),
     assets = useRef<Assets>({}),
+    // Audio Annotation clips (draft-level, like assets; see audioAnnotations.ts).
+    audio = useRef<AudioClips>({}),
     history = useRef<Frame[]>([]),
     index = useRef(-1);
   const [frame, setFrame] = useState<Frame | null>(null),
@@ -179,6 +183,17 @@ export function useDocument(onError: (message: string) => void) {
   useEffect(() => {
     renderNowRef.current = renderNow;
   }, [renderNow]);
+  // A library font that timed out or failed rendered with the fallback;
+  // redraw once it arrives so the canvas shows the chosen font.
+  useEffect(() => {
+    const fellBack = new Set<string>();
+    return sharedFontLoader().subscribe((family, state) => {
+      if (state === 'failed') fellBack.add(family);
+      if (state !== 'loaded' || !fellBack.delete(family)) return;
+      const value = history.current[index.current];
+      if (value?.layers.some((layer) => layer.kind === 'text' && layer.fontFamily === family)) void renderNowRef.current(value);
+    });
+  }, []);
   /**
    * Render immediately. Any explicit render (commit, undo, cancel, document
    * install) supersedes a scheduled live preview, so a gesture preview can
@@ -265,6 +280,10 @@ export function useDocument(onError: (message: string) => void) {
     },
     [publish, onError, paint, historyBudget],
   );
+  /** Add a recorded/attached clip, dropping clips no history frame references. */
+  const addAudioClip = useCallback((id: string, clip: AudioClip) => {
+    audio.current = { ...referencedAudioClips(history.current, audio.current), [id]: clip };
+  }, []);
   const install = useCallback(async (draft: Draft) => {
     const expected = history.current[index.current];
     previewScheduler.current?.cancel();
@@ -348,6 +367,7 @@ export function useDocument(onError: (message: string) => void) {
         if (history.current[index.current] !== expected)
           throw new Error('Document changed during import. Please try again.');
         assets.current = draft.assets;
+        audio.current = draft.audio || {};
         history.current = draft.history;
         index.current = draft.index;
         const installed = draft.history[draft.index];
@@ -484,6 +504,8 @@ export function useDocument(onError: (message: string) => void) {
   return {
     canvas,
     assets,
+    audio,
+    addAudioClip,
     history,
     index,
     frame,

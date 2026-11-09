@@ -95,7 +95,7 @@ export function ToolFlyout({
             <item.icon aria-hidden="true" />
             <span>{item.label}</span>
           </span>
-          <kbd aria-hidden="true">{item.key}</kbd>
+          {item.key && <kbd aria-hidden="true">{item.key}</kbd>}
         </button>
       ))}
     </div>, document.body,

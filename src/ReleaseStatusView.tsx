@@ -106,7 +106,9 @@ export default function ReleaseStatus({
     };
   }, [pollIntervalMs]);
 
-  const version = releaseLabel(snapshot.release);
+  // The label names the build running in this tab: the served release while it
+  // is that build, the baked version while a newer deploy awaits a reload.
+  const version = releaseLabel(snapshot.updateCommit ? null : snapshot.release);
   const state =
     snapshot.health === 'checking' ? 'Checking server…' : healthLabel(snapshot.health);
   const label = `${version}. ${state}`;
@@ -122,7 +124,7 @@ export default function ReleaseStatus({
       data-testid="release-status"
       aria-live="polite"
       aria-label={label}
-      title={snapshot.release ? `${label} · ${snapshot.release.commit}` : label}
+      title={snapshot.release && !snapshot.updateCommit ? `${label} · ${snapshot.release.commit}` : label}
     >
       <span aria-hidden="true" className="release-status-dot" />
       <span className="release-status-version">{version}</span>
