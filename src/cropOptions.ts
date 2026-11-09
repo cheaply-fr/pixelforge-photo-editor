@@ -45,8 +45,9 @@ export function constrainCropEnd(
   canvasHeight: number,
 ): CropPoint {
   if (!ratio || !(ratio > 0) || !Number.isFinite(ratio)) return end;
-  const sx = Math.max(0, Math.min(canvasWidth, start.x)),
-    sy = Math.max(0, Math.min(canvasHeight, start.y));
+  // Whole-pixel start and size so the planned crop keeps the exact ratio.
+  const sx = Math.floor(Math.max(0, Math.min(canvasWidth, start.x))),
+    sy = Math.floor(Math.max(0, Math.min(canvasHeight, start.y)));
   const directionX = end.x >= sx ? 1 : -1,
     directionY = end.y >= sy ? 1 : -1;
   const availableX = directionX > 0 ? canvasWidth - sx : sx,
@@ -55,7 +56,13 @@ export function constrainCropEnd(
     height = Math.min(Math.abs(end.y - sy), availableY);
   if (width / Math.max(height, 1e-9) > ratio) width = height * ratio;
   else height = width / ratio;
-  return { x: sx + directionX * width, y: sy + directionY * height };
+  let w = Math.floor(width),
+    h = Math.round(w / ratio);
+  if (h > availableY) {
+    h = Math.floor(availableY);
+    w = Math.min(Math.floor(availableX), Math.round(h * ratio));
+  }
+  return { x: sx + directionX * w, y: sy + directionY * h };
 }
 
 /**

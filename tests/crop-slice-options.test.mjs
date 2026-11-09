@@ -41,7 +41,10 @@ test('constrained crop drags keep the ratio, direction and canvas bounds', () =>
   assert.deepEqual(constrainCropEnd({ x: 1, y: 1 }, { x: 9, y: 4 }, null, 10, 10), { x: 9, y: 4 });
   const ratio = 16 / 9,
     wide = constrainCropEnd({ x: 0, y: 0 }, { x: 900, y: 900 }, ratio, 1200, 800);
-  assert.ok(Math.abs(wide.x / wide.y - ratio) < 1e-9);
+  assert.ok(Number.isInteger(wide.x) && Number.isInteger(wide.y), 'whole pixels');
+  assert.ok(Math.abs(wide.x / wide.y - ratio) < 1 / wide.y, 'ratio within one pixel');
+  const square = constrainCropEnd({ x: 120.4, y: 33.8 }, { x: 505.1, y: 600 }, 1, 1200, 800);
+  assert.equal(square.x - 120, square.y - 33, 'fractional starts still give an exact square');
 });
 
 test('straighten crop is the largest level rectangle inside the rotated canvas', () => {

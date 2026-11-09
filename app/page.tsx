@@ -19364,7 +19364,7 @@ export default function Home() {
                               toolFlyoutAnchor?.dataset.toolId === id
                             : undefined
                         }
-                        title={`${label}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
+                        title={`${label}${id === 'frame' ? ' (artboard)' : ''}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
