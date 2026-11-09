@@ -32,3 +32,16 @@ with a searchable "Browse fonts" picker). Draft settings, type-style presets
 and batch updates accept system or library families; text layers themselves
 accept any bounded family name for portability. See
 [`font-library-contract.md`](./font-library-contract.md).
+
+## One Font control
+
+The Text section's **Font** picker (accessible name "Text tool font") is the
+single font-family control: it sets the font for new type and, when a type
+layer is selected or characters are being edited, restyles that layer or
+those characters as one undo step (see #249). The Character panel no longer
+has its own font-family picker. The Type options bar shown above the canvas
+while a type tool is active mirrors the same state through the same action.
+The Layers panel picker is labelled **Layer font (whole layer)**: it sets the
+whole layer's family and does not change the default for new type.
+
+Evidence: `tests/browser/audit-vector-type.spec.ts` (desktop and mobile).

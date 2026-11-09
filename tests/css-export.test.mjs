@@ -27,7 +27,10 @@ test('CSS export represents vector geometry and rejects pixel-bearing layers', (
   const layer = { ...common, kind: 'rectangle', width: 120, height: 80, color: '#ff0000', stroke: 3, fill: true };
   const css = layerToCss(layer, 800, 600);
   assert.match(css, /background: #ff0000/);
-  assert.match(css, /border: 3px solid #ff0000/);
+  // A filled shape without a strokeColor draws no outline on the canvas.
+  assert.match(css, /border: none/);
+  assert.match(layerToCss({ ...layer, strokeColor: '#0000ff' }, 800, 600), /border: 3px solid #0000ff/);
+  assert.match(layerToCss({ ...layer, fill: false }, 800, 600), /border: 3px solid #ff0000/);
   assert.match(css, /clip-path: path\('M 0 0 L 120 0 L 120 80 L 0 80 Z'\)/);
   assert.throws(() => layerToCss({ ...common, kind: 'raster', asset: 'asset-1' }, 800, 600), /editable text and vector/);
   assert.throws(() => layerToCss(layer, 0, 600), /dimensions/);

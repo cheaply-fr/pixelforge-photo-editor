@@ -66,6 +66,7 @@ import {
   type ParametricShapeVariant,
   type RoundedRectNode,
 } from './vectorShapes.ts';
+import { shapeOutlineColor } from './shapeAppearance.ts';
 
 /** Trace one closed contour whose nodes may carry cubic handles. */
 function traceShapeNodes(
@@ -438,6 +439,8 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+        /** Outline colour drawn in addition to any fill; absent keeps the legacy rule (outline in `color` when unfilled). */
+        strokeColor?: string;
         /** Rounded-rectangle corner radius in local px; legacy drafts omit it (square). */
         cornerRadius?: number;
       }
@@ -448,6 +451,8 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+        /** See the rectangle `strokeColor`. */
+        strokeColor?: string;
       }
     | {
         /** A parametric segment from the layer origin to width/height. */
@@ -465,6 +470,8 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+        /** See the rectangle `strokeColor`. */
+        strokeColor?: string;
         sides: number;
         /** Legacy drafts omit this and render as a regular polygon. */
         variant?: ParametricShapeVariant;
@@ -1955,6 +1962,8 @@ export function validateFrame(
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         (layer.kind !== 'line' &&
           (!('fill' in layer) || typeof layer.fill !== 'boolean')) ||
+        ('strokeColor' in layer && (layer.kind === 'line' || (layer.strokeColor !== undefined &&
+          (typeof layer.strokeColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.strokeColor))))) ||
         (layer.kind === 'rectangle' && !validCornerRadius(layer.cornerRadius)) ||
         (layer.kind === 'polygon' &&
           (!integer(layer.sides, 3, 32) ||
@@ -4118,20 +4127,23 @@ export async function renderFrame(
       }
     }
     if (layer.kind === 'rectangle') {
+      const outline = shapeOutlineColor(layer);
       context.fillStyle = layer.color;
-      context.strokeStyle = layer.color;
+      context.strokeStyle = outline ?? layer.color;
       context.lineWidth = layer.stroke;
       if (clampCornerRadius(layer.cornerRadius, layer.width, layer.height) > 0) {
         context.beginPath();
         traceShapeNodes(context, roundedRectNodes(layer.width, layer.height, layer.cornerRadius));
         if (layer.fill) context.fill();
-        else context.stroke();
-      } else if (layer.fill) context.fillRect(0, 0, layer.width, layer.height);
-      else context.strokeRect(0, 0, layer.width, layer.height);
+        if (outline) context.stroke();
+      } else {
+        if (layer.fill) context.fillRect(0, 0, layer.width, layer.height);
+        if (outline) context.strokeRect(0, 0, layer.width, layer.height);
+      }
     }
     if (layer.kind === 'ellipse') {
       context.fillStyle = layer.color;
-      context.strokeStyle = layer.color;
+      context.strokeStyle = shapeOutlineColor(layer) ?? layer.color;
       context.lineWidth = layer.stroke;
       context.beginPath();
       context.ellipse(
@@ -4144,7 +4156,7 @@ export async function renderFrame(
         Math.PI * 2,
       );
       if (layer.fill) context.fill();
-      else context.stroke();
+      if (shapeOutlineColor(layer)) context.stroke();
     }
     if (layer.kind === 'line') {
       context.strokeStyle = layer.color;
@@ -4157,7 +4169,7 @@ export async function renderFrame(
     }
     if (layer.kind === 'polygon') {
       context.fillStyle = layer.color;
-      context.strokeStyle = layer.color;
+      context.strokeStyle = shapeOutlineColor(layer) ?? layer.color;
       context.lineWidth = layer.stroke;
       context.beginPath();
       const points = shapePoints(
@@ -4176,7 +4188,7 @@ export async function renderFrame(
       });
       context.closePath();
       if (layer.fill) context.fill();
-      else context.stroke();
+      if (shapeOutlineColor(layer)) context.stroke();
     }
     if (layer.kind === 'path') {
       context.beginPath();

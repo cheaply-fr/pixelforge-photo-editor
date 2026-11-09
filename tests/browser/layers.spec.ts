@@ -597,15 +597,16 @@ test('ellipse layers stay vector-editable through export and reload', async ({
   await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
   const exported = await project(page),
     ellipse = exported.value.history[exported.value.index].layers[1];
-  expect(ellipse).toMatchObject({ kind: 'ellipse', fill: false });
+  // Shape tools draw filled with the foreground colour by default.
+  expect(ellipse).toMatchObject({ kind: 'ellipse', fill: true });
   expect(ellipse.width).toBeGreaterThan(1);
-  await page.getByLabel('Filled shape', { exact: true }).check();
+  await page.getByLabel('Filled shape', { exact: true }).uncheck();
   await page.reload();
   await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
   const reloaded = await project(page);
   expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject({
     kind: 'ellipse',
-    fill: true,
+    fill: false,
   });
 });
 

@@ -1,6 +1,7 @@
 import type { Layer, Matrix } from './document.ts';
 import { serializePathData, validatePath, type PathModel } from './paths.ts';
 import { roundedRectNodes, shapePoints } from './vectorShapes.ts';
+import { parametricShapePathStyle } from './shapeAppearance.ts';
 
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -40,14 +41,23 @@ function pathForVector(layer: ExportableVector): PathModel | undefined {
     ...('inHandle' in point && point.inHandle ? { inHandle: { ...point.inHandle } } : {}),
     ...('outHandle' in point && point.outHandle ? { outHandle: { ...point.outHandle } } : {}),
   }));
+  if (layer.kind === 'line')
+    return validatePath({
+      nodes,
+      closed: false,
+      fill: false,
+      stroke: true,
+      strokeWidth: layer.stroke,
+      fillColor: color(layer.color),
+      strokeColor: color(layer.color),
+    });
+  const style = parametricShapePathStyle(layer);
   return validatePath({
     nodes,
-    closed: layer.kind !== 'line',
-    fill: layer.kind !== 'line' && layer.fill,
-    stroke: true,
-    strokeWidth: layer.stroke,
-    fillColor: color(layer.color),
-    strokeColor: color(layer.color),
+    closed: true,
+    ...style,
+    fillColor: color(style.fillColor),
+    strokeColor: color(style.strokeColor),
   });
 }
 

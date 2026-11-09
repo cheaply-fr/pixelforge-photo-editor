@@ -6,6 +6,8 @@ import {
 } from './projectLimits.ts';
 import { validCornerRadius } from './vectorShapes.ts';
 import { validCustomShapeChoice } from './customShapeLibrary.ts';
+import { validShapeAppearance, type ShapeAppearanceSettings } from './shapeAppearance.ts';
+import { validPenOptions, type PenOptions } from './penOptions.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -223,6 +225,10 @@ export type Settings = {
   shapeCornerRadius?: number;
   /** Custom Shape tool choice: a built-in library id or `path-preset:<id>`. */
   customShapeId?: string;
+  /** Shape tools' Fill / Stroke / Stroke width / W×H options; absent keys use the defaults. */
+  shapeAppearance?: Partial<ShapeAppearanceSettings>;
+  /** Pen family Mode, Auto Add/Delete and Rubber Band; absent keys use the defaults. */
+  penOptions?: Partial<PenOptions>;
   /** Spacing between brush dabs as a percent of diameter (1–1,000). */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -557,6 +563,7 @@ function validSettings(settings: unknown): settings is Settings {
   }
   if (!validCornerRadius(candidate.shapeCornerRadius)) return false;
   if (candidate.customShapeId !== undefined && !validCustomShapeChoice(candidate.customShapeId)) return false;
+  if (!validShapeAppearance(candidate.shapeAppearance) || !validPenOptions(candidate.penOptions)) return false;
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;

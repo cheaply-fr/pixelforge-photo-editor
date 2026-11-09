@@ -57,7 +57,7 @@ const drawShape = async (
 };
 
 const selectShape = async (page: Page, index: number) => {
-  const rows = page.getByRole('button', { name: /^Select layer Shape/ });
+  const rows = page.getByRole('button', { name: /^Select layer Rectangle/ });
   await expect(rows).toHaveCount(2);
   await rows.nth(index).click();
 };
@@ -206,7 +206,7 @@ test('keeps non-contiguous folder members deterministic at the first member stac
   const exported = await project(page);
   const value = exported.value;
   const frame = value.history[value.index];
-  const shapes = frame.layers.filter((layer) => layer.name.startsWith('Shape'));
+  const shapes = frame.layers.filter((layer) => layer.name.startsWith('Rectangle'));
   expect(shapes).toHaveLength(2);
   const first = frame.layers.findIndex((layer) => layer.groupId === frame.groups![0].id);
   const grouped = frame.layers.filter((layer) => layer.groupId === frame.groups![0].id);
@@ -247,12 +247,12 @@ test('moving a layer between folders keeps members contiguous and removes empty 
   await drawShape(page, 0.2, 0.2, 0.18, 0.16, '#ff0000');
   await drawShape(page, 0.45, 0.3, 0.18, 0.16, '#0000ff');
 
-  await page.getByRole('button', { name: 'Select layer Shape 1', exact: true }).click();
+  await page.getByRole('button', { name: 'Select layer Rectangle 1', exact: true }).click();
   await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
-  await page.getByRole('button', { name: 'Select layer Shape 2', exact: true }).click();
+  await page.getByRole('button', { name: 'Select layer Rectangle 2', exact: true }).click();
   await page.getByRole('button', { name: 'Group active layer', exact: true }).click();
 
-  await page.getByRole('button', { name: 'Select layer Shape 1', exact: true }).click();
+  await page.getByRole('button', { name: 'Select layer Rectangle 1', exact: true }).click();
   await openPanel(page, 'Layer details');
   await page.getByLabel('Layer folder', { exact: true }).selectOption({ label: 'Group 2' });
   const exported = await project(page);
@@ -260,7 +260,7 @@ test('moving a layer between folders keeps members contiguous and removes empty 
 
   expect(frame.groups).toHaveLength(1);
   expect(frame.groups![0].name).toBe('Group 2');
-  const shapes = frame.layers.filter((layer) => layer.name.startsWith('Shape'));
-  expect(shapes.map((layer) => layer.name)).toEqual(['Shape 1', 'Shape 2']);
+  const shapes = frame.layers.filter((layer) => layer.name.startsWith('Rectangle'));
+  expect(shapes.map((layer) => layer.name)).toEqual(['Rectangle 1', 'Rectangle 2']);
   expect(shapes.every((layer) => layer.groupId === frame.groups![0].id)).toBe(true);
 });
