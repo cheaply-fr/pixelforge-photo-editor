@@ -57,6 +57,15 @@ dropped (device library) or fails draft validation, never applied. Evidence:
 `tests/brush-blend-mode.test.mjs` and
 `tests/browser/brush-blend-mode.spec.ts` on desktop and mobile.
 
+## Tool presets (2026-11-09)
+
+Branch `feat/tool-presets`. The **Tool presets** control above the tool
+options captures whole-tool option snapshots for every tool with options
+(Brush included) in a separate device library
+(`pixelforge.tool-presets.v1`), with Reset Tool / Reset All Tools and
+JSON import/export. Brush presets above are unchanged and keep travelling in
+drafts and projects. See [`tool-presets-contract.md`](./tool-presets-contract.md).
+
 ## Silk strands in presets (2026-11-08)
 
 Branch `feat/brush-silk-strands`. Presets can capture the Brush **Silk
