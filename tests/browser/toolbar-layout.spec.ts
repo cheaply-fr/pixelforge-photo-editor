@@ -299,7 +299,7 @@ test('family variants occupy one category slot without duplicate toolbar ids', a
 
 test('measure tools and Selection Brush keep independent toolbar slots', async ({ page }) => {
   await openEditor(page);
-  for (const label of ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Count', 'Selection Brush']) {
+  for (const label of ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Audio Annotation', 'Count', 'Selection Brush']) {
     await expect(page.getByRole('button', { name: `${label} tool`, exact: true })).toBeVisible();
   }
   await expect(page.getByRole('button', { name: 'Eyedropper tool', exact: true }).locator('.tool-subtool-arrow')).toHaveCount(0);
