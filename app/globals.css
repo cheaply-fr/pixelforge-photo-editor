@@ -83,7 +83,7 @@
 .layer-actions { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin:10px 0; }
 .layer-actions button { padding:8px 5px; border:1px solid #374151; border-radius:6px; background:#252d39; font-size:11px; }
 .layer-actions button:disabled { opacity:.4; cursor:not-allowed; }
-.layer-list { display:flex; flex-direction:column; gap:4px; max-height:240px; overflow:auto; }
+.layer-list { display:flex; flex-direction:column; gap:4px; max-height:240px; overflow:auto; padding-block:3px; }
 .layer-row { display:flex; text-align:left; align-items:center; gap:10px; padding:9px; background:#202834; border:1px solid transparent; border-radius:6px; width:100%; }
 .layer-row.selected { border-color:#8b5cf6; background:#342c4b; }
 .layer-row.multi-selected { border-color:#4a6285; background:#202d3f; }
@@ -91,6 +91,37 @@
 .layer-row.clipped { position:relative; margin-left:16px; width:calc(100% - 16px); min-width:0; gap:6px; box-shadow:inset 2px 0 0 #6d8eb8; }
 .layer-row.clipped > span:last-child { min-width:0; }
 .layer-clip-glyph { flex:none; color:#9fb6d6; font-size:14px; line-height:1; }
+/* Layers panel rows: drag handle, select button, delete and menu buttons. */
+.layer-row-item { position:relative; display:flex; align-items:center; gap:2px; min-width:0; user-select:none; -webkit-user-select:none; }
+.layer-row-item > .layer-row { flex:1 1 auto; min-width:0; }
+.layer-row-item.clipped { margin-left:16px; }
+.layer-row-item > .layer-row.clipped { margin-left:0; width:auto; }
+.layer-row-item.dragging, .group-row.dragging { opacity:.45; }
+.layer-drag-handle { flex:none; display:grid; place-items:center; width:16px; align-self:stretch; color:#6f7a8c; cursor:grab; touch-action:none; }
+.layer-list.drag-active .layer-drag-handle { cursor:grabbing; }
+.layer-row-action { flex:none; display:grid; place-items:center; width:26px; height:26px; padding:0; border:1px solid transparent; border-radius:5px; background:transparent; color:#aeb6c4; opacity:0; }
+.layer-row-item:hover .layer-row-action, .layer-row-item:focus-within .layer-row-action, .layer-row-action[aria-expanded="true"] { opacity:1; }
+.layer-row-action:hover, .layer-row-action:focus-visible { border-color:#4a5568; background:#2a3342; color:#fff; }
+.layer-row-delete:hover { color:#ff9b87; }
+.layer-row-action.refused { color:#6b7280; }
+@media (hover:none), (pointer:coarse) {
+  .layer-row-action { opacity:1; width:30px; height:30px; }
+  .layer-drag-handle { width:24px; min-height:30px; color:#8d97a8; }
+}
+.layer-row-item.drop-above::before, .layer-row-item.drop-below::after, .group-row.drop-above::before { content:''; position:absolute; left:0; right:0; height:2px; border-radius:2px; background:#a78bfa; box-shadow:0 0 0 1px #1a1d24; pointer-events:none; z-index:2; }
+.layer-row-item.drop-above::before, .group-row.drop-above::before { top:-3px; }
+.layer-row-item.drop-below::after { bottom:-3px; }
+.group-row { position:relative; }
+.group-row.drop-into { outline:2px solid #a78bfa; outline-offset:-1px; background:#3a2f55; }
+.layer-row-item.drop-refused::before, .layer-row-item.drop-refused::after, .group-row.drop-refused::before { background:#ef6b5b; }
+.group-row.drop-into.drop-refused { outline-color:#ef6b5b; }
+.layer-drop-hint { position:fixed; z-index:60; max-width:206px; padding:4px 8px; border:1px solid #6d5aa8; border-radius:6px; background:#211c33f2; color:#ede6ff; font-size:11px; pointer-events:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-shadow:0 6px 20px #0008; }
+.layer-drop-hint.refused { border-color:#a8483d; background:#33201ef2; color:#ffd9d3; }
+.layer-row-menu { position:fixed; z-index:70; width:216px; max-height:calc(100vh - 16px); overflow:auto; display:flex; flex-direction:column; padding:6px; border:1px solid #3a4150; border-radius:8px; background:#191c23f7; box-shadow:0 16px 40px #000a; }
+.layer-row-menu [role="menuitem"] { min-height:30px; padding:6px 10px; border:0; border-radius:5px; background:transparent; color:#e5e7eb; text-align:left; font-size:12px; }
+.layer-row-menu [role="menuitem"].separated { margin-top:5px; box-shadow:0 -1px 0 #2d3340; border-top-left-radius:0; border-top-right-radius:0; }
+.layer-row-menu [role="menuitem"]:hover:not(:disabled), .layer-row-menu [role="menuitem"]:focus-visible { background:#2d3550; color:#fff; }
+.layer-row-menu [role="menuitem"]:disabled { opacity:.4; cursor:not-allowed; }
 .layer-selection-toolbar { display:grid; gap:6px; padding:7px 0; color:#969ba6; font-size:9px; }
 .layer-search-field { margin:8px 0; }
 .layer-search-field input[type=search] { font-size:11px; }
