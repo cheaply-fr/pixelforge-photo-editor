@@ -122,6 +122,20 @@ test('whole-layer styling updates base fields and keeps other overrides on runs'
   assert.deepEqual(styled.rich.runs, [{ length: 11, style: { italic: true, fontFamily: 'Library Sans' } }]);
 });
 
+test('changing the font of an existing type layer replaces the layer font and old per-character fonts', () => {
+  const source = layer({ rich: { version: 1, runs: [{ length: 5, style: { fontFamily: 'Lobster', italic: true } }, { length: 6 }] } });
+  const styled = applyStyleToLayer(source, { fontFamily: 'Georgia' }, (family) => ['Arial', 'Georgia'].includes(family));
+  assert.equal(styled.fontFamily, 'Georgia');
+  assert.equal(styled.text, source.text);
+  // Other character styles survive; no run keeps an older font override.
+  assert.ok(styled.rich.runs.every((run) => run.style?.fontFamily === undefined));
+  assert.deepEqual(styled.rich.runs[0].style, { italic: true });
+  // A family the layer field cannot hold still covers every character.
+  const library = applyStyleToLayer(source, { fontFamily: 'JetBrains Mono' }, () => false);
+  assert.equal(library.fontFamily, 'Arial');
+  assert.deepEqual(library.rich.runs.map((run) => run.style?.fontFamily), ['JetBrains Mono', 'JetBrains Mono']);
+});
+
 test('plain-text edits outside a session keep styles aligned', () => {
   const source = layer({ rich: { version: 1, runs: [{ length: 6 }, { length: 5, style: { italic: true } }] } });
   const next = withTextRemapped(source, 'Hello brave world', { ...source, text: 'Hello brave world' });

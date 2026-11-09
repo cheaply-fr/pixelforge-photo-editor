@@ -11774,8 +11774,7 @@ export default function Home() {
   const typeActions: TypeActions = {
     character: (patch) => {
       // Like Photoshop, options-bar changes also become the defaults for new type.
-      if (typeof patch.fontFamily === 'string' && (FONTS as readonly string[]).includes(patch.fontFamily))
-        setFontFamily(patch.fontFamily as (typeof FONTS)[number]);
+      if (typeof patch.fontFamily === 'string' && isSelectableFontFamily(patch.fontFamily)) setFontFamily(patch.fontFamily);
       if (typeof patch.fontSize === 'number') setFontSize(Math.max(16, Math.min(160, Math.round(patch.fontSize))));
       if (typeof patch.color === 'string') setColor(patch.color);
       if (patch.fontWeight !== undefined) setTypeDefaults((value) => ({ ...value, bold: (patch.fontWeight ?? 400) >= 600 }));
@@ -11858,6 +11857,16 @@ export default function Home() {
       setTypePresets(next);
       try { localStorage.setItem(TYPE_PRESETS_STORAGE_KEY, serializeTypePresets(next)); } catch { /* storage unavailable */ }
     },
+  };
+  /**
+   * The Text section's Font picker works like Photoshop's options bar: it
+   * styles the active type layer (or the selected characters while editing)
+   * and also becomes the default for new type.
+   */
+  const chooseTextToolFont = (family: string) => {
+    typeActions.character({ fontFamily: family });
+    if (typeView.editing)
+      window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.type-editor-input')?.focus({ preventScroll: true }), 0);
   };
   const toggleTypePanel = (panel: 'character' | 'paragraph') => {
     const open = !typePanelsOpen[panel];
@@ -20580,7 +20589,7 @@ export default function Home() {
                   onChange={(e) => setText(e.target.value)}
                 />
               </label>
-              <div className="select-row font-select-row"><span>Font</span><FontFamilySelect label="Text tool font" value={fontFamily} onChange={setFontFamily} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <div className="select-row font-select-row" data-type-keep=""><span>Font</span><FontFamilySelect label="Text tool font" value={typeSource !== 'defaults' && typeView.character.fontFamily !== 'mixed' ? typeView.character.fontFamily : fontFamily} onChange={chooseTextToolFont} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
               <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
               {fontAvailability === 'fallback' && (
                 <output data-testid="font-fallback-warning" className="adjust-note">
