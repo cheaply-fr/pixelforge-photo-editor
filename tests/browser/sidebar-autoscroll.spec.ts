@@ -11,7 +11,7 @@ import type { Tool } from '../../src/drafts.ts';
 /** Toolbar accessible labels (`<label> tool`) for every registered tool. */
 const TOOL_LABELS: Record<Tool, string> = {
   move: 'Move', hand: 'Hand', zoom: 'Zoom', 'rotate-view': 'Rotate View',
-  eyedropper: 'Eyedropper', 'color-sampler': 'Color Sampler', ruler: 'Ruler', note: 'Note', count: 'Count',
+  eyedropper: 'Eyedropper', 'color-sampler': 'Color Sampler', ruler: 'Ruler', note: 'Note', 'audio-note': 'Audio Annotation', count: 'Count',
   fill: 'Fill', gradient: 'Gradient', clone: 'Clone', heal: 'Healing', 'spot-heal': 'Spot Healing',
   patch: 'Patch', 'red-eye': 'Red Eye', 'pattern-stamp': 'Pattern Stamp', crop: 'Crop',
   'perspective-crop': 'Perspective Crop', slice: 'Slice', 'slice-select': 'Slice Select', frame: 'Frame',

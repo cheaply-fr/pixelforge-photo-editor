@@ -8,7 +8,7 @@
  */
 
 export type PaletteToolId =
-  | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
+  | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'audio-note' | 'count'
   | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush' | 'art-history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'blur' | 'sharpen' | 'pen'
@@ -25,7 +25,7 @@ export type ToolCategory = {
 
 export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'navigation', label: 'Navigate', tools: ['move', 'hand', 'zoom', 'rotate-view'] },
-  { id: 'measure', label: 'Measure', tools: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'] },
+  { id: 'measure', label: 'Measure', tools: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'] },
   { id: 'marquee', label: 'Marquee', tools: ['select', 'ellipse-select', 'row-select', 'column-select'] },
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
   { id: 'selection', label: 'Selection', tools: ['selection-brush', 'quick-selection', 'magic-wand'] },
@@ -43,7 +43,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   u: ['rectangle', 'ellipse', 'line', 'polygon'],
   m: ['select', 'ellipse-select', 'row-select', 'column-select'],
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
+  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
   w: ['selection-brush', 'quick-selection', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
@@ -97,6 +97,7 @@ export const TOOL_ICONS = {
   'color-sampler': 'Crosshair',
   ruler: 'Ruler',
   note: 'StickyNote',
+  'audio-note': 'AudioLines',
   count: 'Hash',
   select: 'SquareDashed',
   'ellipse-select': 'CircleDashed',

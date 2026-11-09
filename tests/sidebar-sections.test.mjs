@@ -41,6 +41,8 @@ const LEGACY_TOOL_OPTIONS_TOOLS = [
   'mixer-brush', 'history-brush', 'art-history-brush', 'selection-brush', 'quick-selection',
   'gradient', 'rectangle', 'ellipse', 'line', 'polygon', 'pen', 'freeform-pen',
   'curvature-pen', 'direct-select',
+  // Added deliberately: lists the document's audio annotations (play/delete).
+  'audio-note',
 ];
 
 test('every palette tool has exactly one registry entry and nothing else is mapped', () => {

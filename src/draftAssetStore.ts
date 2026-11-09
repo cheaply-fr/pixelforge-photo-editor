@@ -35,6 +35,14 @@ import {
   type AssetTile,
   type TiledAsset,
 } from './tiledAssets.ts';
+import {
+  AUDIO_NOTE_MAX_BYTES,
+  AUDIO_NOTE_MAX_CLIPS,
+  AUDIO_NOTE_MAX_DURATION_MS,
+  AUDIO_NOTE_MIME_TYPES,
+  type AudioClip,
+  type AudioNoteMime,
+} from './audioAnnotations.ts';
 
 export const DRAFT_MANIFEST_KIND = 'pixelforge-draft-manifest' as const;
 export const DRAFT_MANIFEST_FORMAT = 3 as const;
@@ -53,7 +61,10 @@ export type DraftTiledAssetRef = {
   tiles: (string | null)[];
 };
 
-export type DraftManifest = Omit<Draft, 'assets' | 'localRevision'> & {
+/** One Audio Annotation clip: its data URL's hash plus metadata. */
+export type DraftAudioRef = { hash: string; mime: AudioNoteMime; bytes: number; durationMs: number };
+
+export type DraftManifest = Omit<Draft, 'assets' | 'localRevision' | 'audio'> & {
   kind: typeof DRAFT_MANIFEST_KIND;
   format: typeof DRAFT_MANIFEST_FORMAT | typeof DRAFT_TILED_MANIFEST_FORMAT;
   /** Optimistic-concurrency revision; also read by older builds' conflict checks. */
@@ -62,6 +73,11 @@ export type DraftManifest = Omit<Draft, 'assets' | 'localRevision'> & {
   assetRefs: Record<string, DraftAssetRef | DraftTiledAssetRef>;
   /** Format 4: tile key → SHA-256 of the tile's PNG bytes. */
   tileRefs?: Record<string, string>;
+  /**
+   * Audio clip id → content hash and metadata. The clip's data URL is stored
+   * as an ordinary asset record (same content-addressed key space).
+   */
+  audioRefs?: Record<string, DraftAudioRef>;
   savedAt: string;
 };
 
@@ -85,6 +101,7 @@ export type DraftAssetRecord = {
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ID_PATTERN = /^[a-f0-9-]{36}$/;
+const AUDIO_ID_PATTERN = /^[a-zA-Z0-9_-]{1,96}$/;
 const MAX_ASSET_REFS = MAX_PROJECT_ASSETS;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -144,6 +161,28 @@ function validTiledRef(ref: Record<string, unknown>, tileRefs: Record<string, un
   );
 }
 
+function validAudioRefs(value: unknown): value is Record<string, DraftAudioRef> {
+  if (!isRecord(value)) return false;
+  const entries = Object.entries(value);
+  return (
+    entries.length <= AUDIO_NOTE_MAX_CLIPS &&
+    entries.every(
+      ([id, ref]) =>
+        AUDIO_ID_PATTERN.test(id) &&
+        isRecord(ref) &&
+        typeof ref.hash === 'string' &&
+        SHA256_PATTERN.test(ref.hash) &&
+        (AUDIO_NOTE_MIME_TYPES as readonly unknown[]).includes(ref.mime) &&
+        Number.isInteger(ref.bytes) &&
+        Number(ref.bytes) >= 1 &&
+        Number(ref.bytes) <= AUDIO_NOTE_MAX_BYTES &&
+        Number.isInteger(ref.durationMs) &&
+        Number(ref.durationMs) >= 1 &&
+        Number(ref.durationMs) <= AUDIO_NOTE_MAX_DURATION_MS,
+    )
+  );
+}
+
 export function isDraftManifest(value: unknown): value is DraftManifest {
   if (!isRecord(value)) return false;
   const candidate = value as Partial<DraftManifest>;
@@ -171,6 +210,7 @@ export function isDraftManifest(value: unknown): value is DraftManifest {
     )
       return false;
   } else if (candidate.tileRefs !== undefined) return false;
+  if (candidate.audioRefs !== undefined && !validAudioRefs(candidate.audioRefs)) return false;
   const refs = Object.entries(candidate.assetRefs);
   return (
     refs.length <= MAX_ASSET_REFS &&
@@ -216,6 +256,7 @@ export function manifestAssetHashes(manifest: DraftManifest): string[] {
   const hashes = new Set<string>();
   for (const ref of Object.values(manifest.assetRefs)) if (!isTiledRef(ref)) hashes.add(ref.hash);
   for (const hash of Object.values(manifest.tileRefs || {})) hashes.add(hash);
+  for (const ref of Object.values(manifest.audioRefs || {})) hashes.add(ref.hash);
   return [...hashes];
 }
 
@@ -239,9 +280,16 @@ export function createDraftManifest(
   hashes: ReadonlyMap<string, string>,
   now = new Date().toISOString(),
   tileHashesByKey: ReadonlyMap<string, string> = new Map(),
+  audioHashes: ReadonlyMap<string, string> = new Map(),
 ): DraftManifest {
   if (!validRevision(revision)) throw new Error('Invalid draft revision');
-  const { assets, localRevision: _previous, ...rest } = draft;
+  const { assets, localRevision: _previous, audio, ...rest } = draft;
+  const audioRefs: Record<string, DraftAudioRef> = {};
+  for (const [id, clip] of Object.entries(audio || {})) {
+    const hash = audioHashes.get(id);
+    if (!hash || !SHA256_PATTERN.test(hash)) throw new Error('Draft audio clip is not hashed');
+    audioRefs[id] = { hash, mime: clip.mime, bytes: clip.bytes, durationMs: clip.durationMs };
+  }
   const assetRefs: Record<string, DraftAssetRef | DraftTiledAssetRef> = {};
   const tileRefs: Record<string, string> = {};
   let tiled = false;
@@ -269,6 +317,7 @@ export function createDraftManifest(
     localRevision: revision,
     assetRefs,
     ...(tiled ? { tileRefs } : {}),
+    ...(Object.keys(audioRefs).length ? { audioRefs } : {}),
     savedAt: now,
   };
 }
@@ -359,6 +408,7 @@ export async function decodeDraftManifest(
     format: _format,
     assetRefs,
     tileRefs: _tileRefs,
+    audioRefs,
     savedAt: _savedAt,
     ...draft
   } = manifest;
@@ -372,5 +422,9 @@ export async function decodeDraftManifest(
           tiles: ref.tiles.map((key) => (key === null ? null : tiles.get(key)!)),
         }
       : { url: urls.get(ref.hash)!, w: ref.w, h: ref.h };
-  return { ...draft, assets };
+  if (!audioRefs) return { ...draft, assets };
+  const audio: Record<string, AudioClip> = {};
+  for (const [id, ref] of Object.entries(audioRefs))
+    audio[id] = { url: urls.get(ref.hash)!, mime: ref.mime, bytes: ref.bytes, durationMs: ref.durationMs };
+  return { ...draft, assets, audio };
 }

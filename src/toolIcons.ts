@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Bandage,
   Blend,
   Brush,
@@ -64,6 +65,7 @@ import { TOOL_ICONS, type PaletteToolId, type ToolIconName } from './toolPalette
 
 /** Components for every icon named in `TOOL_ICONS`. */
 const TOOL_ICON_COMPONENTS: Record<ToolIconName, LucideIcon> = {
+  AudioLines,
   Bandage,
   Blend,
   Brush,
