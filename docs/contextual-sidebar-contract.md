@@ -16,10 +16,19 @@ Top to bottom:
    aria-label="<Tool> tool options" tabindex="-1">`. It renders exactly the
    sections the active tool registers, in table order. A tool with no inline
    options shows a one-line hint (`data-testid="tool-options-empty"`).
-3. **Layers** — the layer list and the active layer's essentials: add /
-   duplicate / delete / group actions, layer selection, Find layers,
-   visibility and lock, masks, vector masks and clipping, name, opacity, fill
-   colour and blend mode. Action buttons are compact wrapping chips.
+3. **Layers** — the layer list (with #237's drag-and-drop, per-row trash and
+   ⋯ / right-click menu) and, **directly under the list, a Photoshop-style
+   footer** (`role="toolbar"` "Layer actions", `data-testid="layer-footer"`)
+   of icon buttons with accessible names and tooltips: Add paint layer, Add
+   adjustment layer, Group active layer (new folder), Mask from selection,
+   Create clipping mask, Release clipping mask, Raise layer, Lower layer,
+   Duplicate layer and Delete layer (trash). These actions appear nowhere
+   else in the sidebar. One row on desktop; on phones every button is at
+   least 32 × 36 px and the row wraps rather than overflowing at 375 px.
+   Below it: layer selection, Find layers, visibility and lock, the remaining
+   mask / vector-mask actions, name, opacity, fill colour, blend mode and the
+   selected text/shape/line/path layer's own properties. Secondary actions are
+   compact wrapping chips.
 4. **More panels** strip — a `<fieldset>` named "More panels" with one
    disclosure button per panel (`aria-expanded`, `aria-controls`, accessible
    name "<Panel> panel", visible short label and icon, tooltip).
@@ -31,7 +40,7 @@ Top to bottom:
 
 | Panel (strip label) | Contents (registered sections) |
 | --- | --- |
-| Layer details (Details) | position X/Y, layer order (Raise/Lower/Bring/Send), Layer folder, text typography, shape/line/path geometry — `layer-details` |
+| Layer details (Details) | position X/Y, arrange (Bring to front/forward, Send backward/to back), Layer folder — `layer-details` |
 | Adjust selected layer (Adjust) | `adjustments` |
 | Filters | `quick-filters`, `filter-effects` (incl. filter stack) |
 | Layer styles (Styles) | `layer-styles` and its nine style blocks |

@@ -233,3 +233,58 @@ test('desktop has no sheet handle', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'desktop only');
   await expect(page.locator('.inspector-sheet-handle')).toBeHidden();
 });
+
+const FOOTER_ACTIONS = [
+  'Add paint layer', 'Add adjustment layer', 'Group active layer', 'Mask from selection',
+  'Create clipping mask', 'Release clipping mask', 'Raise layer', 'Lower layer',
+  'Duplicate layer', 'Delete layer',
+];
+
+test('layer actions sit in an icon footer directly under the layer list', async ({ page }, testInfo) => {
+  if (testInfo.project.name === 'mobile') await page.setViewportSize({ width: 375, height: 812 });
+  for (const tool of ['Brush', 'Move']) {
+    await selectTool(page, tool);
+    const footer = page.getByRole('toolbar', { name: 'Layer actions' });
+    await expect(footer).toBeVisible();
+    for (const name of FOOTER_ACTIONS) {
+      const button = footer.getByRole('button', { name, exact: true });
+      await expect(button).toBeVisible();
+      await expect(button).toHaveAttribute('title', /\S/);
+      // No duplicate text button elsewhere in the sidebar.
+      await expect(inspector(page).getByRole('button', { name, exact: true })).toHaveCount(1);
+    }
+    const geometry = await page.evaluate(() => {
+      const list = document.querySelector('aside.inspector .layer-list')!.getBoundingClientRect();
+      const bar = document.querySelector('[data-testid="layer-footer"]')!;
+      const box = bar.getBoundingClientRect();
+      const buttons = Array.from(bar.querySelectorAll('button')).map((button) => button.getBoundingClientRect());
+      return {
+        gap: box.top - list.bottom,
+        overflow: bar.scrollWidth - bar.clientWidth,
+        right: Math.max(...buttons.map((rect) => rect.right)) - box.right,
+        minWidth: Math.min(...buttons.map((rect) => rect.width)),
+        minHeight: Math.min(...buttons.map((rect) => rect.height)),
+        page: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+    expect(geometry.gap).toBeGreaterThanOrEqual(0);
+    expect(geometry.gap).toBeLessThanOrEqual(12);
+    expect(geometry.overflow).toBeLessThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(0.5);
+    expect(geometry.page).toBe(0);
+    if (testInfo.project.name === 'mobile') {
+      expect(geometry.minWidth).toBeGreaterThanOrEqual(32);
+      expect(geometry.minHeight).toBeGreaterThanOrEqual(32);
+    }
+  }
+  // The footer acts on the active layer.
+  const rows = inspector(page).getByRole('button', { name: /^Select layer / });
+  const footer = page.getByRole('toolbar', { name: 'Layer actions' });
+  const before = await rows.count();
+  await footer.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await expect(rows).toHaveCount(before + 1);
+  await footer.getByRole('button', { name: 'Duplicate layer', exact: true }).click();
+  await expect(rows).toHaveCount(before + 2);
+  await footer.getByRole('button', { name: 'Delete layer', exact: true }).click();
+  await expect(rows).toHaveCount(before + 1);
+});
