@@ -308,6 +308,16 @@ composite below that layer. Each windowed retouch segment records a
 timeline keeps at most the latest 512). `tests/browser/retouch-tool-worker-previews.spec.ts`
 asserts both on a 1500×1500, 10-layer document.
 
+Presenting a render never shows an intermediate frame: the finished image is
+drawn onto the visible canvas in one synchronous step
+(`presentCanvasImage` in `src/canvasPresentation.ts`), which resizes the
+backing store only when the document size changed and otherwise resets the
+context just before drawing. A render in flight keeps `aria-busy="true"` on
+the editor shell and `data-rendering="true"` on the canvas, but neither may
+change what is on screen; only the initial load dims the editor
+(`data-loading`). The status-bar text is debounced (shown after 250 ms of
+rendering, hidden after 150 ms idle) so stroke previews do not flicker it.
+
 The fallback keeps local editing functional on
 browsers without OffscreenCanvas and preserves the previous canvas on a failed
 or cancelled render. Main-thread rendering yields between layers and observes
