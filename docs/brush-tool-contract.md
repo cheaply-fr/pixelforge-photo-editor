@@ -259,7 +259,7 @@ Eraser and Smudge (#212, `513779d`). Paint Symmetry now also applies to
 Stroke Path with Brush (Brush, Pencil, Eraser; the 20,000-dab budget covers
 all copies), Mixer Brush, History and Art History Brush, Clone Stamp and
 Healing Brush (each copy samples a source point mapped by the same
-transform); Spot Healing, Patch and Smudge stay single-copy (see
+transform); Spot Healing and Patch stay single-copy; Smudge has its own symmetry, with Strength, Mode, Finger Painting, Sample All Layers, tip angle/roundness, pressure size/strength, scatter/count and presets (see [`smudge-tool-contract.md`](./smudge-tool-contract.md) and
 [`paint-symmetry-contract.md`](./paint-symmetry-contract.md)). Brush and Pencil have a **Mode** (blend mode) option (W4-3); see
 "Brush and Pencil Mode" in
 [`brush-dynamics-contract.md`](./brush-dynamics-contract.md). Open (fix wave

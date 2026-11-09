@@ -101,6 +101,7 @@ import { BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from './brushSize.ts';
 import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
 import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
 import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.ts';
+import { validSmudgeSettings, type SmudgeSettings } from './smudge.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
 export type Tool =
@@ -268,6 +269,11 @@ export type Settings = {
   spongeVibrance?: number;
   /** Bounded wet/load/mix controls persisted for the Mixer Brush. */
   mixerBrush?: MixerBrushSettings;
+  /**
+   * Smudge Strength, Mode, Finger Painting, Sample All Layers and pressure
+   * strength. Older drafts omit it; their Smudge "Flow" was `brushOpacity`.
+   */
+  smudge?: Partial<SmudgeSettings>;
   /** Bounded restore controls persisted for the History Brush. */
   historyBrush?: HistoryBrushSettings;
   /** Bounded painterly source-safe controls persisted for Art History Brush. */
@@ -522,6 +528,7 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.paintSymmetry !== undefined && !validPaintSymmetry(candidate.paintSymmetry)) return false;
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
+  if (candidate.smudge !== undefined && !validSmudgeSettings(candidate.smudge)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
   if (candidate.historySourceIndex !== undefined &&
