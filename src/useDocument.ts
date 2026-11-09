@@ -11,6 +11,7 @@ import {
 } from './document';
 import { sanitizeClippingRelations } from './layerClipping';
 import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
+import { sharedFontLoader } from './fontLoader';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
 import { presentCanvasImage } from './canvasPresentation';
@@ -179,6 +180,17 @@ export function useDocument(onError: (message: string) => void) {
   useEffect(() => {
     renderNowRef.current = renderNow;
   }, [renderNow]);
+  // A library font that timed out or failed rendered with the fallback;
+  // redraw once it arrives so the canvas shows the chosen font.
+  useEffect(() => {
+    const fellBack = new Set<string>();
+    return sharedFontLoader().subscribe((family, state) => {
+      if (state === 'failed') fellBack.add(family);
+      if (state !== 'loaded' || !fellBack.delete(family)) return;
+      const value = history.current[index.current];
+      if (value?.layers.some((layer) => layer.kind === 'text' && layer.fontFamily === family)) void renderNowRef.current(value);
+    });
+  }, []);
   /**
    * Render immediately. Any explicit render (commit, undo, cancel, document
    * install) supersedes a scheduled live preview, so a gesture preview can
