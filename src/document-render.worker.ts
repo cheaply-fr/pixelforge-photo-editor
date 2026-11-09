@@ -291,6 +291,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
           final: compositeCache.finalHits > finalHitsBefore,
           clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
           reusedLayers: compositeCache.lastReusedLayers,
+          suffixLayers: compositeCache.lastSuffixLayers,
         },
       );
     } catch (error) {

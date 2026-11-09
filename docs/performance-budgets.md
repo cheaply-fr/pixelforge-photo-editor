@@ -323,6 +323,37 @@ measurements; these are local/live observations, not CI budgets.
   stroke and a click on a 1500×1500, 9-layer document (it failed on main with
   effective opacity 0.5).
 
+### Painting a low layer of a tall stack (cached composite above)
+
+Reported live: on a 2646×4096 painting with ~71 layers each brush stroke on
+a layer near the bottom re-rendered "n/71 layers" for about 50 s, while the
+same stroke on the top layer took about 2 s. The prefix snapshot covered the
+layers below, but every layer above the painted one was recomposited per
+preview and per commit. The render now also keeps the composite of the
+layers above the edited one (`compositeSuffixStart`, see
+`layer-pixel-budget-contract.md`) and draws it in one step.
+
+Local probe (`tests/browser/paint-low-layer-benchmark.spec.ts`, release
+build, desktop Chromium, headless; 41 full-canvas 2646×4096 layers of
+semi-transparent discs imported as images; an 8-segment brush stroke; time
+from release until the canvas reports `data-rendering=false`; two alternating
+runs each against `main` at 54ad24d on one shared machine):
+
+| Stroke | `main` | This change | Layers from the cache above |
+| --- | --- | --- | --- |
+| Layer 1, first stroke after selecting it | 4.2 / 4.8 s | 4.3 / 4.2 s (builds the cache) | 0 |
+| Layer 1, next strokes | 4.2–4.8 s | 0.77–1.07 s | 39 |
+| Top layer, first stroke after switching from layer 1 | 1.0 / 1.0 s | 4.1 / 4.2 s | 0 |
+| Top layer, next strokes | 0.88–0.96 s | 0.69–1.03 s | 0 |
+
+On `main` the previews during a low-layer stroke could not keep up (one
+render per stroke completed); with the cache 12–14 previews render per
+stroke. Trade-off: while a low layer is painted, prefix snapshots above it are
+no longer refreshed, so the first stroke after switching to a much higher
+layer recomposites the stack once (the last row's first stroke). Retained
+memory is unchanged: the cached range uses one of the prefix snapshot
+slots. The live 71-layer case and live builds were not measured.
+
 ### Structural layer edits (`perf/incremental-structural-renders`)
 
 Reported live: deleting one non-empty layer of a 62-layer 2646×4096 painting

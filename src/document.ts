@@ -194,6 +194,7 @@ import {
   alphaBounds,
   compositeLayerKeys,
   type CompositeCache,
+  compositeSuffixStart,
 } from './compositeCache.ts';
 import {
   LAYER_PIXEL_CEILING,
@@ -3098,6 +3099,18 @@ export async function frameCompositeKey(frame: Frame, assets: Assets): Promise<s
   );
 }
 
+/**
+ * True when an ungrouped layer composites onto the result with plain
+ * source-over and never reads the pixels beneath it, so the layers above an
+ * edited one can be flattened once and reused (compositeSuffixStart). A
+ * hidden or fully transparent layer draws nothing and qualifies.
+ */
+export function layerIgnoresBackdrop(layer: Layer): boolean {
+  if (!layer.visible || layer.opacity === 0) return true;
+  if (layer.kind === 'adjustment') return false;
+  return layer.blend === 'source-over' && layerStyleBackdropPasses(layer.styles).length === 0;
+}
+
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
@@ -3130,15 +3143,23 @@ export async function renderFrame(
     options = { ...options, layerFilterPass: true };
   }
   const out = surface(frame.w, frame.h),
-    context = out.getContext('2d')!,
+    outContext = out.getContext('2d')!,
     groups = new Map((frame.groups || []).map((group) => [group.id, group])),
     renderedGroups = new Set<string>();
+  // Layers draw into `out`, except while the cached "above" composite is
+  // being rebuilt (see compositeSuffixStart): then they draw into its surface.
+  let context = outContext;
   const reportProgress = (layerIndex: number) =>
     options?.onProgress?.(layerIndex + 1, frame.layers.length);
   let startIndex = 0,
     checkpoints: ReadonlySet<number> = new Set(),
     keys: string[] | undefined;
-  if (compositeCache) compositeCache.lastReusedLayers = 0;
+  let suffixStart = -1,
+    suffixSurface: HTMLCanvasElement | undefined;
+  if (compositeCache) {
+    compositeCache.lastReusedLayers = 0;
+    compositeCache.lastSuffixLayers = 0;
+  }
   // Without live overrides, the finished composite of the previous render is
   // reused when nothing that affects pixels changed (adding or deleting an
   // empty layer, renaming, reselecting). Otherwise it is refreshed below.
@@ -3159,12 +3180,22 @@ export async function renderFrame(
     // differ on every render, and the committed render compares against the
     // last committed one.
     const changedIndex = live ? undefined : compositeCache.noteKeys(frame.w, frame.h, keys);
+    // While the edited layer is being painted, the layers above it are
+    // unchanged: draw them from one cached composite. An edit inside that
+    // range (changedIndex) renders it normally so its prefix snapshots stay.
+    if (compositeCache.suffixAllowed(frame.w, frame.h)) {
+      const start = compositeSuffixStart(frame, {
+        overrides: live ? overrides : undefined,
+        independent: (index) => layerIgnoresBackdrop(frame.layers[index]),
+      });
+      if (start >= 0 && (changedIndex === undefined || changedIndex < start)) suffixStart = start;
+    }
     checkpoints = new Set(
       compositeCheckpointTargets(frame, {
         overrides,
         changedIndex,
         slots: compositeCache.capacity(frame.w, frame.h),
-      }),
+      }).filter((index) => suffixStart < 0 || index < suffixStart),
     );
     const hit = compositeCache.match(frame.w, frame.h, keys);
     if (hit) {
@@ -3175,6 +3206,8 @@ export async function renderFrame(
       compositeCache.lastReusedLayers = startIndex;
       reportProgress(hit.index);
     }
+    // A snapshot that already holds part of the range leaves nothing to reuse.
+    if (startIndex > suffixStart) suffixStart = -1;
   }
   for (const [layerIndex, layer] of frame.layers.entries()) {
     if (layerIndex < startIndex) continue;
@@ -3198,6 +3231,19 @@ export async function renderFrame(
         },
         keys,
       );
+    }
+    if (compositeCache && keys && layerIndex === suffixStart) {
+      const above = compositeCache.matchSuffix(frame.w, frame.h, suffixStart, keys);
+      if (above) {
+        context.drawImage(above, 0, 0);
+        compositeCache.lastSuffixLayers = frame.layers.length - suffixStart;
+        reportProgress(frame.layers.length - 1);
+        break;
+      }
+      // Rebuild it: draw the remaining layers onto a transparent surface.
+      suffixSurface = compositeCache.takeSuffixSurface(frame.w, frame.h) ?? surface(frame.w, frame.h);
+      context = suffixSurface.getContext('2d')!;
+      context.clearRect(0, 0, frame.w, frame.h);
     }
     if (
       options?.yieldEveryLayers &&
@@ -4215,6 +4261,18 @@ export async function renderFrame(
     }
     context.restore();
     reportProgress(layerIndex);
+  }
+  if (suffixSurface) {
+    context = outContext;
+    context.drawImage(suffixSurface, 0, 0);
+    if (compositeCache && keys && !options?.isCancelled?.())
+      compositeCache.storeSuffix({
+        w: frame.w,
+        h: frame.h,
+        start: suffixStart,
+        keys: keys.slice(suffixStart),
+        surface: suffixSurface,
+      });
   }
   if (frame.colorMode === 'grayscale') {
     const image = context.getImageData(0, 0, frame.w, frame.h);
