@@ -369,6 +369,50 @@
    its top part is on screen below the canvas, so a tail spacer lets sections
    near the end still scroll their header up into that on-screen band. */
 @media(max-width:680px){.inspector{max-height:100svh;overflow-y:auto}.inspector::after{content:"";grid-column:1/-1;height:60svh;pointer-events:none}}
+/* Tool presets (docs/tool-presets-contract.md) */
+.tool-presets-panel{padding:10px 15px}
+.tool-presets-trigger{width:100%;min-height:40px;display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid #34363e;border-radius:8px;background:#202228;color:#d4d5d8;text-align:left;cursor:pointer}
+.tool-presets-trigger:hover{border-color:#564037}
+.tool-presets-trigger:focus-visible,.tool-presets-apply:focus-visible,.tool-presets-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tool-presets-trigger>svg{width:14px;flex:none;color:#8f929b}
+.tool-presets-trigger .tool-presets-chevron{margin-left:auto;transition:transform .15s ease}
+.tool-presets-trigger[aria-expanded="true"] .tool-presets-chevron{transform:rotate(180deg)}
+.tool-presets-trigger-text{display:grid;gap:2px;min-width:0}
+.tool-presets-trigger-text b{font-size:11px;font-weight:730}
+.tool-presets-trigger-text small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9299a6;font-size:10px}
+.tool-presets-modified{flex:none;padding:2px 6px;border:1px solid #6d4a20;border-radius:999px;background:#2b2216;color:#ffc074;font-size:9px;font-weight:650}
+.tool-presets-popover{display:grid;gap:8px;margin-top:8px;padding:8px;border:1px solid #30343d;border-radius:8px;background:#1c1f25}
+.tool-presets-filters{display:flex;align-items:center;gap:8px;min-width:0}
+.tool-presets-filters .text-input{flex:1;min-width:0;min-height:32px}
+.tool-presets-filters .check-row{flex:none;display:flex;align-items:center;gap:5px;font-size:10px;color:#c4cad4}
+.tool-presets-list{display:grid;gap:4px;max-height:min(40vh,260px);overflow:auto;margin:0;padding:0;list-style:none}
+.tool-presets-list li{min-width:0;border-radius:7px}
+.tool-presets-list li[data-dragging]{opacity:.5}
+.tool-presets-apply{width:100%;min-height:40px;display:grid;gap:2px;padding:6px 9px;border:1px solid #343943;border-radius:7px;background:#1b1e24;color:#e5e7ec;text-align:left;cursor:pointer}
+.tool-presets-list li[data-selected] .tool-presets-apply{border-color:#5f6a7a;background:#232833}
+.tool-presets-apply[aria-current="true"]{border-color:var(--accent);background:#2a2526}
+.tool-presets-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:650}
+.tool-presets-apply small{color:#9299a6;font-size:9px}
+.tool-presets-rename{display:flex;flex-wrap:wrap;gap:6px}
+.tool-presets-rename .text-input{flex:1 1 140px;min-width:0;min-height:32px}
+.tool-presets-rename button{min-height:32px;font-size:11px}
+.tool-presets-actions{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+.tool-presets-actions button{min-height:36px;display:grid;place-items:center;padding:0;border:1px solid #3c414c;border-radius:6px;background:#242831;color:#cbd1dc}
+.tool-presets-actions button svg{width:15px}
+.tool-presets-actions button:disabled{opacity:.35;cursor:default}
+.tool-presets-save{display:grid;gap:6px;padding-top:6px;border-top:1px solid #2b2e35}
+.tool-presets-save .layer-field{display:grid;gap:4px;font-size:10px;color:#c4cad4}
+.tool-presets-save .text-input{min-height:32px}
+.tool-presets-includes{display:flex;flex-wrap:wrap;gap:6px 14px}
+.tool-presets-includes .check-row{display:flex;align-items:center;gap:5px;font-size:10px;color:#c4cad4}
+.tool-presets-save>button,.tool-presets-footer button{min-height:34px;font-size:11px}
+.tool-presets-footer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.tool-presets-footer button{display:flex;align-items:center;justify-content:center;gap:5px}
+.tool-presets-footer button svg{width:13px}
+.tool-presets-empty,.tool-presets-note{margin:0;color:#9299a6;font-size:10px;line-height:1.4}
+@media(max-width:680px){.tool-presets-panel{grid-column:1/-1}.tool-presets-actions button,.tool-presets-apply,.tool-presets-footer button{min-height:44px}}
+.tool-presets-popover .check-row{margin-top:0}
+.tool-presets-popover{min-width:0;margin:8px 0 0}
 /* Audio Annotation (docs/audio-annotation-contract.md): workspace-only DOM, never exported. */
 .canvas-wrap .audio-annotation-layer{position:absolute;inset:0;pointer-events:none}
 .audio-annotation-marker{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;padding:0;display:grid;place-items:center;border:2px solid #fff;border-radius:50% 50% 50% 4px;background:#7c4dff;color:#fff;box-shadow:0 2px 8px #000a;pointer-events:none;touch-action:none;cursor:pointer}

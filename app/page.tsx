@@ -148,6 +148,34 @@ import {
   writeStoredBrushPresets,
 } from '../src/brushPresetLibrary';
 import { BrushPresetLibraryControls } from '../src/BrushPresetLibraryControls';
+import { ToolPresetsControl } from '../src/ToolPresetsControl';
+import {
+  addToolPreset,
+  allToolDefaultSettings,
+  createToolPreset,
+  deleteToolPreset,
+  duplicateToolPreset,
+  exportToolPresets,
+  isPresetTool,
+  mergeImportedToolPresets,
+  moveToolPreset,
+  moveToolPresetTo,
+  parseToolPresetImport,
+  PRESET_TOOL_LABELS,
+  readStoredToolPresets,
+  renameToolPreset,
+  resolveToolPresetSettings,
+  toolDefaultSettings,
+  toolPresetMatches,
+  TOOL_PRESET_IMPORT_MAX_BYTES,
+  updateToolPreset,
+  writeStoredToolPresets,
+  type PresetTool,
+  type ToolPreset,
+  type ToolPresetInclude,
+  type ToolSettingKey,
+  type ToolSettingValues,
+} from '../src/toolPresets';
 import {
   createCustomPatternPreset,
   normalizeCustomPatternPresets,
@@ -3158,6 +3186,8 @@ export default function Home() {
     // Saved brush presets start from this device's library (localStorage).
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>(() => readStoredBrushPresets(browserPresetStorage())),
     [selectedBrushLibraryId, setSelectedBrushLibraryId] = useState(''),
+    [toolPresets, setToolPresets] = useState<ToolPreset[]>(() => readStoredToolPresets(browserPresetStorage())),
+    [appliedToolPresets, setAppliedToolPresets] = useState<Partial<Record<PresetTool, string>>>({}),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
@@ -3482,6 +3512,7 @@ export default function Home() {
     // Storage failures are reported as false and never block editing.
     writeStoredBrushPresets(browserPresetStorage(), customBrushPresets);
   }, [customBrushPresets]);
+
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -16971,6 +17002,130 @@ export default function Home() {
     closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
   };
+  // Tool presets (docs/tool-presets-contract.md). Settings only: applying a
+  // preset or resetting options never changes the document or its history.
+  const toolSettingValues: ToolSettingValues = {
+    color, backgroundColor, size, hardness, brushOpacity, brushBlendMode, brushPreset,
+    spacing: brushSpacing, brushSmoothing, brushScatter, brushDynamics, brushTexture, brushDual,
+    brushBristle, brushWetEdges, brushBuildUp, brushFlow, angle: brushAngle, roundness: brushRoundness,
+    flipX: brushFlipX, flipY: brushFlipY, pressureSize, pressureOpacity, pressureCurve,
+    secondaryBrushPreset, paintSymmetry, patternId, patternTileSize, redEyeThreshold, redEyeAmount,
+    colorTolerance, tonalExposure, tonalRange, spongeMode, spongeVibrance, mixerBrush, historyBrush,
+    artHistoryBrush, gradientMode, gradientEnd, gradientMidpoint, gradientMidpointPosition,
+    gradientReverse, gradientDither, gradientNoise, gradientBlend, gradientOpacity, gradientStops,
+    polygonVariant, polygonSides, polygonInnerRadius, text, fontFamily, fontSize, fontPreviewSize,
+    selectionOperation,
+  };
+  const toolSettingSetters: { [K in ToolSettingKey]: (value: ToolSettingValues[K]) => void } = {
+    color: setColor, backgroundColor: setBackgroundColor, size: (value) => setSize(clampBrushSize(value)),
+    hardness: setHardness, brushOpacity: setBrushOpacity, brushBlendMode: setBrushBlendMode,
+    brushPreset: setBrushPreset, spacing: setBrushSpacing, brushSmoothing: setBrushSmoothing,
+    brushScatter: setBrushScatter, brushDynamics: setBrushDynamics, brushTexture: setBrushTexture,
+    brushDual: setBrushDual, brushBristle: setBrushBristle, brushWetEdges: setBrushWetEdges,
+    brushBuildUp: setBrushBuildUp, brushFlow: setBrushFlow, angle: setBrushAngle,
+    roundness: setBrushRoundness, flipX: setBrushFlipX, flipY: setBrushFlipY,
+    pressureSize: setPressureSize, pressureOpacity: setPressureOpacity, pressureCurve: setPressureCurve,
+    secondaryBrushPreset: setSecondaryBrushPreset, paintSymmetry: setPaintSymmetry, patternId: setPatternId,
+    patternTileSize: setPatternTileSize, redEyeThreshold: setRedEyeThreshold, redEyeAmount: setRedEyeAmount,
+    colorTolerance: setColorTolerance, tonalExposure: setTonalExposure, tonalRange: setTonalRange,
+    spongeMode: setSpongeMode, spongeVibrance: setSpongeVibrance, mixerBrush: setMixerBrush,
+    historyBrush: setHistoryBrush, artHistoryBrush: setArtHistoryBrush, gradientMode: setGradientMode,
+    gradientEnd: setGradientEnd, gradientMidpoint: setGradientMidpoint,
+    gradientMidpointPosition: setGradientMidpointPosition, gradientReverse: setGradientReverse,
+    gradientDither: setGradientDither, gradientNoise: setGradientNoise, gradientBlend: setGradientBlend,
+    gradientOpacity: setGradientOpacity, gradientStops: setGradientStops, polygonVariant: setPolygonVariant,
+    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius, text: setText,
+    fontFamily: setFontFamily, fontSize: setFontSize, fontPreviewSize: setFontPreviewSize,
+    selectionOperation: setSelectionOperation,
+  };
+  const applyToolSettingValues = (values: Partial<ToolSettingValues>) => {
+    for (const key of Object.keys(values) as ToolSettingKey[]) {
+      const value = values[key];
+      if (value !== undefined) (toolSettingSetters[key] as (next: unknown) => void)(value);
+    }
+  };
+  const presetTool = isPresetTool(tool) ? tool : undefined;
+  const appliedToolPreset = presetTool
+    ? toolPresets.find((preset) => preset.id === appliedToolPresets[presetTool])
+    : undefined;
+  const appliedToolPresetModified = appliedToolPreset ? !toolPresetMatches(appliedToolPreset, toolSettingValues) : false;
+  const applyToolPreset = (preset: ToolPreset) => {
+    if (preset.tool !== tool) selectToolbarTool(preset.tool, PRESET_TOOL_LABELS[preset.tool]);
+    applyToolSettingValues(resolveToolPresetSettings(preset));
+    setAppliedToolPresets((current) => ({ ...current, [preset.tool]: preset.id }));
+    setNotice(`Tool preset “${preset.label}” applied to ${PRESET_TOOL_LABELS[preset.tool]}`);
+  };
+  /** Update the library and persist it; storage failures are reported, never fatal. */
+  const commitToolPresets = (next: ToolPreset[], message: string) => {
+    setToolPresets(next);
+    setNotice(
+      writeStoredToolPresets(browserPresetStorage(), next)
+        ? message
+        : `${message} (not stored: device storage is unavailable or full)`,
+    );
+  };
+  const saveToolPreset = (label: string, include: ToolPresetInclude) => {
+    if (!presetTool) return;
+    try {
+      const preset = createToolPreset(crypto.randomUUID(), label, presetTool, toolSettingValues, include);
+      commitToolPresets(addToolPreset(toolPresets, preset), `Tool preset “${preset.label}” saved on this device`);
+      setAppliedToolPresets((current) => ({ ...current, [presetTool]: preset.id }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool preset could not be saved');
+    }
+  };
+  const runToolPresetEdit = (edit: () => ToolPreset[], message: string) => {
+    try {
+      commitToolPresets(edit(), message);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool preset could not be changed');
+    }
+  };
+  const toolPresetLabel = (id: string) => toolPresets.find((preset) => preset.id === id)?.label ?? 'preset';
+  const deleteToolPresetById = (id: string) => {
+    const label = toolPresetLabel(id);
+    if (!window.confirm(`Delete the tool preset “${label}” from this device?`)) return;
+    runToolPresetEdit(() => deleteToolPreset(toolPresets, id), `Tool preset “${label}” deleted`);
+  };
+  const updateToolPresetById = (id: string) => {
+    const preset = toolPresets.find((item) => item.id === id);
+    if (!preset || preset.tool !== tool) return;
+    runToolPresetEdit(() => updateToolPreset(toolPresets, id, toolSettingValues), `Tool preset “${preset.label}” updated from the current options`);
+    setAppliedToolPresets((current) => ({ ...current, [preset.tool]: preset.id }));
+  };
+  const exportToolPresetFile = () => {
+    downloadBlob(new Blob([exportToolPresets(toolPresets)], { type: 'application/json' }), 'pixelforge-tool-presets.json');
+    setNotice(`${toolPresets.length} tool preset${toolPresets.length === 1 ? '' : 's'} exported as pixelforge-tool-presets.json`);
+  };
+  const importToolPresetFile = async (file: File) => {
+    try {
+      if (file.size > TOOL_PRESET_IMPORT_MAX_BYTES) throw new Error('The tool preset file is too large (512 KB maximum)');
+      const { presets, rejected } = parseToolPresetImport(await file.text());
+      const merged = mergeImportedToolPresets(toolPresets, presets, () => crypto.randomUUID());
+      commitToolPresets(
+        merged.presets,
+        `Imported ${merged.added} tool preset${merged.added === 1 ? '' : 's'}` +
+          (rejected ? `; ${rejected} invalid skipped` : '') +
+          (merged.skipped ? `; ${merged.skipped} over the limit skipped` : ''),
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool presets could not be imported');
+    }
+  };
+  const resetCurrentTool = () => {
+    if (!presetTool) return;
+    const label = PRESET_TOOL_LABELS[presetTool];
+    if (!window.confirm(`Reset ${label} options to their defaults? Options shared with related tools reset too.`)) return;
+    applyToolSettingValues(toolDefaultSettings(presetTool));
+    setAppliedToolPresets((current) => ({ ...current, [presetTool]: undefined }));
+    setNotice(`${label} options reset to defaults`);
+  };
+  const resetAllTools = () => {
+    if (!window.confirm('Reset the options of every tool to their defaults? Saved presets and colours are kept.')) return;
+    applyToolSettingValues(allToolDefaultSettings());
+    setAppliedToolPresets({});
+    setNotice('All tool options reset to defaults');
+  };
   const beginToolHold = (id: Tool, button: HTMLButtonElement) => {
     stopToolHold();
     toolHoldOpened.current = false;
@@ -19220,6 +19375,37 @@ export default function Home() {
               </button>
             </div>
           </SidebarSection>
+          {presetTool && (
+            <ToolPresetsControl
+              tool={presetTool}
+              presets={toolPresets}
+              appliedId={appliedToolPreset?.id}
+              modified={appliedToolPresetModified}
+              onApply={applyToolPreset}
+              onSave={saveToolPreset}
+              onRename={(id, label) =>
+                runToolPresetEdit(() => renameToolPreset(toolPresets, id, label), `Tool preset renamed to “${label.trim().slice(0, 80)}”`)
+              }
+              onDuplicate={(id) =>
+                runToolPresetEdit(() => duplicateToolPreset(toolPresets, id, crypto.randomUUID()), `Tool preset “${toolPresetLabel(id)}” duplicated`)
+              }
+              onDelete={deleteToolPresetById}
+              onUpdate={updateToolPresetById}
+              onMove={(id, direction, visibleIds) =>
+                commitToolPresets(moveToolPreset(toolPresets, id, direction, visibleIds), `Tool preset “${toolPresetLabel(id)}” moved`)
+              }
+              onMoveTo={(id, targetId) =>
+                commitToolPresets(
+                  moveToolPresetTo(toolPresets, id, toolPresets.findIndex((preset) => preset.id === targetId)),
+                  `Tool preset “${toolPresetLabel(id)}” moved`,
+                )
+              }
+              onExport={exportToolPresetFile}
+              onImport={(file) => void importToolPresetFile(file)}
+              onResetTool={resetCurrentTool}
+              onResetAll={resetAllTools}
+            />
+          )}
           {toolShowsSection(tool, 'tool-options') && (
             <SidebarSection
               id="tool-options"
