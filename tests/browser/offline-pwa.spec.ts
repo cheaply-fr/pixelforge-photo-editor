@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -95,6 +96,7 @@ test('offline cloud save reports a failure while preserving the local draft', as
   await expect(
     page.getByRole('status', { name: 'Draft save status' }),
   ).toHaveText('Saved on this device');
+  await openPanel(page, 'My projects');
   await expect(
     page.getByRole('button', { name: 'Save to my projects', exact: true }),
   ).toBeVisible();

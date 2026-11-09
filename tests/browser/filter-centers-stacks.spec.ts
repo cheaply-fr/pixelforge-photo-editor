@@ -72,6 +72,7 @@ test('several filters stack on one raster layer with toggle, reorder, remove, un
   test.setTimeout(120_000);
   await importFixture(page);
   const original = await digest(page);
+  await openPanel(page, 'Filters');
   const add = page.getByRole('button', { name: /^Add filter to stack/ });
   await expect(add).toBeDisabled();
 

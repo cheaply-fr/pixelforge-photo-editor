@@ -8691,8 +8691,11 @@ export default function Home() {
         ...commonLayer(`Adjustment ${f.layers.length}`),
         kind: 'adjustment',
       })
-    )
+    ) {
+      // Its controls live in the Adjust selected layer panel: open it.
+      openSidebarFor('adjustments');
       setNotice('Adjustment layer added; edit its nondestructive controls below');
+    }
   };
   const addPaint = () => {
     const f = current();

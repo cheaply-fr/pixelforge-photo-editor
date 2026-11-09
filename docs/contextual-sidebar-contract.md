@@ -101,7 +101,8 @@ Layer Style → Layer styles (the panel is committed synchronously so *Enable
 outline* can be focused); enabling a style checkbox → its block. Tool clicks
 target the tool area, which is always rendered for the active tool.
 Opening a panel through a reveal is remembered for the active tool like a
-strip click. Programmatic paths (draft restore, action playback) never open
+strip click. Adding an adjustment layer (Layers panel button or Layer → New
+Adjustment Layer) opens *Adjust selected layer*, where its controls live. Programmatic paths (draft restore, action playback) never open
 panels.
 
 ## Keyboard and accessibility

@@ -300,6 +300,7 @@ test('a stacked filter is edited in place with the Filter effects controls, one 
   test.setTimeout(180_000);
   await importFixture(page);
   await filter(page, 'Mosaic…');
+  await openPanel(page, 'Filters');
   await page.getByRole('button', { name: /^Add filter to stack/ }).click();
   await settled(page);
   await filter(page, 'Emboss…');

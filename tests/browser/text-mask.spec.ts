@@ -112,6 +112,8 @@ test('type masks create alpha selections, compose modes and preserve editable te
   expect(horizontal.bounds.height).toBeGreaterThan(0);
   expect(frame.layers.find((layer) => layer.kind === 'text')).toEqual(before);
 
+  // Selection mode is a selection-tool option (contextual sidebar).
+  await selectTool(page, 'Select');
   await page.getByLabel('Selection mode', { exact: true }).selectOption('subtract');
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await typeMenu(page).getByRole('menuitem', { name: 'Horizontal Type Mask', exact: true }).click();

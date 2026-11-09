@@ -93,6 +93,7 @@ test('folder distribution spaces three visible layers and leaves outer layers fi
   await selectShape(page, 2);
   await page.getByLabel('Layer folder', { exact: true }).selectOption({ label: 'Group 1' });
   await selectShape(page, 0);
+  await selectTool(page, 'Move');
   await expect(page.getByRole('button', { name: 'Distribute horizontally', exact: true })).toBeEnabled();
   const before = await project(page);
   const beforeLayers = before.history[before.index].layers;
@@ -119,6 +120,7 @@ test('selected root layers distribute without requiring a folder', async ({ page
   await drawShape(page, 0.72, 0.12, 0.07, 0.06);
   const rows = page.getByRole('button', { name: /^Select layer Shape/ });
   await rows.nth(0).click();
+  await selectTool(page, 'Move');
   await rows.nth(2).click({ modifiers: ['Shift'] });
   await expect(page.getByRole('button', { name: 'Distribute horizontally', exact: true })).toBeEnabled();
   const before = await project(page);

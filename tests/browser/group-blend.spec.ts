@@ -109,6 +109,7 @@ test('isolates overlapping group blends and preserves children through undo, loc
   await drawShape(page, 0.22, 0.22, 0.52, 0.52, '#ff0000');
   await drawShape(page, 0.38, 0.38, 0.52, 0.52, '#0000ff');
   await selectShape(page, 1);
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable outline', { exact: true }).check();
   await openPanel(page, 'Layer styles');
   await page.getByLabel('Outline width', { exact: true }).press('ArrowRight');

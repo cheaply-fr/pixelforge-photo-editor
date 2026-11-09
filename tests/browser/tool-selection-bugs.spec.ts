@@ -275,10 +275,10 @@ test('Save Selection… names a selection stored in the document; downloading is
   const dialog = page.getByRole('dialog', { name: 'Save Selection' });
   await expect(dialog).toBeVisible();
   await dialog.getByLabel('Name for the saved selection').fill('almond');
-  await openPanel(page, 'Saved selections');
   await dialog.getByRole('button', { name: 'Save selection', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(footer(page)).toContainText('Selection “almond” saved');
+  await openPanel(page, 'Saved selections');
   const panel = page.getByRole('region', { name: 'Saved selections' });
   await expect(panel.getByRole('button', { name: 'Load selection almond', exact: true })).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Rename selection almond', exact: true })).toBeVisible();

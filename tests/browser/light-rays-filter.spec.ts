@@ -197,6 +197,7 @@ test('a stacked Light Rays entry stays editable, including its centre', async ({
   await filter(page, 'Light Rays…');
   await page.getByLabel('Ray count', { exact: true }).fill('16');
   await settled(page);
+  await openPanel(page, 'Filters');
   await page.getByRole('button', { name: /^Add filter to stack/ }).click();
   await settled(page);
   await openPanel(page, 'Filters');

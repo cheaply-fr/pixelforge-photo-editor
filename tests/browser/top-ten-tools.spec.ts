@@ -288,6 +288,7 @@ test('8. Levels, Curves and photo color controls stay nondestructive and persist
   await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('128');
   expect((await pixelAt(page))[0]).toBe(0);
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('RGB midpoint', { exact: true }).fill('210');
   await page.getByLabel('Brightness', { exact: true }).fill('120');
   await page.getByLabel('Saturation', { exact: true }).fill('70');

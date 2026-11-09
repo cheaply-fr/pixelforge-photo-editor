@@ -57,8 +57,8 @@ test('Layer Styles decorate an editable layer and survive undo, reload and proje
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   const before = await canvasPixels(page);
 
-  await page.getByLabel('Enable outline', { exact: true }).check();
   await openPanel(page, 'Layer styles');
+  await page.getByLabel('Enable outline', { exact: true }).check();
   await page.getByLabel('Outline width', { exact: true }).press('ArrowRight');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   const after = await canvasPixels(page);

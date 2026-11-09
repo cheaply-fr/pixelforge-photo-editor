@@ -522,6 +522,7 @@ test('signed-in users save, revisit and continue cloud projects without automati
     page.getByRole('status', { name: 'Draft save status' }),
   ).toHaveText('Saved on this device');
   expect(saves).toBe(0);
+  await openPanel(page, 'My projects');
   await page.getByRole('button', { name: 'Save to my projects' }).click();
   await expect(
     page.getByText('Cloud copy saved.', { exact: false }),
@@ -866,6 +867,7 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   await expect(page.getByLabel('Drawing color')).toHaveValue('#000000');
   await expect(page.getByLabel('Background color')).toHaveValue('#ffffff');
 
+  await selectTool(page, 'Select');
   await expect(
     page.getByRole('button', { name: 'Clear selection', exact: true }),
   ).toBeDisabled();
