@@ -90,6 +90,42 @@ behavior while the pointer is down.
 Pointer capture and `touch-action: none` remain required for touch and pen
 strokes; `pointercancel` must discard the preview without committing pixels.
 
+### Pointer samples and hidden pages
+
+The committed stroke depends only on the pointer samples, never on how often
+animation frames run. Chromium aligns continuous input to frames: it delivers
+at most one `pointermove` per frame and lists every sample since the previous
+event in `getCoalescedEvents()` (the last entry is the event itself). A hidden
+tab or app pane gets no or very rare frames, so a whole stroke can arrive as a
+few moves that each carry many samples, with the release flushing the rest.
+
+- Every path-dependent tool applies each coalesced sample, oldest first, as
+  its own move before the event's position (`precedingCoalescedSamples` in
+  `src/pointerSamples.ts`; tool list `STROKE_SAMPLING_TOOLS` in
+  `app/page.tsx`): Brush, Pencil, Eraser, Smudge, Blur, Sharpen, Dodge, Burn,
+  Sponge, Clone, Healing, Spot Healing, Patch, Pattern Stamp, Red Eye, Color
+  Replacement, Background Eraser, Mixer/History/Art History Brush, Mask
+  Brush/Eraser, Adjustment Brush, Selection Brush, Quick Selection, Lasso,
+  Magnetic Lasso, Freeform Pen and Quick Mask painting. Drag-to-size tools
+  (shapes, marquees, crop, move, gradient) use only the latest position.
+- A replayed move (one buffered while a trimmed paint layer grows) applies its
+  client offset to every sample. Moves that arrive before a tool's buffer is
+  ready are queued per sample and replayed in order.
+- Stamping, smudging and other per-segment work is synchronous per sample.
+  Only previews wait: buffer previews go through the one-per-frame preview
+  scheduler, and tools whose preview is a direct render or a full
+  recomputation (Lasso, Magnetic Lasso, Freeform Pen, Quick Selection,
+  Selection Brush, mask refinement, Spot Healing, Patch) skip it for all but
+  the last sample of an event.
+- Release commits without waiting for a frame and includes every sample
+  delivered before it; the preview catches up when frames resume.
+- `tests/browser/stroke-input-background.spec.ts` pauses animation frames,
+  reports the page hidden, delivers a 200-sample sine stroke as coalesced
+  moves of 16 samples and requires the commit to be pixel-identical to the
+  same stroke delivered visibly one sample per move, with the curve's peaks
+  painted (Brush, Pencil, Eraser, Smudge, Dodge, Blur, Clone; desktop and
+  mobile). `tests/pointer-samples.test.mjs` covers the sample helper.
+
 ## Acceptance tests
 
 Add focused tests to `tests/browser/layers.spec.ts` (or a separate
