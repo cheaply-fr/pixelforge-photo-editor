@@ -377,6 +377,8 @@ import {
   mixRectByMask,
   type PixelRect,
 } from '../src/selectionClip';
+import { canvasDirtyBox, noteCanvasWrite, trackCanvasWrites, untrackCanvasWrites } from '../src/canvasDirty';
+import { emptyTiledAsset, isTiledAsset, tiledContentRegion } from '../src/tiledAssets';
 import {
   refineSelectionAlpha,
   type SelectionRefineMode,
@@ -569,9 +571,12 @@ import {
   applyAffine,
   normalizePaintSymmetry,
   paintSymmetryForLayer,
+  paintSymmetryAppliesToTool,
+  symmetryCloneCopies,
   symmetryDabCopies,
   type PaintSymmetrySettings,
   type SymmetryAffine,
+  type SymmetryDab,
 } from '../src/paintSymmetry';
 import { PaintSymmetryControls, PaintSymmetryOverlay } from '../src/PaintSymmetryControls';
 import {
@@ -645,6 +650,7 @@ import {
   defaultStrokePathChoice,
   normalizeStrokePathSettings,
   planStrokePath,
+  strokePathMaxSamplesForCopies,
   strokePathSources,
   type StrokePathSample,
   type StrokePathSettings,
@@ -656,9 +662,10 @@ import {
   DEFAULT_ART_HISTORY_BRUSH,
   DEFAULT_MIXER_BRUSH,
   applyArtHistoryBrushPixels,
-  interpolateBrushStrokePoints,
   applyHistoryBrushPixels,
   applyMixerBrushPixels,
+  applySymmetricRetouchBrush,
+  interpolateBrushStrokePoints,
   type HistoryBrushSettings,
   type ArtHistoryBrushSettings,
   type MixerBrushSettings,
@@ -1689,6 +1696,11 @@ type Gesture = {
   blendStroke?: BrushBlendStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
+  /**
+   * Asset id `buffer` was drawn from when its writes are tracked
+   * (`src/canvasDirty.ts`), so the commit hashes only the touched tiles.
+   */
+  tileBase?: string;
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
   cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -1923,7 +1935,10 @@ const stampCanvas = (
     });
     changed = secondaryResult.changed || changed;
   }
-  if (changed) context.putImageData(image, left, top);
+  if (changed) {
+    context.putImageData(image, left, top);
+    noteCanvasWrite(target, left, top, width, height);
+  }
   return changed;
 };
 
@@ -1992,12 +2007,19 @@ const stampCanvasSegment = (
           angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
           // Colour dynamics are resolved once per source dab and shared.
           color = options.color && brushDabColor(options.color, options.colorBackground, dab);
-        for (const copy of symmetryDabCopies(options.symmetry, {
+        const sourceDab = {
           x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
-        }))
+        };
+        // Clone/Healing: the copy's transform also maps the source sample
+        // point, so the source offset turns or mirrors with the copy.
+        const copies: Array<SymmetryDab & { sourceX?: number; sourceY?: number }> =
+          sourceX !== undefined && sourceY !== undefined
+            ? symmetryCloneCopies(options.symmetry, sourceDab, { x: sourceX, y: sourceY })
+            : symmetryDabCopies(options.symmetry, sourceDab);
+        for (const copy of copies)
           changed = stampCanvas(target, {
             ...options, size, opacity, color, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
-            x: copy.x, y: copy.y, sourceX, sourceY,
+            x: copy.x, y: copy.y, sourceX: copy.sourceX, sourceY: copy.sourceY,
           }) || changed;
         continue;
       }
@@ -2051,17 +2073,44 @@ const stampCanvasSegment = (
 const stampStrokePathSamples = (
   target: HTMLCanvasElement,
   samples: readonly StrokePathSample[],
-  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'>,
+  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'> & {
+    /** Paint Symmetry transforms (identity first); omitted paints one copy. */
+    symmetry?: readonly SymmetryAffine[];
+  },
 ) => {
-  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS;
+  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS,
+    { symmetry, ...stampOptions } = options;
   let changed = false;
   for (const sample of samples) {
     const size = Math.max(1, options.size * sample.sizeScale),
       opacity = options.opacity * sample.opacityScale;
     if (opacity <= 0) continue;
-    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction))
+    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction)) {
+      if (symmetry && symmetry.length > 1) {
+        // Same rule as a pointer stroke: every copy is the geometric image of
+        // the already-jittered dab and shares its colour dynamics.
+        const dabSize = dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
+        for (const copy of symmetryDabCopies(symmetry, {
+          x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
+        }))
+          changed = stampCanvas(target, {
+            ...stampOptions,
+            pointerType: 'mouse',
+            size: dabSize,
+            opacity: opacity * dab.opacityScale,
+            color,
+            angle: copy.angle,
+            flipX: copy.flipX,
+            flipY: copy.flipY,
+            x: copy.x,
+            y: copy.y,
+          }) || changed;
+        continue;
+      }
       changed = stampCanvas(target, {
-        ...options,
+        ...stampOptions,
         pointerType: 'mouse',
         size: dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
         angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
@@ -2070,6 +2119,7 @@ const stampStrokePathSamples = (
         x: dab.x,
         y: dab.y,
       }) || changed;
+    }
   }
   return changed;
 };
@@ -2493,6 +2543,7 @@ const confineStrokeRect = (
   if (!changed) return false;
   image.data.set(mixed);
   targetContext.putImageData(image, rect.x, rect.y);
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
   return true;
 };
 /** Frame-space selection coverage (alpha) for edits stored at canvas size. */
@@ -2582,6 +2633,8 @@ const blendStrokeRect = (
   if (!changed) return false;
   image.data.set(composed);
   targetContext.putImageData(image, rect.x, rect.y);
+  // Report the write so a tracked gesture buffer commits these tiles.
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
   return true;
 };
 /**
@@ -3439,8 +3492,16 @@ export default function Home() {
    * PNG it was just encoded from, and the render worker receives the pixels
    * with the commit render instead of decoding the data URL again.
    */
-  const addPaintedAsset = (buffer: HTMLCanvasElement) => {
-    const id = addAsset(assets.current, buffer);
+  const addPaintedAsset = (buffer: HTMLCanvasElement, base?: string) => {
+    // Dirty-rectangle hint: every write since the buffer was drawn from
+    // `base` was tracked, so unchanged tiles keep `base`'s tiles unread.
+    const dirty = base ? canvasDirtyBox(buffer) : undefined;
+    untrackCanvasWrites(buffer);
+    const id = addAsset(
+      assets.current,
+      buffer,
+      dirty !== undefined ? { hint: { base: assets.current[base!], dirty } } : undefined,
+    );
     const asset = assets.current[id];
     primeDecodedAsset(asset, buffer);
     primeWorkerDecodedAsset(asset, buffer);
@@ -9215,10 +9276,18 @@ export default function Home() {
       }
       const tool = settings.tool,
         brushSize = localSize(layer.matrix, size),
+        // Paint Symmetry applies to Brush, Pencil and Eraser paths exactly as
+        // to a hand-drawn stroke of those tools (Smudge has no symmetry).
+        symmetry = tool === 'smudge' ? undefined : paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
         plan = planStrokePath(
           sources.map((item) => ({ path: item.path, matrix: item.matrix })),
           layer.matrix,
-          { ...settings, size: brushSize, spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing },
+          {
+            ...settings,
+            size: brushSize,
+            spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing,
+            ...(symmetry && symmetry.length > 1 ? { maxSamples: strokePathMaxSamplesForCopies(symmetry.length) } : {}),
+          },
         );
       let changed: boolean;
       if (tool === 'smudge') {
@@ -9232,6 +9301,10 @@ export default function Home() {
         // buffer, then composite it once over the layer (src/brushBlend.ts).
         const blendMode = usesBrushBlendStroke(tool, brushBlendMode) ? brushBlendMode : undefined,
           target = blendMode ? surface(buffer.width, buffer.height) : buffer;
+        // Without a selection or blend mode every write is a tracked stamp, so
+        // the commit hashes only the tiles the path touched. A blend-mode
+        // path rewrites the whole buffer at once and is scanned in full.
+        if (!selectionMask && !blendMode) trackCanvasWrites(buffer);
         changed = stampStrokePathSamples(target, plan.samples, {
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
@@ -9252,6 +9325,7 @@ export default function Home() {
           mode: tool === 'eraser' ? 'destination-out' : 'source-over',
           color: tool === 'eraser' ? undefined : brushColor(color),
           colorBackground: brushColor(backgroundColor),
+          symmetry,
         });
         if (changed && blendMode) {
           const bufferContext = buffer.getContext('2d')!,
@@ -9264,7 +9338,8 @@ export default function Home() {
           ));
           bufferContext.putImageData(composed, 0, 0);
         }
-        // Photoshop confines painting to the active selection.
+        // Photoshop confines painting to the active selection (every
+        // symmetry copy is confined by the same layer-space mask).
         if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
       }
       if (!changed) {
@@ -9272,11 +9347,12 @@ export default function Home() {
         setNotice('Stroke Path painted nothing: the path lies outside this layer or selection');
         return;
       }
-      const asset = addPaintedAsset(buffer);
+      const asset = addPaintedAsset(buffer, tool !== 'smudge' && !selectionMask ? layer.asset : undefined);
       const label = STROKE_PATH_TOOL_LABELS[tool];
       if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
         setNotice(
           `Path stroked with ${label}${settings.simulatePressure ? ' (simulated pressure)' : ''}` +
+          `${symmetry && symmetry.length > 1 ? ` (${symmetry.length} symmetry copies)` : ''}` +
           `${plan.limited ? '; spacing widened to stay within the dab limit' : ''}; undo restores the layer`,
         );
     } catch (error) {
@@ -9719,7 +9795,14 @@ export default function Home() {
       if (current() !== f) return true;
       const buffer = surface(plan.w, plan.h);
       buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
-      const asset = addAsset(assets.current, buffer);
+      // Outside the drawn layer the new canvas is transparent: only the
+      // tiles under it are read back and hashed.
+      const asset = addAsset(assets.current, buffer, {
+        hint: {
+          base: emptyTiledAsset(plan.w, plan.h),
+          dirty: { x: plan.offsetX, y: plan.offsetY, w: source.w, h: source.h },
+        },
+      });
       // The expansion is pixel-identical, so it replaces the current history
       // entry instead of adding one: undo is unaffected and the page does not
       // reflow (e.g. a growing History list on phones) under the pointer.
@@ -9754,7 +9837,7 @@ export default function Home() {
     /** Source canvases of the most recently created assets. */
     recent: new Map<string, HTMLCanvasElement>(),
   });
-  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: { tiled?: boolean }): string => {
+  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: Parameters<typeof addDocumentAsset>[2]): string => {
     const id = addDocumentAsset(target, source, options);
     const recent = autoTrim.current.recent;
     recent.delete(id);
@@ -9776,12 +9859,21 @@ export default function Home() {
       try {
         const context = source.getContext('2d');
         if (!context) continue;
+        // A tiled asset is transparent outside its non-empty tiles, so only
+        // their bounding rectangle is read back (a stroke on a new layer
+        // reads a few tiles instead of the whole canvas).
+        const region = isTiledAsset(stored) ? tiledContentRegion(stored) : undefined;
         const plan = planLayerTrim(
-          context.getImageData(0, 0, stored.w, stored.h).data,
+          region === undefined
+            ? context.getImageData(0, 0, stored.w, stored.h).data
+            : region
+              ? context.getImageData(region.x, region.y, region.width, region.height).data
+              : [],
           stored.w,
           stored.h,
           layer.matrix,
           AUTO_TRIM_MARGIN,
+          region,
         );
         if (!plan) {
           state.known.add(layer.asset);
@@ -11772,6 +11864,8 @@ export default function Home() {
         moved: false,
         brushPoints: [{ x: local.x, y: local.y, pressure: pressure(e) }],
         queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        // Paint Symmetry is fixed for the stroke at pointer-down.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
       };
       gesture.current = g;
       g.pending = (async () => {
@@ -11815,19 +11909,23 @@ export default function Home() {
           const points = (g.queued || []).map((item) => ({ x: item.x, y: item.y, pressure: item.pressure }));
           g.brushPoints = points;
           const brushSize = localSize(layer.matrix, size);
-          const changed = mixerHistoryCanvasDabs(
-            tool,
-            g.sourcePixels,
-            buffer,
-            points,
+          const retouchOptions =
             tool === 'mixer-brush'
               ? { ...mixerBrush, size: brushSize, hardness }
               : tool === 'history-brush'
               ? { ...historyBrush, size: brushSize, hardness }
-              : { ...artHistoryBrush, size: brushSize, hardness },
-            g.selectionMask,
-          );
-          if (tool === 'art-history-brush') g.changed = changed;
+              : { ...artHistoryBrush, size: brushSize, hardness };
+          if ((g.paintSymmetry?.length ?? 0) > 1) {
+            // Paint Symmetry copies are applied over the whole buffer (#220).
+            const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
+            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry);
+            if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
+            buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          } else {
+            // Without symmetry only the brush's reach is read and written.
+            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask);
+            if (tool === 'art-history-brush') g.changed = changed;
+          }
           g.last = points.at(-1) || g.last;
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
@@ -12075,6 +12173,9 @@ export default function Home() {
         pointerType: e.pointerType,
         moved: false,
         cloneAnchor: sourceAnchor,
+        // Paint Symmetry is fixed for the stroke at pointer-down; each copy
+        // maps its source point through the same transform.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
         spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
@@ -12582,6 +12683,10 @@ export default function Home() {
           const image = await decodeAsset(assets.current[rasterAsset!]),
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
+          // Every later write goes through stampCanvas / confineStrokeRect,
+          // which report their rectangles for the commit's tile hint.
+          trackCanvasWrites(buffer);
+          g.tileBase = rasterAsset!;
           // Photoshop confines painting and erasing to the active selection.
           const selectionMask = f.selection && layer.kind === 'raster'
             ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
@@ -13066,17 +13171,31 @@ export default function Home() {
       const brushSize = localSize(g.layer.matrix, size);
       let changed: boolean;
       try {
-        changed = mixerHistoryCanvasDabs(
-          g.tool,
-          g.sourcePixels,
-          g.buffer,
-          g.tool === 'history-brush' ? [nextPoint] : segmentPoints,
+        const retouchOptions =
           g.tool === 'mixer-brush'
             ? { ...mixerBrush, size: brushSize, hardness }
             : g.tool === 'history-brush'
             ? { ...historyBrush, size: brushSize, hardness }
-            : { ...artHistoryBrush, size: brushSize, hardness },
-          g.selectionMask,
+            : { ...artHistoryBrush, size: brushSize, hardness };
+        const strokePoints = g.tool === 'history-brush' ? [nextPoint] : segmentPoints;
+        if ((g.paintSymmetry?.length ?? 0) > 1) {
+          // Paint Symmetry copies are applied over the whole buffer (#220).
+          const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
+          const next = applySymmetricRetouchBrush(
+            g.tool,
+            destination,
+            g.sourcePixels,
+            g.buffer.width,
+            g.buffer.height,
+            strokePoints,
+            retouchOptions,
+            g.selectionMask,
+            g.paintSymmetry,
+          );
+          changed = g.tool === 'art-history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
+          g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+        } else
+          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask
         );
       } catch (error) {
         if (g.tool !== 'art-history-brush') throw error;
@@ -13829,7 +13948,7 @@ export default function Home() {
           colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
-      const asset = addPaintedAsset(g.buffer);
+      const asset = addPaintedAsset(g.buffer, g.tileBase);
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
@@ -17206,7 +17325,7 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
-            {frame && (tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+            {frame && paintSymmetryAppliesToTool(tool) && (
               <PaintSymmetryOverlay
                 value={paintSymmetry}
                 onChange={setPaintSymmetry}
@@ -18452,7 +18571,7 @@ export default function Home() {
                       </select>
                     </label>
                   )}
-                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && frame && (
+                  {paintSymmetryAppliesToTool(tool) && frame && (
                     <PaintSymmetryControls
                       value={paintSymmetry}
                       onChange={setPaintSymmetry}

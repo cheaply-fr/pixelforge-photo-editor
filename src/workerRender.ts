@@ -6,7 +6,7 @@ import {
   type Assets,
   type Frame,
 } from './document.ts';
-import { isAssetShape } from './tiledAssets.ts';
+import { isAssetShape, markDecodedTileCacheStats, validDecodedTileCacheStats } from './tiledAssets.ts';
 import type { TileCache } from './tilePlan.ts';
 import { CompositeCache, detectCompositeSnapshotBudget, markCompositeReuse, validCompositeReuse } from './compositeCache.ts';
 import { assetsToSend } from './workerAssets.ts';
@@ -480,6 +480,7 @@ export async function renderFrameWithWorker(
         (value.image as ImageBitmap).height === frame.h
       ) {
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+        if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
         if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         finish(() => resolve(value.image as ImageBitmap));
       } else if (
@@ -491,6 +492,7 @@ export async function renderFrameWithWorker(
         value.bytes.byteLength <= 64 * 1024 * 1024
       ) {
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+        if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
         if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         void createImageBitmap(
           new Blob([value.bytes], { type: 'image/png' }),
@@ -860,6 +862,7 @@ class PersistentWorkerSession {
       (value.image as ImageBitmap).height === task.frame.h
     ) {
       if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+      if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
       if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
       this.finish(task, () => task.resolve(value.image as ImageBitmap));
       void this.startNext();
@@ -874,6 +877,7 @@ class PersistentWorkerSession {
       value.bytes.byteLength <= 64 * 1024 * 1024
     ) {
       if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+      if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
       if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
       void createImageBitmap(new Blob([value.bytes], { type: 'image/png' })).then(
         (image) => {
