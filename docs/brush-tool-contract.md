@@ -221,7 +221,10 @@ Paint Symmetry for Brush, Pencil and Eraser (#210, `0ad0e69`;
 Stroke Path with Brush with simulated-pressure tapers for Brush, Pencil,
 Eraser and Smudge (#212, `513779d`). Open (fix wave 4 in the rubric): symmetry
 is not applied to Stroke Path with Brush or to Mixer, History, Clone and
-healing tools; there are no custom brush tip shapes. Brush and Pencil gained a
+healing tools (Smudge gained symmetry, Strength, Mode, Finger Painting, Sample
+All Layers, tip angle/roundness, pressure size/strength, scatter/count and
+presets on branch `feat/smudge-tool-options`; see
+[`smudge-tool-contract.md`](./smudge-tool-contract.md)); there are no custom brush tip shapes. Brush and Pencil gained a
 **Mode** (blend mode) option on branch `feat/brush-blend-mode` (W4-3); see
 "Brush and Pencil Mode" in
 [`brush-dynamics-contract.md`](./brush-dynamics-contract.md).

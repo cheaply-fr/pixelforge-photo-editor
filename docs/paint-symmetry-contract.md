@@ -54,3 +54,12 @@ layer-space conjugation, bounds, determinism and draft validation.
 `tests/browser/paint-symmetry.spec.ts` covers desktop and mobile radial 8,
 axis/dual/mandala strokes, centre drag/keyboard/field edits with the Eraser,
 selection confinement, undo/redo, Off pixel identity and reload.
+
+## Smudge (2026-11-09)
+
+Branch `feat/smudge-tool-options`. Smudge shows the same **Symmetry** group and
+on-canvas guides. Every copy is the geometric image of the (scattered,
+jittered) Smudge dab, as for Brush, and carries its own paint load, loaded at
+the copy's own first dab; see [`smudge-tool-contract.md`](./smudge-tool-contract.md).
+Pure evidence: the mirrored-stroke and dual-axis windowed tests in
+`tests/smudge.test.mjs`.
