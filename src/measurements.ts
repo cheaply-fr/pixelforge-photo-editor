@@ -5,6 +5,8 @@
  * editor's working annotations. The renderer intentionally ignores them:
  * overlays are workspace aids and must never leak into an exported image.
  */
+import { validAudioAnnotation, type AudioNoteAnnotation } from './audioAnnotations.ts';
+
 export type MeasurementPoint = { x: number; y: number };
 
 export type MeasurementAnnotation =
@@ -25,7 +27,8 @@ export type MeasurementAnnotation =
       angle: number;
     }
   | { id: string; kind: 'note'; x: number; y: number; text: string }
-  | { id: string; kind: 'count'; x: number; y: number; index: number };
+  | { id: string; kind: 'count'; x: number; y: number; index: number }
+  | AudioNoteAnnotation;
 
 const finite = (value: unknown, min: number, max: number): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
@@ -79,6 +82,7 @@ export function validMeasurements(
         item.text.length <= 500 &&
         safeNote(item.text)
       );
+    if (item.kind === 'audio') return validAudioAnnotation(item, w, h);
     if (item.kind === 'count')
       return (
         point(item, w, h) &&

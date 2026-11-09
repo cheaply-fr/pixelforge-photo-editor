@@ -108,6 +108,7 @@ export const TOOL_SIDEBAR = {
   'color-sampler': NONE,
   ruler: NONE,
   note: NONE,
+  'audio-note': PAINT,
   count: NONE,
   fill: NONE,
   gradient: PAINT,

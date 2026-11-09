@@ -419,6 +419,82 @@ section.layers-panel .layer-properties>.layer-field:first-child{grid-column:1/-1
   .inspector[data-sheet-open="false"]::after{display:none}
   .sidebar-panel-tab{min-height:36px}
 }
+/* Tool presets (docs/tool-presets-contract.md) */
+.tool-presets-panel{padding:10px 15px}
+.tool-presets-trigger{width:100%;min-height:40px;display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid #34363e;border-radius:8px;background:#202228;color:#d4d5d8;text-align:left;cursor:pointer}
+.tool-presets-trigger:hover{border-color:#564037}
+.tool-presets-trigger:focus-visible,.tool-presets-apply:focus-visible,.tool-presets-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tool-presets-trigger>svg{width:14px;flex:none;color:#8f929b}
+.tool-presets-trigger .tool-presets-chevron{margin-left:auto;transition:transform .15s ease}
+.tool-presets-trigger[aria-expanded="true"] .tool-presets-chevron{transform:rotate(180deg)}
+.tool-presets-trigger-text{display:grid;gap:2px;min-width:0}
+.tool-presets-trigger-text b{font-size:11px;font-weight:730}
+.tool-presets-trigger-text small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9299a6;font-size:10px}
+.tool-presets-modified{flex:none;padding:2px 6px;border:1px solid #6d4a20;border-radius:999px;background:#2b2216;color:#ffc074;font-size:9px;font-weight:650}
+.tool-presets-popover{display:grid;gap:8px;margin-top:8px;padding:8px;border:1px solid #30343d;border-radius:8px;background:#1c1f25}
+.tool-presets-filters{display:flex;align-items:center;gap:8px;min-width:0}
+.tool-presets-filters .text-input{flex:1;min-width:0;min-height:32px}
+.tool-presets-filters .check-row{flex:none;display:flex;align-items:center;gap:5px;font-size:10px;color:#c4cad4}
+.tool-presets-list{display:grid;gap:4px;max-height:min(40vh,260px);overflow:auto;margin:0;padding:0;list-style:none}
+.tool-presets-list li{min-width:0;border-radius:7px}
+.tool-presets-list li[data-dragging]{opacity:.5}
+.tool-presets-apply{width:100%;min-height:40px;display:grid;gap:2px;padding:6px 9px;border:1px solid #343943;border-radius:7px;background:#1b1e24;color:#e5e7ec;text-align:left;cursor:pointer}
+.tool-presets-list li[data-selected] .tool-presets-apply{border-color:#5f6a7a;background:#232833}
+.tool-presets-apply[aria-current="true"]{border-color:var(--accent);background:#2a2526}
+.tool-presets-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:650}
+.tool-presets-apply small{color:#9299a6;font-size:9px}
+.tool-presets-rename{display:flex;flex-wrap:wrap;gap:6px}
+.tool-presets-rename .text-input{flex:1 1 140px;min-width:0;min-height:32px}
+.tool-presets-rename button{min-height:32px;font-size:11px}
+.tool-presets-actions{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+.tool-presets-actions button{min-height:36px;display:grid;place-items:center;padding:0;border:1px solid #3c414c;border-radius:6px;background:#242831;color:#cbd1dc}
+.tool-presets-actions button svg{width:15px}
+.tool-presets-actions button:disabled{opacity:.35;cursor:default}
+.tool-presets-save{display:grid;gap:6px;padding-top:6px;border-top:1px solid #2b2e35}
+.tool-presets-save .layer-field{display:grid;gap:4px;font-size:10px;color:#c4cad4}
+.tool-presets-save .text-input{min-height:32px}
+.tool-presets-includes{display:flex;flex-wrap:wrap;gap:6px 14px}
+.tool-presets-includes .check-row{display:flex;align-items:center;gap:5px;font-size:10px;color:#c4cad4}
+.tool-presets-save>button,.tool-presets-footer button{min-height:34px;font-size:11px}
+.tool-presets-footer{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.tool-presets-footer button{display:flex;align-items:center;justify-content:center;gap:5px}
+.tool-presets-footer button svg{width:13px}
+.tool-presets-empty,.tool-presets-note{margin:0;color:#9299a6;font-size:10px;line-height:1.4}
+@media(max-width:680px){.tool-presets-panel{grid-column:1/-1}.tool-presets-actions button,.tool-presets-apply,.tool-presets-footer button{min-height:44px}}
+.tool-presets-popover .check-row{margin-top:0}
+.tool-presets-popover{min-width:0;margin:8px 0 0}
+/* Audio Annotation (docs/audio-annotation-contract.md): workspace-only DOM, never exported. */
+.canvas-wrap .audio-annotation-layer{position:absolute;inset:0;pointer-events:none}
+.audio-annotation-marker{position:absolute;width:30px;height:30px;margin:-15px 0 0 -15px;padding:0;display:grid;place-items:center;border:2px solid #fff;border-radius:50% 50% 50% 4px;background:#7c4dff;color:#fff;box-shadow:0 2px 8px #000a;pointer-events:none;touch-action:none;cursor:pointer}
+.audio-annotation-marker svg{width:16px;height:16px}
+.audio-annotation-layer[data-interactive="true"] .audio-annotation-marker{pointer-events:auto}
+.audio-annotation-layer[data-interactive="true"] .audio-annotation-pending{pointer-events:none}
+.audio-annotation-marker[data-playing="true"]{background:#ff5c35}
+.audio-annotation-marker:focus-visible{outline:3px solid var(--focus-ring,#8ee6ff);outline-offset:2px}
+.audio-annotation-pending{background:#2b2e36;border-style:dashed;opacity:.9}
+.audio-annotation-player{display:none}
+.audio-note-panel{position:absolute;z-index:6;top:10px;left:50%;transform:translateX(-50%);width:min(340px,calc(100% - 20px));padding:10px 12px;border:1px solid #3a3d46;border-radius:11px;background:#1c1e23f5;color:#dfe1e5;box-shadow:0 14px 36px #000a;backdrop-filter:blur(14px)}
+.audio-note-panel-head{display:flex;align-items:center;gap:7px}.audio-note-panel-head>svg{width:15px;color:#b49cff}
+.audio-note-panel h3{flex:1;margin:0;font-size:12px;font-weight:730}
+.audio-note-close{width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:7px;background:transparent;color:#9aa0aa}.audio-note-close:hover{background:#2b2e36;color:#fff}.audio-note-close svg{width:14px}
+.audio-note-hint{margin:6px 0 8px;color:#9aa0aa;font-size:9px;line-height:1.4}
+.audio-note-actions{display:flex;flex-wrap:wrap;gap:6px}
+.audio-note-actions button{min-height:34px;display:flex;align-items:center;gap:6px;padding:0 11px;border:1px solid #3a3d46;border-radius:8px;background:#22242a;color:#e1e4ea;font-size:10px;font-weight:650}
+.audio-note-actions button:hover:not(:disabled){border-color:var(--accent)}.audio-note-actions button:disabled{opacity:.45}
+.audio-note-actions button svg{width:14px}
+.audio-note-actions .audio-note-record{border-color:var(--accent);background:var(--accent);color:#17181d}
+.audio-note-actions .audio-note-stop{border-color:#ff8b70;color:#ffae97}
+.audio-note-status{min-height:12px;margin:7px 0 0;color:#b8bcc5;font-size:9px}
+.audio-note-error{margin:5px 0 0;color:#ffae97;font-size:9px;line-height:1.4}
+.audio-note-options .audio-note-hint{margin-top:0}
+.audio-note-list{display:grid;gap:5px;margin:0;padding:0;list-style:none}
+.audio-note-list li{display:flex;align-items:center;gap:7px;min-height:34px;padding:3px 5px;border:1px solid #30333a;border-radius:7px;background:#202228;font-size:10px}
+.audio-note-list button{width:30px;height:30px;flex:none;display:grid;place-items:center;border:1px solid #30333a;border-radius:7px;background:#17181d;color:#c9ccd3}.audio-note-list button:hover{border-color:var(--accent);color:#fff}.audio-note-list button svg{width:13px}
+.audio-note-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.audio-note-length{color:#8f939c;font-variant-numeric:tabular-nums}
+.audio-note-empty{margin:0;color:#7d818b;font-size:9px}
+dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
+.audio-note-status{display:block}
 /* Custom Shape tool library picker (docs/shape-tools-contract.md). */
 .custom-shape-picker{min-width:0;margin:10px 0 0;padding:0;border:0}.custom-shape-picker legend{margin-bottom:6px;padding:0;color:#93969e;font-size:9px}
 .custom-shape-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:5px}
@@ -457,3 +533,5 @@ section.layers-panel .layer-properties>.layer-field:first-child{grid-column:1/-1
 }
 /* Tool labels are controls, not text: a drag across the rail must not select them. */
 .toolbar,.tool-flyout{-webkit-user-select:none;user-select:none}
+/* Contain visually hidden text (sr-only, curve hints) inside its scroll panel, so it cannot stretch the page and let the editor shift. */
+.inspector,.curve-editor{position:relative}

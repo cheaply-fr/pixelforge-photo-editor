@@ -167,6 +167,34 @@ import {
   writeStoredBrushPresets,
 } from '../src/brushPresetLibrary';
 import { BrushPresetLibraryControls } from '../src/BrushPresetLibraryControls';
+import { ToolPresetsControl } from '../src/ToolPresetsControl';
+import {
+  addToolPreset,
+  allToolDefaultSettings,
+  createToolPreset,
+  deleteToolPreset,
+  duplicateToolPreset,
+  exportToolPresets,
+  isPresetTool,
+  mergeImportedToolPresets,
+  moveToolPreset,
+  moveToolPresetTo,
+  parseToolPresetImport,
+  PRESET_TOOL_LABELS,
+  readStoredToolPresets,
+  renameToolPreset,
+  resolveToolPresetSettings,
+  toolDefaultSettings,
+  toolPresetMatches,
+  TOOL_PRESET_IMPORT_MAX_BYTES,
+  updateToolPreset,
+  writeStoredToolPresets,
+  type PresetTool,
+  type ToolPreset,
+  type ToolPresetInclude,
+  type ToolSettingKey,
+  type ToolSettingValues,
+} from '../src/toolPresets';
 import {
   createCustomPatternPreset,
   normalizeCustomPatternPresets,
@@ -862,6 +890,23 @@ import {
   type MeasurementPoint,
 } from '../src/measurements';
 import {
+  audioAnnotations,
+  audioClipBytes,
+  moveAudioAnnotation,
+  newAudioClipId,
+  nextAudioNoteLabel,
+  referencedAudioClips,
+  removeAudioAnnotation,
+  type AudioClip,
+  type AudioNoteAnnotation,
+} from '../src/audioAnnotations';
+import {
+  AudioAnnotationList,
+  AudioAnnotationMarkers,
+  AudioRecordPanel,
+  useAudioAnnotationPlayer,
+} from '../src/audioAnnotationPanel';
+import {
   cycleScreenMode,
   normalizeScreenMode,
   screenModeClass,
@@ -1211,6 +1256,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'color-sampler', label: 'Color Sampler', icon: toolIcon('color-sampler'), key: 'I' },
   { id: 'ruler', label: 'Ruler', icon: toolIcon('ruler'), key: 'I' },
   { id: 'note', label: 'Note', icon: toolIcon('note'), key: 'I' },
+  { id: 'audio-note', label: 'Audio Annotation', icon: toolIcon('audio-note'), key: 'I' },
   { id: 'count', label: 'Count', icon: toolIcon('count'), key: 'I' },
   { id: 'fill', label: 'Fill', icon: toolIcon('fill'), key: 'G' },
   { id: 'gradient', label: 'Gradient', icon: toolIcon('gradient'), key: 'G' },
@@ -1371,7 +1417,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   m: MARQUEE_TOOLS,
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
+  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
   w: ['selection-brush', 'quick-selection', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
@@ -3098,6 +3144,8 @@ export default function Home() {
     {
       canvas,
       assets,
+      audio: audioClips,
+      addAudioClip,
       history,
       index,
       frame,
@@ -3171,6 +3219,8 @@ export default function Home() {
     // Saved brush presets start from this device's library (localStorage).
     [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>(() => readStoredBrushPresets(browserPresetStorage())),
     [selectedBrushLibraryId, setSelectedBrushLibraryId] = useState(''),
+    [toolPresets, setToolPresets] = useState<ToolPreset[]>(() => readStoredToolPresets(browserPresetStorage())),
+    [appliedToolPresets, setAppliedToolPresets] = useState<Partial<Record<PresetTool, string>>>({}),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
@@ -3374,8 +3424,12 @@ export default function Home() {
   const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
     revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
+  /** Where a new audio annotation will be pinned while its panel is open. */
+  const [audioDraft, setAudioDraft] = useState<MeasurementPoint | null>(null);
   const setTool = useCallback((next: Tool) => {
     setActiveTool(next);
+    // Any tool switch closes a pending Audio Annotation panel.
+    setAudioDraft(null);
     if (next === 'smudge' || next === 'blur' || next === 'sharpen')
       lastRFamilyTool.current = next;
     const family = flyoutForTool(next);
@@ -3551,6 +3605,7 @@ export default function Home() {
     // Storage failures are reported as false and never block editing.
     writeStoredBrushPresets(browserPresetStorage(), customBrushPresets);
   }, [customBrushPresets]);
+
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -4250,6 +4305,7 @@ export default function Home() {
       version: 2,
       history: history.current,
       assets: assets.current,
+      audio: audioClips.current,
       index: index.current,
       name,
       metadata: { ...metadata },
@@ -4266,6 +4322,7 @@ export default function Home() {
         version: 2,
         history: history.current,
         assets: assets.current,
+        audio: audioClips.current,
         index: index.current,
         name,
         metadata: { ...metadata },
@@ -5238,6 +5295,45 @@ export default function Home() {
       return true;
     return false;
   };
+  // Audio Annotation (docs/audio-annotation-contract.md): markers are frame
+  // measurements (undoable, never rendered); clips are draft-level.
+  const audioPlayer = useAudioAnnotationPlayer(setNotice);
+  const commitAudioAnnotation = (clip: AudioClip, label: string) => {
+    const at = audioDraft;
+    if (!at) return;
+    const clipId = newAudioClipId();
+    addAudioClip(clipId, clip);
+    if (
+      appendMeasurement({
+        id: newMeasurementId(),
+        kind: 'audio',
+        x: at.x,
+        y: at.y,
+        clip: clipId,
+        durationMs: clip.durationMs,
+        label,
+      })
+    ) {
+      setAudioDraft(null);
+      setNotice(`${label} added to the draft`);
+    }
+  };
+  const updateAudioAnnotations = (next: MeasurementAnnotation[] | undefined, message: string) => {
+    if (next && commit({ ...current(), measurements: next })) setNotice(message);
+  };
+  const moveAudioNote = (item: AudioNoteAnnotation, to: MeasurementPoint) => {
+    const f = current();
+    updateAudioAnnotations(
+      moveAudioAnnotation(f.measurements || [], item.id, to.x, to.y, f.w, f.h),
+      `${item.label} moved`,
+    );
+  };
+  const deleteAudioNote = (item: AudioNoteAnnotation) => {
+    if (audioPlayer.playing === item.id) audioPlayer.stop();
+    updateAudioAnnotations(removeAudioAnnotation(current().measurements || [], item.id), `${item.label} deleted`);
+  };
+  const toggleAudioNote = (item: AudioNoteAnnotation) =>
+    audioPlayer.toggle(item.id, audioClips.current[item.clip]);
   const transformSelectionValue = selectionTransforming
     ? current().selection
     : undefined;
@@ -8199,6 +8295,7 @@ export default function Home() {
       cloud,
       history: history.current.slice(),
       assets: { ...assets.current },
+      audio: audioClips.current,
       index: index.current,
       name,
       settings: {
@@ -8327,6 +8424,7 @@ export default function Home() {
   }, [
     ready,
     revision,
+    audioClips,
     draftId,
     cloud,
     name,
@@ -8483,7 +8581,11 @@ export default function Home() {
       );
       setCloud({ ...result, owner: member.id });
       setCloudMessage(
-        'Cloud copy saved. Choose Update cloud project after further edits.',
+        `Cloud copy saved.${
+          audioAnnotations(current()).length
+            ? ' Audio annotations stay on this device and were not uploaded.'
+            : ''
+        } Choose Update cloud project after further edits.`,
       );
     } catch (error) {
       if (error instanceof CloudConflictError) setCloudConflict(error);
@@ -12340,6 +12442,11 @@ export default function Home() {
         )
           setNotice('Note added to the draft');
       } else setNotice('Note cancelled');
+      return;
+    }
+    if (tool === 'audio-note') {
+      setAudioDraft({ x: p.x, y: p.y });
+      setNotice('Record or attach audio for this annotation');
       return;
     }
     if (tool === 'count') {
@@ -17003,6 +17110,130 @@ export default function Home() {
     closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
   };
+  // Tool presets (docs/tool-presets-contract.md). Settings only: applying a
+  // preset or resetting options never changes the document or its history.
+  const toolSettingValues: ToolSettingValues = {
+    color, backgroundColor, size, hardness, brushOpacity, brushBlendMode, brushPreset,
+    spacing: brushSpacing, brushSmoothing, brushScatter, brushDynamics, brushTexture, brushDual,
+    brushBristle, brushWetEdges, brushBuildUp, brushFlow, angle: brushAngle, roundness: brushRoundness,
+    flipX: brushFlipX, flipY: brushFlipY, pressureSize, pressureOpacity, pressureCurve,
+    secondaryBrushPreset, paintSymmetry, patternId, patternTileSize, redEyeThreshold, redEyeAmount,
+    colorTolerance, tonalExposure, tonalRange, spongeMode, spongeVibrance, mixerBrush, historyBrush,
+    artHistoryBrush, gradientMode, gradientEnd, gradientMidpoint, gradientMidpointPosition,
+    gradientReverse, gradientDither, gradientNoise, gradientBlend, gradientOpacity, gradientStops,
+    polygonVariant, polygonSides, polygonInnerRadius, text, fontFamily, fontSize, fontPreviewSize,
+    selectionOperation,
+  };
+  const toolSettingSetters: { [K in ToolSettingKey]: (value: ToolSettingValues[K]) => void } = {
+    color: setColor, backgroundColor: setBackgroundColor, size: (value) => setSize(clampBrushSize(value)),
+    hardness: setHardness, brushOpacity: setBrushOpacity, brushBlendMode: setBrushBlendMode,
+    brushPreset: setBrushPreset, spacing: setBrushSpacing, brushSmoothing: setBrushSmoothing,
+    brushScatter: setBrushScatter, brushDynamics: setBrushDynamics, brushTexture: setBrushTexture,
+    brushDual: setBrushDual, brushBristle: setBrushBristle, brushWetEdges: setBrushWetEdges,
+    brushBuildUp: setBrushBuildUp, brushFlow: setBrushFlow, angle: setBrushAngle,
+    roundness: setBrushRoundness, flipX: setBrushFlipX, flipY: setBrushFlipY,
+    pressureSize: setPressureSize, pressureOpacity: setPressureOpacity, pressureCurve: setPressureCurve,
+    secondaryBrushPreset: setSecondaryBrushPreset, paintSymmetry: setPaintSymmetry, patternId: setPatternId,
+    patternTileSize: setPatternTileSize, redEyeThreshold: setRedEyeThreshold, redEyeAmount: setRedEyeAmount,
+    colorTolerance: setColorTolerance, tonalExposure: setTonalExposure, tonalRange: setTonalRange,
+    spongeMode: setSpongeMode, spongeVibrance: setSpongeVibrance, mixerBrush: setMixerBrush,
+    historyBrush: setHistoryBrush, artHistoryBrush: setArtHistoryBrush, gradientMode: setGradientMode,
+    gradientEnd: setGradientEnd, gradientMidpoint: setGradientMidpoint,
+    gradientMidpointPosition: setGradientMidpointPosition, gradientReverse: setGradientReverse,
+    gradientDither: setGradientDither, gradientNoise: setGradientNoise, gradientBlend: setGradientBlend,
+    gradientOpacity: setGradientOpacity, gradientStops: setGradientStops, polygonVariant: setPolygonVariant,
+    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius, text: setText,
+    fontFamily: setFontFamily, fontSize: setFontSize, fontPreviewSize: setFontPreviewSize,
+    selectionOperation: setSelectionOperation,
+  };
+  const applyToolSettingValues = (values: Partial<ToolSettingValues>) => {
+    for (const key of Object.keys(values) as ToolSettingKey[]) {
+      const value = values[key];
+      if (value !== undefined) (toolSettingSetters[key] as (next: unknown) => void)(value);
+    }
+  };
+  const presetTool = isPresetTool(tool) ? tool : undefined;
+  const appliedToolPreset = presetTool
+    ? toolPresets.find((preset) => preset.id === appliedToolPresets[presetTool])
+    : undefined;
+  const appliedToolPresetModified = appliedToolPreset ? !toolPresetMatches(appliedToolPreset, toolSettingValues) : false;
+  const applyToolPreset = (preset: ToolPreset) => {
+    if (preset.tool !== tool) selectToolbarTool(preset.tool, PRESET_TOOL_LABELS[preset.tool]);
+    applyToolSettingValues(resolveToolPresetSettings(preset));
+    setAppliedToolPresets((current) => ({ ...current, [preset.tool]: preset.id }));
+    setNotice(`Tool preset “${preset.label}” applied to ${PRESET_TOOL_LABELS[preset.tool]}`);
+  };
+  /** Update the library and persist it; storage failures are reported, never fatal. */
+  const commitToolPresets = (next: ToolPreset[], message: string) => {
+    setToolPresets(next);
+    setNotice(
+      writeStoredToolPresets(browserPresetStorage(), next)
+        ? message
+        : `${message} (not stored: device storage is unavailable or full)`,
+    );
+  };
+  const saveToolPreset = (label: string, include: ToolPresetInclude) => {
+    if (!presetTool) return;
+    try {
+      const preset = createToolPreset(crypto.randomUUID(), label, presetTool, toolSettingValues, include);
+      commitToolPresets(addToolPreset(toolPresets, preset), `Tool preset “${preset.label}” saved on this device`);
+      setAppliedToolPresets((current) => ({ ...current, [presetTool]: preset.id }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool preset could not be saved');
+    }
+  };
+  const runToolPresetEdit = (edit: () => ToolPreset[], message: string) => {
+    try {
+      commitToolPresets(edit(), message);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool preset could not be changed');
+    }
+  };
+  const toolPresetLabel = (id: string) => toolPresets.find((preset) => preset.id === id)?.label ?? 'preset';
+  const deleteToolPresetById = (id: string) => {
+    const label = toolPresetLabel(id);
+    if (!window.confirm(`Delete the tool preset “${label}” from this device?`)) return;
+    runToolPresetEdit(() => deleteToolPreset(toolPresets, id), `Tool preset “${label}” deleted`);
+  };
+  const updateToolPresetById = (id: string) => {
+    const preset = toolPresets.find((item) => item.id === id);
+    if (!preset || preset.tool !== tool) return;
+    runToolPresetEdit(() => updateToolPreset(toolPresets, id, toolSettingValues), `Tool preset “${preset.label}” updated from the current options`);
+    setAppliedToolPresets((current) => ({ ...current, [preset.tool]: preset.id }));
+  };
+  const exportToolPresetFile = () => {
+    downloadBlob(new Blob([exportToolPresets(toolPresets)], { type: 'application/json' }), 'pixelforge-tool-presets.json');
+    setNotice(`${toolPresets.length} tool preset${toolPresets.length === 1 ? '' : 's'} exported as pixelforge-tool-presets.json`);
+  };
+  const importToolPresetFile = async (file: File) => {
+    try {
+      if (file.size > TOOL_PRESET_IMPORT_MAX_BYTES) throw new Error('The tool preset file is too large (512 KB maximum)');
+      const { presets, rejected } = parseToolPresetImport(await file.text());
+      const merged = mergeImportedToolPresets(toolPresets, presets, () => crypto.randomUUID());
+      commitToolPresets(
+        merged.presets,
+        `Imported ${merged.added} tool preset${merged.added === 1 ? '' : 's'}` +
+          (rejected ? `; ${rejected} invalid skipped` : '') +
+          (merged.skipped ? `; ${merged.skipped} over the limit skipped` : ''),
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool presets could not be imported');
+    }
+  };
+  const resetCurrentTool = () => {
+    if (!presetTool) return;
+    const label = PRESET_TOOL_LABELS[presetTool];
+    if (!window.confirm(`Reset ${label} options to their defaults? Options shared with related tools reset too.`)) return;
+    applyToolSettingValues(toolDefaultSettings(presetTool));
+    setAppliedToolPresets((current) => ({ ...current, [presetTool]: undefined }));
+    setNotice(`${label} options reset to defaults`);
+  };
+  const resetAllTools = () => {
+    if (!window.confirm('Reset the options of every tool to their defaults? Saved presets and colours are kept.')) return;
+    applyToolSettingValues(allToolDefaultSettings());
+    setAppliedToolPresets({});
+    setNotice('All tool options reset to defaults');
+  };
   const beginToolHold = (id: Tool, button: HTMLButtonElement) => {
     stopToolHold();
     toolHoldOpened.current = false;
@@ -18280,6 +18511,19 @@ export default function Home() {
               <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
             </fieldset>
           ) : null}
+          {audioPlayer.element}
+          {tool === 'audio-note' && audioDraft && frame && (
+            <AudioRecordPanel
+              key={`${audioDraft.x},${audioDraft.y}`}
+              existing={referencedAudioClips(history.current, audioClips.current)}
+              defaultLabel={nextAudioNoteLabel(frame.measurements)}
+              onCommit={commitAudioAnnotation}
+              onCancel={() => {
+                setAudioDraft(null);
+                setNotice('Audio annotation cancelled');
+              }}
+            />
+          )}
           <div
             className="canvas-wrap"
             data-testid="canvas-wrap"
@@ -18305,6 +18549,19 @@ export default function Home() {
               onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
+            {frame && (
+              <AudioAnnotationMarkers
+                frame={frame}
+                items={audioAnnotations(frame)}
+                pending={tool === 'audio-note' ? audioDraft : null}
+                interactive={tool === 'audio-note'}
+                playing={audioPlayer.playing}
+                toFrame={point}
+                onToggle={toggleAudioNote}
+                onMove={moveAudioNote}
+                onDelete={deleteAudioNote}
+              />
+            )}
             {frame && cloneSource && (tool === 'clone' || tool === 'heal')
               ? (() => {
                   // The source is stored in the layer placement it was picked
@@ -18474,6 +18731,8 @@ export default function Home() {
                       </g>
                     );
                   }
+                  // Audio markers are interactive HTML (AudioAnnotationMarkers).
+                  if (item.kind === 'audio') return null;
                   if (item.kind === 'note')
                     return (
                       <g key={item.id} className="measurement-note">
@@ -18825,6 +19084,38 @@ export default function Home() {
             data-testid="tool-options-area"
             tabIndex={-1}
           >
+            {/* Tool presets (#233) sit above the active tool's options. */}
+            {presetTool && (
+              <ToolPresetsControl
+                tool={presetTool}
+                presets={toolPresets}
+                appliedId={appliedToolPreset?.id}
+                modified={appliedToolPresetModified}
+                onApply={applyToolPreset}
+                onSave={saveToolPreset}
+                onRename={(id, label) =>
+                  runToolPresetEdit(() => renameToolPreset(toolPresets, id, label), `Tool preset renamed to “${label.trim().slice(0, 80)}”`)
+                }
+                onDuplicate={(id) =>
+                  runToolPresetEdit(() => duplicateToolPreset(toolPresets, id, crypto.randomUUID()), `Tool preset “${toolPresetLabel(id)}” duplicated`)
+                }
+                onDelete={deleteToolPresetById}
+                onUpdate={updateToolPresetById}
+                onMove={(id, direction, visibleIds) =>
+                  commitToolPresets(moveToolPreset(toolPresets, id, direction, visibleIds), `Tool preset “${toolPresetLabel(id)}” moved`)
+                }
+                onMoveTo={(id, targetId) =>
+                  commitToolPresets(
+                    moveToolPresetTo(toolPresets, id, toolPresets.findIndex((preset) => preset.id === targetId)),
+                    `Tool preset “${toolPresetLabel(id)}” moved`,
+                  )
+                }
+                onExport={exportToolPresetFile}
+                onImport={(file) => void importToolPresetFile(file)}
+                onResetTool={resetCurrentTool}
+                onResetAll={resetAllTools}
+              />
+            )}
             {activeToolSidebar.sections.map((section) => (
               <Fragment key={section}>
           {section === 'rotate-view' && (
@@ -18866,6 +19157,15 @@ export default function Home() {
               collapsed={collapsedSections.has('tool-options')}
               onToggle={toggleSidebarSection}
             >
+              {tool === 'audio-note' && (
+                <AudioAnnotationList
+                  items={audioAnnotations(frame)}
+                  usedBytes={audioClipBytes(referencedAudioClips(history.current, audioClips.current))}
+                  playing={audioPlayer.playing}
+                  onToggle={toggleAudioNote}
+                  onDelete={deleteAudioNote}
+                />
+              )}
               {tool === 'gradient' && (
                 <label className="select-row">
                   <span>Gradient type</span>

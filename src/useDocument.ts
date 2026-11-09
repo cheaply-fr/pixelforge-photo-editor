@@ -13,6 +13,7 @@ import { sanitizeClippingRelations } from './layerClipping';
 import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
 import { sharedFontLoader } from './fontLoader';
 import type { Draft } from './drafts';
+import { referencedAudioClips, type AudioClip, type AudioClips } from './audioAnnotations';
 import { beginPerformanceSpan } from './performanceMarks';
 import { presentCanvasImage } from './canvasPresentation';
 import {
@@ -74,6 +75,8 @@ function markGesturePreview(
 export function useDocument(onError: (message: string) => void) {
   const canvas = useRef<HTMLCanvasElement>(null),
     assets = useRef<Assets>({}),
+    // Audio Annotation clips (draft-level, like assets; see audioAnnotations.ts).
+    audio = useRef<AudioClips>({}),
     history = useRef<Frame[]>([]),
     index = useRef(-1);
   const [frame, setFrame] = useState<Frame | null>(null),
@@ -277,6 +280,10 @@ export function useDocument(onError: (message: string) => void) {
     },
     [publish, onError, paint, historyBudget],
   );
+  /** Add a recorded/attached clip, dropping clips no history frame references. */
+  const addAudioClip = useCallback((id: string, clip: AudioClip) => {
+    audio.current = { ...referencedAudioClips(history.current, audio.current), [id]: clip };
+  }, []);
   const install = useCallback(async (draft: Draft) => {
     const expected = history.current[index.current];
     previewScheduler.current?.cancel();
@@ -360,6 +367,7 @@ export function useDocument(onError: (message: string) => void) {
         if (history.current[index.current] !== expected)
           throw new Error('Document changed during import. Please try again.');
         assets.current = draft.assets;
+        audio.current = draft.audio || {};
         history.current = draft.history;
         index.current = draft.index;
         const installed = draft.history[draft.index];
@@ -496,6 +504,8 @@ export function useDocument(onError: (message: string) => void) {
   return {
     canvas,
     assets,
+    audio,
+    addAudioClip,
     history,
     index,
     frame,

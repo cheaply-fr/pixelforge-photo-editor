@@ -114,6 +114,9 @@ export const TOOL_SECTIONS = {
   'color-sampler': null,
   ruler: null,
   note: null,
+  // Recording/attach happen in the on-canvas panel; the sidebar lists the
+  // document's audio annotations with keyboard play/pause and delete.
+  'audio-note': 'tool-options',
   count: null,
   fill: null,
   gradient: 'tool-options',
