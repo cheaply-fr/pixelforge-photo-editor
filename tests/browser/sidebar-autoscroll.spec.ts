@@ -23,7 +23,7 @@ const TOOL_LABELS: Record<Tool, string> = {
   dodge: 'Dodge', burn: 'Burn', sponge: 'Sponge', smudge: 'Smudge', blur: 'Blur', sharpen: 'Sharpen',
   pen: 'Pen', 'freeform-pen': 'Freeform Pen', 'curvature-pen': 'Curvature Pen',
   'add-anchor': 'Add Anchor Point', 'delete-anchor': 'Delete Anchor Point', 'convert-point': 'Convert Point',
-  'path-select': 'Path Selection', 'direct-select': 'Direct Selection', text: 'Text', rectangle: 'Shape', ellipse: 'Ellipse',
+  'path-select': 'Path Selection', 'direct-select': 'Direct Selection', text: 'Horizontal Type', 'vertical-text': 'Vertical Type', 'text-mask': 'Horizontal Type Mask', 'vertical-text-mask': 'Vertical Type Mask', rectangle: 'Shape', ellipse: 'Ellipse',
   line: 'Line', polygon: 'Polygon', 'rounded-rectangle': 'Rounded Rectangle', 'custom-shape': 'Custom Shape', select: 'Select', 'ellipse-select': 'Elliptical marquee',
   'row-select': 'Single Row marquee', 'column-select': 'Single Column marquee', lasso: 'Lasso',
   'polygonal-lasso': 'Polygonal Lasso', 'magnetic-lasso': 'Magnetic Lasso',
@@ -354,7 +354,7 @@ test('rapid successive tool clicks: only the last one wins', async ({ page }) =>
   await enableMotion(page);
   await scrollSidebarTo(page, 'bottom');
   const before = (await revealState(page)).sequence;
-  for (const label of ['Brush', 'Rotate View', 'Text', 'Move', 'Lasso'])
+  for (const label of ['Brush', 'Rotate View', 'Horizontal Type', 'Move', 'Lasso'])
     await toolButton(page, label).click();
   const state = await settledReveal(page, before);
   expect(state.sequence - before).toBe(5);
@@ -577,7 +577,7 @@ test('sticky headers and scroll-padding offset the landing position', async ({ p
   });
   await scrollSidebarTo(page, 'bottom');
   before = (await revealState(page)).sequence;
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await settledReveal(page, before);
   expectHeaderAligned(await sectionBox(page, 'text'), 52);
 });

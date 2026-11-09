@@ -274,7 +274,7 @@ test('tool presets are keyboard operable and fit the layout', async ({ page }) =
 test('tools without options show no presets control', async ({ page }) => {
   await selectTool(page, 'Eyedropper');
   await expect(presetsPanel(page)).toHaveCount(0);
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await expect(status(page)).toContainText('Text · No preset applied');
   await selectTool(page, 'Select');
   await expect(status(page)).toContainText('Select · No preset applied');

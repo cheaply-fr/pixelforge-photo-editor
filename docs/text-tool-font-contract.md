@@ -14,6 +14,11 @@ Text tool. Browser rendering still depends on the local platform's installed
 font fallback; full OpenType shaping, licensed font providers and missing-font
 substitution diagnostics remain separate roadmap work.
 
+The Type tool's on-canvas editing, character runs and the font-loading
+interface (family strings, `document.fonts` waits and re-layout) are defined
+in [`type-tool-contract.md`](./type-tool-contract.md). Character-run families
+are not limited to this allow-list, so a font library can provide more.
+
 Pure persistence/validation coverage is in
 `tests/persistence-contract.test.mjs`. Desktop and mobile acceptance covers
 the Text tool selection, new-layer font assignment and reload persistence in

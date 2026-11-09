@@ -20,6 +20,7 @@ const TOOL_FAMILIES = [
   ['Mask Brush', 'Mask Eraser', 'Adjustment Brush'],
   ['Pen', 'Freeform Pen', 'Curvature Pen', 'Add Anchor Point', 'Delete Anchor Point', 'Convert Point'],
   ['Path Selection', 'Direct Selection'],
+  ['Horizontal Type', 'Vertical Type', 'Horizontal Type Mask', 'Vertical Type Mask'],
 ] as const;
 
 const FLYOUT_LABELS: Readonly<Record<string, string>> = {

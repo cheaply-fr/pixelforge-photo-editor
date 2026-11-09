@@ -142,6 +142,9 @@ export const TOOL_SIDEBAR = {
   blur: PAINT,
   sharpen: PAINT,
   text: { sections: ['text'], panel: null },
+  'vertical-text': { sections: ['text'], panel: null },
+  'text-mask': { sections: ['text'], panel: null },
+  'vertical-text-mask': { sections: ['text'], panel: null },
   pen: PAINT,
   'freeform-pen': PAINT,
   'curvature-pen': PAINT,
@@ -180,6 +183,19 @@ export function toolSidebar(tool: string): ToolSidebarSpec {
 /** True when the active tool's options area renders `section`. */
 export function toolAreaShows(tool: string, section: SidebarSectionId): boolean {
   return (toolSidebar(tool).sections as readonly SidebarSectionId[]).includes(section);
+}
+
+/**
+ * Sections the tool options area renders: the tool's own sections, plus the
+ * Text section (Type / Character / Paragraph panels, #244) whenever the
+ * selected layer is a text layer, whatever the tool.
+ */
+export function toolAreaSectionsFor(
+  tool: string,
+  context: { textLayerSelected?: boolean } = {},
+): readonly ToolAreaSectionId[] {
+  const sections = toolSidebar(tool).sections;
+  return context.textLayerSelected && !sections.includes('text') ? [...sections, 'text'] : sections;
 }
 
 export function isSidebarPanelId(value: unknown): value is SidebarPanelId {

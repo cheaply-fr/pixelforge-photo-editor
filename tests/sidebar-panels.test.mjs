@@ -16,6 +16,7 @@ import {
   sectionPlacement,
   serializeOpenPanels,
   togglePanel,
+  toolAreaSectionsFor,
   toolAreaShows,
   toolSidebar,
   withOpenPanel,
@@ -224,10 +225,21 @@ test('persistence round-trips and rejects malformed input', () => {
 });
 
 test('the page renders the tool area from the table and every panel in the strip', () => {
-  assert.match(pageSource, /activeToolSidebar\.sections\.map\(\(section\)/);
+  assert.match(pageSource, /toolAreaSectionsFor\(tool, \{ textLayerSelected: Boolean\(activeTypeLayer\) \}\)\.map\(\(section\)/);
   for (const section of TOOL_AREA_SECTIONS) assert.ok(pageSource.includes(`section === '${section}'`), section);
   for (const panel of SIDEBAR_PANEL_IDS)
     assert.ok(pageSource.includes(`openSidebarPanel === '${panel}'`), `${panel} has no panel body`);
   assert.ok(!pageSource.includes('toolShowsSection('), 'the page must not bypass the contextual table');
   for (const section of SIDEBAR_SECTION_IDS) assert.ok(SIDEBAR_SECTIONS[section]);
+});
+
+test('a selected text layer adds the Text section for any tool (#244)', () => {
+  assert.deepEqual(toolAreaSectionsFor('brush'), ['tool-options']);
+  assert.deepEqual(toolAreaSectionsFor('brush', { textLayerSelected: true }), ['tool-options', 'text']);
+  assert.deepEqual(toolAreaSectionsFor('move', { textLayerSelected: true }), ['layer-alignment', 'text']);
+  assert.deepEqual(toolAreaSectionsFor('hand', { textLayerSelected: true }), ['text']);
+  assert.deepEqual(toolAreaSectionsFor('text', { textLayerSelected: true }), ['text']);
+  assert.deepEqual(toolAreaSectionsFor('no-such-tool', { textLayerSelected: true }), ['text']);
+  for (const tool of ['vertical-text', 'text-mask', 'vertical-text-mask'])
+    assert.deepEqual(toolAreaSectionsFor(tool), ['text']);
 });

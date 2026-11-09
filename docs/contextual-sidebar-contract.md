@@ -81,6 +81,12 @@ Top to bottom:
   slice per instance (`part`: `layers`, `alignment`, `selection`, `details`,
   `styles`).
 
+The tool area renders `toolAreaSectionsFor(tool, { textLayerSelected })`:
+the tool's own sections plus the *Text* section (Type / Character /
+Paragraph panels, #244) whenever the selected layer is a text layer, with any
+tool, so `revealTextSectionFor` still scrolls to it. *Tool presets* (#233)
+render at the top of the tool area for tools that support presets.
+
 New tools or tool features slot in by adding/adjusting their `TOOL_SIDEBAR`
 entry and rendering their controls inside the matching section.
 

@@ -49,7 +49,7 @@ const PANEL_ONLY_CONTROLS = [
 test('each tool shows only its own options; other tools and large panels are absent', async ({ page }) => {
   const cases: Array<[string, string | null]> = [
     ['Brush', 'Brush'],
-    ['Text', 'Text'],
+    ['Horizontal Type', 'Text'],
     ['Gradient', 'Gradient'],
     ['Move', 'Move'],
     ['Crop', null],
@@ -92,7 +92,7 @@ test('the sidebar is bounded: tool options, Layers, the strip and at most one pa
   test.skip(testInfo.project.name !== 'desktop', 'desktop geometry');
   await page.setViewportSize({ width: 1280, height: 800 });
   const heights: Record<string, { scrollHeight: number; clientHeight: number }> = {};
-  for (const tool of ['Hand', 'Move', 'Select', 'Crop', 'Text', 'Gradient', 'Clone', 'Brush']) {
+  for (const tool of ['Hand', 'Move', 'Select', 'Crop', 'Horizontal Type', 'Gradient', 'Clone', 'Brush']) {
     await selectTool(page, tool);
     const geometry = await inspector(page).evaluate((element) => {
       const body = element.querySelector('.inspector-body')!;
@@ -141,12 +141,12 @@ test('the open panel is remembered per tool across a reload', async ({ page }) =
   await selectTool(page, 'Brush');
   await openPanel(page, 'Adjust selected layer');
   // A tool without its own choice keeps the panel the user last opened.
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await expect(openPanelBody(page, 'adjustments')).toBeVisible();
   await openPanel(page, 'Filters');
   await selectTool(page, 'Gradient');
   await closePanels(page);
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await expect(openPanelBody(page, 'filters')).toBeVisible();
   await selectTool(page, 'Gradient');
   await expect(page.locator('#sidebar-open-panel')).toHaveCount(0);
@@ -159,7 +159,7 @@ test('the open panel is remembered per tool across a reload', async ({ page }) =
   expect(JSON.parse(stored ?? '{}')).toMatchObject({ brush: 'adjustments', text: 'filters' });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await expect(openPanelBody(page, 'filters')).toBeVisible();
   await selectTool(page, 'Brush');
   await expect(openPanelBody(page, 'adjustments')).toBeVisible();
