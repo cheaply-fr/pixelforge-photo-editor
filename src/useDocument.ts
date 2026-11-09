@@ -14,6 +14,7 @@ import { clearLayerFilterCaches, renderFrameWithWorker } from './workerRender';
 import { sharedFontLoader } from './fontLoader';
 import type { Draft } from './drafts';
 import { beginPerformanceSpan } from './performanceMarks';
+import { presentCanvasImage } from './canvasPresentation';
 import {
   createPreviewScheduler,
   type PreviewRequest,
@@ -154,11 +155,9 @@ export function useDocument(onError: (message: string) => void) {
           if (sequence !== renderSequence.current) return;
           if (overrides) markGesturePreview(renderPath, firstCompleted, value.layers.length);
           const target = canvas.current;
-          if (target) {
-            target.width = value.w;
-            target.height = value.h;
-            target.getContext('2d')!.drawImage(image, 0, 0);
-          }
+          // Present the finished image in one synchronous step, resizing the
+          // backing store only when the document size changed.
+          if (target) presentCanvasImage(target, image, value.w, value.h);
         } finally {
           closeImageSource(image);
         }
@@ -363,10 +362,8 @@ export function useDocument(onError: (message: string) => void) {
         assets.current = draft.assets;
         history.current = draft.history;
         index.current = draft.index;
-        const target = canvas.current!;
-        target.width = draft.history[draft.index].w;
-        target.height = draft.history[draft.index].h;
-        target.getContext('2d')!.drawImage(image, 0, 0);
+        const installed = draft.history[draft.index];
+        presentCanvasImage(canvas.current!, image, installed.w, installed.h);
       } finally {
         closeImageSource(image);
       }
