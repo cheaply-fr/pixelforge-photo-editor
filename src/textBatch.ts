@@ -1,13 +1,14 @@
-import { FONTS, type Frame } from './document.ts';
+import { type Frame } from './document.ts';
+import { isSelectableFontFamily } from './fontLibrary.ts';
 
 export type TextBatchPatch = {
-  fontFamily?: (typeof FONTS)[number];
+  fontFamily?: string;
   fontSize?: number;
   bold?: boolean;
 };
 
 export function updateAllTextLayers(frame: Frame, patch: TextBatchPatch): { frame: Frame; updated: number } {
-  if (patch.fontFamily !== undefined && !FONTS.includes(patch.fontFamily)) throw new Error('Unsupported text font');
+  if (patch.fontFamily !== undefined && !isSelectableFontFamily(patch.fontFamily)) throw new Error('Unsupported text font');
   if (patch.fontSize !== undefined && (!Number.isFinite(patch.fontSize) || patch.fontSize < 1 || patch.fontSize > 1000)) throw new Error('Text size must be between 1 and 1000 pixels');
   if (patch.bold !== undefined && typeof patch.bold !== 'boolean') throw new Error('Bold must be a boolean');
   let updated = 0;

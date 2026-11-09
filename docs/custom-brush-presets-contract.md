@@ -56,3 +56,16 @@ Smoke wisp use Normal. Validation rejects unknown or non-native modes, so a
 dropped (device library) or fails draft validation, never applied. Evidence:
 `tests/brush-blend-mode.test.mjs` and
 `tests/browser/brush-blend-mode.spec.ts` on desktop and mobile.
+
+## Smudge presets (2026-11-09)
+
+Branch `feat/smudge-tool-options`. Smudge shows the same **Saved brush
+preset** library. A preset saved while Smudge is active also captures an
+optional `smudge` object (Strength, Mode, Finger Painting, Sample All Layers,
+Ignore Adjustments, pressure strength); choosing it restores those options and
+the shared tip (size, hardness, angle, roundness, scatter/count/jitter,
+bristle, texture). Built-ins and presets saved before this field existed carry
+no `smudge` and leave the Smudge options unchanged. Invalid `smudge` values
+fail validation (device library entries are dropped, drafts and projects are
+rejected). Evidence: `tests/smudge.test.mjs` and
+`tests/browser/smudge-options.spec.ts` on desktop and mobile.

@@ -1,5 +1,9 @@
 /* PixelForge's service worker keeps the static editor shell available after a successful online visit. */
 const CACHE_NAME = 'pixelforge-shell-v2';
+// Library fonts and their glyph metadata are cached on first use in their own
+// cache (URLs carry ?v=<asset version>), so shell cache bumps never evict them
+// and a font used once keeps working offline (docs/font-library-contract.md).
+const FONT_CACHE_NAME = 'pixelforge-fonts-v1';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/pixel-logo.svg', '/icons/pixelforge-192.png', '/icons/pixelforge-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -23,6 +27,21 @@ self.addEventListener('fetch', (event) => {
   // Health reads must reach the network; cache busting queries must not grow the shell cache.
   const path = new URL(request.url).pathname;
   if (path === '/release.json' || path === '/api/readyz.json') return;
+
+  if (path.startsWith('/fonts/')) {
+    event.respondWith(
+      caches.open(FONT_CACHE_NAME).then((cache) =>
+        cache.match(request).then((cached) => {
+          if (cached) return cached;
+          return fetch(request).then((response) => {
+            if (response.ok) void cache.put(request, response.clone());
+            return response;
+          });
+        }),
+      ),
+    );
+    return;
+  }
 
   if (request.mode === 'navigate') {
     // Always check the network first so a deploy can replace a cached HTML shell.

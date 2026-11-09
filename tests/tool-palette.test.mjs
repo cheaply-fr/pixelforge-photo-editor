@@ -31,7 +31,8 @@ test('categories and families resolve stable labels for common Photoshop groups'
   assert.equal(flyoutForTool('pen'), 'pen');
   assert.equal(flyoutForTool('blur'), 'retouch');
   assert.deepEqual(flyoutTools('retouch'), ['smudge', 'blur', 'sharpen']);
-  assert.deepEqual(flyoutTools('pen'), ['pen', 'freeform-pen', 'curvature-pen']);
+  assert.deepEqual(flyoutTools('pen'), ['pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point']);
+  assert.deepEqual(flyoutTools('direct-select'), ['path-select', 'direct-select']);
   assert.equal(flyoutForTool('selection-brush'), undefined);
   assert.equal(flyoutForTool('quick-selection'), 'selection');
   assert.deepEqual(familyTools('s'), ['clone', 'pattern-stamp']);
@@ -77,8 +78,14 @@ test('compact category slots show one family representative and active variant',
   const selection = TOOL_CATEGORIES.find((category) => category.id === 'selection');
   assert.deepEqual(compactCategoryTools(selection), ['selection-brush', 'quick-selection']);
   const draw = TOOL_CATEGORIES.find((category) => category.id === 'draw');
-  assert.deepEqual(compactCategoryTools(draw), ['pen', 'direct-select', 'text', 'rectangle']);
-  assert.deepEqual(compactCategoryTools(draw, 'curvature-pen'), ['curvature-pen', 'direct-select', 'text', 'rectangle']);
+  assert.deepEqual(compactCategoryTools(draw), ['pen', 'path-select', 'text', 'rectangle']);
+  assert.deepEqual(compactCategoryTools(draw, 'curvature-pen'), ['curvature-pen', 'path-select', 'text', 'rectangle']);
+  assert.deepEqual(compactCategoryTools(draw, 'direct-select'), ['pen', 'direct-select', 'text', 'rectangle']);
+  assert.deepEqual(compactCategoryTools(draw, 'convert-point'), ['convert-point', 'path-select', 'text', 'rectangle']);
+  assert.deepEqual(
+    compactCategoryTools(draw, 'move', { pen: 'delete-anchor', 'path-selection': 'direct-select' }),
+    ['delete-anchor', 'direct-select', 'text', 'rectangle'],
+  );
 });
 
 test('every active variant keeps one visible slot per family', () => {
@@ -98,4 +105,28 @@ test('every active variant keeps one visible slot per family', () => {
       );
     }
   }
+});
+
+test('path tools follow Photoshop A and P families and the Pen flyout order', () => {
+  assert.deepEqual(familyTools('a'), ['path-select', 'direct-select']);
+  assert.equal(cycleFamilyTool('move', 'a'), 'path-select');
+  assert.equal(cycleFamilyTool('path-select', 'a'), 'direct-select');
+  assert.equal(cycleFamilyTool('direct-select', 'a'), 'path-select');
+  assert.equal(cycleFamilyTool('path-select', 'a', true), 'direct-select');
+  // Add/Delete Anchor Point and Convert Point have no shortcut in Photoshop:
+  // they live in the Pen flyout but P keeps cycling the drawing pens only.
+  assert.deepEqual(familyTools('p'), ['pen', 'freeform-pen', 'curvature-pen']);
+  for (const tool of ['add-anchor', 'delete-anchor', 'convert-point']) {
+    assert.equal(familyForTool(tool), undefined, tool);
+    assert.equal(flyoutForTool(tool), 'pen', tool);
+    assert.equal(categoryForTool(tool), 'draw', tool);
+  }
+  assert.equal(cycleFamilyTool('curvature-pen', 'p'), 'pen');
+  assert.equal(flyoutForTool('path-select'), 'path-selection');
+  assert.equal(categoryForTool('path-select'), 'draw');
+  const draw = TOOL_CATEGORIES.find((category) => category.id === 'draw');
+  assert.deepEqual(draw.tools.slice(0, 8), [
+    'pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point',
+    'path-select', 'direct-select',
+  ]);
 });

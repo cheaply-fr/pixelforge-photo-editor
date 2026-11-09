@@ -43,6 +43,8 @@ const LEGACY_TOOL_OPTIONS_TOOLS = [
   'curvature-pen', 'direct-select',
   // Added deliberately: lists the document's audio annotations (play/delete).
   'audio-note',
+  // Path tools added after the registry; they share the Pen tool options.
+  'add-anchor', 'delete-anchor', 'convert-point', 'path-select',
 ];
 
 test('every palette tool has exactly one registry entry and nothing else is mapped', () => {

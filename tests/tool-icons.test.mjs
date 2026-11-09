@@ -101,6 +101,10 @@ test('selection, crop and paint tools keep icons distinct from each other', () =
     ['gradient', 'color-replace'],
     ['sponge', 'sharpen'],
     ['direct-select', 'move'],
+    ['path-select', 'move'],
+    ['path-select', 'direct-select'],
+    ['add-anchor', 'delete-anchor'],
+    ['convert-point', 'pen'],
   ];
   for (const [a, b] of pairs) assert.notEqual(drawing(a), drawing(b), `${a} vs ${b}`);
 });

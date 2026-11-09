@@ -15,9 +15,19 @@ export type ReadyInfo = {
 export type ReleaseHealth = 'online' | 'degraded' | 'offline';
 
 const APPLICATION = 'pixelforge-photo-editor' as const;
-/** Version baked into the editor shell so offline/local sessions still identify the app. */
-export const APP_VERSION = '0.1.0';
 const SAFE_TEXT = /^[a-zA-Z0-9._+-]{1,80}$/;
+
+declare const __PIXELFORGE_BUILD_VERSION__: string | undefined;
+/**
+ * Version of the running build, baked in by vite.config.ts from the same
+ * derivation as /release.json (scripts/release-version.mjs), so offline and
+ * local sessions still identify the app. Unbundled code (pure tests) has no
+ * baked version.
+ */
+export const APP_VERSION =
+  typeof __PIXELFORGE_BUILD_VERSION__ === 'string' && SAFE_TEXT.test(__PIXELFORGE_BUILD_VERSION__)
+    ? __PIXELFORGE_BUILD_VERSION__
+    : '0.0.0-dev';
 const COMMIT = /^[a-f0-9]{40}$/i;
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -79,8 +89,13 @@ export function releaseHealth(
   return 'online';
 }
 
-export function releaseLabel(release: ReleaseInfo | null): string {
-  return `v${release?.version ?? APP_VERSION}`;
+/**
+ * Top-bar version label. While a newer deploy is waiting for a reload the tab
+ * still runs its own build, so pass `null` to show the baked version; the
+ * update notice names the new one.
+ */
+export function releaseLabel(release: ReleaseInfo | null, fallback: string = APP_VERSION): string {
+  return `v${release?.version ?? fallback}`;
 }
 
 export function healthLabel(health: ReleaseHealth): string {

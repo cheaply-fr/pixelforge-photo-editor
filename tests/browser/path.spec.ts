@@ -167,6 +167,9 @@ test('Direct Selection A moves a path node with undo/redo and rejects locked pat
   await closeTriangle(page);
   const before = await project(page);
   const pathBefore = activePath(before);
+  // A follows Photoshop's family order: Path Selection, then Direct Selection.
+  await page.keyboard.press('a');
+  await expect(page.getByRole('button', { name: 'Path Selection tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('a');
   await expect(page.getByRole('button', { name: 'Direct Selection tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const start = await canvasPoint(page, 0.25, 0.25);

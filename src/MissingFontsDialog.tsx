@@ -1,28 +1,50 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { checkFontAvailability } from './fontAvailability';
+import { fontFamilyKind } from './fontLibrary';
+import { sharedFontLoader } from './fontLoader';
+import { useFontLoaderRevision } from './useFontLibrary';
 
 type Props = {
   families: readonly string[];
   close: () => void;
 };
 
+type Status = 'available' | 'fallback' | 'library-loaded' | 'library-on-demand' | 'missing';
+
+const LABELS: Record<Status, string> = {
+  available: 'Available',
+  fallback: 'Fallback active',
+  'library-loaded': 'Library font · loaded',
+  'library-on-demand': 'Library font · loads on demand',
+  missing: 'Missing · fallback active',
+};
+
 export default function MissingFontsDialog({ families, close }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const status = useMemo(() => {
+  // Re-render when a library family finishes loading.
+  useFontLoaderRevision();
+  const status = (() => {
     const check =
       typeof document !== 'undefined' && document.fonts
         ? (font: string) => document.fonts.check(font)
         : () => true;
+    const loader = sharedFontLoader();
     return Object.fromEntries(
-      families.map((family) => [family, checkFontAvailability(family, check)]),
+      families.map((family): [string, Status] => {
+        const kind = fontFamilyKind(family);
+        if (kind === 'system') return [family, checkFontAvailability(family, check)];
+        if (kind === 'unknown') return [family, 'missing'];
+        const state = loader.state(family);
+        return [family, state === 'loaded' ? 'library-loaded' : state === 'failed' ? 'fallback' : 'library-on-demand'];
+      }),
     );
-  }, [families]);
+  })();
 
   useEffect(() => {
     dialog.current?.showModal();
-  }, [families]);
+  }, []);
 
-  const missing = families.filter((family) => status[family] === 'fallback');
+  const missing = families.filter((family) => status[family] === 'fallback' || status[family] === 'missing');
   return (
     <dialog
       ref={dialog}
@@ -33,21 +55,23 @@ export default function MissingFontsDialog({ families, close }: Props) {
       <form onSubmit={(event) => event.preventDefault()}>
         <h2 id="missing-fonts-title">Manage Missing Fonts</h2>
         <p>
-          PixelForge checks the bounded local font list in this browser. Missing
-          families remain editable, but the browser&apos;s fallback font is
-          used; no font files or text are uploaded.
+          PixelForge checks the built-in system fonts in this browser and the
+          fonts used by this document. Library fonts are self-hosted and load on
+          demand. Missing families remain editable, but the browser&apos;s
+          fallback font is used; no font files or text are uploaded.
         </p>
         <ul className="missing-fonts-list" aria-label="Font availability">
           {families.map((family) => {
-            const available = status[family] !== 'fallback';
+            const value = status[family];
+            const problem = value === 'fallback' || value === 'missing';
             return (
               <li
                 key={family}
-                className={available ? undefined : 'missing'}
+                className={problem ? 'missing' : undefined}
                 data-testid={`font-status-${family.replaceAll(' ', '-')}`}
               >
                 <span>{family}</span>
-                <strong>{available ? 'Available' : 'Fallback active'}</strong>
+                <strong>{LABELS[value]}</strong>
               </li>
             );
           })}

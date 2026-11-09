@@ -6,6 +6,11 @@ import {
   type SelectionOperation,
   type SelectionPart,
 } from './document';
+import {
+  CANVAS_FEATHER_THRESHOLD,
+  featherAlpha,
+  validSelectionFeather,
+} from './selectionFeather';
 
 function drawPart(context: CanvasRenderingContext2D, part: SelectionPart) {
   context.fillStyle = '#fff';
@@ -47,11 +52,33 @@ export async function renderSelection(
     }
   }
   const out = surface(w, h), target = out.getContext('2d')!;
-  target.filter = selection.feather > 0 ? `blur(${selection.feather}px)` : 'none';
+  const feather = validSelectionFeather(selection.feather) ? selection.feather : 0;
+  // Large radii keep the canvas blur (unchanged output for existing
+  // documents); small and fractional radii, where the browser's box
+  // quantisation is visible, use the exact fractional Gaussian below.
+  const exact = feather > 0 && feather < CANVAS_FEATHER_THRESHOLD;
+  target.filter = feather >= CANVAS_FEATHER_THRESHOLD ? `blur(${feather}px)` : 'none';
   target.drawImage(raw, 0, 0);
-  if (selection.inverted) {
-    const image = target.getImageData(0, 0, w, h);
-    for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255 - image.data[i];
+  target.filter = 'none';
+  if (exact || selection.inverted) {
+    const image = target.getImageData(0, 0, w, h), data = image.data;
+    if (exact) {
+      // Fractional Gaussian on the alpha plane; selection coverage is white.
+      const alpha = new Uint8ClampedArray(w * h);
+      for (let pixel = 0; pixel < alpha.length; pixel += 1) alpha[pixel] = data[pixel * 4 + 3];
+      const blurred = featherAlpha(alpha, w, h, feather);
+      for (let pixel = 0; pixel < blurred.length; pixel += 1) {
+        const offset = pixel * 4;
+        if (blurred[pixel] > 0 && data[offset + 3] === 0) {
+          data[offset] = 255;
+          data[offset + 1] = 255;
+          data[offset + 2] = 255;
+        }
+        data[offset + 3] = blurred[pixel];
+      }
+    }
+    if (selection.inverted)
+      for (let i = 3; i < data.length; i += 4) data[i] = 255 - data[i];
     target.putImageData(image, 0, 0);
   }
   if (!selection.matrix) return out;
