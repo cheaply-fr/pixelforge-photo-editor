@@ -184,6 +184,8 @@ import {
 } from './layerStyles.ts';
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
+import { replaceColorWindow } from './colorReplace.ts';
+import type { ColorReplaceLimits, ColorReplaceMode, ColorReplaceSampling } from './retouchOptions.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
 import { strokeWindow, strokeWindowReach } from './strokeWindow.ts';
 import { colorRegionMask } from './colorRegion.ts';
@@ -2624,7 +2626,9 @@ export function floodFill(
 /**
  * Replaces sampled colors under a circular brush stroke while preserving the
  * source alpha. The source surface remains immutable so repeated pointer
- * events cannot gradually widen the sampled color range.
+ * events cannot gradually widen the sampled color range. Without `options`
+ * the legacy behaviour applies (Normal mode, the `target` sampled once,
+ * Discontiguous); see `src/colorReplace.ts` for the other choices.
  */
 export function replaceColorStroke(
   source: HTMLCanvasElement,
@@ -2638,6 +2642,11 @@ export function replaceColorStroke(
   size: number,
   tolerance = 24,
   opacity = 1,
+  options: {
+    mode?: ColorReplaceMode;
+    sampling?: ColorReplaceSampling;
+    limits?: ColorReplaceLimits;
+  } = {},
 ) {
   const match = color.match(/^#([a-f\d]{6})$/i);
   if (!match) throw new Error('Replacement color is invalid');
@@ -2666,38 +2675,26 @@ export function replaceColorStroke(
     outputData = image.data,
     distance = Math.hypot(x2 - x1, y2 - y1),
     steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5))),
-    amount = Math.max(0, Math.min(1, opacity));
-  let changed = false;
-  const matches = (offset: number) =>
-    sourceData[offset + 3] > 0 &&
-    Math.max(
-      Math.abs(sourceData[offset] - target[0]),
-      Math.abs(sourceData[offset + 1] - target[1]),
-      Math.abs(sourceData[offset + 2] - target[2]),
-      Math.abs(sourceData[offset + 3] - target[3]),
-    ) <= tolerance;
-  for (let step = 0; step <= steps; step += 1) {
-    const cx = x1 + ((x2 - x1) * step) / steps,
-      cy = y1 + ((y2 - y1) * step) / steps,
-      left = Math.max(0, Math.floor(cx - radius)),
-      right = Math.min(width - 1, Math.ceil(cx + radius)),
-      top = Math.max(0, Math.floor(cy - radius)),
-      bottom = Math.min(height - 1, Math.ceil(cy + radius));
-    for (let y = top; y <= bottom; y += 1) {
-      for (let x = left; x <= right; x += 1) {
-        if (Math.hypot(x - cx, y - cy) > radius) continue;
-        const offset = ((y - window.y) * window.width + x - window.x) * 4;
-        if (!matches(offset)) continue;
-        for (let channel = 0; channel < 3; channel += 1)
-          outputData[offset + channel] = Math.round(
-            sourceData[offset + channel] * (1 - amount) +
-              replacement[channel] * amount,
-          );
-        outputData[offset + 3] = sourceData[offset + 3];
-        changed = true;
-      }
-    }
-  }
+    dabs = Array.from({ length: steps + 1 }, (_, step) => ({
+      x: x1 + ((x2 - x1) * step) / steps,
+      y: y1 + ((y2 - y1) * step) / steps,
+    }));
+  const changed = replaceColorWindow({
+    source: sourceData,
+    output: outputData,
+    window,
+    layerWidth: width,
+    layerHeight: height,
+    dabs,
+    radius,
+    paint: replacement as [number, number, number],
+    tolerance,
+    opacity,
+    mode: options.mode ?? 'normal',
+    sampling: options.sampling ?? 'once',
+    target,
+    limits: options.limits ?? 'discontiguous',
+  });
   if (changed) context.putImageData(image, window.x, window.y);
   return changed;
 }

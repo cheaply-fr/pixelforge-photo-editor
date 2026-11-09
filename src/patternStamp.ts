@@ -44,6 +44,15 @@ export type PatternStampRequest = BrushPressureSettings & BrushTipSettings & {
   /** Absolute canvas origin of a bounded destination buffer. */
   originX?: number;
   originY?: number;
+  /**
+   * Tile phase anchor in canvas pixels. Aligned stamping keeps the default
+   * (0, 0) so every stroke continues one canvas-wide tiling; non-aligned
+   * stamping passes the stroke start so each stroke restarts the tile there.
+   */
+  anchorX?: number;
+  anchorY?: number;
+  /** A selection-defined RGBA tile used instead of the procedural pattern. */
+  tile?: { width: number; height: number; data: ArrayLike<number> };
 };
 
 export type AppliedPatternStamp = RadialMask & { changed: boolean };
@@ -87,9 +96,15 @@ function assertRequest(request: PatternStampRequest): {
 } {
   if (!validDimensions(request.width, request.height))
     throw new Error('Pattern canvas dimensions are invalid');
-  if (!validPatternId(request.pattern))
+  if (request.tile) {
+    const { width, height, data } = request.tile;
+    if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+      width > PATTERN_MAX_TILE || height > PATTERN_MAX_TILE || data.length !== width * height * 4)
+      throw new Error('Pattern tile is invalid');
+  } else if (!validPatternId(request.pattern))
     throw new Error('Pattern id is invalid');
-  if (!finite(request.originX ?? 0) || !finite(request.originY ?? 0))
+  if (!finite(request.originX ?? 0) || !finite(request.originY ?? 0) ||
+    !finite(request.anchorX ?? 0) || !finite(request.anchorY ?? 0))
     throw new Error('Pattern origin is invalid');
   const tileSize = normalizePatternTileSize(request.tileSize),
     foreground = request.foreground ?? [0, 0, 0, 255],
@@ -203,8 +218,11 @@ export function applyPatternStamp(
       'Pattern destination must contain RGBA data for every pixel',
     );
   const radial = radialStampMask(request),
-    originX = request.originX ?? 0,
-    originY = request.originY ?? 0;
+    originX = (request.originX ?? 0) - Math.round(request.anchorX ?? 0),
+    originY = (request.originY ?? 0) - Math.round(request.anchorY ?? 0),
+    tile = request.tile,
+    tileWidth = tile?.width ?? tileSize,
+    tileHeight = tile?.height ?? tileSize;
   let changed = false;
   for (let py = radial.bounds.top; py < radial.bounds.bottom; py += 1)
     for (let px = radial.bounds.left; px < radial.bounds.right; px += 1) {
@@ -214,16 +232,19 @@ export function applyPatternStamp(
         ] / 255;
       if (alpha <= 0) continue;
       const tileX =
-          ((Math.floor(originX + px) % tileSize) + tileSize) % tileSize,
-        tileY = ((Math.floor(originY + py) % tileSize) + tileSize) % tileSize,
-        color = patternColor(
-          request.pattern,
-          tileX,
-          tileY,
-          tileSize,
-          foreground,
-          background,
-        );
+          ((Math.floor(originX + px) % tileWidth) + tileWidth) % tileWidth,
+        tileY = ((Math.floor(originY + py) % tileHeight) + tileHeight) % tileHeight,
+        color = tile
+          ? (Array.from({ length: 4 }, (_, channel) =>
+            tile.data[(tileY * tileWidth + tileX) * 4 + channel]) as BrushColor)
+          : patternColor(
+            request.pattern,
+            tileX,
+            tileY,
+            tileSize,
+            foreground,
+            background,
+          );
       changed =
         sourceOver(destination, (py * request.width + px) * 4, color, alpha) ||
         changed;

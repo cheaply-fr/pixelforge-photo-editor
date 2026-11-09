@@ -30,7 +30,15 @@ export type SpotHealingStroke = {
    * selection, with feathered edges, after undo, reload and project import.
    */
   selectionMask?: string;
+  /**
+   * Healing type. Absent (strokes recorded before types existed) replays as
+   * `proximity`, the original annulus median, byte-for-byte.
+   */
+  type?: SpotHealingStrokeType;
 };
+
+export const SPOT_HEALING_STROKE_TYPES = ['content-aware', 'texture', 'proximity'] as const;
+export type SpotHealingStrokeType = (typeof SPOT_HEALING_STROKE_TYPES)[number];
 
 /** Asset ids accepted for a stroke's selection mask snapshot. */
 export const SPOT_HEALING_MASK_ID = /^[a-z\d-]{1,160}$/i;
@@ -66,6 +74,11 @@ export function validSpotHealingStroke(
   if (
     candidate.selectionMask !== undefined &&
     (typeof candidate.selectionMask !== 'string' || !SPOT_HEALING_MASK_ID.test(candidate.selectionMask))
+  )
+    return false;
+  if (
+    candidate.type !== undefined &&
+    !(SPOT_HEALING_STROKE_TYPES as readonly string[]).includes(candidate.type as string)
   )
     return false;
   return candidate.points.every((point) => {
@@ -149,6 +162,185 @@ function contextSample(
   return [median(0), median(1), median(2), median(3)];
 }
 
+/** Eight unit ray directions used by the Content-Aware membrane fill. */
+const RAYS: ReadonlyArray<readonly [number, number]> = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+  [Math.SQRT1_2, Math.SQRT1_2], [-Math.SQRT1_2, Math.SQRT1_2],
+  [Math.SQRT1_2, -Math.SQRT1_2], [-Math.SQRT1_2, -Math.SQRT1_2],
+];
+
+type Footprint = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** Strongest radial coverage of any stroke point, 0..1. */
+  coverage: Float32Array;
+};
+
+/** The union of every brush dab of a stroke, clipped to the bitmap. */
+function strokeFootprint(stroke: SpotHealingStroke, width: number, height: number): Footprint | null {
+  const radius = stroke.size / 2;
+  let left = width, top = height, right = 0, bottom = 0;
+  for (const point of stroke.points) {
+    left = Math.min(left, Math.max(0, Math.floor(point.x - radius)));
+    top = Math.min(top, Math.max(0, Math.floor(point.y - radius)));
+    right = Math.max(right, Math.min(width, Math.floor(point.x + radius) + 1));
+    bottom = Math.max(bottom, Math.min(height, Math.floor(point.y + radius) + 1));
+  }
+  if (right <= left || bottom <= top) return null;
+  const footprint: Footprint = {
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
+    coverage: new Float32Array((right - left) * (bottom - top)),
+  };
+  for (const point of stroke.points) {
+    const x0 = Math.max(left, Math.floor(point.x - radius)),
+      y0 = Math.max(top, Math.floor(point.y - radius)),
+      x1 = Math.min(right, Math.floor(point.x + radius) + 1),
+      y1 = Math.min(bottom, Math.floor(point.y + radius) + 1);
+    for (let y = y0; y < y1; y += 1)
+      for (let x = x0; x < x1; x += 1) {
+        const value = radialCoverage(Math.hypot(x - point.x, y - point.y), radius, stroke.hardness),
+          index = (y - top) * footprint.width + (x - left);
+        if (value > footprint.coverage[index]) footprint.coverage[index] = value;
+      }
+  }
+  return footprint;
+}
+
+const inHole = (footprint: Footprint, x: number, y: number) => {
+  const fx = x - footprint.left, fy = y - footprint.top;
+  return fx >= 0 && fy >= 0 && fx < footprint.width && fy < footprint.height &&
+    footprint.coverage[fy * footprint.width + fx] > 0;
+};
+
+/**
+ * Content-Aware: a membrane fill. Eight rays leave the pixel until they
+ * reach the first visible pixel outside the stroke footprint (within a
+ * bounded reach); hits are averaged with inverse-square distance weights.
+ * Opposite hits interpolate across the hole, so smooth gradients and edges
+ * that cross the stroke continue through it instead of taking one flat
+ * median colour.
+ */
+function membraneSample(
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  footprint: Footprint,
+  x: number,
+  y: number,
+  reach: number,
+): [number, number, number] | null {
+  let red = 0, green = 0, blue = 0, total = 0;
+  for (const [dx, dy] of RAYS) {
+    for (let step = 1; step <= reach; step += 1) {
+      const sx = Math.round(x + dx * step), sy = Math.round(y + dy * step);
+      if (sx < 0 || sy < 0 || sx >= width || sy >= height) break;
+      if (inHole(footprint, sx, sy)) continue;
+      const offset = pixelOffset(width, sx, sy);
+      if (source[offset + 3] <= 0) break;
+      const distance = Math.hypot(sx - x, sy - y), weight = 1 / (distance * distance);
+      red += source[offset] * weight;
+      green += source[offset + 1] * weight;
+      blue += source[offset + 2] * weight;
+      total += weight;
+      break;
+    }
+  }
+  return total > 0 ? [red / total, green / total, blue / total] : null;
+}
+
+/** Mean of the visible pixels in a (2r + 1) square box, or null. */
+function boxMean(source: ArrayLike<number>, width: number, height: number, x: number, y: number, r: number) {
+  let red = 0, green = 0, blue = 0, count = 0;
+  for (let sy = Math.max(0, y - r); sy <= Math.min(height - 1, y + r); sy += 1)
+    for (let sx = Math.max(0, x - r); sx <= Math.min(width - 1, x + r); sx += 1) {
+      const offset = pixelOffset(width, sx, sy);
+      if (source[offset + 3] <= 0) continue;
+      red += source[offset];
+      green += source[offset + 1];
+      blue += source[offset + 2];
+      count += 1;
+    }
+  return count ? [red / count, green / count, blue / count] : null;
+}
+
+/**
+ * Create Texture borrows detail from a donor area: the brush footprint
+ * shifted by one stroke diameter in the first of eight directions whose
+ * shifted footprint overlaps the original the least (ties keep the earlier
+ * direction, so the choice is deterministic).
+ */
+function textureShift(stroke: SpotHealingStroke, footprint: Footprint): [number, number] {
+  const distance = Math.ceil(stroke.size + 2);
+  let best: [number, number] = [distance, 0], bestOverlap = Infinity;
+  for (const [dx, dy] of RAYS) {
+    const sx = Math.round(dx * distance), sy = Math.round(dy * distance);
+    let overlap = 0;
+    for (let y = 0; y < footprint.height; y += 2)
+      for (let x = 0; x < footprint.width; x += 2)
+        if (footprint.coverage[y * footprint.width + x] > 0 &&
+          inHole(footprint, footprint.left + x + sx, footprint.top + y + sy)) overlap += 1;
+    if (overlap < bestOverlap) {
+      bestOverlap = overlap;
+      best = [sx, sy];
+    }
+  }
+  return best;
+}
+
+/** Content-Aware and Create Texture fills over the whole stroke footprint. */
+function applyFootprintStroke(
+  destination: Uint8ClampedArray,
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  stroke: SpotHealingStroke,
+  selectionMask?: ArrayLike<number>,
+): boolean {
+  const footprint = strokeFootprint(stroke, width, height);
+  if (!footprint) return false;
+  const samplingSource = source === destination ? new Uint8ClampedArray(source) : source,
+    reach = Math.max(2, Math.ceil(stroke.size * 1.5) + 2),
+    shift = stroke.type === 'texture' ? textureShift(stroke, footprint) : [0, 0];
+  let changed = false;
+  for (let fy = 0; fy < footprint.height; fy += 1)
+    for (let fx = 0; fx < footprint.width; fx += 1) {
+      const coverage = footprint.coverage[fy * footprint.width + fx];
+      if (coverage <= 0) continue;
+      const x = footprint.left + fx, y = footprint.top + fy,
+        selected = selectionMask ? selectionMask[y * width + x] / 255 : 1;
+      if (selected <= 0) continue;
+      const base = membraneSample(samplingSource, width, height, footprint, x, y, reach);
+      if (!base) continue;
+      let fill = base;
+      if (stroke.type === 'texture') {
+        // Base tone from the membrane plus the donor's high-frequency detail
+        // (donor pixel minus its 5 x 5 local mean).
+        const dx = x + shift[0], dy = y + shift[1];
+        if (dx >= 0 && dy >= 0 && dx < width && dy < height && !inHole(footprint, dx, dy)) {
+          const offset = pixelOffset(width, dx, dy), mean = boxMean(samplingSource, width, height, dx, dy, 2);
+          if (samplingSource[offset + 3] > 0 && mean)
+            fill = [0, 1, 2].map((channel) =>
+              base[channel] + samplingSource[offset + channel] - mean[channel]) as [number, number, number];
+        }
+      }
+      const offset = pixelOffset(width, x, y),
+        amount = clamp(coverage * stroke.opacity * selected, 0, 1),
+        alpha = destination[offset + 3];
+      for (let channel = 0; channel < 3; channel += 1)
+        destination[offset + channel] = Math.round(
+          destination[offset + channel] * (1 - amount) + clamp(fill[channel], 0, 255) * amount,
+        );
+      if (alpha === 0) destination[offset] = destination[offset + 1] = destination[offset + 2] = 0;
+      changed = true;
+    }
+  return changed;
+}
+
 function applyStroke(
   destination: Uint8ClampedArray,
   source: ArrayLike<number>,
@@ -157,6 +349,8 @@ function applyStroke(
   stroke: SpotHealingStroke,
   selectionMask?: ArrayLike<number>,
 ): boolean {
+  if (stroke.type === 'content-aware' || stroke.type === 'texture')
+    return applyFootprintStroke(destination, source, width, height, stroke, selectionMask);
   const radius = stroke.size / 2,
     // A multi-point stroke is one immutable operation. When the caller uses
     // the same buffer for source and destination, freeze the sampling surface

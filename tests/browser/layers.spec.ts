@@ -449,6 +449,8 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
   await page.getByLabel('Size', { exact: true }).fill('10');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
   await page.getByLabel('Color tolerance', { exact: true }).fill('5');
+  // Normal paints the flat colour; the default Color mode keeps luminosity.
+  await page.getByLabel('Color Replace mode', { exact: true }).selectOption('normal');
   const canvas = page.getByTestId('editor-canvas');
   await canvas.scrollIntoViewIfNeeded();
   const box = (await canvas.boundingBox())!;

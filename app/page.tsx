@@ -203,6 +203,26 @@ import {
   normalizeCustomPatternPresets,
   type CustomPatternPreset,
 } from '../src/customPatternPresets';
+import {
+  addImagePattern,
+  capturePatternTile,
+  normalizeImagePatterns,
+  type ImagePattern,
+  type PatternTile,
+} from '../src/imagePatterns';
+import {
+  DEFAULT_RETOUCH_OPTIONS,
+  normalizeRetouchOptions,
+  type CloneSample,
+  type ColorReplaceLimits,
+  type ColorReplaceMode,
+  type ColorReplaceSampling,
+  type PatchMode,
+  type RetouchOptions,
+  type SpotHealingType,
+} from '../src/retouchOptions';
+import { GRADIENT_LOOKUP_SIZE, renderGradientShape } from '../src/gradientShapes';
+import { historySourceLabels } from '../src/historyTimeline';
 import { createCustomShapePreset, normalizeCustomShapePresets, type CustomShapeKind, type CustomShapePreset } from '../src/customShapePresets';
 import { createCustomPathPreset, normalizeCustomPathPresets, type CustomPathPreset } from '../src/customPathPresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
@@ -818,6 +838,7 @@ import {
   type SpotHealingStroke,
 } from '../src/spotHealing';
 import {
+  PATCH_MAX_OFFSET,
   PATCH_MAX_POINTS,
   PATCH_MAX_STROKES,
   type PatchStroke,
@@ -1878,6 +1899,24 @@ const STROKE_SAMPLING_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
   'lasso', 'magnetic-lasso', 'freeform-pen',
 ]);
 
+type GradientType = NonNullable<Settings['gradientMode']>;
+
+/**
+ * Patch selection workflow: the stored offset is source minus destination.
+ * Source mode reads from where the selection was dragged to; Destination
+ * mode writes there, reading the original selection.
+ */
+const patchRegionOffset = (
+  mode: 'source' | 'destination',
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) => {
+  const clampOffset = (value: number) => Math.max(-PATCH_MAX_OFFSET, Math.min(PATCH_MAX_OFFSET, Math.round(value))),
+    x = clampOffset(end.x - start.x),
+    y = clampOffset(end.y - start.y);
+  return mode === 'source' ? { x, y } : { x: -x, y: -y };
+};
+
 type Gesture = {
   tool: Tool;
   /** The owning press was released; the commit may still be waiting. */
@@ -1902,8 +1941,15 @@ type Gesture = {
   maskPreviewAsset?: string;
   patternId?: PatternId;
   patternTileSize?: number;
+  /** Pattern Stamp: selection-defined tile and non-aligned phase anchor. */
+  patternTile?: PatternTile;
+  patternAnchor?: { x: number; y: number };
   redEyeThreshold?: number;
   redEyeAmount?: number;
+  /** Patch: the press point is being tested against the selection. */
+  patchRegionPending?: boolean;
+  /** Color Replace: options fixed at pointer-down. */
+  colorReplace?: Pick<RetouchOptions, 'colorReplaceMode' | 'colorReplaceSampling' | 'colorReplaceLimits'>;
   /** Local-space nondestructive context-aware cleanup metadata. */
   spotHealingStroke?: SpotHealingStroke;
   /** Gradient drag: decoded layer and selection, prepared at pointer-down. */
@@ -2387,6 +2433,11 @@ const patternCanvas = (
     tileSize: number;
     foreground: BrushColor;
     background: BrushColor;
+    /** Non-aligned strokes restart the tile phase at the stroke start. */
+    anchorX?: number;
+    anchorY?: number;
+    /** Selection-defined image tile replacing the procedural pattern. */
+    tile?: PatternTile;
   },
 ) => {
   const radius = resolveBrushStamp(options).radius,
@@ -2423,6 +2474,9 @@ const patternCanvas = (
       background: options.background,
       originX: left,
       originY: top,
+      anchorX: options.anchorX,
+      anchorY: options.anchorY,
+      tile: options.tile,
     });
   if (result.changed) context.putImageData(image, left, top);
   return result.changed;
@@ -2631,6 +2685,35 @@ const smudgeCompositeSample = async (
     context.drawImage(rendered, 0, 0);
   }
   return { data: context.getImageData(0, 0, width, height).data, width, height, x: 0, y: 0 };
+};
+
+/**
+ * Clone/Healing Sample Current & Below or All Layers: the visible composite
+ * of the bottom layers up to and including `layer` (or of every layer),
+ * rendered into the layer's local pixel space.
+ */
+const compositeSampleCanvas = async (
+  frame: Frame,
+  layer: Layer,
+  assets: Assets,
+  width: number,
+  height: number,
+  sample: 'below' | 'all',
+): Promise<HTMLCanvasElement> => {
+  const index = frame.layers.findIndex((item) => item.id === layer.id),
+    rendered = await renderFrame(
+      sample === 'below' && index >= 0 ? { ...frame, layers: frame.layers.slice(0, index + 1) } : frame,
+      assets,
+    ),
+    local = surface(width, height),
+    context = local.getContext('2d')!,
+    inverse = invertAffine(layer.matrix as unknown as SymmetryAffine);
+  if (inverse) {
+    context.imageSmoothingEnabled = false;
+    context.setTransform(inverse[0], inverse[1], inverse[2], inverse[3], inverse[4], inverse[5]);
+    context.drawImage(rendered, 0, 0);
+  }
+  return local;
 };
 
 /** Apply one immutable Blur or Sharpen segment to the gesture buffer (windowed). */
@@ -3029,7 +3112,11 @@ const sampledGestureStroke = (
   confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
     options.kind === 'replace'
       ? replaceColorStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
-        options.color, options.size, options.tolerance, options.opacity)
+        options.color, options.size, options.tolerance, options.opacity, {
+          mode: g.colorReplace?.colorReplaceMode,
+          sampling: g.colorReplace?.colorReplaceSampling,
+          limits: g.colorReplace?.colorReplaceLimits,
+        })
       : eraseBackgroundStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
         options.size, options.tolerance, options.opacity));
 const selectionMaskForLayer = async (
@@ -3267,6 +3354,8 @@ export default function Home() {
     [toolPresets, setToolPresets] = useState<ToolPreset[]>(() => readStoredToolPresets(browserPresetStorage())),
     [appliedToolPresets, setAppliedToolPresets] = useState<Partial<Record<PresetTool, string>>>({}),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
+    [imagePatterns, setImagePatterns] = useState<ImagePattern[]>([]),
+    [retouchOptions, setRetouchOptions] = useState<RetouchOptions>(() => ({ ...DEFAULT_RETOUCH_OPTIONS })),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
     [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
@@ -3289,7 +3378,7 @@ export default function Home() {
     [brushBuildUp, setBrushBuildUp] = useState(BRUSH_BUILD_UP_DEFAULT),
     [secondaryBrushPreset, setSecondaryBrushPreset] = useState<SecondaryBrushPreset>('none'),
     [brushFlow, setBrushFlow] = useState(100),
-    [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
+    [gradientMode, setGradientMode] = useState<GradientType>('linear'),
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
     [gradientMidpoint, setGradientMidpoint] = useState('none'),
     [gradientMidpointPosition, setGradientMidpointPosition] = useState(50),
@@ -3545,6 +3634,11 @@ export default function Home() {
   // even before React re-renders (an Alt-click right after a stroke on a
   // large document must not be lost or read stale).
   const cloneSourceRef = useRef<{ x: number; y: number; matrix: Matrix } | null>(null);
+  /**
+   * Aligned Clone/Healing: the document-space source-minus-destination offset
+   * of the first stroke after a source was chosen, tied to that source.
+   */
+  const cloneOffsetRef = useRef<{ source: object; x: number; y: number } | null>(null);
   /** Stored selection snapshots, reused by selection value and by mask content. */
   const selectionSnapshots = useRef(new SelectionSnapshotCache());
   /**
@@ -3601,6 +3695,103 @@ export default function Home() {
     const [a, b, c, d, e, f] = source.matrix;
     const documentPoint = { x: a * source.x + c * source.y + e, y: b * source.x + d * source.y + f };
     return inversePoint(matrix, documentPoint) || { x: source.x, y: source.y };
+  };
+  /**
+   * The source point for a Clone/Healing stroke starting at `start` (layer
+   * pixels). Non-aligned strokes always restart at the chosen source; aligned
+   * strokes keep the first stroke's offset until a new source is chosen.
+   */
+  const cloneStrokeSource = (
+    start: { x: number; y: number },
+    matrix: Matrix,
+    aligned: boolean,
+  ): { x: number; y: number } | null => {
+    const anchor = cloneSourceIn(matrix), source = cloneSourceRef.current;
+    if (!anchor || !source || !aligned) return anchor;
+    const [a, b, c, d, e, f] = matrix,
+      toDocument = (point: { x: number; y: number }) => ({
+        x: a * point.x + c * point.y + e,
+        y: b * point.x + d * point.y + f,
+      }),
+      startDocument = toDocument(start);
+    const offset = cloneOffsetRef.current;
+    if (!offset || offset.source !== source) {
+      const anchorDocument = toDocument(anchor);
+      cloneOffsetRef.current = {
+        source,
+        x: anchorDocument.x - startDocument.x,
+        y: anchorDocument.y - startDocument.y,
+      };
+      return anchor;
+    }
+    return inversePoint(matrix, { x: startDocument.x + offset.x, y: startDocument.y + offset.y }) || anchor;
+  };
+  /** Decoded selection-defined Pattern Stamp tiles, by pattern id. */
+  const imagePatternTiles = useRef(new Map<string, PatternTile>());
+  const imagePatternTile = async (id: string | null): Promise<PatternTile | undefined> => {
+    const pattern = id ? imagePatterns.find((item) => item.id === id) : undefined;
+    if (!pattern) return undefined;
+    const known = imagePatternTiles.current.get(pattern.id);
+    if (known) return known;
+    const image = new Image();
+    image.src = pattern.url;
+    await image.decode();
+    const canvas = surface(pattern.width, pattern.height),
+      context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const tile = { width: pattern.width, height: pattern.height, data: context.getImageData(0, 0, pattern.width, pattern.height).data };
+    imagePatternTiles.current.set(pattern.id, tile);
+    return tile;
+  };
+  /**
+   * Pattern Stamp "Define pattern from selection": the selected pixels of
+   * the active raster layer become a small local image pattern (see
+   * src/imagePatterns.ts) and the Pattern Stamp source.
+   */
+  const definePatternFromSelection = async () => {
+    const frame = current(),
+      layer = frame?.layers.find((item) => item.id === frame.active);
+    if (!frame?.selection) {
+      setNotice('Make a selection before defining a pattern from it');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster') {
+      setNotice('Select a raster layer before defining a pattern');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        canvas = surface(width, height),
+        context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const mask = await selectionMaskForLayer(frame.selection, frame, layer, assets.current, width, height),
+        tile = mask && capturePatternTile(context.getImageData(0, 0, width, height).data, width, height, mask);
+      if (!tile) {
+        setNotice('The selection contains no visible pixels on this layer');
+        return;
+      }
+      const tileCanvas = surface(tile.width, tile.height);
+      const tileContext = tileCanvas.getContext('2d')!,
+        tileImage = tileContext.createImageData(tile.width, tile.height);
+      tileImage.data.set(tile.data);
+      tileContext.putImageData(tileImage, 0, 0);
+      const pattern: ImagePattern = {
+        id: crypto.randomUUID(),
+        label: `Selection pattern ${imagePatterns.length + 1}`,
+        width: tile.width,
+        height: tile.height,
+        url: tileCanvas.toDataURL('image/png'),
+      };
+      const next = addImagePattern(imagePatterns, pattern);
+      imagePatternTiles.current.set(pattern.id, tile);
+      setImagePatterns(next);
+      setRetouchOptions((options) => ({ ...options, patternImage: pattern.id }));
+      setNotice(`${pattern.label} defined (${tile.width}×${tile.height} px)`);
+    } catch {
+      setNotice('Could not define a pattern from this selection');
+    }
   };
   const clearCloneSource = () => {
     cloneSourceRef.current = null;
@@ -4142,9 +4333,14 @@ export default function Home() {
     buffer.getContext('2d')!.drawImage(layerCanvas, 0, 0);
     // Render the gradient on its own surface, then composite it onto the
     // layer with the chosen Mode and Opacity (Normal paints over).
-    const gradientSurface = surface(buffer.width, buffer.height),
+    const shaped = gradientMode === 'angle' || gradientMode === 'diamond',
+      // Angle and Diamond are rendered per pixel from a lookup row that uses
+      // the same colour stops as Linear (src/gradientShapes.ts).
+      gradientSurface = surface(shaped ? GRADIENT_LOOKUP_SIZE : buffer.width, shaped ? 1 : buffer.height),
       context = gradientSurface.getContext('2d')!,
-      gradient = gradientMode === 'radial'
+      gradient = shaped
+        ? context.createLinearGradient(0, 0, GRADIENT_LOOKUP_SIZE, 0)
+        : gradientMode === 'radial'
         ? context.createRadialGradient(
           start.x,
           start.y,
@@ -4167,8 +4363,13 @@ export default function Home() {
       stops: gradientStops,
     })) gradient.addColorStop(stop.offset, stop.color);
     context.fillStyle = gradient;
-    context.fillRect(0, 0, buffer.width, buffer.height);
-    let gradientPixels: Uint8ClampedArray = context.getImageData(0, 0, buffer.width, buffer.height).data;
+    context.fillRect(0, 0, gradientSurface.width, gradientSurface.height);
+    let gradientPixels: Uint8ClampedArray = shaped
+      ? renderGradientShape(
+        gradientMode as 'angle' | 'diamond', buffer.width, buffer.height, start, end,
+        context.getImageData(0, 0, GRADIENT_LOOKUP_SIZE, 1).data,
+      )
+      : context.getImageData(0, 0, buffer.width, buffer.height).data;
     if (gradientNoise > 0 || gradientDither > 0) {
       gradientPixels = applyGradientNoise(gradientPixels, buffer.width, buffer.height, gradientNoise);
       gradientPixels = applyGradientDither(gradientPixels, buffer.width, buffer.height, gradientDither);
@@ -4320,6 +4521,8 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    imagePatterns,
+    retouchOptions,
     customShapePresets,
     customPathPresets,
     polygonVariant,
@@ -4438,6 +4641,8 @@ export default function Home() {
     // Keep this device's library and add any presets carried by the draft/project.
     setCustomBrushPresets((currentPresets) => mergeBrushPresetLibraries(currentPresets, s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
+    setImagePatterns(normalizeImagePatterns(s.imagePatterns));
+    setRetouchOptions(normalizeRetouchOptions(s.retouchOptions));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
     setSelectedCustomPathPresetId('');
@@ -4698,7 +4903,14 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Brush preset could not be saved');
     }
   };
+  const setRetouchOption = <K extends keyof RetouchOptions>(key: K, value: RetouchOptions[K]) =>
+    setRetouchOptions((options) => ({ ...options, [key]: value }));
+  /** The selected selection-defined pattern, if it still exists. */
+  const activeImagePattern = retouchOptions.patternImage
+    ? imagePatterns.find((item) => item.id === retouchOptions.patternImage)
+    : undefined;
   const applyCustomPatternPreset = (preset: CustomPatternPreset) => {
+    setRetouchOption('patternImage', null);
     setPatternId(preset.pattern);
     setPatternTileSize(preset.tileSize);
     setColor(preset.foreground);
@@ -8454,6 +8666,8 @@ export default function Home() {
         brushPreset,
         customBrushPresets,
         customPatternPresets,
+        imagePatterns,
+        retouchOptions,
         customShapePresets,
         customPathPresets,
         polygonVariant,
@@ -8584,6 +8798,8 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    imagePatterns,
+    retouchOptions,
     customShapePresets,
     customPathPresets,
     polygonVariant,
@@ -13137,7 +13353,7 @@ export default function Home() {
           buffer.getContext('2d')!.drawImage(currentImage, 0, 0);
           let sourceIndex = index.current;
           if (tool === 'history-brush' || tool === 'art-history-brush') {
-            sourceIndex = Math.max(0, Math.min(history.current.length - 1, historySourceIndex ?? index.current));
+            sourceIndex = Math.max(0, Math.min(history.current.length - 1, historySourceIndex ?? 0));
             const sourceFrame = history.current[sourceIndex];
             const sourceLayer = sourceFrame?.layers.find((item) => item.id === layer.id) ||
               (tool === 'history-brush' ? sourceFrame?.layers.find((item) => item.id === sourceFrame.active) : undefined);
@@ -13301,6 +13517,7 @@ export default function Home() {
             size: localSize(layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
+            type: retouchOptions.spotHealingType,
           },
         };
       gesture.current = g;
@@ -13340,8 +13557,13 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before Patch');
         return;
       }
+      // Source/Destination: a press inside an active selection drags the
+      // selection as the patch region (decided once the mask is sampled);
+      // otherwise, and always in Brush mode, the click-source-then-paint
+      // brush workflow applies.
+      const regionMode = retouchOptions.patchMode !== 'brush' && f.selection ? retouchOptions.patchMode : undefined;
       const cloneSource = cloneSourceIn(layer.matrix);
-      if (!cloneSource) {
+      if (!cloneSource && !regionMode) {
         chooseCloneSource(local, layer.matrix);
         setNotice('Patch source set; drag on the image to paint the patch');
         return;
@@ -13369,8 +13591,8 @@ export default function Home() {
             hardness,
             opacity: brushOpacity / 100,
             sourceOffset: {
-              x: cloneSource.x - x,
-              y: cloneSource.y - y,
+              x: cloneSource ? cloneSource.x - x : 0,
+              y: cloneSource ? cloneSource.y - y : 0,
             },
           },
         };
@@ -13388,11 +13610,31 @@ export default function Home() {
         // Any selection shape is captured in layer space (also for moved or
         // scaled layers), so replay stays aligned after reload.
         g.selectionPending = true;
+        g.patchRegionPending = Boolean(regionMode);
         g.pending = (async () => {
           try {
+            if (regionMode) {
+              const mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, asset.w, asset.h);
+              if (gesture.current !== g) return;
+              g.patchRegionPending = false;
+              if (mask && mask[Math.floor(y) * asset.w + Math.floor(x)] > 0) {
+                g.patchStroke = {
+                  ...g.patchStroke!,
+                  points: [{ x, y }],
+                  sourceOffset: patchRegionOffset(regionMode, g.start, g.last),
+                  region: regionMode,
+                };
+              } else if (!cloneSource) {
+                gesture.current = null;
+                chooseCloneSource(local, layer.matrix);
+                setNotice('Patch source set; drag on the image to paint the patch');
+                return;
+              }
+            }
             const selectionMask = await captureSelectionSnapshot(f, layer);
             g.selectionPending = false;
             if (selectionMask && g.patchStroke) g.patchStroke.selectionMask = selectionMask;
+            if (g.patchStroke?.region && !selectionMask) throw new Error('Patch region needs a selection');
           } catch {
             if (gesture.current === g) gesture.current = null;
             setNotice('Could not read the selection for Patch');
@@ -13417,12 +13659,13 @@ export default function Home() {
       }
       // Option/Alt-click is handled before the gesture guard above so a
       // source click is never dropped; a first plain click also sets it.
-      const sourceAnchor = cloneSourceIn(layer.matrix);
+      const sourceAnchor = cloneStrokeSource(local, layer.matrix, retouchOptions.cloneAligned);
       if (!sourceAnchor) {
         chooseCloneSource(local, layer.matrix);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
+      const cloneSample = retouchOptions.cloneSample;
       const g = {
         tool,
         start: local,
@@ -13450,6 +13693,17 @@ export default function Home() {
           if (gesture.current !== g) return;
           const buffer = surface(source.width, source.height);
           buffer.getContext('2d')!.drawImage(source, 0, 0);
+          if (cloneSample !== 'current') {
+            // Sample Current & Below / All Layers: read the visible composite
+            // of those layers, rendered once into this layer's pixel space.
+            const composite = await compositeSampleCanvas(
+              f, layer, assets.current, source.width, source.height, cloneSample,
+            );
+            if (gesture.current !== g) return;
+            const sourceContext = source.getContext('2d')!;
+            sourceContext.clearRect(0, 0, source.width, source.height);
+            sourceContext.drawImage(composite, 0, 0);
+          }
           // Photoshop confines Clone Stamp and Healing Brush to the selection.
           const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
           if (gesture.current !== g) return;
@@ -13515,6 +13769,9 @@ export default function Home() {
         pointerType: e.pointerType,
         patternId,
         patternTileSize,
+        // Aligned keeps one canvas-wide tiling; otherwise each stroke
+        // restarts the tile at its own start point.
+        patternAnchor: retouchOptions.patternAligned ? undefined : { x: Math.round(local.x), y: Math.round(local.y) },
         moved: false,
         spacingState: { started: false, carry: 0 },
         queued: [
@@ -13522,6 +13779,7 @@ export default function Home() {
         ],
       } as Gesture;
       gesture.current = g;
+      const patternImage = retouchOptions.patternImage;
       g.pending = (async () => {
         try {
           const sourceImage = await decodeAsset(assets.current[layer.asset]),
@@ -13530,6 +13788,8 @@ export default function Home() {
               sourceImage.naturalHeight,
             );
           buffer.getContext('2d')!.drawImage(sourceImage, 0, 0);
+          if (gesture.current !== g) return;
+          g.patternTile = await imagePatternTile(patternImage);
           if (gesture.current !== g) return;
           const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
           if (gesture.current !== g) return;
@@ -13561,6 +13821,9 @@ export default function Home() {
                 flipY: brushFlipY,
                 pattern: g.patternId!,
                 tileSize: g.patternTileSize!,
+                tile: g.patternTile,
+                anchorX: g.patternAnchor?.x,
+                anchorY: g.patternAnchor?.y,
                 foreground: brushColor(color),
                 background: brushColor(backgroundColor),
               }) || Boolean(g.changed);
@@ -13648,6 +13911,11 @@ export default function Home() {
         frame: f,
         layer,
         moved: false,
+        colorReplace: {
+          colorReplaceMode: retouchOptions.colorReplaceMode,
+          colorReplaceSampling: retouchOptions.colorReplaceSampling,
+          colorReplaceLimits: retouchOptions.colorReplaceLimits,
+        },
       } as Gesture;
       gesture.current = g;
       g.pending = (async () => {
@@ -13659,7 +13927,11 @@ export default function Home() {
             );
           source.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
-          const sample = source
+          // Background Swatch sampling replaces the background colour;
+          // Once and Continuous start from the pixel under the press.
+          const sample = g.colorReplace?.colorReplaceSampling === 'background'
+            ? [...brushColor(backgroundColor).slice(0, 3), 255]
+            : source
             .getContext('2d')!
             .getImageData(
               Math.max(0, Math.min(source.width - 1, Math.floor(local.x))),
@@ -14139,6 +14411,20 @@ export default function Home() {
       });
       return;
     }
+    if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke?.region) {
+      // Selection workflow: the drag moves the patch region.
+      g.last = { x: local.x, y: local.y };
+      g.patchStroke.sourceOffset = patchRegionOffset(g.patchStroke.region, g.start, g.last);
+      if (g.selectionPending || intermediate) return;
+      const stroke = g.patchStroke;
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id
+          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
+          : item),
+      });
+      return;
+    }
     if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke) {
       const asset = assets.current[g.layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
@@ -14324,6 +14610,9 @@ export default function Home() {
           flipY: brushFlipY,
           pattern: g.patternId!,
           tileSize: g.patternTileSize!,
+          tile: g.patternTile,
+          anchorX: g.patternAnchor?.x,
+          anchorY: g.patternAnchor?.y,
           foreground: brushColor(color),
           background: brushColor(backgroundColor),
         }) || Boolean(g.changed);
@@ -15235,6 +15524,11 @@ export default function Home() {
       })) setNotice('Spot Healing applied nondestructively');
     } else if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke) {
       const stroke = g.patchStroke;
+      if (stroke.region && (!g.moved || (!stroke.sourceOffset.x && !stroke.sourceOffset.y))) {
+        void paint(f);
+        setNotice('Drag the selection to where the patch should come from or go');
+        return;
+      }
       if (!g.moved) {
         void paint(f);
         setNotice('Patch needs a drag after setting a source');
@@ -15573,8 +15867,8 @@ export default function Home() {
       })) {
         const label = g.tool === 'mixer-brush' ? 'Mixer Brush stroke applied' :
           g.tool === 'history-brush'
-            ? `History Brush restored source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : index.current + 1}`
-            : `Art History Brush applied from source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : index.current + 1}`;
+            ? `History Brush restored source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : 1}`
+            : `Art History Brush applied from source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : 1}`;
         setNotice(label);
       }
     } else if (
@@ -15614,6 +15908,9 @@ export default function Home() {
             flipY: brushFlipY,
             pattern: g.patternId!,
             tileSize: g.patternTileSize!,
+            tile: g.patternTile,
+            anchorX: g.patternAnchor?.x,
+            anchorY: g.patternAnchor?.y,
             foreground: brushColor(color),
             background: brushColor(backgroundColor),
           }) || Boolean(g.changed);
@@ -16565,10 +16862,10 @@ export default function Home() {
       setNotice('Mixer Brush selected; drag to blend the immutable source snapshot');
     } else if (command === 'history-brush-tool') {
       activateTool('history-brush');
-      setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
+      setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}`);
     } else if (command === 'art-history-brush-tool') {
       activateTool('art-history-brush');
-      setNotice(`Art History Brush selected; local painterly source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
+      setNotice(`Art History Brush selected; local painterly source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}`);
     } else if (command === 'set-history-source') {
       setHistorySourceIndex(index.current);
       setNotice(`History Brush source set to snapshot ${index.current + 1}`);
@@ -19601,11 +19898,13 @@ export default function Home() {
                   <select
                     aria-label="Gradient type"
                     value={gradientMode}
-                    onChange={(event) => setGradientMode(event.target.value as 'linear' | 'radial' | 'reflected')}
+                    onChange={(event) => setGradientMode(event.target.value as GradientType)}
                   >
                     <option value="linear">Linear</option>
                     <option value="radial">Radial</option>
+                    <option value="angle">Angle</option>
                     <option value="reflected">Reflected</option>
+                    <option value="diamond">Diamond</option>
                   </select>
                 </label>
               )}
@@ -20052,11 +20351,30 @@ export default function Home() {
                       />
                     )}
                   {tool === 'spot-heal' && (
-                    <p className="adjust-note">
-                      Samples a bounded local context ring and keeps the
-                      source and alpha channel unchanged. Use Remove Background
-                      for edge-connected backdrop removal.
-                    </p>
+                    <>
+                      <label className="select-row">
+                        <span>Type</span>
+                        <select
+                          aria-label="Spot Healing type"
+                          value={retouchOptions.spotHealingType}
+                          onChange={(event) => setRetouchOption('spotHealingType', event.target.value as SpotHealingType)}
+                        >
+                          <option value="content-aware">Content-Aware</option>
+                          <option value="texture">Create Texture</option>
+                          <option value="proximity">Proximity Match</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        {retouchOptions.spotHealingType === 'content-aware'
+                          ? 'Content-Aware interpolates the pixels around the whole stroke across it, so gradients continue. '
+                          : retouchOptions.spotHealingType === 'texture'
+                            ? 'Create Texture fills with the surrounding tone plus fine detail borrowed from a nearby area. '
+                            : 'Proximity Match takes the median of a ring just outside each brush position. '}
+                        Each type samples a bounded local context ring (a local
+                        approximation); the source and alpha channel stay unchanged.
+                        Use Remove Background for edge-connected backdrop removal.
+                      </p>
+                    </>
                   )}
                   {(tool === 'blur' || tool === 'sharpen') && (
                     <p className="adjust-note">
@@ -20067,11 +20385,30 @@ export default function Home() {
                     </p>
                   )}
                   {tool === 'patch' && (
-                    <p className="adjust-note">
-                      Click a source area, then drag over a destination. Patch
-                      copies a bounded local neighbourhood while keeping the
-                      source asset and alpha channel unchanged.
-                    </p>
+                    <>
+                      <label className="select-row">
+                        <span>Patch</span>
+                        <select
+                          aria-label="Patch mode"
+                          value={retouchOptions.patchMode}
+                          onChange={(event) => setRetouchOption('patchMode', event.target.value as PatchMode)}
+                        >
+                          <option value="source">Source</option>
+                          <option value="destination">Destination</option>
+                          <option value="brush">Brush</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        {retouchOptions.patchMode === 'source'
+                          ? 'Drag inside a selection to the area that should replace it; the patch is tone-matched to its surroundings. '
+                          : retouchOptions.patchMode === 'destination'
+                            ? 'Drag inside a selection to copy it to where you release. '
+                            : ''}
+                        Click a source area, then drag over a destination
+                        {retouchOptions.patchMode === 'brush' ? '' : ' to patch outside a selection'}.
+                        Patch keeps the source asset and alpha channel unchanged.
+                      </p>
+                    </>
                   )}
                   {(tool === 'mask-brush' ||
                     tool === 'mask-eraser' ||
@@ -20552,6 +20889,47 @@ export default function Home() {
                       suffix=""
                     />
                   )}
+                  {tool === 'color-replace' && (
+                    <>
+                      <label className="select-row">
+                        <span>Mode</span>
+                        <select
+                          aria-label="Color Replace mode"
+                          value={retouchOptions.colorReplaceMode}
+                          onChange={(event) => setRetouchOption('colorReplaceMode', event.target.value as ColorReplaceMode)}
+                        >
+                          <option value="color">Color</option>
+                          <option value="hue">Hue</option>
+                          <option value="saturation">Saturation</option>
+                          <option value="luminosity">Luminosity</option>
+                          <option value="normal">Normal</option>
+                        </select>
+                      </label>
+                      <label className="select-row">
+                        <span>Sampling</span>
+                        <select
+                          aria-label="Color Replace sampling"
+                          value={retouchOptions.colorReplaceSampling}
+                          onChange={(event) => setRetouchOption('colorReplaceSampling', event.target.value as ColorReplaceSampling)}
+                        >
+                          <option value="continuous">Continuous</option>
+                          <option value="once">Once</option>
+                          <option value="background">Background Swatch</option>
+                        </select>
+                      </label>
+                      <label className="select-row">
+                        <span>Limits</span>
+                        <select
+                          aria-label="Color Replace limits"
+                          value={retouchOptions.colorReplaceLimits}
+                          onChange={(event) => setRetouchOption('colorReplaceLimits', event.target.value as ColorReplaceLimits)}
+                        >
+                          <option value="contiguous">Contiguous</option>
+                          <option value="discontiguous">Discontiguous</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
                   {(tool === 'dodge' || tool === 'burn') && (
                     <>
                       <Slider
@@ -20618,12 +20996,12 @@ export default function Home() {
                       <Slider label="History flow" value={historyBrush.flow} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, flow: value }))} suffix="%" />
                       <label className="select-row">
                         <span>History source</span>
-                        <select aria-label="History source" value={String(historySourceIndex ?? index.current)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
-                          {history.current.map((_, snapshot) => <option key={snapshot} value={snapshot}>Snapshot {snapshot + 1}</option>)}
+                        <select aria-label="History source" value={String(historySourceIndex ?? 0)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
+                          {historySourceLabels(history.current).map((label, snapshot) => <option key={snapshot} value={snapshot}>{label}</option>)}
                         </select>
                       </label>
                       <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
-                      <p className="adjust-note">Source snapshot: {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1} of {history.current.length}. Restore is painted through the brush and remains undoable; discarded snapshots cannot be recovered.</p>
+                      <p className="adjust-note">Source snapshot: {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1} of {history.current.length}. Restore is painted through the brush and remains undoable; discarded snapshots cannot be recovered.</p>
                     </>
                   )}
                   {tool === 'art-history-brush' && (
@@ -20634,12 +21012,12 @@ export default function Home() {
                       <Slider label="Fidelity" value={artHistoryBrush.fidelity} min={0} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, fidelity: value }))} suffix="%" />
                       <label className="select-row">
                         <span>Art History source</span>
-                        <select aria-label="Art History source" value={String(historySourceIndex ?? index.current)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
-                          {history.current.map((_, snapshot) => <option key={snapshot} value={snapshot}>Snapshot {snapshot + 1}</option>)}
+                        <select aria-label="Art History source" value={String(historySourceIndex ?? 0)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
+                          {historySourceLabels(history.current).map((label, snapshot) => <option key={snapshot} value={snapshot}>{label}</option>)}
                         </select>
                       </label>
                       <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`Art History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
-                      <p className="adjust-note">Local deterministic painterly approximation from snapshot {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}. Source pixels remain immutable and the committed stroke is undoable; bristle and wet-media dynamics are staged.</p>
+                      <p className="adjust-note">Local deterministic painterly approximation from snapshot {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}. Source pixels remain immutable and the committed stroke is undoable; bristle and wet-media dynamics are staged.</p>
                     </>
                   )}
                   {tool === 'pattern-stamp' && (
@@ -20648,17 +21026,44 @@ export default function Home() {
                         <span>Pattern</span>
                         <select
                           aria-label="Pattern source"
-                          value={patternId}
-                          onChange={(event) =>
-                            setPatternId(event.target.value as PatternId)
-                          }
+                          value={activeImagePattern ? `image:${activeImagePattern.id}` : patternId}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (value.startsWith('image:')) setRetouchOption('patternImage', value.slice(6));
+                            else {
+                              setPatternId(value as PatternId);
+                              setRetouchOption('patternImage', null);
+                            }
+                          }}
                         >
                           {PATTERN_IDS.map((id) => (
                             <option key={id} value={id}>
                               {id[0].toUpperCase() + id.slice(1)}
                             </option>
                           ))}
+                          {imagePatterns.map((pattern) => (
+                            <option key={pattern.id} value={`image:${pattern.id}`}>
+                              {pattern.label} ({pattern.width}×{pattern.height})
+                            </option>
+                          ))}
                         </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!frame?.selection}
+                        onClick={() => void definePatternFromSelection()}
+                      >
+                        Define pattern from selection
+                      </button>
+                      <label className="check-row">
+                        <input
+                          aria-label="Pattern aligned"
+                          type="checkbox"
+                          checked={retouchOptions.patternAligned}
+                          onChange={(event) => setRetouchOption('patternAligned', event.target.checked)}
+                        />
+                        Aligned
                       </label>
                       {customPatternPresets.length > 0 && (
                         <label className="select-row">
@@ -20687,19 +21092,44 @@ export default function Home() {
                         suffix="px"
                       />
                       <p className="adjust-note">
-                        Pattern Stamp generates a bounded local tile from the
-                        foreground/background wells. No source image leaves this
-                        device.
+                        {activeImagePattern
+                          ? 'Pattern Stamp repeats the pixels captured from a selection (at most 128 px per side).'
+                          : 'Pattern Stamp generates a bounded local tile from the foreground/background wells.'}
+                        {' '}No source image leaves this device.
                       </p>
                     </>
                   )}
                   {(tool === 'clone' || tool === 'heal') && (
-                    <p className="adjust-note">
-                      Option/Alt-click the canvas to set or re-anchor the
-                      source point. Drag to paint with a fixed source offset;
-                      the source pixels stay unchanged until you commit the
-                      stroke.
-                    </p>
+                    <>
+                      <label className="check-row">
+                        <input
+                          aria-label="Clone aligned"
+                          type="checkbox"
+                          checked={retouchOptions.cloneAligned}
+                          onChange={(event) => setRetouchOption('cloneAligned', event.target.checked)}
+                        />
+                        Aligned
+                      </label>
+                      <label className="select-row">
+                        <span>Sample</span>
+                        <select
+                          aria-label="Clone sample"
+                          value={retouchOptions.cloneSample}
+                          onChange={(event) => setRetouchOption('cloneSample', event.target.value as CloneSample)}
+                        >
+                          <option value="current">Current Layer</option>
+                          <option value="below">Current &amp; Below</option>
+                          <option value="all">All Layers</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        Option/Alt-click the canvas to set or re-anchor the
+                        source point. Aligned keeps the source offset between
+                        strokes; otherwise each stroke starts again at the source
+                        point. The source pixels stay unchanged until you commit
+                        the stroke.
+                      </p>
+                    </>
                   )}
                   {tool === 'selection-brush' && (
                     <p className="adjust-note">

@@ -110,6 +110,8 @@ import type { MarqueeOptions } from './marqueeOptions.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
 import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
+import { validRetouchOptions, type RetouchOptions } from './retouchOptions.ts';
+import { normalizeImagePatterns, type ImagePattern } from './imagePatterns.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -211,6 +213,10 @@ export type Settings = {
   customBrushPresets?: CustomBrushPreset[];
   /** User-authored local Pattern Stamp presets; source pixels never leave the device. */
   customPatternPresets?: CustomPatternPreset[];
+  /** Selection-defined Pattern Stamp tiles (small local PNGs, at most eight). */
+  imagePatterns?: ImagePattern[];
+  /** Clone/Pattern Stamp, Spot Healing, Patch and Color Replace options; absent keys use defaults. */
+  retouchOptions?: Partial<RetouchOptions>;
   /** User-authored local vector shape presets; geometry remains editable. */
   customShapePresets?: CustomShapePreset[];
   /** User-authored local editable Pen paths; source pixels never leave the device. */
@@ -234,7 +240,7 @@ export type Settings = {
   /** Scatter axes, Count, Count jitter and size/angle/opacity jitter; absent keys use legacy defaults. */
   brushDynamics?: Partial<BrushDynamics>;
   /** Gradient geometry for the Gradient tool. */
-  gradientMode?: 'linear' | 'radial' | 'reflected';
+  gradientMode?: 'linear' | 'radial' | 'reflected' | 'angle' | 'diamond';
   /** Gradient endpoint behaviour. */
   gradientEnd?: 'transparent' | 'background';
   /** Optional authored colour stop at the midpoint; `none` preserves the legacy two-stop gradient. */
@@ -499,6 +505,9 @@ function validSettings(settings: unknown): settings is Settings {
       normalizeCustomBrushPresets(candidate.customBrushPresets).length !== candidate.customBrushPresets.length) ||
     (candidate.customPatternPresets !== undefined &&
       normalizeCustomPatternPresets(candidate.customPatternPresets).length !== candidate.customPatternPresets.length) ||
+    (candidate.imagePatterns !== undefined &&
+      normalizeImagePatterns(candidate.imagePatterns).length !== candidate.imagePatterns.length) ||
+    (candidate.retouchOptions !== undefined && !validRetouchOptions(candidate.retouchOptions)) ||
     (candidate.customShapePresets !== undefined &&
       normalizeCustomShapePresets(candidate.customShapePresets).length !== candidate.customShapePresets.length) ||
     (candidate.customPathPresets !== undefined &&
@@ -553,7 +562,7 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
-  if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected'].includes(candidate.gradientMode)) return false;
+  if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected', 'angle', 'diamond'].includes(candidate.gradientMode)) return false;
   if (candidate.defaultTypeStyle !== undefined) {
     try {
       normalizeTypeStyle(candidate.defaultTypeStyle);

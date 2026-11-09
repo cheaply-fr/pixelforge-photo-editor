@@ -22,6 +22,17 @@ available frame. A stroke restores historical RGBA through brush opacity, flow,
 hardness and selection alpha; it never changes the source frame. The current
 stroke is committed as one undo step and is safe to cancel by switching tools.
 
+Without a chosen source (`historySourceIndex` absent, as in older drafts) the
+History and Art History Brushes use the first retained history state (the
+opening state, or the oldest state kept once older ones are trimmed), so a
+stroke restores something out of the box instead of repainting the current
+state. The source menus name each state after the change that produced it
+(`describeHistoryStep` in `src/historyTimeline.ts`: "Opening state", "Pixel
+edit", "Spot Healing", "New layer", "Selection", … followed by the active
+layer), derived from the frames because history keeps no command names.
+Evidence: `tests/audit-retouch.test.mjs` and
+`tests/browser/audit-retouch-paint.spec.ts` (toolbar audit I-20).
+
 ## Determinism and limits
 
 Each pointer move applies its dabs to the window of the gesture buffer that
