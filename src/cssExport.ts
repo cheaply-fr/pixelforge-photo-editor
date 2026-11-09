@@ -1,6 +1,6 @@
 import type { Layer, Matrix } from './document.ts';
 import { serializePathData, validatePath, type PathModel } from './paths.ts';
-import { shapePoints } from './vectorShapes.ts';
+import { roundedRectNodes, shapePoints } from './vectorShapes.ts';
 
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -25,7 +25,7 @@ const isExportableVector = (layer: Layer): layer is ExportableVector =>
 function pathForVector(layer: ExportableVector): PathModel | undefined {
   if (layer.kind === 'path') return validatePath(layer.path);
   const points = layer.kind === 'rectangle'
-    ? [{ x: 0, y: 0 }, { x: layer.width, y: 0 }, { x: layer.width, y: layer.height }, { x: 0, y: layer.height }]
+    ? roundedRectNodes(layer.width, layer.height, layer.cornerRadius)
     : layer.kind === 'ellipse'
       ? Array.from({ length: 64 }, (_, index) => {
           const angle = index * Math.PI * 2 / 64;
@@ -34,7 +34,12 @@ function pathForVector(layer: ExportableVector): PathModel | undefined {
       : layer.kind === 'polygon'
         ? shapePoints(layer.width, layer.height, layer.variant, layer.sides, layer.innerRadius)
         : [{ x: 0, y: 0 }, { x: layer.width, y: layer.height }];
-  const nodes = points.map((point) => ({ x: point.x, y: point.y }));
+  const nodes = points.map((point) => ({
+    x: point.x,
+    y: point.y,
+    ...('inHandle' in point && point.inHandle ? { inHandle: { ...point.inHandle } } : {}),
+    ...('outHandle' in point && point.outHandle ? { outHandle: { ...point.outHandle } } : {}),
+  }));
   return validatePath({
     nodes,
     closed: layer.kind !== 'line',

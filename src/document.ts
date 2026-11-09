@@ -60,8 +60,30 @@ import {
 import {
   shapePoints,
   validateShapeVariant,
+  clampCornerRadius,
+  roundedRectNodes,
+  validCornerRadius,
   type ParametricShapeVariant,
+  type RoundedRectNode,
 } from './vectorShapes.ts';
+
+/** Trace one closed contour whose nodes may carry cubic handles. */
+function traceShapeNodes(
+  context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  nodes: readonly RoundedRectNode[],
+): void {
+  const [first] = nodes;
+  if (!first) return;
+  context.moveTo(first.x, first.y);
+  for (let index = 1; index <= nodes.length; index += 1) {
+    const previous = nodes[index - 1], node = nodes[index % nodes.length];
+    if (previous.outHandle || node.inHandle) {
+      const out = previous.outHandle ?? previous, incoming = node.inHandle ?? node;
+      context.bezierCurveTo(out.x, out.y, incoming.x, incoming.y, node.x, node.y);
+    } else context.lineTo(node.x, node.y);
+  }
+  context.closePath();
+}
 import {
   validMeasurements,
   type MeasurementAnnotation,
@@ -416,6 +438,8 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+        /** Rounded-rectangle corner radius in local px; legacy drafts omit it (square). */
+        cornerRadius?: number;
       }
     | {
         kind: 'ellipse';
@@ -1918,6 +1942,7 @@ export function validateFrame(
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         (layer.kind !== 'line' &&
           (!('fill' in layer) || typeof layer.fill !== 'boolean')) ||
+        (layer.kind === 'rectangle' && !validCornerRadius(layer.cornerRadius)) ||
         (layer.kind === 'polygon' &&
           (!integer(layer.sides, 3, 32) ||
             (layer.innerRadius !== undefined &&
@@ -4084,7 +4109,12 @@ export async function renderFrame(
       context.fillStyle = layer.color;
       context.strokeStyle = layer.color;
       context.lineWidth = layer.stroke;
-      if (layer.fill) context.fillRect(0, 0, layer.width, layer.height);
+      if (clampCornerRadius(layer.cornerRadius, layer.width, layer.height) > 0) {
+        context.beginPath();
+        traceShapeNodes(context, roundedRectNodes(layer.width, layer.height, layer.cornerRadius));
+        if (layer.fill) context.fill();
+        else context.stroke();
+      } else if (layer.fill) context.fillRect(0, 0, layer.width, layer.height);
       else context.strokeRect(0, 0, layer.width, layer.height);
     }
     if (layer.kind === 'ellipse') {

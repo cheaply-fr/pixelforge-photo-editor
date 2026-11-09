@@ -13,7 +13,7 @@ export type PaletteToolId =
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'blur' | 'sharpen' | 'pen'
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
-  | 'path-select' | 'direct-select' | 'add-anchor' | 'delete-anchor' | 'convert-point' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
+  | 'path-select' | 'direct-select' | 'add-anchor' | 'delete-anchor' | 'convert-point' | 'text' | 'rectangle' | 'rounded-rectangle' | 'ellipse' | 'line' | 'polygon' | 'custom-shape' | 'freeform-pen' | 'curvature-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
   | 'magnetic-lasso' | 'selection-brush' | 'quick-selection' | 'magic-wand';
 
@@ -33,7 +33,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
-  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point', 'path-select', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
+  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point', 'path-select', 'direct-select', 'text', 'rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'] },
 ] as const;
 
 /** Photoshop's repeated-key families. Singletons are intentionally omitted. */
@@ -41,7 +41,7 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'ellipse', 'line', 'polygon'],
+  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   m: ['select', 'ellipse-select', 'row-select', 'column-select'],
   i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
@@ -70,7 +70,7 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   crop: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'],
   fill: ['gradient', 'fill'],
   brush: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  shape: ['rectangle', 'ellipse', 'line', 'polygon'],
+  shape: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   eraser: ['eraser', 'background-eraser', 'magic-eraser'],
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],
@@ -155,9 +155,11 @@ export const TOOL_ICONS = {
   'direct-select': 'SplinePointer',
   text: 'Type',
   rectangle: 'RectangleHorizontal',
+  'rounded-rectangle': 'SquareRoundCorner',
   ellipse: 'Circle',
   line: 'Minus',
   polygon: 'Hexagon',
+  'custom-shape': 'Shapes',
 } as const satisfies Record<PaletteToolId, string>;
 
 export type ToolIconName = (typeof TOOL_ICONS)[PaletteToolId];

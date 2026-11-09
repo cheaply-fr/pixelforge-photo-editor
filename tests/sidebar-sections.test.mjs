@@ -45,6 +45,8 @@ const LEGACY_TOOL_OPTIONS_TOOLS = [
   'audio-note',
   // Path tools added after the registry; they share the Pen tool options.
   'add-anchor', 'delete-anchor', 'convert-point', 'path-select',
+  // Added with their tools (docs/shape-tools-contract.md).
+  'rounded-rectangle', 'custom-shape',
 ];
 
 test('every palette tool has exactly one registry entry and nothing else is mapped', () => {
