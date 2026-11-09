@@ -105,7 +105,7 @@ test('a commit encodes only changed tiles and shares the rest by object', () => 
   const two = recorder();
   const { asset: next, stats: nextStats } = tileAssetFromBands(w, h, bandReader(edited, w), two.encode, base);
   assert.deepEqual(two.calls, [[256, 0, 256, 256]]);
-  assert.deepEqual(nextStats, { tiles: 6, encoded: 1, reused: 5, empty: 0 });
+  assert.deepEqual(nextStats, { tiles: 6, encoded: 1, reused: 5, empty: 0, hashed: 6, skipped: 0, hinted: false });
   next.tiles.forEach((tile, index) => {
     if (index === 1) assert.notEqual(tile, base.tiles[1]);
     else assert.equal(tile, base.tiles[index], `tile ${index} is shared by object`);
