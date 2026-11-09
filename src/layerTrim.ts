@@ -79,6 +79,11 @@ export function translateLocal(matrix: Matrix, x: number, y: number): Matrix {
 /**
  * Plan storing a raster layer at its non-transparent bounding box. Returns
  * null when the layer already fits its content (nothing to save).
+ *
+ * With `region`, `pixels` holds only that rectangle of the `width × height`
+ * layer and the caller guarantees every pixel outside it is transparent
+ * (e.g. the union of a tiled asset's non-empty tiles); the plan is the same
+ * as for the whole layer.
  */
 export function planLayerTrim(
   pixels: ArrayLike<number>,
@@ -86,8 +91,14 @@ export function planLayerTrim(
   height: number,
   matrix: Matrix,
   margin = 0,
+  region?: PixelBounds | null,
 ): LayerTrimPlan | null {
-  const tight = findTrimBounds(pixels, width, height, { mode: 'transparent' });
+  const area = region === undefined ? { x: 0, y: 0, width, height } : region;
+  const found =
+    area && area.width > 0 && area.height > 0
+      ? findTrimBounds(pixels, area.width, area.height, { mode: 'transparent' })
+      : null;
+  const tight = found && { ...found, x: found.x + area!.x, y: found.y + area!.y };
   // An optional transparent margin (clamped to the asset) keeps room for
   // effects that render just outside the content, such as a layer style
   // shadow or outline added later.

@@ -17,7 +17,10 @@ Raster and editable presentation layers retain nondestructive RGB curves in
 channel plus red, green and blue channels. Rendering compiles these curves to
 8-bit lookup tables, preserves alpha (including transparent RGB data), and
 leaves the source asset unchanged. Older documents omit the field and migrate
-to identity curves.
+to identity curves. An optional `curves.interpolation` (`linear` or
+`monotone`) selects piecewise-linear or monotone-cubic joins; see
+[`curves-adjustment-contract.md`](./curves-adjustment-contract.md) for point
+limits, legacy resolution and validation.
 
 Frames may also contain an optional `groups` array of editable folders. A group stores an ID, name, visibility, lock state, opacity, a validated blend value and its persisted `collapsed` panel state. Layers reference a group with `groupId`; their own source pixels, transforms and order remain unchanged. Group members render into an isolated frame-sized surface, retaining each child blend, mask, transform, style, adjustment, visibility and opacity; the group opacity and blend are then applied once at the first member stacking slot. Group locks prevent edits to member layers. Folder creation, rename, collapse/expand, visibility, opacity, blend, lock and ungroup actions are undoable and survive local/portable/cloud round trips. See [`group-compositing-contract.md`](./group-compositing-contract.md) for bounds, non-contiguous members and progress behavior.
 

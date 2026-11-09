@@ -126,3 +126,7 @@ jobs:
         env:
           DEPLOY_URL: https://photoeditor.cheaply.fr
         run: npm run verify:deployment
+      # The version is derived from this run's number (docs/deployment.md,
+      # "Release versions"); nothing is committed or tagged.
+      - name: Report release version
+        run: node -e "const r=JSON.parse(require('fs').readFileSync('dist/release.json','utf8'));console.log('Deployed v'+r.version+' ('+r.commit+')')" | tee -a "$GITHUB_STEP_SUMMARY"

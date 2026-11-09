@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { selectionDecimal } from './document';
+import { parseSelectionFeather } from './selectionFeather';
 
 export default function SelectAndMaskDialog({
   close,
@@ -13,9 +14,9 @@ export default function SelectAndMaskDialog({
   const [feather, setFeather] = useState('0');
   useEffect(() => { dialog.current?.showModal(); }, []);
   const radius = selectionDecimal(smoothRadius);
-  const featherValue = selectionDecimal(feather);
+  const featherValue = parseSelectionFeather(feather);
   const valid = Number.isInteger(radius) && radius >= 0 && radius <= 64 &&
-    Number.isInteger(featherValue) && featherValue >= 0 && featherValue <= 1000;
+    featherValue !== null;
   return (
     <dialog
       ref={dialog}
@@ -23,7 +24,7 @@ export default function SelectAndMaskDialog({
       aria-labelledby="select-and-mask-title"
       onCancel={close}
     >
-      <form onSubmit={(event) => { event.preventDefault(); if (valid) apply(radius, featherValue); }}>
+      <form onSubmit={(event) => { event.preventDefault(); if (valid && featherValue !== null) apply(radius, featherValue); }}>
         <h2 id="select-and-mask-title">Select and Mask</h2>
         <p>
           Refine the current alpha selection locally. Source pixels stay unchanged;
@@ -45,13 +46,13 @@ export default function SelectAndMaskDialog({
           <input
             aria-label="Select and Mask feather (px)"
             type="text"
-            inputMode="numeric"
+            inputMode="decimal"
             value={feather}
-            aria-invalid={feather !== '' && !(Number.isInteger(featherValue) && featherValue >= 0 && featherValue <= 1000) ? true : undefined}
+            aria-invalid={feather !== '' && featherValue === null ? true : undefined}
             onChange={(event) => setFeather(event.target.value)}
           />
         </label>
-        {!valid && <p role="alert" className="resize-error">Use smoothing 0–64 px and feather 0–1000 px.</p>}
+        {!valid && <p role="alert" className="resize-error">Use whole smoothing 0–64 px and feather 0–1000 px (decimals such as 1.2 allowed).</p>}
         <div className="dialog-actions">
           <button type="button" onClick={close}>Cancel</button>
           <button type="submit" disabled={!valid}>Apply Select and Mask</button>

@@ -55,8 +55,12 @@ const safeSize = (size: number) => (Number.isFinite(size) ? Math.max(1, size) : 
 export const strokeWindowReach = {
   /** Dodge, Burn and Sponge change pixels under the radial stamp only. */
   tonal: (size: number) => safeSize(size) / 2 + 2,
-  /** Smudge also reads the source a quarter of the brush behind each pixel. */
-  smudge: (size: number) => safeSize(size) / 2 + Math.ceil(Math.max(1, safeSize(size) * 0.25)) + 3,
+  /**
+   * Smudge reads and changes pixels under each dab and loads its carried
+   * paint from the stroke's largest dab footprint (see `smudgeDabReach`);
+   * callers grow the window around the planned (scattered) dab centres.
+   */
+  smudge: (size: number) => Math.ceil(safeSize(size) / 2) + 3,
   /** Blur and Sharpen average a neighbourhood of at most 4 px. */
   retouch: (size: number) => Math.max(0.5, safeSize(size) / 2) + 4 + 3,
   /** Mixer Brush and History Brush change and read pixels under the dab only. */

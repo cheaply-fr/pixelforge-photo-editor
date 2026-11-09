@@ -27,7 +27,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { SidebarSection } from '../src/SidebarSection';
 import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
 import type { TriggerOrigin, TriggerSource } from '../src/sidebarAutoScroll';
@@ -165,6 +165,8 @@ import {
   type TextMaskOrientation,
 } from '../src/textMask';
 import { useDocument } from '../src/useDocument';
+import { useDelayedFlag } from '../src/useDelayedFlag';
+import { RENDER_STATUS_HIDE_DELAY_MS, RENDER_STATUS_SHOW_DELAY_MS } from '../src/canvasPresentation';
 import {
   applySelectLinkedLayers,
   planSelectLinkedLayers,
@@ -207,6 +209,10 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import {
+  formatSelectionFeather,
+  normalizeSelectionFeather,
+} from '../src/selectionFeather';
 import SaveSelectionDialog from '../src/SaveSelectionDialog';
 import EditFillDialog from '../src/EditFillDialog';
 import { editFillColor, type EditFillOptions } from '../src/editFill';
@@ -305,8 +311,13 @@ import {
   validClippingRelationship,
 } from '../src/layerClipping';
 import { insertCopiesAboveSources, insertLayerAboveActive } from '../src/layerInsertion';
-import CurveEditor from '../src/CurveEditor';
-import { type CurveChannel, type CurvePoints } from '../src/curves';
+import CurveEditor, { type CurveChangeOptions } from '../src/CurveEditor';
+import {
+  curveInterpolation,
+  type CurveChannel,
+  type CurveInterpolation,
+  type CurvePoints,
+} from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { applyFadePixels } from '../src/fade';
 import { createBackgroundMask } from '../src/backgroundRemoval';
@@ -377,6 +388,8 @@ import {
   mixRectByMask,
   type PixelRect,
 } from '../src/selectionClip';
+import { canvasDirtyBox, noteCanvasWrite, trackCanvasWrites, untrackCanvasWrites } from '../src/canvasDirty';
+import { emptyTiledAsset, isTiledAsset, tiledContentRegion } from '../src/tiledAssets';
 import {
   refineSelectionAlpha,
   type SelectionRefineMode,
@@ -491,6 +504,7 @@ import {
   stepBrushSize,
   type BrushSpacingState,
 } from '../src/brushSize';
+import { precedingCoalescedSamples } from '../src/pointerSamples';
 import {
   BRUSH_PRESSURE_CURVES,
   normalizeBrushPressureCurve,
@@ -567,6 +581,7 @@ import {
   DEFAULT_PAINT_SYMMETRY,
   affineMaxScale,
   applyAffine,
+  invertAffine,
   normalizePaintSymmetry,
   paintSymmetryForLayer,
   paintSymmetryAppliesToTool,
@@ -641,7 +656,21 @@ import {
   type PathNode,
   type PathModel,
 } from '../src/paths';
-import { applySmudgeStroke } from '../src/smudge';
+import {
+  DEFAULT_SMUDGE_SETTINGS,
+  applySmudgeDabs,
+  createSmudgeStroke,
+  normalizeSmudgeSettings,
+  planSmudgeSegment,
+  smudgeDabReach,
+  type RasterView,
+  type SmudgeApplyOptions,
+  type SmudgePoint,
+  type SmudgeSettings,
+  type SmudgeStroke,
+  type SmudgeTip,
+} from '../src/smudge';
+import { SmudgeToolOptions } from '../src/SmudgeToolOptions';
 import {
   DEFAULT_STROKE_PATH_SETTINGS,
   STROKE_PATH_TOOL_LABELS,
@@ -790,6 +819,13 @@ import {
 } from '../src/fontPreview';
 import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
+import FontFamilySelect from '../src/FontFamilySelect';
+import { fontFamilyKind, isSelectableFontFamily, missingFontFamilies } from '../src/fontLibrary';
+import { ensureTextLayerFonts, sharedFontLoader } from '../src/fontLoader';
+import { currentTextCaretAdapter, planGlyphInsert } from '../src/glyphInsert';
+import type { GlyphInsertMode } from '../src/GlyphsPanel';
+import { useFontLoadState } from '../src/useFontLibrary';
+const GlyphsPanel = lazy(() => import('../src/GlyphsPanel'));
 import HistogramDialog from '../src/HistogramDialog';
 import { buildHistogram, type HistogramData } from '../src/histogram';
 import AdjustmentsDialog, { type AdjustmentCommand } from '../src/AdjustmentsDialog';
@@ -1091,6 +1127,7 @@ type Command =
   | 'font-preview-size'
   | 'language-options'
   | 'missing-fonts'
+  | 'glyphs'
   | 'image-mode'
   | 'image-analysis'
   | 'image-adjustments';
@@ -1498,6 +1535,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Language Options', command: 'language-options' },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'missing-fonts' },
+    { label: 'Glyphs, Icons & Symbols…', command: 'glyphs' },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
     { label: 'Load Default Type Styles', command: 'load-default-type-styles' },
     { label: 'Save Default Type Styles', command: 'save-default-type-styles' },
@@ -1647,6 +1685,19 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
 
 /** Tools whose one gesture spans several presses (click-to-place, tap-to-arm). */
 const MULTI_PRESS_GESTURE_TOOLS: readonly Tool[] = ['polygonal-lasso', 'magnetic-lasso', 'pen', 'curvature-pen'];
+/**
+ * Tools whose result depends on the whole pointer path, not just its latest
+ * position: each browser-coalesced sample of a move is applied to them (see
+ * `precedingCoalescedSamples`). Drag-to-size tools (shapes, marquees, crop,
+ * move, gradient) only need the latest position.
+ */
+const STROKE_SAMPLING_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
+  'brush', 'pencil', 'eraser', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge',
+  'clone', 'heal', 'spot-heal', 'patch', 'pattern-stamp', 'red-eye', 'color-replace',
+  'background-eraser', 'mixer-brush', 'history-brush', 'art-history-brush',
+  'mask-brush', 'mask-eraser', 'adjustment-brush', 'selection-brush', 'quick-selection',
+  'lasso', 'magnetic-lasso', 'freeform-pen',
+]);
 
 type Gesture = {
   tool: Tool;
@@ -1694,6 +1745,11 @@ type Gesture = {
   blendStroke?: BrushBlendStroke;
   /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
   paintSymmetry?: readonly SymmetryAffine[];
+  /**
+   * Asset id `buffer` was drawn from when its writes are tracked
+   * (`src/canvasDirty.ts`), so the commit hashes only the touched tiles.
+   */
+  tileBase?: string;
   /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
   cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
@@ -1742,6 +1798,8 @@ type Gesture = {
   smoothedLast?: { x: number; y: number };
   /** Dab spacing carried across pointer segments of one stroke. */
   spacingState?: BrushSpacingState;
+  /** Smudge carried paint, tip and sample for this stroke. */
+  smudge?: SmudgeGestureState & { last: SmudgePoint };
   points?: PathNode[];
   lastPressure?: number;
   pointerType?: string;
@@ -1928,7 +1986,10 @@ const stampCanvas = (
     });
     changed = secondaryResult.changed || changed;
   }
-  if (changed) context.putImageData(image, left, top);
+  if (changed) {
+    context.putImageData(image, left, top);
+    noteCanvasWrite(target, left, top, width, height);
+  }
   return changed;
 };
 
@@ -2316,39 +2377,72 @@ const tonalCanvasSegment = (
     { source, selectionMask: options.selectionMask, tool: options.mode },
   );
 
-/** Apply one immutable Smudge segment and publish the preview pixels (windowed like the tonal tools). */
+/** Per-stroke Smudge engine state, fixed at pointer-down (see src/smudge.ts). */
+type SmudgeGestureState = {
+  stroke: SmudgeStroke;
+  /** Last applied point (layer space) with its pressure. */
+  last?: SmudgePoint;
+  tip: SmudgeTip;
+  apply: Omit<SmudgeApplyOptions, 'selectionMask'>;
+  symmetry?: readonly SymmetryAffine[];
+};
+
+/**
+ * Apply one Smudge segment to the gesture buffer. Dabs are planned first (the
+ * carried paint lives in `state`), then only the window around them is read
+ * and written; a Sample All Layers composite is read in place.
+ */
 const smudgeCanvasSegment = (
-  source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
-  from: { x: number; y: number },
-  to: { x: number; y: number },
-  options: {
-    size: number;
-    hardness: number;
-    flow: number;
-    selectionMask?: Uint8ClampedArray;
-  },
-) =>
-  windowedCanvasStroke(
+  from: SmudgePoint,
+  to: SmudgePoint,
+  state: SmudgeGestureState,
+  selectionMask?: Uint8ClampedArray,
+) => {
+  const dabs = planSmudgeSegment(state.stroke, from, to, state.tip, state.symmetry);
+  if (!dabs.length) return false;
+  return windowedCanvasStroke(
     destination,
-    strokeWindow([from, to], strokeWindowReach.smudge(options.size), destination.width, destination.height),
-    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
-      const a = windowPoint(from, rect), b = windowPoint(to, rect);
-      return applySmudgeStroke(sourcePixels!, destinationPixels, {
-        width,
-        height,
-        x1: a.x,
-        y1: a.y,
-        x2: b.x,
-        y2: b.y,
-        size: options.size,
-        hardness: options.hardness,
-        flow: options.flow,
-        selectionMask,
-      });
-    },
-    { source, selectionMask: options.selectionMask, tool: 'smudge' },
+    strokeWindow(dabs, smudgeDabReach(state.stroke), destination.width, destination.height),
+    ({ destination: pixels, selectionMask: mask, rect }) => ({
+      pixels,
+      changed: applySmudgeDabs(
+        state.stroke,
+        dabs,
+        { data: pixels, width: rect.width, height: rect.height, x: rect.x, y: rect.y },
+        { ...state.apply, selectionMask: mask },
+      ),
+    }),
+    { selectionMask, tool: 'smudge' },
   );
+};
+
+/**
+ * Render the visible composite (optionally without adjustment layers) into
+ * a layer's local pixel space for Smudge's Sample All Layers.
+ */
+const smudgeCompositeSample = async (
+  frame: Frame,
+  layer: Layer,
+  assets: Assets,
+  width: number,
+  height: number,
+  ignoreAdjustments: boolean,
+): Promise<RasterView> => {
+  const rendered = await renderFrame(
+      ignoreAdjustments ? { ...frame, layers: frame.layers.filter((item) => item.kind !== 'adjustment') } : frame,
+      assets,
+    ),
+    local = surface(width, height),
+    context = local.getContext('2d')!,
+    inverse = invertAffine(layer.matrix as unknown as SymmetryAffine);
+  if (inverse) {
+    context.imageSmoothingEnabled = false;
+    context.setTransform(inverse[0], inverse[1], inverse[2], inverse[3], inverse[4], inverse[5]);
+    context.drawImage(rendered, 0, 0);
+  }
+  return { data: context.getImageData(0, 0, width, height).data, width, height, x: 0, y: 0 };
+};
 
 /** Apply one immutable Blur or Sharpen segment to the gesture buffer (windowed). */
 const retouchCanvasSegment = (
@@ -2423,39 +2517,36 @@ const mixerHistoryCanvasDabs = (
   );
 
 /**
- * Smudge counterpart of `stampStrokePathSamples`: smear between consecutive
- * samples of each contour, reading the stroke-start pixels like a pointer
- * Smudge stroke. Pixels are read and written once for the whole path.
+ * Smudge counterpart of `stampStrokePathSamples`: drag carried paint along
+ * each contour exactly like a pointer Smudge stroke (one stroke state per
+ * contour). Simulated pressure scales the dab size and Strength.
  */
 const smudgeStrokePathSamples = (
-  source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
   samples: readonly StrokePathSample[],
-  options: { size: number; hardness: number; flow: number; selectionMask?: Uint8ClampedArray },
+  state: Omit<SmudgeGestureState, 'stroke'>,
+  selectionMask?: Uint8ClampedArray,
 ) => {
   const width = destination.width, height = destination.height,
-    sourcePixels = source.getContext('2d')!.getImageData(0, 0, width, height).data,
     context = destination.getContext('2d')!,
-    image = context.getImageData(0, 0, width, height);
-  let pixels: Uint8ClampedArray = image.data, changed = false;
-  for (let index = 1; index < samples.length; index += 1) {
-    const from = samples[index - 1], to = samples[index],
-      flow = options.flow * from.opacityScale;
-    if (from.contour !== to.contour || flow <= 0) continue;
-    const result = applySmudgeStroke(sourcePixels, pixels, {
-      width, height, x1: from.x, y1: from.y, x2: to.x, y2: to.y,
-      size: Math.min(10000, Math.max(1, options.size * from.sizeScale)),
-      hardness: options.hardness,
-      flow,
-      selectionMask: options.selectionMask,
-    });
-    pixels = result.pixels;
-    changed = result.changed || changed;
+    image = context.getImageData(0, 0, width, height),
+    view: RasterView = { data: image.data, width, height, x: 0, y: 0 };
+  let changed = false, stroke: SmudgeStroke | undefined, contour = -1;
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index];
+    if (sample.contour !== contour || !stroke) {
+      contour = sample.contour;
+      stroke = createSmudgeStroke({ size: state.tip.size, copies: state.symmetry?.length ?? 1 });
+    }
+    const previous = index > 0 && samples[index - 1].contour === contour ? samples[index - 1] : sample,
+      point = (item: StrokePathSample): SmudgePoint => ({
+        x: item.x, y: item.y, sizeScale: item.sizeScale, strengthScale: item.opacityScale,
+      }),
+      dabs = planSmudgeSegment(stroke, point(previous), point(sample), state.tip, state.symmetry);
+    if (dabs.length)
+      changed = applySmudgeDabs(stroke, dabs, view, { ...state.apply, selectionMask }) || changed;
   }
-  if (changed) {
-    image.data.set(pixels);
-    context.putImageData(image, 0, 0);
-  }
+  if (changed) context.putImageData(image, 0, 0);
   return changed;
 };
 
@@ -2533,6 +2624,7 @@ const confineStrokeRect = (
   if (!changed) return false;
   image.data.set(mixed);
   targetContext.putImageData(image, rect.x, rect.y);
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
   return true;
 };
 /** Frame-space selection coverage (alpha) for edits stored at canvas size. */
@@ -2622,6 +2714,8 @@ const blendStrokeRect = (
   if (!changed) return false;
   image.data.set(composed);
   targetContext.putImageData(image, rect.x, rect.y);
+  // Report the write so a tracked gesture buffer commits these tiles.
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
   return true;
 };
 /**
@@ -2841,7 +2935,9 @@ export default function Home() {
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
     commandDisabledRef = useRef<Record<string, boolean>>({}),
-    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new');
+    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new'),
+    // History entry created by the current curve-point drag (see setCurve).
+    curveGestureFrame = useRef<Frame | null>(null);
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
     [name, setName] = useState('coastline-edit');
@@ -2866,6 +2962,11 @@ export default function Home() {
       paint,
       schedulePaint,
     } = doc;
+  // The status bar reports a render only once it has run for a moment, and
+  // keeps reporting while back-to-back stroke previews follow each other, so
+  // sub-frame renders do not flicker "Rendering… / Render ready". The canvas
+  // `data-rendering` attribute and the shell's aria-busy stay exact.
+  const renderStatusBusy = useDelayedFlag(doc.rendering, RENDER_STATUS_SHOW_DELAY_MS, RENDER_STATUS_HIDE_DELAY_MS);
   // A render can outlive the React event that started it. Keep a mutable
   // revision mirror so async layer commands can reject stale ownership even
   // before a new render paints its replacement frame.
@@ -2961,6 +3062,7 @@ export default function Home() {
     [spongeMode, setSpongeMode] = useState<SpongeMode>('saturate'),
     [spongeVibrance, setSpongeVibrance] = useState(50),
     [mixerBrush, setMixerBrush] = useState<MixerBrushSettings>({ ...DEFAULT_MIXER_BRUSH }),
+    [smudgeSettings, setSmudgeSettings] = useState<SmudgeSettings>(() => ({ ...DEFAULT_SMUDGE_SETTINGS })),
     [historyBrush, setHistoryBrush] = useState<HistoryBrushSettings>({ ...DEFAULT_HISTORY_BRUSH }),
     [artHistoryBrush, setArtHistoryBrush] = useState<ArtHistoryBrushSettings>({ ...DEFAULT_ART_HISTORY_BRUSH }),
     [historySourceIndex, setHistorySourceIndex] = useState<number | undefined>(undefined),
@@ -2971,7 +3073,8 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56),
-    [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
+    [fontFamily, setFontFamily] = useState<string>('Arial'),
+    [glyphsOpen, setGlyphsOpen] = useState(false),
     [fontPreviewSize, setFontPreviewSize] = useState<FontPreviewSize>(DEFAULT_FONT_PREVIEW_SIZE),
     [missingFontsOpen, setMissingFontsOpen] = useState(false),
     [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
@@ -3479,8 +3582,16 @@ export default function Home() {
    * PNG it was just encoded from, and the render worker receives the pixels
    * with the commit render instead of decoding the data URL again.
    */
-  const addPaintedAsset = (buffer: HTMLCanvasElement) => {
-    const id = addAsset(assets.current, buffer);
+  const addPaintedAsset = (buffer: HTMLCanvasElement, base?: string) => {
+    // Dirty-rectangle hint: every write since the buffer was drawn from
+    // `base` was tracked, so unchanged tiles keep `base`'s tiles unread.
+    const dirty = base ? canvasDirtyBox(buffer) : undefined;
+    untrackCanvasWrites(buffer);
+    const id = addAsset(
+      assets.current,
+      buffer,
+      dirty !== undefined ? { hint: { base: assets.current[base!], dirty } } : undefined,
+    );
     const asset = assets.current[id];
     primeDecodedAsset(asset, buffer);
     primeWorkerDecodedAsset(asset, buffer);
@@ -3493,6 +3604,36 @@ export default function Home() {
    * request re-reads the gesture when it runs, so it shows the latest buffer
    * and is dropped once the gesture has been committed or abandoned.
    */
+  /** Smudge engine settings for a stroke on `layer`, fixed when the stroke starts. */
+  const smudgeStrokeSettings = (
+    layer: Layer,
+    frame: Frame,
+    sample?: RasterView,
+  ): Omit<SmudgeGestureState, 'stroke'> => ({
+    tip: {
+      size: localSize(layer.matrix, size),
+      hardness,
+      angle: brushAngle,
+      roundness: brushRoundness,
+      flipX: brushFlipX,
+      flipY: brushFlipY,
+      scatter: brushScatter,
+      dynamics: brushDynamics,
+      pressureSize,
+      pressureStrength: smudgeSettings.pressureStrength,
+      pressureCurve,
+    },
+    apply: {
+      strength: smudgeSettings.strength / 100,
+      mode: smudgeSettings.mode,
+      fingerPainting: smudgeSettings.fingerPainting,
+      color: brushColor(color),
+      sample,
+      bristle: brushBristle,
+      texture: brushTexture,
+    },
+    symmetry: paintSymmetryForLayer(paintSymmetry, frame.w, frame.h, layer.matrix),
+  });
   const previewGesture = (g: Gesture) =>
     schedulePaint(() =>
       gesture.current === g && g.buffer && g.layer
@@ -3777,6 +3918,7 @@ export default function Home() {
     spongeMode,
     spongeVibrance,
     mixerBrush,
+    smudge: smudgeSettings,
     historyBrush,
     artHistoryBrush,
     historySourceIndex,
@@ -3888,6 +4030,8 @@ export default function Home() {
     setSpongeMode(s.spongeMode ?? 'saturate');
     setSpongeVibrance(s.spongeVibrance ?? 50);
     setMixerBrush({ ...DEFAULT_MIXER_BRUSH, ...s.mixerBrush });
+    // Drafts saved before Strength existed used the shared brush opacity as the Smudge "Flow".
+    setSmudgeSettings(normalizeSmudgeSettings(s.smudge, s.tool === 'smudge' ? s.brushOpacity : undefined));
     setHistoryBrush({ ...DEFAULT_HISTORY_BRUSH, ...s.historyBrush });
     setArtHistoryBrush({ ...DEFAULT_ART_HISTORY_BRUSH, ...s.artHistoryBrush });
     setHistorySourceIndex(s.historySourceIndex);
@@ -3896,7 +4040,7 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
-    setFontFamily(s.fontFamily && FONTS.includes(s.fontFamily) ? s.fontFamily : 'Arial');
+    setFontFamily(s.fontFamily && isSelectableFontFamily(s.fontFamily) ? s.fontFamily : 'Arial');
     setFontPreviewSize(normalizeFontPreviewSize(s.fontPreviewSize));
     setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
@@ -3966,13 +4110,25 @@ export default function Home() {
     setFontFamily,
     setFontPreviewSize,
   ]);
-  const fontAvailability = checkFontAvailability(
+  // Library fonts load on demand; choosing one starts its download.
+  const libraryFontState = useFontLoadState(fontFamily, fontFamilyKind(fontFamily) === 'library' ? { priority: 'high', weight: 700 } : false);
+  const fontAvailability = fontFamilyKind(fontFamily) === 'library' ? (libraryFontState === 'failed' ? 'fallback' : 'available') : checkFontAvailability(
     fontFamily,
     (font) =>
       typeof document !== 'undefined' && document.fonts
         ? document.fonts.check(font)
         : true,
   );
+  // Portable projects keep unknown family names; disclose them once per set.
+  const missingDocumentFonts = missingFontFamilies(
+    (frame?.layers ?? []).flatMap((layer) => (layer.kind === 'text' ? [layer.fontFamily] : [])),
+  ).join(', ');
+  const announcedMissingFonts = useRef('');
+  useEffect(() => {
+    if (!missingDocumentFonts || announcedMissingFonts.current === missingDocumentFonts) return;
+    announcedMissingFonts.current = missingDocumentFonts;
+    setNotice(`Missing fonts: ${missingDocumentFonts}. Text stays editable and renders with a fallback font.`);
+  }, [missingDocumentFonts]);
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
     if (!preset) return;
@@ -4013,6 +4169,8 @@ export default function Home() {
     if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
     // Presets saved before the blend mode existed paint Normal.
     setBrushBlendMode(normalizeBrushBlendMode(preset.brushBlendMode));
+    // Presets saved from Smudge also restore its Strength, Mode and toggles.
+    if (preset.smudge) setSmudgeSettings(normalizeSmudgeSettings(preset.smudge));
     setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
   };
@@ -4072,6 +4230,7 @@ export default function Home() {
         brushFlow,
         brushOpacity,
         brushBlendMode,
+        ...(tool === 'smudge' ? { smudge: smudgeSettings } : {}),
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -5299,6 +5458,51 @@ export default function Home() {
     editLayer({ textPath: binding });
     setNotice('Text attached to editable path');
   };
+  /** Glyphs panel insertion; see src/glyphInsert.ts for the adapter order. */
+  const insertGlyph = async (glyph: string, family: string, mode: GlyphInsertMode) => {
+    const f = current();
+    const plan = mode === 'shape'
+      ? { kind: 'new-layer' as const, text: glyph, fontFamily: family }
+      : planGlyphInsert({ active: f.active, layers: f.layers.map((layer) => ({ ...layer, locked: layerIsLocked(f, layer) })) }, glyph, family);
+    void sharedFontLoader().ensure(family, { text: glyph, priority: 'high' });
+    if (plan.kind === 'caret') {
+      if (currentTextCaretAdapter()?.insertTextAtCaret(glyph) !== false) {
+        setNotice('Glyph inserted at the text caret');
+        return;
+      }
+    }
+    if (plan.kind === 'append') {
+      if (editLayer({ text: plan.text } as Partial<Layer>)) setNotice('Glyph added to the active text layer');
+      return;
+    }
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice('Layer limit reached; remove a layer before inserting a glyph');
+      return;
+    }
+    const size = Math.max(24, Math.min(256, fontSize * 2));
+    const added = addLayer({
+      ...commonLayer(`Glyph ${glyph}`),
+      kind: 'text',
+      text: glyph,
+      fontSize: size,
+      fontFamily: family,
+      bold: false,
+      color,
+      boxWidth: Math.max(size * 2, 64),
+      textAlign: 'left',
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      orientation: 'horizontal',
+      matrix: [1, 0, 0, 1, Math.max(0, Math.round(f.w / 2 - size / 2)), Math.max(0, Math.round(f.h / 2 - size / 2))],
+    });
+    if (!added) return;
+    if (mode === 'shape') {
+      await ensureTextLayerFonts([{ fontFamily: family, text: glyph }]);
+      await convertTextToShape();
+      return;
+    }
+    setNotice(`Glyph added as a new ${family} text layer`);
+  };
   const pasteLoremIpsum = () => {
     const f = current();
     if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
@@ -5769,7 +5973,7 @@ export default function Home() {
           shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h,
           feather, inverted: false, mask: maskId,
         },
-      })) setNotice(`Select and Mask applied (smooth ${smoothRadius} px, feather ${feather} px)`);
+      })) setNotice(`Select and Mask applied (smooth ${smoothRadius} px, feather ${formatSelectionFeather(feather)} px)`);
     } catch (error) {
       if (isCurrentSelectionOperation(f, frameIndex, workToken))
         setNotice(error instanceof Error ? error.message : 'Select and Mask failed');
@@ -6282,10 +6486,14 @@ export default function Home() {
     }
     setSelection({ ...f.selection, inverted: !f.selection.inverted });
   };
-  const setSelectionFeather = (feather: number) => {
-    const f = current();
+  const setSelectionFeather = (value: number) => {
+    const f = current(), feather = normalizeSelectionFeather(value);
+    if (Number.isNaN(feather)) {
+      setNotice('Selection feather must be 0 to 1000 px');
+      return;
+    }
     if (f.selection && commit({ ...f, selection: { ...f.selection, feather } }))
-      setNotice(`Selection feather set to ${Math.round(feather)} px`);
+      setNotice(`Selection feather set to ${formatSelectionFeather(feather)} px`);
   };
   const createMaskFromSelection = async () => {
     const f = current(),
@@ -7019,8 +7227,47 @@ export default function Home() {
       adjust({ levelsOutputWhite });
   const setColorBalance = (patch: Partial<Adjustments['colorBalance']>) =>
     adjust({ colorBalance: { ...colorBalance, ...patch } });
-  const setCurve = (channel: CurveChannel, points: CurvePoints) =>
-    adjust({ curves: { ...curves, [channel]: points } });
+  // One curve-point drag is one undo step: the first change commits, later
+  // changes of the same drag amend that history entry in place.
+  const setCurve = (
+    channel: CurveChannel,
+    points: CurvePoints,
+    options?: CurveChangeOptions,
+  ) => {
+    const next = {
+      ...curves,
+      interpolation: curveInterpolation(curves),
+      [channel]: points,
+    };
+    const top = current();
+    if (options?.continuing && curveGestureFrame.current === top) {
+      const amended: Frame = {
+        ...top,
+        layers: top.layers.map((layer) =>
+          layer.id === top.active
+            ? {
+                ...layer,
+                adjustments: {
+                  ...effectiveAdjustments(layer.adjustments),
+                  curves: next,
+                },
+              }
+            : layer,
+        ),
+      };
+      if (doc.amend(amended, top)) {
+        curveGestureFrame.current = current();
+        // amend() replaces the entry without rendering; repaint like commit.
+        void paint(current());
+        return;
+      }
+    }
+    const committed = adjust({ curves: next });
+    curveGestureFrame.current =
+      committed && current() !== top ? current() : null;
+  };
+  const setCurveInterpolation = (interpolation: CurveInterpolation) =>
+    adjust({ curves: { ...curves, interpolation } });
   const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
   const updateRecordedFilterParameters = (effects: Adjustments['filterEffects']) => {
@@ -7640,6 +7887,7 @@ export default function Home() {
         spongeMode,
         spongeVibrance,
         mixerBrush,
+        smudge: smudgeSettings,
         historyBrush,
         artHistoryBrush,
         historySourceIndex,
@@ -7763,6 +8011,7 @@ export default function Home() {
     spongeMode,
     spongeVibrance,
     mixerBrush,
+    smudgeSettings,
     historyBrush,
     artHistoryBrush,
     historySourceIndex,
@@ -9270,16 +9519,19 @@ export default function Home() {
         );
       let changed: boolean;
       if (tool === 'smudge') {
-        const source = surface(buffer.width, buffer.height);
-        source.getContext('2d')!.drawImage(image, 0, 0);
-        changed = smudgeStrokePathSamples(source, buffer, plan.samples, {
-          size: brushSize, hardness, flow: brushOpacity / 100, selectionMask,
-        });
+        const sample = smudgeSettings.sampleAllLayers
+          ? await smudgeCompositeSample(f, layer, assets.current, buffer.width, buffer.height, smudgeSettings.ignoreAdjustments)
+          : undefined;
+        changed = smudgeStrokePathSamples(buffer, plan.samples, smudgeStrokeSettings(layer, f, sample), selectionMask);
       } else {
         // Brush/Pencil in a non-Normal mode stroke the path on a transparent
         // buffer, then composite it once over the layer (src/brushBlend.ts).
         const blendMode = usesBrushBlendStroke(tool, brushBlendMode) ? brushBlendMode : undefined,
           target = blendMode ? surface(buffer.width, buffer.height) : buffer;
+        // Without a selection or blend mode every write is a tracked stamp, so
+        // the commit hashes only the tiles the path touched. A blend-mode
+        // path rewrites the whole buffer at once and is scanned in full.
+        if (!selectionMask && !blendMode) trackCanvasWrites(buffer);
         changed = stampStrokePathSamples(target, plan.samples, {
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
@@ -9322,7 +9574,7 @@ export default function Home() {
         setNotice('Stroke Path painted nothing: the path lies outside this layer or selection');
         return;
       }
-      const asset = addPaintedAsset(buffer);
+      const asset = addPaintedAsset(buffer, tool !== 'smudge' && !selectionMask ? layer.asset : undefined);
       const label = STROKE_PATH_TOOL_LABELS[tool];
       if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
         setNotice(
@@ -9770,7 +10022,14 @@ export default function Home() {
       if (current() !== f) return true;
       const buffer = surface(plan.w, plan.h);
       buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
-      const asset = addAsset(assets.current, buffer);
+      // Outside the drawn layer the new canvas is transparent: only the
+      // tiles under it are read back and hashed.
+      const asset = addAsset(assets.current, buffer, {
+        hint: {
+          base: emptyTiledAsset(plan.w, plan.h),
+          dirty: { x: plan.offsetX, y: plan.offsetY, w: source.w, h: source.h },
+        },
+      });
       // The expansion is pixel-identical, so it replaces the current history
       // entry instead of adding one: undo is unaffected and the page does not
       // reflow (e.g. a growing History list on phones) under the pointer.
@@ -9805,7 +10064,7 @@ export default function Home() {
     /** Source canvases of the most recently created assets. */
     recent: new Map<string, HTMLCanvasElement>(),
   });
-  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: { tiled?: boolean }): string => {
+  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: Parameters<typeof addDocumentAsset>[2]): string => {
     const id = addDocumentAsset(target, source, options);
     const recent = autoTrim.current.recent;
     recent.delete(id);
@@ -9827,12 +10086,21 @@ export default function Home() {
       try {
         const context = source.getContext('2d');
         if (!context) continue;
+        // A tiled asset is transparent outside its non-empty tiles, so only
+        // their bounding rectangle is read back (a stroke on a new layer
+        // reads a few tiles instead of the whole canvas).
+        const region = isTiledAsset(stored) ? tiledContentRegion(stored) : undefined;
         const plan = planLayerTrim(
-          context.getImageData(0, 0, stored.w, stored.h).data,
+          region === undefined
+            ? context.getImageData(0, 0, stored.w, stored.h).data
+            : region
+              ? context.getImageData(region.x, region.y, region.width, region.height).data
+              : [],
           stored.w,
           stored.h,
           layer.matrix,
           AUTO_TRIM_MARGIN,
+          region,
         );
         if (!plan) {
           state.known.add(layer.asset);
@@ -11711,15 +11979,14 @@ export default function Home() {
         ],
       } as Gesture;
       gesture.current = g;
+      // Strength, mode, tip and symmetry are fixed for the stroke at pointer-down.
+      const settingsAtDown = smudgeSettings,
+        strokeSettings = smudgeStrokeSettings(layer, f);
       g.pending = (async () => {
         try {
           const image = await decodeAsset(assets.current[layer.asset]),
-            source = surface(image.naturalWidth, image.naturalHeight),
-            buffer = surface(image.naturalWidth, image.naturalHeight),
-            sourceContext = source.getContext('2d')!,
-            bufferContext = buffer.getContext('2d')!;
-          sourceContext.drawImage(image, 0, 0);
-          bufferContext.drawImage(image, 0, 0);
+            buffer = surface(image.naturalWidth, image.naturalHeight);
+          buffer.getContext('2d')!.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
           g.selectionMask = await selectionMaskForLayer(
             f.selection,
@@ -11730,19 +11997,25 @@ export default function Home() {
             image.naturalHeight,
           );
           if (gesture.current !== g) return;
-          g.source = source;
+          // Sample All Layers reads the visible composite rendered once now.
+          const sample = settingsAtDown.sampleAllLayers
+            ? await smudgeCompositeSample(f, layer, assets.current, buffer.width, buffer.height, settingsAtDown.ignoreAdjustments)
+            : undefined;
+          if (gesture.current !== g) return;
+          g.smudge = {
+            ...strokeSettings,
+            apply: { ...strokeSettings.apply, sample },
+            stroke: createSmudgeStroke({ size: strokeSettings.tip.size, copies: strokeSettings.symmetry?.length ?? 1 }),
+            last: g.queued?.[0] ?? { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
+          };
           g.buffer = buffer;
-          let from = g.start;
+          const smudge = g.smudge;
           for (const queued of g.queued || []) {
-            const changed = smudgeCanvasSegment(source, buffer, from, queued, {
-              size: localSize(layer.matrix, size),
-              hardness,
-              flow: brushOpacity / 100,
-              selectionMask: g.selectionMask,
-            });
-            from = queued;
+            const changed = smudgeCanvasSegment(buffer, smudge.last, queued, smudge, g.selectionMask);
+            smudge.last = queued;
             g.changed = Boolean(g.changed || changed);
           }
+          g.last = { x: smudge.last.x, y: smudge.last.y };
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
         } catch {
@@ -12642,6 +12915,10 @@ export default function Home() {
           const image = await decodeAsset(assets.current[rasterAsset!]),
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
+          // Every later write goes through stampCanvas / confineStrokeRect,
+          // which report their rectangles for the commit's tile hint.
+          trackCanvasWrites(buffer);
+          g.tileBase = rasterAsset!;
           // Photoshop confines painting and erasing to the active selection.
           const selectionMask = f.selection && layer.kind === 'raster'
             ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
@@ -12708,8 +12985,30 @@ export default function Home() {
     MULTI_PRESS_GESTURE_TOOLS.includes(g.tool) ||
     gesturePointer.current === null ||
     gesturePointer.current === e.pointerId;
-  const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  /**
+   * Apply the samples the browser coalesced into `e` before `e` itself, as
+   * individual moves marked `intermediate`. Chromium delivers one pointermove
+   * per animation frame and lists the rest in getCoalescedEvents(); a hidden
+   * tab or app pane gets almost no frames, so without this a stroke made
+   * there keeps only a few positions and paints straight chords.
+   */
+  const applyCoalescedSamples = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    for (const sample of precedingCoalescedSamples(e, e.nativeEvent as PointerEvent | undefined))
+      pointerMove(Object.create(e, {
+        clientX: { value: sample.clientX },
+        clientY: { value: sample.clientY },
+        pressure: { value: sample.pressure ?? e.pressure },
+        nativeEvent: { value: sample.source },
+      }) as React.PointerEvent<HTMLCanvasElement>, true);
+  };
+  /**
+   * `intermediate` marks a coalesced sample that a later sample of the same
+   * event follows: it is applied to the stroke, but tools whose preview is a
+   * direct render or a full recomputation leave that to the final sample.
+   */
+  const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>, intermediate = false) => {
     if (quickMaskGesture.current && quickMaskRef.current) {
+      if (!intermediate) applyCoalescedSamples(e);
       const p = point(e),
         g = quickMaskGesture.current;
       if (!brushSegmentDue(Math.hypot(p.x - g.last.x, p.y - g.last.y), size)) return;
@@ -12724,22 +13023,14 @@ export default function Home() {
     }
     const g = gesture.current;
     if (!g || g.released || !ownsGesture(g, e)) return;
-    if (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') {
-      // The browser may merge several pointer samples into one move event;
-      // paint each of them so fast flicks and pen curves keep their shape.
-      const native = e.nativeEvent as PointerEvent | undefined,
-        coalesced = typeof native?.getCoalescedEvents === 'function' ? native.getCoalescedEvents() : [];
-      if (native && coalesced.length > 1) {
-        // A replayed move (see the trimmed-layer expansion) carries an offset.
-        const dx = e.clientX - native.clientX, dy = e.clientY - native.clientY;
-        for (const sample of coalesced.slice(0, -1))
-          pointerMove(Object.create(e, {
-            clientX: { value: sample.clientX + dx },
-            clientY: { value: sample.clientY + dy },
-            pressure: { value: sample.pressure },
-            nativeEvent: { value: sample },
-          }) as React.PointerEvent<HTMLCanvasElement>);
-      }
+    // The browser may merge several pointer samples into one move event (one
+    // per animation frame, and almost none while the page is hidden); apply
+    // each of them so fast flicks, pen curves and background strokes keep
+    // their shape. The stroke never depends on how often frames run.
+    if (!intermediate && STROKE_SAMPLING_TOOLS.has(g.tool)) {
+      applyCoalescedSamples(e);
+      // A sample can end or replace the gesture (e.g. a cancelled stroke).
+      if (gesture.current !== g || g.released) return;
     }
     const p = point(e);
     const local =
@@ -12771,7 +13062,7 @@ export default function Home() {
           ...g.maskRefinementStroke,
           points: [from, point],
         }) || Boolean(g.changed);
-        if (g.maskPreviewAsset) {
+        if (g.maskPreviewAsset && !intermediate) {
           setPreviewAsset(assets.current, g.maskPreviewAsset, g.maskBuffer);
           const previewFrame: Frame = {
             ...g.frame,
@@ -12807,7 +13098,7 @@ export default function Home() {
       g.last = { x, y };
       // Until the selection snapshot is ready, record points only; the
       // capture paints the first preview with every point so far.
-      if (g.selectionPending) return;
+      if (g.selectionPending || intermediate) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
@@ -12829,7 +13120,7 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
-      if (g.selectionPending) return;
+      if (g.selectionPending || intermediate) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
@@ -12854,7 +13145,7 @@ export default function Home() {
         g.points = next;
         g.last = p;
         g.moved = next.length > 1;
-        previewFreeformPath(g);
+        if (!intermediate) previewFreeformPath(g);
       }
       return;
     }
@@ -13018,6 +13309,11 @@ export default function Home() {
         g.last = p;
         return;
       }
+      // The mask is recomputed from every point; the event's last sample does it.
+      if (intermediate) {
+        g.last = p;
+        return;
+      }
       g.quickSelectionMask = quickSelectionMask(g.quickSelectionSource, {
         width: g.frame.w,
         height: g.frame.h,
@@ -13061,7 +13357,7 @@ export default function Home() {
       });
       g.selectionBrushMask = result.mask;
       g.changed = Boolean(g.changed || result.changed);
-      selectionBrushPreview(g);
+      if (!intermediate) selectionBrushPreview(g);
       g.last = p;
       return;
     }
@@ -13081,22 +13377,26 @@ export default function Home() {
       g.last = local;
       return;
     }
-    if (g.tool === 'smudge' && !g.buffer) {
+    if (g.tool === 'smudge' && (!g.buffer || !g.smudge)) {
       (g.queued || (g.queued = [])).push({
         ...local,
-        pressure: g.lastPressure,
-        pointerType: g.pointerType,
+        pressure: pressure(e),
+        pointerType: e.pointerType,
       });
+      return;
     }
-    if (g.tool === 'smudge' && g.buffer && g.source) {
-      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer!.matrix, size))) return;
-      const changed = smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
-        size: localSize(g.layer!.matrix, size),
-        hardness,
-        flow: brushOpacity / 100,
-        selectionMask: g.selectionMask,
-      });
+    if (g.tool === 'smudge' && g.buffer && g.smudge) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), g.smudge.tip.size)) return;
+      const to = { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        changed = smudgeCanvasSegment(
+          g.buffer,
+          g.smudge.last,
+          to,
+          g.smudge,
+          g.selectionMask,
+        );
       g.changed = Boolean(g.changed || changed);
+      g.smudge.last = to;
       previewGesture(g);
       g.last = local;
       return;
@@ -13414,7 +13714,7 @@ export default function Home() {
     } else if (g.tool === 'lasso') {
       const points = g.points || (g.points = [g.start]);
       if (Math.hypot(p.x - g.last.x, p.y - g.last.y) >= 2) points.push(p);
-      void paint(g.frame).then(() => {
+      if (!intermediate) void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         const x = canvas.current!.getContext('2d')!;
         x.save();
@@ -13450,7 +13750,7 @@ export default function Home() {
         g.moved = true;
         g.last = snapped;
       }
-      void paint(g.frame).then(() => {
+      if (!intermediate) void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         const x = canvas.current!.getContext('2d')!;
         x.save();
@@ -13903,7 +14203,7 @@ export default function Home() {
           colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
-      const asset = addPaintedAsset(g.buffer);
+      const asset = addPaintedAsset(g.buffer, g.tileBase);
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
@@ -14312,14 +14612,16 @@ export default function Home() {
         setNotice('Background Eraser stroke applied');
     } else if (g.tool === 'smudge' && g.buffer && g.layer) {
       let changed = Boolean(g.changed);
-      if (g.moved && g.source && (g.last.x !== local.x || g.last.y !== local.y))
+      if (g.moved && g.smudge && (g.smudge.last.x !== local.x || g.smudge.last.y !== local.y))
         changed =
-          smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
-            size: localSize(g.layer.matrix, size),
-            hardness,
-            flow: brushOpacity / 100,
-            selectionMask: g.selectionMask,
-          }) || changed;
+          smudgeCanvasSegment(
+            g.buffer,
+            g.smudge.last,
+            // A pen reports zero pressure on release; keep the last pressure.
+            { ...local, pressure: g.smudge.last.pressure, pointerType: g.smudge.last.pointerType },
+            g.smudge,
+            g.selectionMask,
+          ) || changed;
       if (!changed) {
         void paint(f);
         setNotice('No Smudge change applied');
@@ -15032,6 +15334,7 @@ export default function Home() {
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'spellcheck') return setSpellcheckOpen(true);
     else if (command === 'missing-fonts') return setMissingFontsOpen(true);
+    else if (command === 'glyphs') return setGlyphsOpen(true);
     else if (command === 'color-settings') return setColorSettingsOpen(true);
     else if (command === 'assign-profile') return setColorProfileOperation('assign');
     else if (command === 'convert-profile') return setColorProfileOperation('convert');
@@ -16079,6 +16382,11 @@ export default function Home() {
       data-testid="editor-shell"
       data-screen-mode={screenMode}
       aria-busy={!ready || doc.rendering}
+      // Only the initial load dims the editor. Renders (every stroke preview,
+      // click and commit) keep aria-busy for assistive technology and tests,
+      // but must never change what is on screen: dimming the shell on
+      // aria-busy made the whole page flash on each click.
+      data-loading={ready ? 'false' : 'true'}
       inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
       onDragOver={(e) => {
@@ -16466,7 +16774,7 @@ export default function Home() {
       )}
       {updateTextLayersOpen && (
         <UpdateTextLayersDialog
-          initialFont={textLayers[0]?.fontFamily && FONTS.includes(textLayers[0].fontFamily as (typeof FONTS)[number]) ? textLayers[0].fontFamily as (typeof FONTS)[number] : 'Arial'}
+          initialFont={textLayers[0]?.fontFamily && isSelectableFontFamily(textLayers[0].fontFamily) ? textLayers[0].fontFamily : 'Arial'}
           initialSize={textLayers[0]?.fontSize ?? fontSize}
           count={textLayers.length}
           close={() => setUpdateTextLayersOpen(false)}
@@ -16485,7 +16793,16 @@ export default function Home() {
         <SpellcheckDialog layers={spellcheckLayers} close={() => setSpellcheckOpen(false)} />
       )}
       {missingFontsOpen && (
-        <MissingFontsDialog families={FONTS} close={() => setMissingFontsOpen(false)} />
+        <MissingFontsDialog families={[...new Set([...FONTS, ...textLayers.map((layer) => layer.fontFamily)])]} close={() => setMissingFontsOpen(false)} />
+      )}
+      {glyphsOpen && (
+        <Suspense fallback={null}>
+          <GlyphsPanel
+            currentFamily={activeTextLayer?.fontFamily ?? fontFamily}
+            close={() => setGlyphsOpen(false)}
+            onInsert={(glyph, family, mode) => void insertGlyph(glyph, family, mode)}
+          />
+        </Suspense>
       )}
       {menuSettingsOpen && (
         <MenuSettingsDialog
@@ -17280,7 +17597,7 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
-            {frame && paintSymmetryAppliesToTool(tool) && (
+            {frame && (paintSymmetryAppliesToTool(tool) || tool === 'smudge') && (
               <PaintSymmetryOverlay
                 value={paintSymmetry}
                 onChange={setPaintSymmetry}
@@ -17956,26 +18273,34 @@ export default function Home() {
               suffix=""
             />
             <div className="adjustment-subtitle">Curves (nondestructive)</div>
-            <CurveEditor
-              label="RGB"
-              points={curves.rgb}
-              onChange={(points) => setCurve('rgb', points)}
-            />
-            <CurveEditor
-              label="Red"
-              points={curves.red}
-              onChange={(points) => setCurve('red', points)}
-            />
-            <CurveEditor
-              label="Green"
-              points={curves.green}
-              onChange={(points) => setCurve('green', points)}
-            />
-            <CurveEditor
-              label="Blue"
-              points={curves.blue}
-              onChange={(points) => setCurve('blue', points)}
-            />
+            <label className="check-row">
+              <input
+                aria-label="Smooth curve interpolation"
+                type="checkbox"
+                checked={curveInterpolation(curves) === 'monotone'}
+                onChange={(event) =>
+                  setCurveInterpolation(
+                    event.target.checked ? 'monotone' : 'linear',
+                  )
+                }
+              />
+              Smooth curve interpolation
+            </label>
+            {(['rgb', 'red', 'green', 'blue'] as const).map((channel) => (
+              <CurveEditor
+                key={channel}
+                label={
+                  channel === 'rgb'
+                    ? 'RGB'
+                    : channel[0].toUpperCase() + channel.slice(1)
+                }
+                points={curves[channel]}
+                interpolation={curveInterpolation(curves)}
+                onChange={(points, options) =>
+                  setCurve(channel, points, options)
+                }
+              />
+            ))}
             <div className="adjustment-subtitle">Color Balance</div>
             <Slider
               label="Shadows cyan/red"
@@ -18597,13 +18922,52 @@ export default function Home() {
                       </select>
                     </label>
                   )}
-                  {tool !== 'magic-eraser' && tool !== 'red-eye' && (
+                  {tool === 'smudge' && (
+                    <>
+                      <SmudgeToolOptions
+                        Slider={Slider}
+                        value={smudgeSettings}
+                        onChange={setSmudgeSettings}
+                        pressureSize={pressureSize}
+                        setPressureSize={setPressureSize}
+                        angle={brushAngle}
+                        setAngle={setBrushAngle}
+                        roundness={brushRoundness}
+                        setRoundness={setBrushRoundness}
+                        scatter={brushScatter}
+                        setScatter={setBrushScatter}
+                        dynamics={brushDynamics}
+                        setDynamics={setBrushDynamics}
+                        bristle={brushBristle}
+                        setBristle={setBrushBristle}
+                        texture={brushTexture}
+                        setTexture={setBrushTexture}
+                      />
+                      <BrushPresetLibraryControls
+                        builtIns={BUILT_IN_BRUSH_PRESETS}
+                        saved={customBrushPresets}
+                        selectedId={selectedBrushLibraryId}
+                        onSelect={selectBrushLibraryPreset}
+                        onSave={defineBrushPreset}
+                        onRename={renameBrushLibraryPreset}
+                        onDelete={deleteBrushLibraryPreset}
+                      />
+                      {frame && (
+                        <PaintSymmetryControls
+                          value={paintSymmetry}
+                          onChange={setPaintSymmetry}
+                          canvasWidth={frame.w}
+                          canvasHeight={frame.h}
+                        />
+                      )}
+                    </>
+                  )}
+                  {tool !== 'magic-eraser' && tool !== 'red-eye' && tool !== 'smudge' && (
                     <Slider
                       label={
                         tool === 'dodge' ||
                         tool === 'burn' ||
                         tool === 'sponge' ||
-                        tool === 'smudge' ||
                         tool === 'blur' ||
                         tool === 'sharpen'
                           ? 'Flow'
@@ -18876,7 +19240,8 @@ export default function Home() {
                     tool === 'eraser' ||
                     tool === 'clone' ||
                     tool === 'heal' ||
-                    tool === 'pattern-stamp') && (
+                    tool === 'pattern-stamp' ||
+                    tool === 'smudge') && (
                     <label className="select-row">
                       <span>Pressure curve</span>
                       <select
@@ -19115,7 +19480,8 @@ export default function Home() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
               />
-              <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) }}>{font}</option>)}</select></label>
+              <div className="select-row font-select-row"><span>Font</span><FontFamilySelect label="Text tool font" value={fontFamily} onChange={setFontFamily} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
               {fontAvailability === 'fallback' && (
                 <output data-testid="font-fallback-warning" className="adjust-note">
                   “{fontFamily}” is unavailable; browser fallback rendering is active.
@@ -20521,7 +20887,7 @@ export default function Home() {
           data-tiled-cache-evictions={tiledTelemetry?.cacheStats?.evictions ?? 0}
           aria-live="polite"
         >
-          {doc.rendering
+          {renderStatusBusy
             ? `Rendering… ${renderProgress?.completed ?? 0}/${renderProgress?.total ?? 0} layers`
             : 'Render ready'}
         </output>

@@ -14,8 +14,13 @@ import type {
 import type { FilterBandProgress } from './filterBands.ts';
 import { prewarmFilterPool } from './filterWorkerPool.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
-import { CompositeCache, type CompositeReuse } from './compositeCache.ts';
+import { CompositeCache, detectCompositeSnapshotBudget, type CompositeReuse } from './compositeCache.ts';
 import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
+import {
+  decodedTileCacheDelta,
+  sharedDecodedTileCache,
+  type DecodedTileCacheStats,
+} from './tiledAssets.ts';
 import {
   clearLayerFilterCache,
   layerFilterCacheDelta,
@@ -88,6 +93,7 @@ type Response =
       width: number;
       height: number;
       layerCache?: LayerFilterCacheStats;
+      tileCache?: DecodedTileCacheStats;
       composite?: CompositeReuse;
     }
   | {
@@ -97,6 +103,7 @@ type Response =
       width: number;
       height: number;
       layerCache?: LayerFilterCacheStats;
+      tileCache?: DecodedTileCacheStats;
       composite?: CompositeReuse;
     }
   | { kind: 'error'; id: number; name: string; message: string };
@@ -112,8 +119,8 @@ const cancelled = new Set<number>();
  */
 let assetStore = new Map<string, Assets[string]>();
 
-/** Composite below the active layer, reused while the layers below are unchanged. */
-const compositeCache = new CompositeCache<HTMLCanvasElement>();
+/** Prefix snapshots and the finished composite, reused while their layers are unchanged. */
+const compositeCache = new CompositeCache<HTMLCanvasElement>(detectCompositeSnapshotBudget());
 let activeId: number | undefined;
 
 /** Apply (or clear) the page's test override of the filter pool size. */
@@ -163,16 +170,17 @@ async function encodeResult(
   width: number,
   height: number,
   layerCache: LayerFilterCacheStats,
+  tileCache: DecodedTileCacheStats,
   composite: CompositeReuse,
 ): Promise<void> {
   if (typeof canvas.transferToImageBitmap === 'function') {
     const image = canvas.transferToImageBitmap();
-    scope.postMessage({ kind: 'result', id, image, width, height, layerCache, composite }, [image]);
+    scope.postMessage({ kind: 'result', id, image, width, height, layerCache, tileCache, composite }, [image]);
     return;
   }
   const blob = await canvas.convertToBlob({ type: 'image/png' });
   const bytes = await blob.arrayBuffer();
-  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache, composite }, [
+  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache, tileCache, composite }, [
     bytes,
   ]);
 }
@@ -216,6 +224,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
   void (async () => {
     let output: OffscreenCanvas | undefined;
     const cacheBefore = sharedLayerFilterCache().stats();
+    const tilesBefore = sharedDecodedTileCache().stats();
     const finalHitsBefore = compositeCache.finalHits;
     const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
     try {
@@ -277,9 +286,11 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         request.frame.w,
         request.frame.h,
         layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()),
+        decodedTileCacheDelta(tilesBefore, sharedDecodedTileCache().stats()),
         {
           final: compositeCache.finalHits > finalHitsBefore,
           clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
+          reusedLayers: compositeCache.lastReusedLayers,
         },
       );
     } catch (error) {
