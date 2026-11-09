@@ -61,7 +61,7 @@ export default function FontFamilySelect({
           </optgroup>
         ))}
       </select>
-      <button type="button" className="font-browse-button" aria-label={`Browse fonts for ${label}`} title="Browse fonts" disabled={disabled} onClick={() => setBrowsing(true)}>
+      <button type="button" className="font-browse-button" aria-label="Browse typefaces" title={`Browse fonts: ${label}`} disabled={disabled} onClick={() => setBrowsing(true)}>
         Aa
       </button>
       {browsing && (

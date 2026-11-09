@@ -62,7 +62,7 @@ async function addTextLayer(page: Page, family: string, text: string) {
 test('font picker searches, filters by category, keeps favourites and supports the keyboard', async ({ page }) => {
   await openEditor(page);
   await page.getByLabel('Text tool', { exact: true }).click();
-  await page.getByRole('button', { name: 'Browse fonts for Text tool font', exact: true }).click();
+  await page.getByRole('button', { name: 'Browse typefaces', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Text tool font' });
   await expect(picker).toBeVisible();
   // Virtualised: the full catalogue is counted but only a window is in the DOM.
@@ -92,7 +92,7 @@ test('font picker searches, filters by category, keeps favourites and supports t
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await page.getByLabel('Text tool', { exact: true }).click();
-  await page.getByRole('button', { name: 'Browse fonts for Text tool font', exact: true }).click();
+  await page.getByRole('button', { name: 'Browse typefaces', exact: true }).click();
   await picker.getByLabel('Font category', { exact: true }).selectOption('favourites');
   await expect(picker.getByRole('button', { name: 'Favourite JetBrains Mono', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await picker.getByLabel('Font category', { exact: true }).selectOption('recent');
