@@ -10,7 +10,7 @@ const TOOL_FAMILIES = [
   ['Gradient', 'Fill'],
   ['Brush', 'Pencil', 'Color Replace', 'Mixer Brush'],
   ['Shape', 'Rounded Rectangle', 'Ellipse', 'Line', 'Polygon', 'Custom Shape'],
-  ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Count'],
+  ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Audio Annotation', 'Count'],
   ['Eraser', 'Background Eraser', 'Magic Eraser'],
   ['Dodge', 'Burn', 'Sponge'],
   ['Clone', 'Pattern Stamp'],

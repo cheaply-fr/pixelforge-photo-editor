@@ -852,6 +852,23 @@ import {
   type MeasurementPoint,
 } from '../src/measurements';
 import {
+  audioAnnotations,
+  audioClipBytes,
+  moveAudioAnnotation,
+  newAudioClipId,
+  nextAudioNoteLabel,
+  referencedAudioClips,
+  removeAudioAnnotation,
+  type AudioClip,
+  type AudioNoteAnnotation,
+} from '../src/audioAnnotations';
+import {
+  AudioAnnotationList,
+  AudioAnnotationMarkers,
+  AudioRecordPanel,
+  useAudioAnnotationPlayer,
+} from '../src/audioAnnotationPanel';
+import {
   cycleScreenMode,
   normalizeScreenMode,
   screenModeClass,
@@ -1209,6 +1226,7 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'color-sampler', label: 'Color Sampler', icon: toolIcon('color-sampler'), key: 'I' },
   { id: 'ruler', label: 'Ruler', icon: toolIcon('ruler'), key: 'I' },
   { id: 'note', label: 'Note', icon: toolIcon('note'), key: 'I' },
+  { id: 'audio-note', label: 'Audio Annotation', icon: toolIcon('audio-note'), key: 'I' },
   { id: 'count', label: 'Count', icon: toolIcon('count'), key: 'I' },
   { id: 'fill', label: 'Fill', icon: toolIcon('fill'), key: 'G' },
   { id: 'gradient', label: 'Gradient', icon: toolIcon('gradient'), key: 'G' },
@@ -1358,7 +1376,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
   u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   m: MARQUEE_TOOLS,
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
+  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
   w: ['selection-brush', 'quick-selection', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
@@ -3091,6 +3109,8 @@ export default function Home() {
     {
       canvas,
       assets,
+      audio: audioClips,
+      addAudioClip,
       history,
       index,
       frame,
@@ -3341,8 +3361,12 @@ export default function Home() {
   const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
     revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
+  /** Where a new audio annotation will be pinned while its panel is open. */
+  const [audioDraft, setAudioDraft] = useState<MeasurementPoint | null>(null);
   const setTool = useCallback((next: Tool) => {
     setActiveTool(next);
+    // Any tool switch closes a pending Audio Annotation panel.
+    setAudioDraft(null);
     if (next === 'smudge' || next === 'blur' || next === 'sharpen')
       lastRFamilyTool.current = next;
     const family = flyoutForTool(next);
@@ -4217,6 +4241,7 @@ export default function Home() {
       version: 2,
       history: history.current,
       assets: assets.current,
+      audio: audioClips.current,
       index: index.current,
       name,
       metadata: { ...metadata },
@@ -4233,6 +4258,7 @@ export default function Home() {
         version: 2,
         history: history.current,
         assets: assets.current,
+        audio: audioClips.current,
         index: index.current,
         name,
         metadata: { ...metadata },
@@ -5205,6 +5231,45 @@ export default function Home() {
       return true;
     return false;
   };
+  // Audio Annotation (docs/audio-annotation-contract.md): markers are frame
+  // measurements (undoable, never rendered); clips are draft-level.
+  const audioPlayer = useAudioAnnotationPlayer(setNotice);
+  const commitAudioAnnotation = (clip: AudioClip, label: string) => {
+    const at = audioDraft;
+    if (!at) return;
+    const clipId = newAudioClipId();
+    addAudioClip(clipId, clip);
+    if (
+      appendMeasurement({
+        id: newMeasurementId(),
+        kind: 'audio',
+        x: at.x,
+        y: at.y,
+        clip: clipId,
+        durationMs: clip.durationMs,
+        label,
+      })
+    ) {
+      setAudioDraft(null);
+      setNotice(`${label} added to the draft`);
+    }
+  };
+  const updateAudioAnnotations = (next: MeasurementAnnotation[] | undefined, message: string) => {
+    if (next && commit({ ...current(), measurements: next })) setNotice(message);
+  };
+  const moveAudioNote = (item: AudioNoteAnnotation, to: MeasurementPoint) => {
+    const f = current();
+    updateAudioAnnotations(
+      moveAudioAnnotation(f.measurements || [], item.id, to.x, to.y, f.w, f.h),
+      `${item.label} moved`,
+    );
+  };
+  const deleteAudioNote = (item: AudioNoteAnnotation) => {
+    if (audioPlayer.playing === item.id) audioPlayer.stop();
+    updateAudioAnnotations(removeAudioAnnotation(current().measurements || [], item.id), `${item.label} deleted`);
+  };
+  const toggleAudioNote = (item: AudioNoteAnnotation) =>
+    audioPlayer.toggle(item.id, audioClips.current[item.clip]);
   const transformSelectionValue = selectionTransforming
     ? current().selection
     : undefined;
@@ -8178,6 +8243,7 @@ export default function Home() {
       cloud,
       history: history.current.slice(),
       assets: { ...assets.current },
+      audio: audioClips.current,
       index: index.current,
       name,
       settings: {
@@ -8306,6 +8372,7 @@ export default function Home() {
   }, [
     ready,
     revision,
+    audioClips,
     draftId,
     cloud,
     name,
@@ -8462,7 +8529,11 @@ export default function Home() {
       );
       setCloud({ ...result, owner: member.id });
       setCloudMessage(
-        'Cloud copy saved. Choose Update cloud project after further edits.',
+        `Cloud copy saved.${
+          audioAnnotations(current()).length
+            ? ' Audio annotations stay on this device and were not uploaded.'
+            : ''
+        } Choose Update cloud project after further edits.`,
       );
     } catch (error) {
       if (error instanceof CloudConflictError) setCloudConflict(error);
@@ -12472,6 +12543,11 @@ export default function Home() {
         )
           setNotice('Note added to the draft');
       } else setNotice('Note cancelled');
+      return;
+    }
+    if (tool === 'audio-note') {
+      setAudioDraft({ x: p.x, y: p.y });
+      setNotice('Record or attach audio for this annotation');
       return;
     }
     if (tool === 'count') {
@@ -18380,6 +18456,19 @@ export default function Home() {
               <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
             </fieldset>
           ) : null}
+          {audioPlayer.element}
+          {tool === 'audio-note' && audioDraft && frame && (
+            <AudioRecordPanel
+              key={`${audioDraft.x},${audioDraft.y}`}
+              existing={referencedAudioClips(history.current, audioClips.current)}
+              defaultLabel={nextAudioNoteLabel(frame.measurements)}
+              onCommit={commitAudioAnnotation}
+              onCancel={() => {
+                setAudioDraft(null);
+                setNotice('Audio annotation cancelled');
+              }}
+            />
+          )}
           <div
             className="canvas-wrap"
             data-testid="canvas-wrap"
@@ -18425,6 +18514,19 @@ export default function Home() {
                 toCanvas={point}
                 active={isTypeTool(tool) && !quickMasking}
                 registerHandlers={(handlers) => { typePointer.current = handlers; }}
+              />
+            )}
+            {frame && (
+              <AudioAnnotationMarkers
+                frame={frame}
+                items={audioAnnotations(frame)}
+                pending={tool === 'audio-note' ? audioDraft : null}
+                interactive={tool === 'audio-note'}
+                playing={audioPlayer.playing}
+                toFrame={point}
+                onToggle={toggleAudioNote}
+                onMove={moveAudioNote}
+                onDelete={deleteAudioNote}
               />
             )}
             {frame && cloneSource && (tool === 'clone' || tool === 'heal')
@@ -18596,6 +18698,8 @@ export default function Home() {
                       </g>
                     );
                   }
+                  // Audio markers are interactive HTML (AudioAnnotationMarkers).
+                  if (item.kind === 'audio') return null;
                   if (item.kind === 'note')
                     return (
                       <g key={item.id} className="measurement-note">
@@ -19402,6 +19506,15 @@ export default function Home() {
               collapsed={collapsedSections.has('tool-options')}
               onToggle={toggleSidebarSection}
             >
+              {tool === 'audio-note' && (
+                <AudioAnnotationList
+                  items={audioAnnotations(frame)}
+                  usedBytes={audioClipBytes(referencedAudioClips(history.current, audioClips.current))}
+                  playing={audioPlayer.playing}
+                  onToggle={toggleAudioNote}
+                  onDelete={deleteAudioNote}
+                />
+              )}
               {tool === 'gradient' && (
                 <label className="select-row">
                   <span>Gradient type</span>
