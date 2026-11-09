@@ -49,6 +49,7 @@ export type TextLayer = Extract<Layer, { kind: 'text' }>;
 export type TypeToolId = 'text' | 'vertical-text' | 'text-mask' | 'vertical-text-mask';
 export const TYPE_TOOLS: readonly string[] = ['text', 'vertical-text', 'text-mask', 'vertical-text-mask'];
 export const isTypeTool = (tool: string): tool is TypeToolId => TYPE_TOOLS.includes(tool);
+export const isTypeMaskTool = (tool: string) => tool === 'text-mask' || tool === 'vertical-text-mask';
 
 export type TypeDefaults = {
   fontFamily: string;
@@ -295,6 +296,8 @@ export function useTypeTool(deps: TypeToolDeps) {
 
   /** Topmost visible text layer under a canvas point, with the hit offset. */
   const hitTextLayer = useCallback((point: Point): { layer: TextLayer; offset: number } | null => {
+    // Type Mask tools always start a new mask entry; they never edit text layers.
+    if (isTypeMaskTool(depsRef.current.tool)) return null;
     const frame = depsRef.current.current();
     for (let index = frame.layers.length - 1; index >= 0; index--) {
       const layer = frame.layers[index];

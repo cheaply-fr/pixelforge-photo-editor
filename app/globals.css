@@ -170,6 +170,16 @@
 .strand-seed-row .select-row { flex:1 1 8rem; }
 .canvas-wrap .measurement-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
 .canvas-wrap .clone-source-overlay { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+.canvas-wrap .selection-outline { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; z-index:2; }
+.selection-outline path { fill:none; stroke-width:1; vector-effect:non-scaling-stroke; shape-rendering:crispEdges; }
+.selection-outline .selection-outline-base { stroke:#fff; }
+.selection-outline .selection-outline-ants { stroke:#000; stroke-dasharray:4 4; animation:selection-ants .6s linear infinite; }
+@keyframes selection-ants { to { stroke-dashoffset:-8; } }
+@media (prefers-reduced-motion: reduce) { .selection-outline .selection-outline-ants { animation:none; } }
+.marquee-options { display:grid; gap:6px; margin-bottom:8px; }
+.marquee-size, .color-region-options { display:flex; flex-wrap:wrap; gap:8px; }
+.marquee-size label, .color-region-options label { display:inline-flex; align-items:center; gap:4px; font-size:12px; }
+.marquee-size input { width:72px; min-height:32px; }
 .clone-source-overlay circle, .clone-source-overlay line { fill:none; stroke:#fff; stroke-width:1.5; vector-effect:non-scaling-stroke; filter:drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000); }
 .canvas-wrap .filter-center-overlay { position:absolute; inset:0; pointer-events:none; }
 .filter-center-overlay .filter-center-handle { position:absolute; width:28px; height:28px; margin:-14px 0 0 -14px; padding:0; border:2px solid #ffb347; border-radius:50%; background:rgba(18,20,24,.35); pointer-events:auto; cursor:move; touch-action:none; box-shadow:0 0 0 1px rgba(0,0,0,.6); }

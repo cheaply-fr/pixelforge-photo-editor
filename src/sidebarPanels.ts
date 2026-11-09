@@ -110,7 +110,7 @@ export const TOOL_SIDEBAR = {
   note: NONE,
   'audio-note': PAINT,
   count: NONE,
-  fill: NONE,
+  fill: PAINT,
   gradient: PAINT,
   clone: PAINT,
   heal: PAINT,
@@ -168,7 +168,7 @@ export const TOOL_SIDEBAR = {
   'magnetic-lasso': SELECT,
   'selection-brush': { sections: ['tool-options', 'selection-options'], panel: null },
   'quick-selection': { sections: ['tool-options', 'selection-options'], panel: null },
-  'magic-wand': SELECT,
+  'magic-wand': { sections: ['tool-options', 'selection-options'], panel: null },
 } as const satisfies Record<Tool, ToolSidebarSpec>;
 
 /** Context for unknown tools (e.g. a stale draft value): no tool sections. */

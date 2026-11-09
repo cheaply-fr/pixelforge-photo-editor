@@ -105,6 +105,8 @@ import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
 import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
 import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.ts';
 import { validSmudgeSettings, type SmudgeSettings } from './smudge.ts';
+import type { ColorRegionSettings } from './colorRegion.ts';
+import type { MarqueeOptions } from './marqueeOptions.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
 import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
@@ -282,6 +284,10 @@ export type Settings = {
   redEyeThreshold?: number;
   redEyeAmount?: number;
   colorTolerance?: number;
+  /** Magic Wand / Fill Contiguous and Sample All Layers; omitted → contiguous, active layer. */
+  colorRegion?: Partial<ColorRegionSettings>;
+  /** Marquee/Lasso options-bar Feather (next selections) and marquee Style. */
+  marquee?: Partial<MarqueeOptions>;
   /** Tonal retouch settings persisted with the active tool. */
   tonalExposure?: number;
   tonalRange?: 'shadows' | 'midtones' | 'highlights';
@@ -571,6 +577,9 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.smudge !== undefined && !validSmudgeSettings(candidate.smudge)) return false;
+  // Loaded through normalizers, so only the container shape is checked here.
+  if (candidate.colorRegion !== undefined && !record(candidate.colorRegion)) return false;
+  if (candidate.marquee !== undefined && !record(candidate.marquee)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
   if (candidate.historySourceIndex !== undefined &&

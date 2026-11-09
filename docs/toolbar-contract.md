@@ -25,7 +25,16 @@ flyout owns focus on open: Home/End move to the first/last item, Up/Down rove
 between items, and Escape or an outside pointer dismisses it and returns focus
 to its trigger. Flyout items are ordinary menu buttons, retain the existing
 tool IDs and shortcuts, display the same Lucide icon vocabulary as the toolbar,
-and can be activated by touch, mouse or keyboard.
+and can be activated by touch, mouse or keyboard. The item of the active
+variant carries `aria-current="true"` (and `data-checked="true"`), so its
+checked state is not conveyed by colour alone.
+
+Tool names are consistent between the rail, flyouts, status bar and tool
+presets: the marquee family is Rectangular Marquee, Elliptical Marquee,
+Single Row Marquee and Single Column Marquee, and the shape family's first
+tool is Rectangle. The Lasso flyout item reads Freeform Lasso. Status messages
+name the tool that made a selection (a freeform Lasso reports "Lasso selection
+created", not "Polygonal").
 
 Repeated Photoshop keys continue to cycle the existing keyboard families:
 `M` marquee, `L` lasso, `W` selection, `C` crop, `G` fill, `B` paint, `U`

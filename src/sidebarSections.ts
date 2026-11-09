@@ -118,7 +118,7 @@ export const TOOL_SECTIONS = {
   // document's audio annotations with keyboard play/pause and delete.
   'audio-note': 'tool-options',
   count: null,
-  fill: null,
+  fill: 'tool-options',
   gradient: 'tool-options',
   clone: 'tool-options',
   heal: 'tool-options',
@@ -176,7 +176,7 @@ export const TOOL_SECTIONS = {
   'magnetic-lasso': 'selection-options',
   'selection-brush': 'tool-options',
   'quick-selection': 'tool-options',
-  'magic-wand': 'selection-options',
+  'magic-wand': 'tool-options',
 } as const satisfies Record<Tool, SidebarSectionId | null>;
 
 /** Tools whose registry entry is `null`. */
@@ -193,7 +193,6 @@ export const TOOLS_WITHOUT_SECTION: Readonly<Record<ToolWithoutSection, string>>
   ruler: 'Measurements are drawn on the canvas overlay.',
   note: 'Notes are placed and edited on the canvas overlay.',
   count: 'Count markers are placed on the canvas overlay.',
-  fill: 'Uses the toolbar foreground colour; no inline options.',
   crop: 'Crop is staged and committed with on-canvas controls.',
   'perspective-crop': 'Perspective crop is staged with on-canvas controls.',
   slice: 'Slices are drawn and committed with on-canvas controls.',

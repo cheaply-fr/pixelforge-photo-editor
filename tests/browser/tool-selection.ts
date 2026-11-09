@@ -3,13 +3,13 @@ import { expect, type Page } from '@playwright/test';
 // Accessible names form the browser contract. Do not select hidden variants
 // through application state: exercise the same toolbar and flyout as a user.
 const TOOL_FAMILIES = [
-  ['Select', 'Elliptical marquee', 'Single Row marquee', 'Single Column marquee'],
+  ['Rectangular Marquee', 'Elliptical Marquee', 'Single Row Marquee', 'Single Column Marquee'],
   ['Lasso', 'Polygonal Lasso', 'Magnetic Lasso'],
   ['Selection Brush', 'Quick Selection', 'Magic Wand'],
   ['Crop', 'Perspective Crop', 'Slice', 'Slice Select', 'Frame'],
   ['Gradient', 'Fill'],
   ['Brush', 'Pencil', 'Color Replace', 'Mixer Brush'],
-  ['Shape', 'Rounded Rectangle', 'Ellipse', 'Line', 'Polygon', 'Custom Shape'],
+  ['Rectangle', 'Rounded Rectangle', 'Ellipse', 'Line', 'Polygon', 'Custom Shape'],
   ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Audio Annotation', 'Count'],
   ['Eraser', 'Background Eraser', 'Magic Eraser'],
   ['Dodge', 'Burn', 'Sponge'],
@@ -24,15 +24,26 @@ const TOOL_FAMILIES = [
 ] as const;
 
 const FLYOUT_LABELS: Readonly<Record<string, string>> = {
-  Select: 'Rectangular Marquee',
-  'Elliptical marquee': 'Elliptical Marquee',
   Lasso: 'Freeform Lasso',
   'Freeform Pen': 'Freeform Pen',
   'Curvature Pen': 'Curvature Pen',
 };
 
+/**
+ * Labels used before the toolbar naming audit (I-11). Older specs keep their
+ * wording; the toolbar itself only exposes the current names.
+ */
+const LEGACY_TOOL_LABELS: Readonly<Record<string, string>> = {
+  Select: 'Rectangular Marquee',
+  'Elliptical marquee': 'Elliptical Marquee',
+  'Single Row marquee': 'Single Row Marquee',
+  'Single Column marquee': 'Single Column Marquee',
+  Shape: 'Rectangle',
+};
+
 /** Select a tool through the compact palette, including an inactive subtool. */
-export async function selectTool(page: Page, label: string): Promise<void> {
+export async function selectTool(page: Page, requestedLabel: string): Promise<void> {
+  const label = LEGACY_TOOL_LABELS[requestedLabel] ?? requestedLabel;
   const palette = page.getByTestId('tool-palette');
   await expect(palette).toBeVisible();
   const requested = palette.getByRole('button', {

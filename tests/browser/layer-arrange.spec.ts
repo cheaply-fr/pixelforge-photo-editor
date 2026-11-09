@@ -31,7 +31,7 @@ const project = async (page: Page) => {
 };
 
 const drawShape = async (page: Page, x: number, y: number, w: number, h: number) => {
-  await page.getByRole('button', { name: 'Shape tool', exact: true }).click();
+  await page.getByRole('button', { name: 'Rectangle tool', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await page.mouse.move(box.x + box.width * x, box.y + box.height * y);

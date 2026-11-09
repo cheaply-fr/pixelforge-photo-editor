@@ -1287,7 +1287,7 @@ export default function LayersPanel({
         </label>
         {frame.selection && (
           <label className="layer-field">
-            Feather {formatSelectionFeather(frame.selection.feather)} px
+            Current selection feather {formatSelectionFeather(frame.selection.feather)} px
             <input
               aria-label="Selection feather"
               type="range"
