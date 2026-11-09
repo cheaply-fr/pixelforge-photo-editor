@@ -11,6 +11,16 @@ commands that operate on one layer.
 ## Selection gestures and commands
 
 - A normal layer-row click replaces the selection and makes that layer active.
+- Picking from the canvas (`src/layerPick.ts`) selects the topmost layer with
+  a non-transparent pixel under the pointer: visible, above 0% opacity, in a
+  visible folder, not an adjustment layer; a clipped layer counts only where
+  its clipping base has pixels and a layer mask hides what it masks. With the
+  Move tool, the "Auto-select layer" option (off by default, not saved with
+  the document) picks on every press before the move starts, and right-click
+  or a touch long-press on the canvas picks without moving. Each layer is
+  sampled at one pixel: a paint layer decodes only the tile under the point,
+  other kinds render alone into a 1 × 1 frame. A point over no pixels keeps
+  the selection and says so in the status bar.
 - Shift-click selects the inclusive stack-order range from the active anchor
   to the clicked row. Ctrl-click on Windows/Linux and Cmd-click on macOS toggle
   one layer without losing the other selected ids.

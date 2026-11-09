@@ -241,6 +241,7 @@ import {
   type PerformanceSpan,
 } from '../src/performanceMarks';
 import LayersPanel, { type LayersPanelPart } from '../src/LayersPanel';
+import { pickLayerAtPoint } from '../src/layerPick';
 import ResizeDialog from '../src/ResizeDialog';
 import GenerativeUpscaleDialog from '../src/GenerativeUpscaleDialog';
 import {
@@ -3787,6 +3788,9 @@ export default function Home() {
   const [selectAndMaskValue, setSelectAndMaskValue] = useState(false);
   const [focusAreaThreshold, setFocusAreaThreshold] = useState(32);
   const [focusAreaSoftness, setFocusAreaSoftness] = useState(24);
+  // Move tool "Auto-select layer": a press picks the topmost visible layer
+  // with pixels under the pointer (src/layerPick.ts). Off by default.
+  const [moveAutoSelect, setMoveAutoSelect] = useState(false);
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
@@ -5784,6 +5788,30 @@ export default function Home() {
       : undefined;
   const layerIsLocked = (f: Frame, layer: Layer) =>
     layer.locked || Boolean(groupForLayer(f, layer)?.locked);
+  /**
+   * Select the topmost visible layer with a non-transparent pixel at a
+   * document point. Returns the picked layer id, or undefined (no change).
+   */
+  const selectLayerAtPoint = async (p: { x: number; y: number }): Promise<string | undefined> => {
+    const f = current();
+    if (!f) return undefined;
+    let id: string | undefined;
+    try {
+      id = await pickLayerAtPoint(f, p, assets.current);
+    } catch {
+      id = undefined;
+    }
+    // The document changed while sampling: keep whatever is selected now.
+    if (current() !== f && current()?.layers.every((layer) => layer.id !== id)) return undefined;
+    const picked = id ? current().layers.find((layer) => layer.id === id) : undefined;
+    if (!picked) {
+      setNotice('No visible layer has pixels at that point');
+      return undefined;
+    }
+    if (picked.id !== current().active || (current().selectedLayerIds?.length ?? 1) > 1) select(picked.id);
+    setNotice(`Selected layer ${picked.name || 'Untitled layer'}`);
+    return picked.id;
+  };
   /** Layers panel row click: a plain (single) selection reveals the layer properties. */
   const selectLayerFromPanel = (
     id: string,
@@ -12337,6 +12365,36 @@ export default function Home() {
       paintSpan.current?.cancel();
       paintSpan.current = beginPerformanceSpan('paint');
     }
+    // A secondary mouse button never moves a layer: with the Move tool it
+    // opens the canvas "select layer at point" action instead.
+    if (tool === 'move' && e.pointerType === 'mouse' && e.button !== 0) return;
+    if (tool === 'move' && moveAutoSelect && !skipExpansion && !quickMasking) {
+      // Auto-select layer: pick the layer under the press first, then start
+      // the move on it. Moves and a release made while the layer is sampled
+      // are replayed, like the paint-layer expansion above.
+      const pending: {
+        pointerId: number;
+        moves: React.PointerEvent<HTMLCanvasElement>[];
+        release?: React.PointerEvent<HTMLCanvasElement>;
+      } = { pointerId: e.pointerId, moves: [] };
+      expansionPointer.current = pending;
+      try {
+        canvas.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // The pointer may already be gone; the release replay handles it.
+      }
+      try {
+        await selectLayerAtPoint(point(e));
+      } finally {
+        expansionPointer.current = null;
+      }
+      const started = pointerDown(e, true);
+      if (gesture.current && gesturePointer.current === e.pointerId)
+        for (const move of pending.moves) pointerMove(move);
+      await started;
+      if (pending.release) await pointerUp(pending.release);
+      return;
+    }
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!,
       p = point(e);
@@ -17554,6 +17612,7 @@ export default function Home() {
   }));
   const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
   const openLayerImageFile = () => layerFile.current?.click();
+  const readThumbnailAssets = () => assets.current;
   /** One Layers panel slice (docs/contextual-sidebar-contract.md). */
   const renderLayersPanel = (current: Frame, part: LayersPanelPart, pixelUsage?: number) => (
     <LayersPanel
@@ -17565,6 +17624,7 @@ export default function Home() {
       deselectLayers={deselectLayers}
       isolateLayers={isolateLayers}
       edit={editLayerFromPanel}
+      thumbnailAssets={readThumbnailAssets}
       add={addPaint}
       addAdjustment={addAdjustmentLayer}
       addSmartObject={() => chooseSmartObjectFile(false)}
@@ -18827,6 +18887,18 @@ export default function Home() {
                 else void pointerUp(e).then(dropUnusedExpansion);
               }}
               onDoubleClick={doubleClick}
+              onContextMenu={(event) => {
+                // Move tool: right-click (or long-press) selects the layer at
+                // that point instead of opening the browser menu.
+                if (tool !== 'move' || quickMasking) return;
+                // A touch long-press first starts a move that has not moved:
+                // drop it, so the press only selects.
+                const pressed = gesture.current;
+                if (pressed && !(pressed.tool === 'move' && !pressed.moved)) return;
+                event.preventDefault();
+                if (pressed) gesture.current = null;
+                void selectLayerAtPoint(point(event));
+              }}
               className={`tool-${tool}`}
             />
             {frame && (
@@ -19436,6 +19508,22 @@ export default function Home() {
           )}
           {section === 'layer-alignment' && frame && (
             <section className="panel layers-part-panel" aria-label="Align to canvas">
+              {tool === 'move' && (
+                <div className="move-pick-options" data-testid="move-pick-options">
+                  <label className="check-row">
+                    <input
+                      aria-label="Auto-select layer"
+                      type="checkbox"
+                      checked={moveAutoSelect}
+                      onChange={(event) => setMoveAutoSelect(event.target.checked)}
+                    />
+                    Auto-select layer
+                  </label>
+                  <p className="adjust-note">
+                    Picks the top visible layer with pixels under the pointer. Right-click (or long-press) the canvas to select a layer without moving it.
+                  </p>
+                </div>
+              )}
               {renderLayersPanel(frame, 'alignment')}
             </section>
           )}
