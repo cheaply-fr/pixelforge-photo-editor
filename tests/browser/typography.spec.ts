@@ -64,17 +64,21 @@ test('typography alignment, tracking and line height render pixels and round-tri
 }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 120 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('AA\nAA');
   await page.getByLabel('Layer text color', { exact: true }).fill('#00ff00');
   await page.getByLabel('Text alignment', { exact: true }).selectOption('left');
-  await page.getByLabel('Text box width', { exact: true }).fill('520');
-  await page.getByLabel('Text box width', { exact: true }).press('Enter');
   await page.getByLabel('Line height', { exact: true }).fill('2');
   await page.getByLabel('Line height', { exact: true }).press('Enter');
   await page.getByLabel('Letter spacing', { exact: true }).fill('12');
   await page.getByLabel('Letter spacing', { exact: true }).press('Enter');
+  // A click makes point type, which aligns around its anchor; alignment
+  // inside an editable box width is paragraph type.
+  await page.getByRole('button', { name: 'Type', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Convert to Paragraph Text', exact: true }).click();
+  await page.getByLabel('Text box width', { exact: true }).fill('520');
+  await page.getByLabel('Text box width', { exact: true }).press('Enter');
   await saved(page);
   const left = await greenBounds(page);
   expect(left.left).toBeLessThan(left.right);
@@ -118,7 +122,7 @@ test('legacy text layers migrate presentation defaults without flattening', asyn
 }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click({ position: { x: 140, y: 140 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('Legacy');
   await saved(page);
@@ -162,7 +166,7 @@ test('legacy text layers migrate presentation defaults without flattening', asyn
 test('Warp Text stays editable, changes the raster, and persists across reload', async ({ page }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 160 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('Warped text');
   await page.getByLabel('Layer text color', { exact: true }).fill('#00ff00');

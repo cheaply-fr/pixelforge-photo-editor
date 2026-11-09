@@ -1310,6 +1310,19 @@ export function applyTextAntiAlias(data: Uint8ClampedArray, mode: TextAntiAlias)
 }
 
 const fontLoadTimeoutMs = 1500;
+/**
+ * Load every font a text layer uses: register library font files for its
+ * base style and character runs (fontLoader.ts), then wait (bounded) until
+ * the browser has each face. Resolves false when a face is still missing.
+ */
+export async function loadTextLayerFonts(
+  layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'fontSize' | 'bold' | 'rich' | 'text'>,
+): Promise<boolean> {
+  const registered = await ensureTextLayerFonts(textLayerRunFontRequests(layer));
+  const faces = await waitForTextLayerFaces(layer);
+  return registered && faces;
+}
+
 /** Font requests for a text layer's base style and every character run. */
 export function textLayerRunFontRequests(
   layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'bold' | 'rich' | 'text'>,
@@ -4070,8 +4083,7 @@ export async function renderFrame(
     if (layer.kind === 'text') {
       // Register library font files used by the layer and its character runs
       // (fontLoader.ts), then wait for every face before measuring.
-      await ensureTextLayerFonts(textLayerRunFontRequests(layer));
-      await waitForTextLayerFaces(layer);
+      await loadTextLayerFonts(layer);
       const binding = normalizeTextPathBinding(layer.textPath),
         pathLayer = binding
           ? frame.layers.find((candidate): candidate is Extract<Layer, { kind: 'path' }> => candidate.id === binding.pathLayerId && candidate.kind === 'path')

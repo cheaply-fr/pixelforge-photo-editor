@@ -369,6 +369,59 @@
    its top part is on screen below the canvas, so a tail spacer lets sections
    near the end still scroll their header up into that on-screen band. */
 @media(max-width:680px){.inspector{max-height:100svh;overflow-y:auto}.inspector::after{content:"";grid-column:1/-1;height:60svh;pointer-events:none}}
+
+/* Type tool: on-canvas editor, options bar and Character/Paragraph panels. */
+.canvas-wrap .type-editor-overlay { position:absolute; inset:0; pointer-events:none; }
+.canvas-wrap canvas.tool-text, .canvas-wrap canvas.tool-vertical-text, .canvas-wrap canvas.tool-text-mask, .canvas-wrap canvas.tool-vertical-text-mask { cursor:text; }
+.type-editor-overlay svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+.type-editor-overlay .type-box { fill:none; stroke:#2e8bff; stroke-width:1; stroke-dasharray:4 3; }
+.type-editor-overlay .type-box.is-paragraph { stroke-dasharray:none; }
+.type-editor-overlay .type-draft-box { fill:#2e8bff14; stroke:#2e8bff; stroke-width:1; stroke-dasharray:5 4; }
+.type-editor-overlay .type-selection { fill:#2e8bff59; }
+.type-editor-overlay .type-caret { stroke:#fff; stroke-width:1.5; mix-blend-mode:difference; animation:type-caret-blink 1.06s steps(1) infinite; }
+.type-editor-overlay .type-handle { fill:#fff; stroke:#2e8bff; stroke-width:1; }
+.type-editor-overlay .type-overflow rect { fill:#fff; stroke:#e5484d; stroke-width:1.5; }
+.type-editor-overlay .type-overflow path { stroke:#e5484d; stroke-width:1.5; }
+.type-editor-overlay .type-editor-input { position:absolute; width:2px; height:1.2em; padding:0; margin:0; border:0; opacity:0; resize:none; overflow:hidden; font-size:16px; line-height:1.2; color:transparent; background:transparent; caret-color:transparent; pointer-events:none; white-space:pre; }
+@keyframes type-caret-blink { 50% { opacity:0; } }
+.type-options-bar { position:absolute; z-index:4; top:3px; left:50%; transform:translateX(-50%); max-width:calc(100% - 16px); display:flex; align-items:center; gap:6px; padding:5px 8px; overflow-x:auto; border:1px solid #34363e; border-radius:10px; background:#17181df2; box-shadow:0 7px 25px #0007; color:#c9cbd1; font-size:11px; white-space:nowrap; }
+.type-options-bar select, .type-options-bar input[type=number], .type-panels select, .type-panels input:not([type=color]) { height:28px; min-width:0; padding:0 6px; border:1px solid #34363e; border-radius:6px; background:#202228; color:#ddd; font-size:11px; }
+.type-options-bar input[type=number] { width:64px; }
+.type-options-bar input[type=color], .type-panels input[type=color] { width:30px; height:28px; padding:2px; border:1px solid #34363e; border-radius:6px; background:#202228; }
+.type-options-bar .type-field { display:flex; align-items:center; gap:3px; }
+.type-options-bar > *, .type-options-bar .type-segment > * { flex:none; }
+.type-options-bar .type-segment { flex-wrap:nowrap; }
+.type-options-bar select { max-width:120px; }
+.type-options-bar .type-field > span { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+.type-options-bar small { color:#7d818b; }
+.type-segment, .type-toggles, .type-glyphs { margin:0; padding:0; border:0; min-width:0; }
+.type-segment { display:inline-flex; gap:2px; flex-wrap:wrap; }
+.type-toggle, .type-icon-button, .type-text-button, .type-actions button, .type-glyphs button, .type-preset-list button, .type-preset-save button { min-width:28px; min-height:28px; display:inline-grid; grid-auto-flow:column; place-items:center; gap:2px; padding:0 6px; border:1px solid #34363e; border-radius:6px; background:#202228; color:#c4c6cc; font-size:11px; }
+.type-toggle.is-on { border-color:#5f392f; background:#2b211f; color:#ff8e72; }
+.type-toggle small { font-size:8px; }
+.type-toggle:disabled, .type-actions button:disabled { opacity:.4; }
+.type-icon-button.is-primary { border-color:var(--accent); background:var(--accent); color:#fff; }
+.type-commit-group { display:inline-flex; gap:4px; margin-left:4px; padding-left:6px; border-left:1px solid #34363e; }
+.type-panels { display:grid; gap:8px; margin-top:10px; }
+.type-panel { border:1px solid #2b2e35; border-radius:8px; padding:6px 8px; background:#1b1d22; }
+.type-panel > summary { cursor:pointer; font-size:11px; font-weight:700; color:#d4d5d8; padding:3px 0; }
+.type-panel[open] > summary { margin-bottom:6px; }
+.type-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+.type-field { display:grid; gap:3px; min-width:0; font-size:9px; color:#93969e; }
+.type-field.type-wide { grid-column:1/-1; }
+.type-field input, .type-field select { width:100%; }
+.type-panels .type-field small { display:none; }
+.type-toggles { display:flex; flex-wrap:wrap; gap:3px; margin-top:8px; }
+.type-small-caps { font-variant:small-caps; }
+.type-actions { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+.type-glyphs { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:3px; margin-top:6px; }
+.type-preset-save { display:flex; gap:4px; }
+.type-preset-save input { flex:1; }
+.type-preset-list { list-style:none; margin:6px 0 0; padding:0; display:grid; gap:3px; }
+.type-preset-list li { display:flex; gap:3px; }
+.type-preset-list li button:first-child { flex:1; justify-content:start; }
+.type-target { margin:0; }
+@media(max-width:680px){ .type-options-bar { top:2px; left:8px; right:8px; transform:none; max-width:none; padding:2px 6px; } .type-commit-group { order:-1; margin:0; padding:0 6px 0 0; border-left:0; border-right:1px solid #34363e; } }
 /* Tool presets (docs/tool-presets-contract.md) */
 .tool-presets-panel{padding:10px 15px}
 .tool-presets-trigger{width:100%;min-height:40px;display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid #34363e;border-radius:8px;background:#202228;color:#d4d5d8;text-align:left;cursor:pointer}

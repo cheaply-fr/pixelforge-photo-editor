@@ -193,7 +193,7 @@ test('Auto Tone follows its Photoshop shortcut and disables safely for locked la
   await page
     .getByRole('menuitem', { name: 'New transparent document', exact: true })
     .click();
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page
     .getByTestId('editor-canvas')
     .click({ position: { x: 120, y: 120 } });

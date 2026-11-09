@@ -16,7 +16,7 @@ test.beforeEach(async ({ page }) => {
 test('OpenType presentation flags persist on editable text layers across project reloads', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await page.getByTestId('editor-canvas').click({ position: { x: 96, y: 96 } });
   await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
   await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
@@ -66,7 +66,7 @@ test('OpenType is disabled for non-text and locked layers', async ({ page }) => 
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'OpenType', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Type', exact: true }).click();
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await page.getByTestId('editor-canvas').click({ position: { x: 90, y: 90 } });
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await page.getByRole('menuitem', { name: 'OpenType', exact: true }).click();
@@ -80,7 +80,7 @@ test('OpenType is disabled for non-text and locked layers', async ({ page }) => 
 test('variable font axes persist on editable text layers', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await page.getByTestId('editor-canvas').click({ position: { x: 96, y: 96 } });
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await page.getByRole('menuitem', { name: 'OpenType', exact: true }).click();

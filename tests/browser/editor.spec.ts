@@ -353,7 +353,7 @@ test('imports a local image and exposes text controls', async ({ page }) => {
   });
   await expect(page.getByLabel('Document name')).toHaveValue('sample');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await expect(page.getByLabel('Text content')).toBeVisible();
 });
 

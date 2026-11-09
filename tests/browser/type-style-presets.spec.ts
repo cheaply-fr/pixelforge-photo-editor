@@ -16,7 +16,7 @@ test.beforeEach(async ({ page }) => {
 test('saves and applies default type styles with undo/reload/project persistence', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await page.getByTestId('editor-canvas').click({ position: { x: 80, y: 80 } });
   await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
   await page.getByLabel('Layer font size', { exact: true }).fill('84');
@@ -66,7 +66,7 @@ test('guards default type style commands for non-text and missing-style states',
 test('keeps the Text tool font choice in the local settings and new editable layer', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await page.getByLabel('Text tool font', { exact: true }).selectOption('Georgia');
   await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 120 } });
   await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
@@ -83,7 +83,7 @@ test('keeps the Text tool font choice in the local settings and new editable lay
 test('persists the Font Preview Size preference and cycles it from the Type menu', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await expect(page.getByLabel('Font preview size', { exact: true })).toHaveValue('medium');
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Font Preview Size', exact: true }).click();

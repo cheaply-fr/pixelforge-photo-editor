@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Request } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { selectTool } from './tool-selection';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -51,17 +52,23 @@ function rowDifference(a: number[], b: number[]): number {
   return changed;
 }
 
-async function addTextLayer(page: Page, family: string, text: string) {
-  await page.getByLabel('Text tool', { exact: true }).click();
+async function addTextLayer(page: Page, family: string, text: string, beforeCommit?: () => Promise<void>) {
+  await selectTool(page, 'Horizontal Type');
   await page.getByLabel('Text content', { exact: true }).fill(text);
   await page.getByLabel('Text tool font', { exact: true }).selectOption(family);
+  // The Text tool options (and their font warning) unmount once a commit
+  // hands the layer to the Move tool, so callers inspect them here.
+  await beforeCommit?.();
   await page.getByTestId('editor-canvas').click({ position: { x: 40, y: 40 } });
   await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
+  // Commit the edit so later layer-panel changes apply to the stored layer.
+  await page.keyboard.press('Control+Enter');
+  await expect(page.getByRole('button', { name: 'Move tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
 }
 
 test('font picker searches, filters by category, keeps favourites and supports the keyboard', async ({ page }) => {
   await openEditor(page);
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await selectTool(page, 'Horizontal Type');
   await page.getByRole('button', { name: 'Browse typefaces', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Text tool font' });
   await expect(picker).toBeVisible();
@@ -91,7 +98,7 @@ test('font picker searches, filters by category, keeps favourites and supports t
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await selectTool(page, 'Horizontal Type');
   await page.getByRole('button', { name: 'Browse typefaces', exact: true }).click();
   await picker.getByLabel('Font category', { exact: true }).selectOption('favourites');
   await expect(picker.getByRole('button', { name: 'Favourite JetBrains Mono', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -142,9 +149,10 @@ test('a library font renders differently from the fallback shown when it cannot 
     await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
     if (blockFonts) await page.route('**/fonts/**', (route) => route.abort());
     await openEditor(page);
-    await addTextLayer(page, 'Bungee', 'Fallback?');
-    if (blockFonts) await expect(page.getByTestId('font-fallback-warning')).toContainText('fallback rendering is active');
-    else await expect(page.getByTestId('font-fallback-warning')).toHaveCount(0);
+    await addTextLayer(page, 'Bungee', 'Fallback?', async () => {
+      if (blockFonts) await expect(page.getByTestId('font-fallback-warning')).toContainText('fallback rendering is active');
+      else await expect(page.getByTestId('font-fallback-warning')).toHaveCount(0);
+    });
     let rows: number[] = [];
     await expect
       .poll(async () => {

@@ -32,7 +32,7 @@ test('Type tool discloses browser font fallback without changing the editable pr
   );
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
 
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await page.getByRole('button', { name: 'Horizontal Type tool', exact: true }).click();
   await expect(page.getByTestId('font-fallback-warning')).toContainText(
     'browser fallback rendering is active',
   );
@@ -44,7 +44,7 @@ test('Type tool discloses browser font fallback without changing the editable pr
     'aria-busy',
     'false',
   );
-  await page.getByRole('button', { name: 'Text tool', exact: true }).click();
+  await page.getByRole('button', { name: 'Horizontal Type tool', exact: true }).click();
   await expect(page.getByTestId('font-fallback-warning')).toBeVisible();
   await expect(page.getByLabel('Text tool font', { exact: true })).toHaveValue(
     'Arial',
