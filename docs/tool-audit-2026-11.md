@@ -8,7 +8,7 @@ no sign-in, no cloud save, no downloads).
 - Release at start: `0.1.1004`, commit `93fa45a1ac785a93629ccecfd16c0e7fbd232f90`
   (built 2026-11-09T05:22Z). `origin/main` was already `6828cdb` (#250 merged,
   not yet deployed) when the audit started.
-- Release changes during the audit: `0.1.1007` / `6828cdb` went live at 10:29Z and was used from then on (see end of report).
+- Release changes during the audit: `0.1.1007` / `6828cdb` went live at 10:29Z and was used from then on; bugs were re-verified on `0.1.1011` / `0ed0e8e` (see end of report).
 - This is an audit only; no code was changed.
 
 Status key: **PASS** works as a Photoshop-style user expects ·
@@ -39,7 +39,7 @@ gap (see Improvements) · **NOT TESTED** with reason.
 | 16 | Lasso | Polygonal Lasso | BUG | Triangle by 3 clicks + click on start; clip at y=800 exactly 210–650 (computed 210–650). No outline (B-01). |
 | 17 | Lasso | Magnetic Lasso | BUG | Real mouse drag → "Magnetic selection created". No outline (B-01). Curved tracing not possible with the pane's straight drags. |
 | 18 | Selection Brush | Selection Brush | BUG | Painted an 18 px selection band matching Size 18. No outline (B-01). |
-| 19 | Selection | Quick Selection (W) | BUG | Click or drag creates nothing and leaves the gesture hanging until Escape (B-02). |
+| 19 | Selection | Quick Selection (W) | BUG | Drag inside the sea → "Quick Selection created (tolerance 24)" on 0.1.1011 (fresh and old draft). No outline (B-01). An earlier "stuck gesture" failure was a test-harness artefact (see B-02, withdrawn). |
 | 20 | Selection | Magic Wand | BUG | Click on sun selected exactly the sun disc. No Tolerance/Contiguous/Sample All Layers control in its options (B-05). No outline (B-01). |
 | 21 | Crop & Slice | Crop (C) | IMPROVEMENT | Drag → preview 1001×703 (expected ≈1000×700) with thirds grid, Apply/Cancel; Enter applied, Undo restored 1440×960. No options at all (I-12). |
 | 22 | Crop & Slice | Perspective Crop | BUG | Corner clicks do nothing; a drag creates a pre-skewed quad with numeric corner fields; Enter applied 922×652, Undo restored. The floating preview panel covers the top-right corner handle (B-06). Pre-skewed default (I-13). |
@@ -80,7 +80,7 @@ gap (see Improvements) · **NOT TESTED** with reason.
 | 57 | Pen | Convert Point | PASS | Drag on corner → "converted to smooth", outline changed. |
 | 58 | Path Selection | Path Selection (A) | PASS | Drag moved the whole path 30 px; undo restored. |
 | 59 | Path Selection | Direct Selection | PASS | Dragged the added anchor up, shape peaked accordingly. |
-| 60 | Type | Horizontal Type (T) | BUG | Click + type "Audit" + ✓ → layer "Audit", tool switched to Move as designed. Changing **Layer font** restyled it. Changing the Text-section **Font** picker did not restyle the existing layer — fixed on main by #249 (merged 11:03Z, not yet deployed). Three separate font pickers (I-25). |
+| 60 | Type | Horizontal Type (T) | IMPROVEMENT | Click + type "Audit" + ✓ → layer "Audit", tool switched to Move as designed. On 6828cdb the Text-section Font picker did not restyle existing type; on 0.1.1011 (#249) it does (Georgia applied to "Audit"). Three separate font pickers remain (I-25). |
 | 61 | Type | Vertical Type | PASS | Click + "VERT" + Ctrl+Enter → stacked V-E-R-T layer, switched to Move. |
 | 62 | Type | Horizontal Type Mask | BUG | On empty canvas: "Horizontal Type Mask selection created". Clicking on existing text instead opens that text layer for editing and inserts the typed characters into it (B-12). |
 | 63 | Type | Vertical Type Mask | PASS | Click + "VM" + Ctrl+Enter → selection; a 60 px brush stroke over it only painted the glyph areas. |
@@ -99,19 +99,19 @@ gap (see Improvements) · **NOT TESTED** with reason.
 | Status | Count |
 |---|---|
 | PASS | 32 (Audio Annotation counted PASS for placement only; recording/attach not tested) |
-| BUG | 21 |
-| IMPROVEMENT | 16 |
+| BUG | 20 |
+| IMPROVEMENT | 17 |
 | NOT TESTED | 0 tools (sub-steps not tested: Audio record/attach, Slice "Download PNG") |
 
-8 of the BUG rows (11–18) are BUG only because of B-01 (no selection outline); their selection logic itself was exact.
+9 of the BUG rows (11–19) are BUG only because of B-01 (no selection outline); their selection logic itself was exact.
 
 ## Bugs
 
-All bugs were reproduced at least twice and re-verified on `0.1.1007` / `6828cdb` (live from 10:29Z); some were first seen on `93fa45a`.
+All bugs were reproduced at least twice on `0.1.1007` / `6828cdb`, and B-01, B-04, B-05, B-08, B-09, B-10, B-11 and B-12 were re-verified after a full reload on `0.1.1011` / `0ed0e8e` (11:25–11:45Z, clean sample draft, no active selection). The code between `6828cdb` and `0ed0e8e` only changed the Text font picker, so B-03, B-06 and B-07 were not re-run.
 
 ### Blocker
 
-None. Every tool family has a working path, but three tools are no-ops (B-02, B-09, B-10).
+None. Every tool family has a working path, but two tools are no-ops (B-09, B-10).
 
 ### Major
 
@@ -120,9 +120,7 @@ Steps: Rectangular Marquee, drag on the image (same for Elliptical, Single Row/C
 Expected: an animated dashed outline. Actual: status "Rectangular selection created" and the selection works (paint is confined exactly), but nothing is drawn. Screenshots after 1 s show the untouched image; the stage has no overlay element for selections and canvas pixels are unchanged; no selection-outline renderer exists in `app/` or `src/`.
 Impact: users cannot see what is selected or whether a selection exists. Release `93fa45a` and `6828cdb`.
 
-**B-02 · Quick Selection · Click or drag creates nothing and leaves the tool stuck.**
-Steps: Quick Selection (W), Size 18, tolerance 24; click or drag inside the sea.
-Expected: a connected selection grows over the sea. Actual: no notice, no selection; pressing Escape then reports "Quick Selection cancelled", so the gesture never finished. Until Escape, further drags are silently ignored. Reproduced 4× from a clean state. No console error. Release `6828cdb`.
+**B-02 · Quick Selection · WITHDRAWN.** In the first session, Quick Selection clicks/drags made no selection and left the gesture open until Escape (4×). After a full reload it works on both a fresh and the old draft, on `0.1.1011`; no Quick Selection code changed between builds. Most likely cause: an earlier synthetic pointer event of mine made `setPointerCapture` throw and left pointer ownership stale for that page session (a harness artefact). Another session also briefly used the same pane tab around 11:05–11:15Z.
 
 **B-05 · Magic Wand and Fill · No tolerance control.**
 Expected: Tolerance, Contiguous, Anti-alias, Sample All Layers. Actual: Magic Wand shows only selection mode/feather; Fill shows "Fill has no sidebar options". Both use the shared `colorTolerance`, which is only exposed while Quick Selection, Color Replace or the erasers are active (tolerance slider condition in `app/page.tsx`). Release `6828cdb`.
@@ -200,4 +198,6 @@ Not a product bug (test harness): synthetic pointer events failed on Magnetic La
 ## Release changes during the audit
 
 - 10:29Z: `0.1.1007` / `6828cdb` (#250, tool-option styling) went live mid-audit; the editor was reloaded and everything from the Rectangular Marquee feather test onward ran on it. Navigation/Measure styling findings were re-checked on it.
-- #249 (Text-section Font picker restyles existing type) merged at 11:03Z but was not deployed by the end of the audit (live still `6828cdb`).
+- #249 (Text-section Font picker restyles existing type) merged at 11:03Z and went live as `0.1.1011` / `0ed0e8e` (built 11:05Z). Bugs were re-verified on it (see Bugs), and the font fix was confirmed.
+- Around 11:05–11:15Z another session briefly used the same browser tab (reload, rail clicks, keys). Findings that could overlap that window were re-run on 0.1.1011.
+- Side observation during re-verification: a selection is saved with the draft and restored after reload. Because it is invisible (B-01), the next Brush strokes outside it silently did nothing, though the status said "Paint layer updated". This is a concrete example of B-01's impact.
