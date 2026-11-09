@@ -28,7 +28,7 @@ const project = async (page: Page): Promise<Project> => {
 const addText = async (page: Page) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByLabel('Text content', { exact: true }).fill('Rasterize me');
   const canvas = page.getByTestId('editor-canvas');
   await canvas.scrollIntoViewIfNeeded();

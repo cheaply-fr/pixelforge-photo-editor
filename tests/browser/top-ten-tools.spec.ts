@@ -329,7 +329,7 @@ test('9. Layers and masks keep source assets, visibility and mask metadata edita
 });
 
 test('10. Editable Text persists and exports valid PNG JPEG and WebP files', async ({ page }) => {
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click({ position: { x: 120, y: 120 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('PixelForge title');
   await page.getByLabel('Layer name', { exact: true }).fill('Headline');

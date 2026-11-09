@@ -1,4 +1,5 @@
 import {
+  ArrowDownAZ,
   Bandage,
   Blend,
   Brush,
@@ -46,6 +47,7 @@ import {
   Spline,
   SplinePointer,
   SquareDashed,
+  SquareDashedText,
   SquareMousePointer,
   Stamp,
   StickyNote,
@@ -53,6 +55,7 @@ import {
   Target,
   Triangle,
   Type,
+  TypeOutline,
   VenetianMask,
   Wand,
   WandSparkles,
@@ -64,6 +67,7 @@ import { TOOL_ICONS, type PaletteToolId, type ToolIconName } from './toolPalette
 
 /** Components for every icon named in `TOOL_ICONS`. */
 const TOOL_ICON_COMPONENTS: Record<ToolIconName, LucideIcon> = {
+  ArrowDownAZ,
   Bandage,
   Blend,
   Brush,
@@ -111,6 +115,7 @@ const TOOL_ICON_COMPONENTS: Record<ToolIconName, LucideIcon> = {
   Spline,
   SplinePointer,
   SquareDashed,
+  SquareDashedText,
   SquareMousePointer,
   Stamp,
   StickyNote,
@@ -118,6 +123,7 @@ const TOOL_ICON_COMPONENTS: Record<ToolIconName, LucideIcon> = {
   Target,
   Triangle,
   Type,
+  TypeOutline,
   VenetianMask,
   Wand,
   WandSparkles,

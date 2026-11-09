@@ -108,6 +108,7 @@ import {
   transformFrameWithMasks,
   floodFill,
   drawTextLayer,
+  ensureTextLayerFonts,
   effectiveTextLayer,
   type Adjustments,
   type Group,
@@ -333,6 +334,12 @@ import {
   type ReferenceImage,
 } from '../src/referenceImage';
 import ActionsPanel from '../src/ActionsPanel';
+import { TypeEditorOverlay, type TypePointerHandlers } from '../src/TypeEditorOverlay';
+import { TypeOptionsBar, TypePanels, type TypeActions, type TypeView } from '../src/TypePanels';
+import { isTypeTool, layoutTextLayer, useTypeTool } from '../src/useTypeTool';
+import { convertToParagraphText, convertToPointText, sessionCharacterState, withTextRemapped } from '../src/textSession';
+import { baseCharacterStyle, commonStyle, normalizeParagraph, type TextAntiAlias } from '../src/richText';
+import { TYPE_PRESETS_STORAGE_KEY, parseTypePresets, presetFromState, serializeTypePresets, upsertTypePreset, type TypePreset } from '../src/typePresets';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
 import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
@@ -930,6 +937,14 @@ type Command =
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
   | 'text-warp'
+  | 'type-panels'
+  | 'type-aa-none'
+  | 'type-aa-sharp'
+  | 'type-aa-crisp'
+  | 'type-aa-strong'
+  | 'type-aa-smooth'
+  | 'type-convert-point'
+  | 'type-convert-paragraph'
   | 'text-on-path'
   | 'convert-to-shape'
   | 'rasterize-type'
@@ -1161,7 +1176,10 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
     icon: toolIcon('direct-select'),
     key: 'A',
   },
-  { id: 'text', label: 'Text', icon: toolIcon('text'), key: 'T' },
+  { id: 'text', label: 'Horizontal Type', icon: toolIcon('text'), key: 'T' },
+  { id: 'vertical-text', label: 'Vertical Type', icon: toolIcon('vertical-text'), key: 'T' },
+  { id: 'text-mask', label: 'Horizontal Type Mask', icon: toolIcon('text-mask'), key: 'T' },
+  { id: 'vertical-text-mask', label: 'Vertical Type Mask', icon: toolIcon('vertical-text-mask'), key: 'T' },
   { id: 'rectangle', label: 'Shape', icon: toolIcon('rectangle'), key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: toolIcon('ellipse'), key: 'U' },
   { id: 'line', label: 'Line', icon: toolIcon('line'), key: 'U' },
@@ -1482,8 +1500,14 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Align Left', command: 'text-align-left' },
     { label: 'Align Center', command: 'text-align-center' },
     { label: 'Align Right', command: 'text-align-right' },
-    { label: 'Panels', command: 'noop', disabled: true },
-    { label: 'Anti-Alias', command: 'noop', disabled: true },
+    { label: 'Character & Paragraph Panels', command: 'type-panels' },
+    { label: 'Anti-Alias: None', command: 'type-aa-none' },
+    { label: 'Anti-Alias: Sharp', command: 'type-aa-sharp' },
+    { label: 'Anti-Alias: Crisp', command: 'type-aa-crisp' },
+    { label: 'Anti-Alias: Strong', command: 'type-aa-strong' },
+    { label: 'Anti-Alias: Smooth', command: 'type-aa-smooth' },
+    { label: 'Convert to Point Text', command: 'type-convert-point' },
+    { label: 'Convert to Paragraph Text', command: 'type-convert-paragraph' },
     { label: 'Horizontal Type', command: 'text-orientation-horizontal' },
     { label: 'Vertical Type', command: 'text-orientation-vertical' },
     { label: 'Horizontal Type Mask', command: 'text-mask-horizontal' },
@@ -2974,7 +2998,16 @@ export default function Home() {
     [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
     [fontPreviewSize, setFontPreviewSize] = useState<FontPreviewSize>(DEFAULT_FONT_PREVIEW_SIZE),
     [missingFontsOpen, setMissingFontsOpen] = useState(false),
-    [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
+    [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined),
+    [typeDefaults, setTypeDefaults] = useState<{ bold: boolean; textAlign: 'left' | 'center' | 'right'; antiAlias: TextAntiAlias }>({ bold: false, textAlign: 'left', antiAlias: 'smooth' }),
+    [typePanelsOpen, setTypePanelsOpen] = useState({ character: true, paragraph: false }),
+    [typePresets, setTypePresets] = useState<TypePreset[]>(() => {
+      try {
+        return typeof localStorage === 'undefined' ? [] : parseTypePresets(localStorage.getItem(TYPE_PRESETS_STORAGE_KEY));
+      } catch {
+        return [];
+      }
+    });
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
   });
@@ -5152,10 +5185,13 @@ export default function Home() {
       }
       return false;
     }
-    const next =
+    let next =
       patch.kind && patch.kind !== layer.kind
         ? (patch as Layer)
         : ({ ...layer, ...patch } as Layer);
+    // Plain-text edits (Layers panel field) keep character styles aligned.
+    if (next.kind === 'text' && layer.kind === 'text' && next.text !== layer.text && !('rich' in patch))
+      next = withTextRemapped(layer, next.text, next);
     if (JSON.stringify(next) === JSON.stringify(layer)) return true;
     let layers = f.layers.map((l) => (l.id === layer.id ? next : l));
     if (patch.matrix !== undefined && layer.layerLinkId !== undefined) {
@@ -5462,10 +5498,14 @@ export default function Home() {
    * The source layer is cloned with a temporary flow orientation, so the
    * command never converts or mutates the user's text metadata.
    */
-  const applyTextMask = async (orientation: TextMaskOrientation) => {
+  const applyTextMask = async (
+    orientation: TextMaskOrientation,
+    /** Type Mask tools pass their uncommitted type instead of a document layer. */
+    source?: Extract<Layer, { kind: 'text' }>,
+  ) => {
     const f = current();
-    const layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || layer.kind !== 'text' || layerIsLocked(f, layer) || !layer.visible || groupForLayer(f, layer)?.visible === false) {
+    const layer = source ?? f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text' || (!source && (layerIsLocked(f, layer) || !layer.visible || groupForLayer(f, layer)?.visible === false))) {
       setNotice('Select a visible, unlocked text layer before creating a type mask');
       return;
     }
@@ -5498,6 +5538,7 @@ export default function Home() {
         context = mask.getContext('2d');
       if (!context) throw new Error('Text mask canvas is unavailable');
       const textLayer = effectiveTextLayer({ ...layer, orientation }, f.w);
+      await ensureTextLayerFonts(textLayer);
       context.save();
       context.setTransform(...textLayer.matrix);
       context.globalAlpha = 1;
@@ -10767,6 +10808,146 @@ export default function Home() {
       setNotice('Could not create a curvature path');
     }
   };
+  const typePointer = useRef<TypePointerHandlers | null>(null);
+  const activeTypeLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
+  const typeTool = useTypeTool({
+    tool,
+    current,
+    commit,
+    amend: (value, expected, dropPrevious = 0) => doc.amend(value, expected, dropPrevious),
+    paint,
+    setNotice,
+    addLayer: (layer) => addLayer(layer),
+    selectLayer: (id) => select(id),
+    isBaseFont: (family) => (FONTS as readonly string[]).includes(family),
+    isLocked: layerIsLocked,
+    applyTextMask: (orientation, layer) => applyTextMask(orientation, layer),
+    defaults: {
+      fontFamily,
+      fontSize,
+      color,
+      bold: typeDefaults.bold,
+      textAlign: typeDefaults.textAlign,
+      antiAlias: typeDefaults.antiAlias,
+      starterText: text,
+    },
+    revision,
+    blocked: quickMasking ? 'Exit Quick Mask mode before adding type' : undefined,
+  });
+  const typeSession = typeTool.session;
+  const typeSource: TypeView['source'] = typeSession ? 'session' : activeTypeLayer ? 'layer' : 'defaults';
+  const typeLayerView = typeSession?.layer ?? activeTypeLayer;
+  const typeView: TypeView = {
+    source: typeSource,
+    character: typeSession
+      ? (sessionCharacterState(typeSession) as TypeView['character'])
+      : activeTypeLayer
+        ? (commonStyle(activeTypeLayer, 0, activeTypeLayer.text.length) as TypeView['character'])
+        : ({
+            ...baseCharacterStyle({ text: '', color, fontSize, fontFamily, bold: typeDefaults.bold }),
+          } as TypeView['character']),
+    textAlign: typeLayerView?.textAlign ?? typeDefaults.textAlign,
+    antiAlias: typeLayerView ? typeLayerView.antiAlias ?? 'smooth' : typeDefaults.antiAlias,
+    textMode: typeLayerView ? typeLayerView.textMode ?? 'point' : undefined,
+    orientation: typeLayerView?.orientation ?? (tool === 'vertical-text' || tool === 'vertical-text-mask' ? 'vertical' : 'horizontal'),
+    paragraph: normalizeParagraph(typeLayerView?.paragraph),
+    fit: typeLayerView?.fit ?? 'none',
+    direction: normalizeTextLanguage(typeLayerView?.languageOptions).direction,
+    locked: Boolean(!typeSession && activeTypeLayer && frame && layerIsLocked(frame, activeTypeLayer)),
+    editing: Boolean(typeSession),
+    mask: Boolean(typeSession?.mask),
+  };
+  const typeActions: TypeActions = {
+    character: (patch) => {
+      // Like Photoshop, options-bar changes also become the defaults for new type.
+      if (typeof patch.fontFamily === 'string' && (FONTS as readonly string[]).includes(patch.fontFamily))
+        setFontFamily(patch.fontFamily as (typeof FONTS)[number]);
+      if (typeof patch.fontSize === 'number') setFontSize(Math.max(16, Math.min(160, Math.round(patch.fontSize))));
+      if (typeof patch.color === 'string') setColor(patch.color);
+      if (patch.fontWeight !== undefined) setTypeDefaults((value) => ({ ...value, bold: (patch.fontWeight ?? 400) >= 600 }));
+      if (typeSource !== 'defaults' && !typeTool.styleCharacters(patch)) setNotice('Unlock the type layer before styling it');
+    },
+    layer: (patch) => {
+      setTypeDefaults((value) => ({
+        ...value,
+        ...(patch.textAlign ? { textAlign: patch.textAlign } : {}),
+        ...(patch.antiAlias ? { antiAlias: patch.antiAlias } : {}),
+      }));
+      if (typeSource !== 'defaults') typeTool.patchTextLayer(patch);
+    },
+    paragraph: (patch) => {
+      if (typeSource !== 'defaults') typeTool.patchParagraph(patch);
+    },
+    direction: (direction) => {
+      if (!typeLayerView) return;
+      typeTool.patchTextLayer({ languageOptions: { ...normalizeTextLanguage(typeLayerView.languageOptions), direction } });
+    },
+    orientation: (orientation) => {
+      if (typeLayerView) typeTool.patchTextLayer({ orientation });
+    },
+    convert: (mode) => {
+      const source = typeLayerView;
+      const layout = source && layoutTextLayer(source);
+      if (!source || !layout) return;
+      const converted = mode === 'point' ? convertToPointText(source, layout) : convertToParagraphText(source, layout);
+      if (typeSession) {
+        typeTool.patchTextLayer(converted);
+        typeTool.select({ anchor: Math.min(typeSession.selection.anchor, converted.text.length), focus: Math.min(typeSession.selection.focus, converted.text.length) });
+      } else if (typeTool.patchTextLayer(converted)) setNotice(mode === 'point' ? 'Converted to point text' : 'Converted to paragraph text');
+    },
+    warp: () => {
+      if (typeSession) typeTool.commitSession();
+      setTextWarp();
+    },
+    commit: () => { typeTool.commitSession(); },
+    cancel: () => typeTool.cancelSession(),
+    findReplace: () => {
+      if (typeSession) typeTool.commitSession();
+      setTextReplaceOpen(true);
+    },
+    spellcheck: () => {
+      if (typeSession) typeTool.commitSession();
+      setSpellcheckOpen(true);
+    },
+    insert: (value) => { typeTool.insertTextAtCaret(value); },
+    openGlyphs: () => {
+      // The font library's glyph picker, when installed, handles this event
+      // and inserts through `pixelforge:insert-text`.
+      const event = new CustomEvent('pixelforge:open-glyph-picker', { cancelable: true, detail: { insert: typeTool.insertTextAtCaret } });
+      return !window.dispatchEvent(event);
+    },
+    presets: typePresets,
+    savePreset: (name) => {
+      try {
+        const preset = presetFromState(name, typeView.character, typeView.paragraph, typeView.textAlign);
+        const next = upsertTypePreset(typePresets, preset);
+        setTypePresets(next);
+        try { localStorage.setItem(TYPE_PRESETS_STORAGE_KEY, serializeTypePresets(next)); } catch { /* storage unavailable */ }
+        setNotice(`Type preset “${preset.name}” saved on this device`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Type preset could not be saved');
+      }
+    },
+    applyPreset: (preset) => {
+      if (typeSource === 'defaults') {
+        setNotice('Select or edit a type layer before applying a preset');
+        return;
+      }
+      typeTool.styleCharacters(preset.character);
+      typeTool.patchTextLayer({ paragraph: preset.paragraph, textAlign: preset.textAlign });
+      setNotice(`Type preset “${preset.name}” applied`);
+    },
+    deletePreset: (name) => {
+      const next = typePresets.filter((preset) => preset.name !== name);
+      setTypePresets(next);
+      try { localStorage.setItem(TYPE_PRESETS_STORAGE_KEY, serializeTypePresets(next)); } catch { /* storage unavailable */ }
+    },
+  };
+  const toggleTypePanel = (panel: 'character' | 'paragraph') => {
+    const open = !typePanelsOpen[panel];
+    setTypePanelsOpen((value) => ({ ...value, [panel]: open }));
+    if (open) revealSidebarSection('text');
+  };
   const pointerDown = async (
     e: React.PointerEvent<HTMLCanvasElement>,
     skipExpansion = false,
@@ -12552,23 +12733,10 @@ export default function Home() {
       );
       return;
     }
-    if (tool === 'text') {
-      const added = addLayer({
-        ...commonLayer('Text ' + f.layers.length),
-        kind: 'text',
-        text: text || 'Your text',
-        fontSize,
-        fontFamily,
-        bold: true,
-        color,
-        boxWidth: Math.max(1, f.w - p.x),
-        textAlign: 'left',
-        lineHeight: 1.2,
-        letterSpacing: 0,
-        orientation: 'horizontal',
-        matrix: [1, 0, 0, 1, p.x, p.y],
-      });
-      if (added) setNotice('Editable text layer added');
+    if (isTypeTool(tool)) {
+      // The Type overlay normally owns pointer input; this keeps programmatic
+      // canvas clicks working (point type at the click baseline).
+      typeTool.createAt(p);
       return;
     }
     if (tool === 'select' || tool === 'ellipse-select' || tool === 'lasso') {
@@ -14405,6 +14573,16 @@ export default function Home() {
     } else void paint(f);
   };
   const doubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Double-clicking type with the Move tool switches to the Type tool and
+    // edits it, as in Photoshop.
+    if (tool === 'move' && !gesture.current && !quickMasking) {
+      const hit = typeTool.hitTextLayer(point(e));
+      if (hit) {
+        activateTool(hit.layer.orientation === 'vertical' ? 'vertical-text' : 'text');
+        typeTool.editLayer(hit.layer.id, { anchor: hit.offset, focus: hit.offset });
+        return;
+      }
+    }
     const g = gesture.current;
     if (g?.tool !== 'polygonal-lasso') return;
     // Double-clicking the final vertex is the desktop equivalent of clicking
@@ -15137,6 +15315,18 @@ export default function Home() {
       setTextOrientation('vertical');
     else if (command === 'language-options') setLanguageOptionsOpen(true);
     else if (command === 'text-warp') setTextWarp();
+    else if (command === 'type-panels') {
+      setTypePanelsOpen({ character: true, paragraph: true });
+      if (!isTypeTool(tool)) activateTool('text');
+      else revealSidebarSection('text');
+    }
+    else if (command.startsWith('type-aa-')) {
+      const antiAlias = command.slice('type-aa-'.length) as TextAntiAlias;
+      setTypeDefaults((value) => ({ ...value, antiAlias }));
+      if (typeTool.patchTextLayer({ antiAlias })) setNotice(`Anti-aliasing: ${antiAlias}`);
+    }
+    else if (command === 'type-convert-point' || command === 'type-convert-paragraph')
+      typeActions.convert(command === 'type-convert-point' ? 'point' : 'paragraph');
     else if (command === 'text-on-path') setTextOnPath();
     else if (command === 'font-preview-size') {
       const next = nextFontPreviewSize(fontPreviewSize);
@@ -15921,6 +16111,16 @@ export default function Home() {
           return !planSelectedLayerMerge(frame).ok;
         return !planLayerMerge(frame).ok;
       }
+      case 'type-aa-none':
+      case 'type-aa-sharp':
+      case 'type-aa-crisp':
+      case 'type-aa-strong':
+      case 'type-aa-smooth':
+        return !layer || layer.kind !== 'text' || locked;
+      case 'type-convert-point':
+        return !layer || layer.kind !== 'text' || locked || (layer.textMode ?? 'point') === 'point';
+      case 'type-convert-paragraph':
+        return !layer || layer.kind !== 'text' || locked || layer.textMode === 'paragraph' || layer.orientation === 'vertical';
       case 'text-align-left':
       case 'text-align-center':
       case 'text-align-right':
@@ -16901,6 +17101,15 @@ export default function Home() {
           </label>
         </aside>
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
+          {isTypeTool(tool) && (
+            <TypeOptionsBar
+              view={typeView}
+              actions={typeActions}
+              fonts={FONTS}
+              panelOpen={typePanelsOpen}
+              onTogglePanel={toggleTypePanel}
+            />
+          )}
           {saveStatus === LOCAL_CONFLICT && (
             <div role="alert" className="draft-conflict">
               {LOCAL_CONFLICT}
@@ -17226,13 +17435,35 @@ export default function Home() {
               ref={canvas}
               data-testid="editor-canvas"
               data-rendering={doc.rendering ? 'true' : 'false'}
-              onPointerDown={(e) => void pointerDown(e)}
-              onPointerMove={pointerMove}
-              onPointerUp={(e) => void pointerUp(e).then(dropUnusedExpansion)}
-              onPointerCancel={(e) => void pointerUp(e).then(dropUnusedExpansion)}
+              onPointerDown={(e) => {
+                if (typePointer.current) typePointer.current.down(e);
+                else void pointerDown(e);
+              }}
+              onPointerMove={(e) => {
+                if (typePointer.current) typePointer.current.move(e);
+                else pointerMove(e);
+              }}
+              onPointerUp={(e) => {
+                if (typePointer.current) typePointer.current.up(e);
+                else void pointerUp(e).then(dropUnusedExpansion);
+              }}
+              onPointerCancel={(e) => {
+                if (typePointer.current) typePointer.current.up(e);
+                else void pointerUp(e).then(dropUnusedExpansion);
+              }}
               onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
+            {frame && (
+              <TypeEditorOverlay
+                typeTool={typeTool}
+                frameWidth={frame.w}
+                frameHeight={frame.h}
+                toCanvas={point}
+                active={isTypeTool(tool) && !quickMasking}
+                registerHandlers={(handlers) => { typePointer.current = handlers; }}
+              />
+            )}
             {frame && cloneSource && (tool === 'clone' || tool === 'heal')
               ? (() => {
                   // The source is stored in the layer placement it was picked
@@ -19109,12 +19340,19 @@ export default function Home() {
               collapsed={collapsedSections.has('text')}
               onToggle={toggleSidebarSection}
             >
-              <input
-                aria-label="Text content"
-                className="text-input"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-              />
+              <p className="adjust-note">
+                Click to add point type, drag to draw a paragraph box, or click existing type to edit it.
+              </p>
+              <label className="select-row"><span>New type text</span>
+                <input
+                  aria-label="Text content"
+                  className="text-input"
+                  value={text}
+                  maxLength={10000}
+                  placeholder="Empty: start typing"
+                  onChange={(e) => setText(e.target.value)}
+                />
+              </label>
               <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) }}>{font}</option>)}</select></label>
               {fontAvailability === 'fallback' && (
                 <output data-testid="font-fallback-warning" className="adjust-note">
@@ -19129,6 +19367,13 @@ export default function Home() {
                 max={160}
                 set={setFontSize}
                 suffix="px"
+              />
+              <TypePanels
+                view={typeView}
+                actions={typeActions}
+                fonts={FONTS}
+                open={typePanelsOpen}
+                onOpenChange={(panel, open) => setTypePanelsOpen((value) => (value[panel] === open ? value : { ...value, [panel]: open }))}
               />
             </SidebarSection>
           )}

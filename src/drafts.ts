@@ -145,6 +145,9 @@ export type Tool =
   | 'blur'
   | 'sharpen'
   | 'text'
+  | 'vertical-text'
+  | 'text-mask'
+  | 'vertical-text-mask'
   | 'pen'
   | 'freeform-pen'
   | 'curvature-pen'
@@ -407,6 +410,9 @@ function validSettings(settings: unknown): settings is Settings {
       'blur',
       'sharpen',
       'text',
+      'vertical-text',
+      'text-mask',
+      'vertical-text-mask',
       'pen',
       'freeform-pen',
       'curvature-pen',

@@ -59,7 +59,7 @@ test.beforeEach(async ({ page }) => {
 test('editable text, layer properties, history and assets survive project export and reload', async ({
   page,
 }) => {
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click();
   await page
     .getByLabel('Edit layer text', { exact: true })
