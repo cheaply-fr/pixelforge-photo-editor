@@ -1219,6 +1219,11 @@ export default function LayersPanel({
           Embedded source · {layer.sourceName || 'untitled image'} · replaceable without changing transforms
         </p>
       )}
+      {layer.kind === 'raster' && layer.background === true && (
+        <p className="mask-status" data-testid="background-layer-status">
+          Background · position locked, Eraser paints the background colour · Layer &gt; Layer from Background or rename to unlock
+        </p>
+      )}
       <div className="layer-properties" data-sidebar-section="layer-properties">
       <label className="layer-field">
         Layer name

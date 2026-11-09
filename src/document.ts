@@ -373,7 +373,18 @@ type Common = {
 };
 export type Layer = Common &
   (
-    | { kind: 'raster'; asset: string; /** Optional editable solid-fill source color. */ fillColor?: string }
+    | {
+        kind: 'raster';
+        asset: string;
+        /** Optional editable solid-fill source color. */
+        fillColor?: string;
+        /**
+         * Photoshop-style Background: while it is the bottom layer its position
+         * is locked and the Eraser paints the background colour. Omitted in
+         * legacy drafts (ordinary layer); Layer from Background removes it.
+         */
+        background?: true;
+      }
     | {
         /** Embedded, source-retaining raster content with an editable transform. */
         kind: 'smart-object';
@@ -850,6 +861,20 @@ export function layerTransformMatrix(
     values,
   );
 }
+/**
+ * Whether `layer` is the frame's Background: a flagged raster layer that is
+ * still the bottom layer. Its position is locked and erasing paints the
+ * background colour; anywhere else the flag has no effect.
+ */
+export const isBackgroundLayer = (frame: Pick<Frame, 'layers'>, layer: Layer | undefined): boolean =>
+  Boolean(layer && layer.kind === 'raster' && layer.background === true && frame.layers[0]?.id === layer.id);
+/** The same layer as an ordinary layer (Layer > Layer from Background). */
+export const layerFromBackground = (layer: Layer): Layer => {
+  if (layer.kind !== 'raster' || layer.background === undefined) return layer;
+  const rest = { ...layer };
+  delete rest.background;
+  return rest;
+};
 export const commonLayer = (name: string): Common => ({
   id: crypto.randomUUID(),
   name,
@@ -1750,6 +1775,8 @@ export function validateFrame(
       (layer.clippingTo !== undefined &&
         typeof layer.clippingTo !== 'string') ||
       (layer.layerLinkId !== undefined && !validId(layer.layerLinkId)) ||
+      ((layer as Record<string, unknown>).background !== undefined &&
+        ((layer as Record<string, unknown>).background !== true || layer.kind !== 'raster')) ||
       (layer.groupId !== undefined &&
         (!validId(layer.groupId) || !groupIds.has(layer.groupId)))
     )
@@ -2255,11 +2282,14 @@ export function rasterFrame(
   canvas: HTMLCanvasElement,
   assets: Assets,
   name = 'Background',
+  /** Mark the layer as the document's locked-position Background. */
+  background = false,
 ): Frame {
   const layer: Layer = {
     ...commonLayer(name),
     kind: 'raster',
     asset: addAsset(assets, canvas),
+    ...(background ? { background: true as const } : {}),
   };
   return {
     w: canvas.width,

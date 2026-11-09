@@ -245,21 +245,29 @@ test('History Brush and Art History Brush restore at every mirror copy', async (
 });
 
 test('Mixer Brush offers symmetry and commits a mirrored stroke as one undo step', async ({ page }) => {
-  await fillAt(page, '#0000ff');
+  await blueWithRedBands(page);
   await selectTool(page, 'Mixer Brush');
   await expect(page.getByTestId('paint-symmetry-controls')).toBeVisible();
   await symmetry(page, 'dual');
   await expect(page.getByTestId('paint-symmetry-summary')).toHaveText('4 copies per dab');
+  const uniform = await project(page);
+  // Mixing inside the uniform blue area changes nothing: no history step.
+  await stroke(page, [200, 360], [320, 380]);
+  await expect(footer(page)).toContainText('No Mixer Brush change');
+  expect((await project(page)).history.length).toBe(uniform.history.length);
+  // Dragging blue into the red band carries blue paint into it, in every copy.
   const before = await project(page);
-  await stroke(page, [200, 200], [320, 260]);
+  await stroke(page, [260, 110], [260, 200]);
   await expect(footer(page)).toContainText('Mixer Brush stroke applied');
   const after = await project(page);
   expect(after.history.length).toBe(before.history.length + 1);
-  // Mixing an unchanged uniform layer keeps every copy's pixels intact.
-  for (const [x, y] of [[260, 230], [940, 230], [260, 570], [940, 570]])
-    expect(await pixel(page, x, y), `${x},${y}`).toEqual(BLUE);
+  const mixed = await pixel(page, 260, 195);
+  expect(mixed[2], `blue carried into red: ${mixed.join(', ')}`).toBeGreaterThan(20);
+  for (const [x, y] of [[940, 195], [260, 605], [940, 605]])
+    near(await pixel(page, x, y), mixed, `mirrored copy ${x},${y}`, 6);
   await editMenu(page, /^Undo/);
   expect((await project(page)).index).toBe(before.index);
+  expect(await pixel(page, 260, 195)).toEqual(RED);
 });
 
 /** Opaque blue layer with red bands through rows 200 and 600. */

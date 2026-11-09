@@ -110,6 +110,8 @@ import {
   identity,
   colorSelectMask,
   commonLayer,
+  isBackgroundLayer,
+  layerFromBackground,
   isRasterContentLayer,
   isMaskableLayer,
   isVectorMaskableLayer,
@@ -519,6 +521,7 @@ import {
 } from '../src/imageSize';
 import {
   applyRadialStamp,
+  BrushStrokeBuffer,
   BRUSH_DEFAULT_ANGLE,
   BRUSH_DEFAULT_ROUNDNESS,
   BRUSH_DEFAULT_SPACING,
@@ -586,6 +589,8 @@ import {
   BRUSH_STRANDS_MAX_INPUT_POINTS,
   BRUSH_STRANDS_SEED_MAX,
   BRUSH_STRANDS_TWISTS_MAX,
+  BRUSH_STRANDS_THICKNESS_MAX,
+  BRUSH_STRANDS_THICKNESS_MIN,
   BRUSH_STRANDS_WIDTH_MAX,
   BRUSH_STRANDS_WIDTH_MIN,
   DEFAULT_BRUSH_STRANDS,
@@ -789,6 +794,7 @@ import {
   applyHistoryBrushPixels,
   applyMixerBrushPixels,
   applySymmetricRetouchBrush,
+  type MixerBrushState,
   interpolateBrushStrokePoints,
   type HistoryBrushSettings,
   type ArtHistoryBrushSettings,
@@ -1030,6 +1036,7 @@ type Command =
   | 'new-layer'
   | 'new-fill-layer'
   | 'new-adjustment-layer'
+  | 'layer-from-background'
   | 'new-smart-object'
   | 'nest-smart-object'
   | 'replace-smart-object'
@@ -1607,6 +1614,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
+    { label: 'Layer from Background', command: 'layer-from-background' },
     { label: 'Layer Mask', command: 'mask-selection' },
     { label: 'Mask All Objects', command: 'mask-all-objects' },
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
@@ -1870,6 +1878,12 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  /** Mixer Brush paint reservoirs for this stroke, one per symmetry copy. */
+  mixerStates?: MixerBrushState[];
+  /** Eraser on the Background layer paints the background colour. */
+  eraseToBackground?: boolean;
+  /** Per-stroke coverage buffers keyed by paint target (Opacity ceiling). */
+  strokeBuffers?: WeakMap<HTMLCanvasElement, BrushStrokeBuffer>;
   /** Immutable source captured at pointer-down for Mixer/History Brush. */
   sourcePixels?: Uint8ClampedArray;
   historySourceIndex?: number;
@@ -2048,6 +2062,28 @@ type StampCanvasOptions = {
   source?: HTMLCanvasElement;
   sourceX?: number;
   sourceY?: number;
+  /** Per-gesture stroke buffers: Opacity becomes a per-stroke ceiling. */
+  strokeBuffers?: BrushStrokeBuffers;
+  /** Stroke opacity ceiling (0..1); defaults to `opacity`. */
+  strokeOpacity?: number;
+};
+
+/** One `BrushStrokeBuffer` per paint target (layer buffer, selection raw, blend paint). */
+type BrushStrokeBuffers = WeakMap<HTMLCanvasElement, BrushStrokeBuffer>;
+const brushStrokeTarget = (
+  buffers: BrushStrokeBuffers | undefined,
+  target: HTMLCanvasElement,
+  ceiling: number,
+  originX: number,
+  originY: number,
+) => {
+  if (!buffers) return undefined;
+  let buffer = buffers.get(target);
+  if (!buffer) {
+    buffer = new BrushStrokeBuffer(target.width, target.height, Math.max(0, Math.min(1, ceiling)));
+    buffers.set(target, buffer);
+  }
+  return { buffer, originX, originY };
 };
 
 /** Apply one bounded local radial stamp without allocating a full-canvas mask. */
@@ -2095,6 +2131,7 @@ const stampCanvas = (
     sourceX = (options.sourceX ?? options.x) - sourceLeft;
     sourceY = (options.sourceY ?? options.y) - sourceTop;
   }
+  const stroke = brushStrokeTarget(options.strokeBuffers, target, options.strokeOpacity ?? options.opacity, left, top);
   const result = applyRadialStamp(image.data, {
     width,
     height,
@@ -2121,7 +2158,7 @@ const stampCanvas = (
     source,
     sourceX,
     sourceY,
-  });
+  }, stroke);
   let changed = result.changed;
   const secondary = options.secondaryPreset && options.secondaryPreset !== 'none'
     ? brushPresetById(options.secondaryPreset)
@@ -2154,7 +2191,7 @@ const stampCanvas = (
       source,
       sourceX,
       sourceY,
-    });
+    }, stroke);
     changed = secondaryResult.changed || changed;
   }
   if (changed) {
@@ -2369,6 +2406,8 @@ const patternCanvas = (
     tileSize: number;
     foreground: BrushColor;
     background: BrushColor;
+    strokeBuffers?: BrushStrokeBuffers;
+    strokeOpacity?: number;
   },
 ) => {
   const radius = resolveBrushStamp(options).radius,
@@ -2405,7 +2444,7 @@ const patternCanvas = (
       background: options.background,
       originX: left,
       originY: top,
-    });
+    }, brushStrokeTarget(options.strokeBuffers, target, options.strokeOpacity ?? options.opacity, left, top));
   if (result.changed) context.putImageData(image, left, top);
   return result.changed;
 };
@@ -2459,8 +2498,12 @@ const redEyeCanvasSegment = (
       threshold: options.threshold,
       amount: options.amount,
     });
-  if (result.changed) context.putImageData(image, left, top);
-  return result.changed;
+  // removeRedEye never mutates its input: write the corrected copy back.
+  if (!result.changed) return false;
+  image.data.set(result.pixels);
+  context.putImageData(image, left, top);
+  noteCanvasWrite(target, left, top, width, height);
+  return true;
 };
 
 const redEyeCanvasStroke = (
@@ -2663,6 +2706,7 @@ const mixerHistoryCanvasDabs = (
   points: readonly BrushStrokePoint[],
   settings: MixerBrushSettings | HistoryBrushSettings | ArtHistoryBrushSettings,
   selectionMask?: Uint8ClampedArray,
+  mixerState?: MixerBrushState,
 ) =>
   windowedCanvasStroke(
     destination,
@@ -2678,7 +2722,7 @@ const mixerHistoryCanvasDabs = (
       const local = points.map((point) => windowPoint(point, rect));
       return {
         pixels: tool === 'mixer-brush'
-          ? applyMixerBrushPixels(pixels, source!, width, height, local, settings as MixerBrushSettings, mask)
+          ? applyMixerBrushPixels(pixels, source!, width, height, local, settings as MixerBrushSettings, mask, mixerState)
           : tool === 'history-brush'
           ? applyHistoryBrushPixels(pixels, source!, width, height, local, settings as HistoryBrushSettings, mask)
           : applyArtHistoryBrushPixels(pixels, source!, width, height, local, settings as ArtHistoryBrushSettings, mask),
@@ -2898,9 +2942,15 @@ const stampGestureSegment = (
   g: Gesture,
   from: { x: number; y: number },
   to: { x: number; y: number },
-  options: Parameters<typeof stampCanvasSegment>[3],
+  strokeOptions: Parameters<typeof stampCanvasSegment>[3],
 ) => {
-  const reach = brushStampReach(options.size, options.scatter),
+  // One stroke buffer set per gesture caps the stroke at its Opacity.
+  const options = {
+      ...strokeOptions,
+      strokeBuffers: g.strokeBuffers ??= new WeakMap(),
+      strokeOpacity: strokeOptions.strokeOpacity ?? strokeOptions.opacity,
+    },
+    reach = brushStampReach(options.size, options.scatter),
     symmetry = g.paintSymmetry;
   if (!symmetry || symmetry.length < 2)
     return confinedGestureEdit(g, from, to, reach, (target) =>
@@ -2985,7 +3035,11 @@ const patternGestureSegment = (
   options: Parameters<typeof patternCanvasSegment>[3],
 ) =>
   confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
-    patternCanvasSegment(target, from, to, options));
+    patternCanvasSegment(target, from, to, {
+      ...options,
+      strokeBuffers: g.strokeBuffers ??= new WeakMap(),
+      strokeOpacity: options.strokeOpacity ?? options.opacity,
+    }));
 /** Red Eye counterpart of `stampGestureSegment`. */
 const redEyeGestureStroke = (
   g: Gesture,
@@ -3295,6 +3349,8 @@ export default function Home() {
     [spongeMode, setSpongeMode] = useState<SpongeMode>('saturate'),
     [spongeVibrance, setSpongeVibrance] = useState(50),
     [mixerBrush, setMixerBrush] = useState<MixerBrushSettings>({ ...DEFAULT_MIXER_BRUSH }),
+    // Adjustment Brush paints the adjustment in (reveal) or out (conceal); Alt flips it per stroke.
+    [adjustmentBrushMode, setAdjustmentBrushMode] = useState<'reveal' | 'conceal'>('reveal'),
     [smudgeSettings, setSmudgeSettings] = useState<SmudgeSettings>(() => ({ ...DEFAULT_SMUDGE_SETTINGS })),
     [historyBrush, setHistoryBrush] = useState<HistoryBrushSettings>({ ...DEFAULT_HISTORY_BRUSH }),
     [artHistoryBrush, setArtHistoryBrush] = useState<ArtHistoryBrushSettings>({ ...DEFAULT_ART_HISTORY_BRUSH }),
@@ -3978,16 +4034,17 @@ export default function Home() {
   const buildGestureStrands = (g: Gesture, preview = false): Strand[] => {
     if (!g.strands || !g.layer) return [];
     const matrix = g.layer.matrix,
+      // Size is the overall ribbon width; strands are spread across it.
       settings = normalizeBrushStrands({
         ...g.strands.settings,
-        width: Math.min(BRUSH_STRANDS_WIDTH_MAX, Math.max(BRUSH_STRANDS_WIDTH_MIN, localSize(matrix, g.strands.settings.width))),
+        width: Math.min(BRUSH_STRANDS_WIDTH_MAX, Math.max(BRUSH_STRANDS_WIDTH_MIN, localSize(matrix, size))),
       }),
       path = smoothStrandPath(g.strands.points, {
         ...strandPathOptions(settings),
         ...(preview ? { maxSamples: STRAND_PREVIEW_MAX_SAMPLES } : {}),
       });
     return buildStrands(path, settings, {
-      strandWidth: localSize(matrix, size),
+      strandWidth: localSize(matrix, settings.thickness),
       sizeAt: pressureSize ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
       opacityAt: pressureOpacity ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
     });
@@ -5810,13 +5867,18 @@ export default function Home() {
     }
     return result;
   };
-  const editLayer = (patch: Partial<Layer>) => {
+  const editLayer = (requested: Partial<Layer>) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before editing layers');
       return false;
     }
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
+    // Renaming the Background turns it into an ordinary layer, as in Photoshop.
+    const patch: Partial<Layer> = 'name' in requested && layer.kind === 'raster' && layer.background === true &&
+      requested.name !== layer.name
+      ? ({ ...requested, background: undefined } as Partial<Layer>)
+      : requested;
     const group = groupForLayer(f, layer);
     if (
       group?.locked ||
@@ -5846,6 +5908,7 @@ export default function Home() {
       patch.kind && patch.kind !== layer.kind
         ? (patch as Layer)
         : ({ ...layer, ...patch } as Layer);
+    if (patch !== requested) next = layerFromBackground(next);
     // Plain-text edits (Layers panel field) keep character styles aligned.
     if (next.kind === 'text' && layer.kind === 'text' && next.text !== layer.text && !('rich' in patch))
       next = withTextRemapped(layer, next.text, next);
@@ -8177,8 +8240,8 @@ export default function Home() {
     setCloud(undefined);
     setCloudMessage('');
   };
-  const startRaster = (image: HTMLCanvasElement, title: string) => {
-    const f = rasterFrame(image, assets.current);
+  const startRaster = (image: HTMLCanvasElement, title: string, background = false) => {
+    const f = rasterFrame(image, assets.current, 'Background', background);
     if (commit(f, true)) {
       clearClipboard();
       setDraftId(createDraftId());
@@ -8196,7 +8259,8 @@ export default function Home() {
       image.getContext('2d')!.fillStyle = '#fff';
       image.getContext('2d')!.fillRect(0, 0, 1200, 800);
     }
-    startRaster(image, transparent ? 'untitled-transparent' : 'untitled');
+    // A filled document starts with a locked-position Background layer.
+    startRaster(image, transparent ? 'untitled-transparent' : 'untitled', !transparent);
     setNotice(transparent ? 'New transparent document' : 'New document');
   };
   /** File → New…: a document of any allowed size and background. */
@@ -8208,7 +8272,7 @@ export default function Home() {
       context.fillStyle = fill;
       context.fillRect(0, 0, request.width, request.height);
     }
-    if (startRaster(image, request.name || 'untitled')) {
+    if (startRaster(image, request.name || 'untitled', Boolean(fill))) {
       setNewDocumentOpen(false);
       setNotice(`New document ${request.width} × ${request.height} px`);
     }
@@ -8342,7 +8406,7 @@ export default function Home() {
         x.bezierCurveTo(350, y - 38, 610, y + 34, 980, y - 6);
         x.stroke();
       }
-      commitDocument(rasterFrame(c, assets.current), true);
+      commitDocument(rasterFrame(c, assets.current, 'Background', true), true);
       setViewZoomState(fittedZoom(stage.current, c.width, c.height));
       setReady(true);
     })();
@@ -10101,7 +10165,12 @@ export default function Home() {
         // the commit hashes only the tiles the path touched. A blend-mode
         // path rewrites the whole buffer at once and is scanned in full.
         if (!selectionMask && !blendMode) trackCanvasWrites(buffer);
+        // Like a pointer stroke: Opacity caps the whole path; the Eraser
+        // paints the background colour on the Background layer.
+        const eraseToBackground = tool === 'eraser' && isBackgroundLayer(f, layer);
         changed = stampStrokePathSamples(target, plan.samples, {
+          strokeBuffers: new WeakMap(),
+          strokeOpacity: brushOpacity / 100,
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -10118,8 +10187,8 @@ export default function Home() {
           roundness: tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
           flipY: brushFlipY,
-          mode: tool === 'eraser' ? 'destination-out' : 'source-over',
-          color: tool === 'eraser' ? undefined : brushColor(color),
+          mode: tool === 'eraser' && !eraseToBackground ? 'destination-out' : 'source-over',
+          color: tool !== 'eraser' ? brushColor(color) : eraseToBackground ? brushColor(backgroundColor) : undefined,
           colorBackground: brushColor(backgroundColor),
           symmetry,
         });
@@ -12389,13 +12458,18 @@ export default function Home() {
         );
         return;
       }
-      if (!layer.mask) {
+      // A fresh adjustment layer has no mask: the Adjustment Brush creates
+      // one on its first stroke (empty to paint the adjustment in, full to
+      // paint it out). Mask Brush/Eraser still refine an existing mask only.
+      if (!layer.mask && tool !== 'adjustment-brush') {
         setNotice('Create a layer mask or remove a background before refining');
         return;
       }
+      const adjustmentConceal = tool === 'adjustment-brush' &&
+        (adjustmentBrushMode === 'conceal') !== e.altKey;
       const mode: MaskRefinementMode =
-          tool === 'mask-eraser' ? 'conceal' : 'reveal',
-        maskAsset = assets.current[layer.mask],
+          tool === 'mask-eraser' || adjustmentConceal ? 'conceal' : 'reveal',
+        maskAsset = layer.mask ? assets.current[layer.mask] : undefined,
         initialPoint = {
           x: p.x,
           y: p.y,
@@ -12423,14 +12497,19 @@ export default function Home() {
       gesture.current = g;
       g.pending = (async () => {
         try {
-          const image = await decodeAsset(maskAsset);
-          if (image.naturalWidth !== f.w || image.naturalHeight !== f.h)
+          const image = maskAsset ? await decodeAsset(maskAsset) : undefined;
+          if (image && (image.naturalWidth !== f.w || image.naturalHeight !== f.h))
             throw new Error('Layer mask dimensions do not match the canvas');
           const buffer = surface(f.w, f.h),
             context = buffer.getContext('2d');
           if (!context) throw new Error('Mask refinement canvas is unavailable');
           context.imageSmoothingEnabled = false;
-          context.drawImage(image, 0, 0);
+          if (image) context.drawImage(image, 0, 0);
+          else if (mode === 'conceal') {
+            // New full-reveal mask: a conceal stroke paints the adjustment out.
+            context.fillStyle = '#fff';
+            context.fillRect(0, 0, f.w, f.h);
+          }
           const selectionMask = await frameSelectionMask(f.selection, f, assets.current);
           if (gesture.current !== g) return;
           g.maskBuffer = buffer;
@@ -13005,6 +13084,7 @@ export default function Home() {
         moved: false,
         brushPoints: [{ x: local.x, y: local.y, pressure: pressure(e) }],
         queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        mixerStates: [],
         // Paint Symmetry is fixed for the stroke at pointer-down.
         paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
       };
@@ -13059,13 +13139,14 @@ export default function Home() {
           if ((g.paintSymmetry?.length ?? 0) > 1) {
             // Paint Symmetry copies are applied over the whole buffer (#220).
             const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
-            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry);
-            if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
+            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry, g.mixerStates);
+            if (tool !== 'history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
             buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
           } else {
             // Without symmetry only the brush's reach is read and written.
-            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask);
-            if (tool === 'art-history-brush') g.changed = changed;
+            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask,
+              g.mixerStates && (g.mixerStates[0] ??= {}));
+            if (tool !== 'history-brush') g.changed = changed;
           }
           g.last = points.at(-1) || g.last;
           g.queued = undefined;
@@ -13494,11 +13575,11 @@ export default function Home() {
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [g.start]) {
-            redEyeGestureStroke(g, from, point, {
+            g.changed = redEyeGestureStroke(g, from, point, {
               radius: localSize(layer.matrix, size) / 2,
               threshold: g.redEyeThreshold ?? 36,
               amount: (g.redEyeAmount ?? 100) / 100,
-            });
+            }) || Boolean(g.changed);
             from = point;
           }
           g.queued = undefined;
@@ -13790,6 +13871,10 @@ export default function Home() {
       setNotice('Add a paint layer, or rasterize this layer before painting');
       return;
     }
+    if (tool === 'move' && isBackgroundLayer(f, layer)) {
+      setNotice('The Background layer is position-locked; use Layer > Layer from Background to move it');
+      return;
+    }
     const rasterAsset = layer.kind === 'raster' ? layer.asset : null;
     const g = {
       tool,
@@ -13806,6 +13891,7 @@ export default function Home() {
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
+      g.eraseToBackground = tool === 'eraser' && isBackgroundLayer(f, layer);
       // Paint Symmetry is fixed for the stroke at pointer-down.
       g.paintSymmetry = paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix);
       if (tool === 'brush' && brushStrands.enabled) {
@@ -13843,6 +13929,7 @@ export default function Home() {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: (brushOpacity / 100) * (brushFlow / 100),
+              strokeOpacity: brushOpacity / 100,
               pointerType: point.pointerType,
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
@@ -13861,8 +13948,8 @@ export default function Home() {
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
               flipY: brushFlipY,
-              mode: tool === 'eraser' ? 'destination-out' : 'source-over',
-              color: tool === 'eraser' ? undefined : brushColor(color),
+              mode: tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+              color: tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
               colorBackground: brushColor(backgroundColor),
             });
             from = destination;
@@ -14213,11 +14300,11 @@ export default function Home() {
       return;
     }
     if (g.tool === 'red-eye' && g.buffer) {
-      redEyeGestureStroke(g, g.last, local, {
+      g.changed = redEyeGestureStroke(g, g.last, local, {
         radius: localSize(g.layer!.matrix, size) / 2,
         threshold: g.redEyeThreshold ?? 36,
         amount: (g.redEyeAmount ?? 100) / 100,
-      });
+      }) || Boolean(g.changed);
       previewGesture(g);
       g.last = local;
       return;
@@ -14372,12 +14459,13 @@ export default function Home() {
             retouchOptions,
             g.selectionMask,
             g.paintSymmetry,
+            g.mixerStates,
           );
-          changed = g.tool === 'art-history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
+          changed = g.tool !== 'history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
           g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
         } else
-          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask
-        );
+          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask,
+            g.mixerStates && (g.mixerStates[0] ??= {}));
       } catch (error) {
         if (g.tool !== 'art-history-brush') throw error;
         gesture.current = null;
@@ -14385,7 +14473,7 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Art History Brush stroke cancelled');
         return;
       }
-      if (g.tool === 'art-history-brush') g.changed = Boolean(g.changed || changed);
+      if (g.tool !== 'history-brush') g.changed = Boolean(g.changed || changed);
       g.brushPoints = [...(g.brushPoints || []), ...segmentPoints];
       g.moved = true;
       g.last = local;
@@ -14492,6 +14580,7 @@ export default function Home() {
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: (brushOpacity / 100) * (brushFlow / 100),
+        strokeOpacity: brushOpacity / 100,
         pointerType: g.pointerType,
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
@@ -14510,8 +14599,8 @@ export default function Home() {
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
         flipY: brushFlipY,
-        mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
-        color: g.tool === 'eraser' ? undefined : brushColor(color),
+        mode: g.tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+        color: g.tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
         colorBackground: brushColor(backgroundColor),
       });
       previewGesture(g);
@@ -15014,7 +15103,9 @@ export default function Home() {
       if (changed)
         setNotice(
             g.tool === 'adjustment-brush'
-              ? 'Adjustment Brush applied to the adjustment mask'
+              ? g.maskRefinementStroke.mode === 'reveal'
+                ? 'Adjustment Brush applied to the adjustment mask'
+                : 'Adjustment Brush concealed the adjustment'
               : g.maskRefinementStroke.mode === 'reveal'
                 ? 'Mask Brush revealed masked pixels'
                 : 'Mask Eraser concealed pixels',
@@ -15170,6 +15261,7 @@ export default function Home() {
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
+          strokeOpacity: brushOpacity / 100,
           pointerType: g.pointerType,
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
@@ -15188,8 +15280,8 @@ export default function Home() {
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
           flipY: brushFlipY,
-          mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
-          color: g.tool === 'eraser' ? undefined : brushColor(color),
+          mode: g.tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+          color: g.tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
           colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
@@ -15451,6 +15543,12 @@ export default function Home() {
         setNotice('No Art History Brush change');
         return;
       }
+      // No paint under the stroke to carry (or nothing moved): no history step.
+      if (g.tool === 'mixer-brush' && !g.changed) {
+        void paint(f);
+        setNotice('No Mixer Brush change: drag across painted pixels to mix them');
+        return;
+      }
       const asset = addPaintedAsset(g.buffer);
       if (commit({
         ...f,
@@ -15571,11 +15669,17 @@ export default function Home() {
         setNotice('Selection Brush selection created');
     } else if (g.tool === 'red-eye' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
-        redEyeGestureStroke(g, g.last, local, {
+        g.changed = redEyeGestureStroke(g, g.last, local, {
           radius: localSize(g.layer.matrix, size) / 2,
           threshold: g.redEyeThreshold ?? 36,
           amount: (g.redEyeAmount ?? 100) / 100,
-        });
+        }) || Boolean(g.changed);
+      // Nothing matched the red-eye test: no pixels, no history step.
+      if (!g.changed) {
+        void paint(f);
+        setNotice('No red-eye pixels found under the brush');
+        return;
+      }
       const asset = addPaintedAsset(g.buffer);
       if (
         commit({
@@ -16389,6 +16493,18 @@ export default function Home() {
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
+    else if (command === 'layer-from-background') {
+      const f = current(),
+        layer = f.layers.find((item) => item.id === f.active);
+      if (!layer || layer.kind !== 'raster' || layer.background !== true)
+        setNotice('The selected layer is not a Background layer');
+      else if (commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...layerFromBackground(item), name: item.name === 'Background' ? 'Layer 0' : item.name } : item),
+      }))
+        setNotice('Background converted to a normal layer; it can now move and erase to transparency');
+    }
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
     else if (command === 'nest-smart-object') return nestSelectedAsSmartObject();
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
@@ -19904,9 +20020,23 @@ export default function Home() {
                     tool === 'adjustment-brush') && (
                     <p className="adjust-note">
                       {tool === 'adjustment-brush'
-                        ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable.'
+                        ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable. Without a mask, the first Reveal stroke limits the adjustment to the painted area and the first Conceal stroke removes it there. Alt-drag uses the other mode.'
                         : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
                     </p>
+                  )}
+                  {tool === 'adjustment-brush' && (
+                    <label className="select-row">
+                      <span>Paint</span>
+                      <select
+                        aria-label="Adjustment Brush mode"
+                        title="Reveal paints the adjustment in; Conceal paints it out (Alt-drag uses the other mode)"
+                        value={adjustmentBrushMode}
+                        onChange={(event) => setAdjustmentBrushMode(event.target.value === 'conceal' ? 'conceal' : 'reveal')}
+                      >
+                        <option value="reveal">Reveal adjustment</option>
+                        <option value="conceal">Conceal adjustment</option>
+                      </select>
+                    </label>
                   )}
                   {(tool === 'brush' || tool === 'pencil') && (
                     <label className="select-row">
@@ -20055,9 +20185,10 @@ export default function Home() {
                               {brushStrands.enabled && (
                                 <>
                                   <p className="adjust-note" data-testid="strand-note">
-                                    One drag paints a twisting ribbon of fine strands. Size and pen pressure set strand
-                                    thickness; the strands are previewed while you drag and painted on release. A
-                                    bounded local approximation, not a smoke simulation.
+                                    One drag paints a twisting ribbon of fine strands. Size sets the ribbon width;
+                                    Strand thickness (scaled by pen pressure) sets each strand. The strands are previewed
+                                    while you drag and painted on release. A bounded local approximation, not a smoke
+                                    simulation.
                                   </p>
                                   <Slider
                                     label="Strands"
@@ -20068,12 +20199,13 @@ export default function Home() {
                                     set={(count) => setBrushStrands((current) => normalizeBrushStrands({ ...current, count }))}
                                   />
                                   <Slider
-                                    label="Ribbon width"
-                                    value={brushStrands.width}
-                                    min={BRUSH_STRANDS_WIDTH_MIN}
-                                    max={BRUSH_STRANDS_WIDTH_MAX}
+                                    label="Strand thickness"
+                                    value={brushStrands.thickness}
+                                    min={BRUSH_STRANDS_THICKNESS_MIN}
+                                    max={BRUSH_STRANDS_THICKNESS_MAX}
+                                    step={0.5}
                                     suffix=" px"
-                                    set={(width) => setBrushStrands((current) => normalizeBrushStrands({ ...current, width }))}
+                                    set={(thickness) => setBrushStrands((current) => normalizeBrushStrands({ ...current, thickness }))}
                                   />
                                   <Slider
                                     label="Twists"

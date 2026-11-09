@@ -6,9 +6,16 @@ local drafts source-safe and reversible.
 ## Mixer Brush (B)
 
 At pointer-down the editor captures an immutable RGBA source snapshot from the
-active raster layer. Each touched brush stamp blends the source colour into a
-detached destination buffer using radial coverage, hardness, flow and the
-persisted Wet, Load and Mix controls. Source pixels are never mutated while a
+active raster layer. The brush is loaded with the snapshot paint under its first
+dab and carries that reservoir along the stroke: every dab deposits the
+reservoir (radial coverage × Flow × (0.25 + 0.75 × Wet)) and then picks up the
+snapshot paint under it (Mix × (1 − 0.8 × Load) of the reservoir is replaced),
+so dragging from the sky into the sun smears sky colour into the sun. The
+reservoir lives on the gesture across pointer moves (one per Paint Symmetry
+copy). Before the 2026-11 audit (B-10) each pixel was mixed with its own
+snapshot value, which is the same pixel, so a stroke never changed anything
+but still added a history step. A stroke that changes no pixel (for example on
+an empty layer) now shows "No Mixer Brush change" and adds no history. Source pixels are never mutated while a
 stroke is in flight. One asset replacement is committed at pointer-up, so the
 whole stroke is one undo step and reload/project export retains the result.
 

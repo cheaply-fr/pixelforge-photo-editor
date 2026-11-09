@@ -139,15 +139,15 @@ test('a Multiply stroke multiplies once against the layer, never against its own
   expect(await rgb(page, 200, 100)).toEqual([255, 0, 0]);
 });
 
-test('Normal strokes keep compounding opacity exactly as before', async ({ page }) => {
+test('Normal strokes stay at their Opacity however many dabs overlap', async ({ page }) => {
   await newDocument(page, 'white');
   await setupBrush(page, 'Brush', '#000000');
   await setSlider(page, 'Opacity', '50');
   await expect(modeSelect(page)).toHaveValue('source-over');
   await mouseStroke(page, [30, 100], [370, 100]);
-  // Legacy behaviour: overlapping 50% dabs build up towards full black.
-  const core = await rgb(page, 200, 100);
-  expect(core[0]).toBeLessThan(20);
+  // Opacity is a per-stroke ceiling (2026-11 audit, B-08): overlapping 50 %
+  // dabs no longer build up towards full black.
+  expect(near(await rgb(page, 200, 100), [128, 128, 128])).toBe(true);
 });
 
 test('Pencil Darken and Brush Screen paint the documented results', async ({ page }) => {

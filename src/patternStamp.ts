@@ -3,6 +3,7 @@ import {
   BRUSH_MAX_PIXELS,
   radialStampMask,
   type BrushColor,
+  type BrushStrokeTarget,
   type BrushPressureSettings,
   type BrushTipSettings,
   type RadialMask,
@@ -192,10 +193,15 @@ function sourceOver(
   return changed;
 }
 
-/** Apply one radial pattern stamp to an RGBA byte buffer in-place. */
+/**
+ * Apply one radial pattern stamp to an RGBA byte buffer in-place. With a
+ * `stroke` target the dab accumulates into that per-stroke buffer, so a
+ * stroke never exceeds its opacity ceiling (see `BrushStrokeBuffer`).
+ */
 export function applyPatternStamp(
   destination: Uint8ClampedArray,
   request: PatternStampRequest,
+  stroke?: BrushStrokeTarget,
 ): AppliedPatternStamp {
   const { tileSize, foreground, background } = assertRequest(request);
   if (destination.length !== request.width * request.height * 4)
@@ -224,9 +230,11 @@ export function applyPatternStamp(
           foreground,
           background,
         );
-      changed =
-        sourceOver(destination, (py * request.width + px) * 4, color, alpha) ||
-        changed;
+      const offset = (py * request.width + px) * 4;
+      changed = (stroke
+        ? stroke.buffer.accumulate(destination, offset, px + stroke.originX, py + stroke.originY,
+          color[0], color[1], color[2], color[3], alpha, false)
+        : sourceOver(destination, offset, color, alpha)) || changed;
     }
   return { ...radial, changed };
 }
