@@ -8,11 +8,11 @@ import {
 } from './document.ts';
 import { isAssetShape } from './tiledAssets.ts';
 import type { TileCache } from './tilePlan.ts';
-import { CompositeCache, markCompositeReuse, validCompositeReuse } from './compositeCache.ts';
+import { CompositeCache, detectCompositeSnapshotBudget, markCompositeReuse, validCompositeReuse } from './compositeCache.ts';
 import { assetsToSend } from './workerAssets.ts';
 
 /** Main-thread prefix composite (used by stroke previews and the fallback). */
-const mainThreadCompositeCache = new CompositeCache<HTMLCanvasElement>();
+const mainThreadCompositeCache = new CompositeCache<HTMLCanvasElement>(detectCompositeSnapshotBudget());
 import {
   assetFingerprint,
   assetFingerprints,
@@ -322,6 +322,7 @@ export async function renderFrameWithWorker(
       markCompositeReuse({
         final: mainThreadCompositeCache.finalHits > finalHitsBefore,
         clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
+        reusedLayers: mainThreadCompositeCache.lastReusedLayers,
       });
     return image;
   };

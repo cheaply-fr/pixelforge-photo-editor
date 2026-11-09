@@ -14,7 +14,7 @@ import type {
 import type { FilterBandProgress } from './filterBands.ts';
 import { prewarmFilterPool } from './filterWorkerPool.ts';
 import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
-import { CompositeCache, type CompositeReuse } from './compositeCache.ts';
+import { CompositeCache, detectCompositeSnapshotBudget, type CompositeReuse } from './compositeCache.ts';
 import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
 import {
   clearLayerFilterCache,
@@ -112,8 +112,8 @@ const cancelled = new Set<number>();
  */
 let assetStore = new Map<string, Assets[string]>();
 
-/** Composite below the active layer, reused while the layers below are unchanged. */
-const compositeCache = new CompositeCache<HTMLCanvasElement>();
+/** Prefix snapshots and the finished composite, reused while their layers are unchanged. */
+const compositeCache = new CompositeCache<HTMLCanvasElement>(detectCompositeSnapshotBudget());
 let activeId: number | undefined;
 
 /** Apply (or clear) the page's test override of the filter pool size. */
@@ -280,6 +280,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
         {
           final: compositeCache.finalHits > finalHitsBefore,
           clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
+          reusedLayers: compositeCache.lastReusedLayers,
         },
       );
     } catch (error) {
