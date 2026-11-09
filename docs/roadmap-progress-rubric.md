@@ -274,7 +274,7 @@ branch; **Open** has none yet. Measurements are local, not CI or production.
 | W3-6 | **No Knockout and no Fill opacity** (layer opacity only) | P2 | **Open** | #204; `layer-styles-contract.md` |
 | W3-7 | **Per-filter blend modes and masks** for filter stacks. (Picking a different filter from the menu now moves the live filter into the stack in `fix/filter-style-bugs`; blend modes and masks remain open) | P2 | **Open** | #199, #204; `smart-filters-contract.md` |
 | W3-8 | **Live stroke preview composites the full frame** (~90 ms per preview at 10.8 MP headless); dirty-rect previews or a cached below/above composite per gesture need region support in `renderFrame`. The gradient preview (#201) also still composites the full document each frame | P2 | **Open** — related to W3-1 | #190, #201; `performance-budgets.md` |
-| W3-9 | **`getCoalescedEvents()` not read**, so browser-coalesced pointer points are dropped while the main thread is busy | P3 | **Open** | #190; `brush-tool-contract.md` |
+| W3-9 | **`getCoalescedEvents()` not read**, so browser-coalesced pointer points are dropped while the main thread is busy | P3 | **Done** — Brush/Pencil/Eraser in #216, every stroke tool in #230 (`093a82a`) | #190; `brush-tool-contract.md` |
 | W3-10 | **First stroke after importing an image** still waits ~600 ms locally for the decode (later strokes are warm since #195) | P3 | **Open** | #195 |
 | W3-11 | **Reduced gradient preview** on layers > 1.5 MP can differ from the commit by a few levels and previews Noise/Dither at that scale; a never-seen selection costs one rasterization + PNG encode for Spot Healing/Patch | P3 | **Open** (documented limitation) | #201; `gradient-mode-contract.md`, `spot-healing-contract.md` |
 | W3-12 | **PNG export in the Claude desktop built-in browser** not verified after #198's hardening (host behaviour cannot be reproduced in CI); **Save with file picker…** is the workaround. Host notes (popups close the pane, ZIPs saved as GUID `.tmp`) are not app bugs | P3 | **Open** — needs a manual check in that host | #198; `export-contract.md` |
@@ -325,21 +325,22 @@ Evidence is kept separate:
 
 ### Fix wave 4 — open follow-ups (2026-11-07)
 
-From the limitations of #209–#213 and from local test runs. Status: all
-**Open** (no branch yet).
+From the limitations of #209–#213 and from local test runs. Updated
+2026-11-09: W4-1, W4-3, W4-4, W4-5, W4-7 and W4-10 shipped in fix wave 5
+(below); W4-2, W4-6, W4-8 and W4-9 remain open.
 
 | # | Item | Priority | Status | Source / area |
 | --- | --- | --- | --- | --- |
-| W4-1 | **Paint symmetry is not applied to Stroke Path with Brush**; a stroked path paints one copy only | P2 | **Open** | #210, #212; `paint-symmetry-contract.md` |
+| W4-1 | **Paint symmetry is not applied to Stroke Path with Brush**; a stroked path paints one copy only | P2 | **Done — #220** (`e1ce828`) | #210, #212; `paint-symmetry-contract.md` |
 | W4-2 | **No custom (sampled) brush tip shapes**, so the 4-point "Glint" tip is not available as a preset | P2 | **Open** | #209; `custom-brush-presets-contract.md` |
-| W4-3 | **The brush has no blend mode**, so brush presets cannot store one | P3 | **Open** | #209; `brush-dynamics-contract.md` |
-| W4-4 | **Symmetry is not applied to Mixer Brush, History / Art History brushes, Clone Stamp or the healing tools** | P3 | **Open** | #210; `paint-symmetry-contract.md` |
-| W4-5 | **Dirty-rect hints for tiled commits**: a commit still reads back and hashes the whole layer (about 0.1 s on a new paint layer) instead of only the tiles a gesture touched | P2 | **Open** | #213 follow-up 1; `tiled-layer-assets-contract.md` |
+| W4-3 | **The brush has no blend mode**, so brush presets cannot store one | P3 | **Done — #218** (`06df4a7`) | #209; `brush-dynamics-contract.md` |
+| W4-4 | **Symmetry is not applied to Mixer Brush, History / Art History brushes, Clone Stamp or the healing tools** | P3 | **Done — #220** (`e1ce828`); Spot Healing and Patch stay single-copy (documented) | #210; `paint-symmetry-contract.md` |
+| W4-5 | **Dirty-rect hints for tiled commits**: a commit still reads back and hashes the whole layer (about 0.1 s on a new paint layer) instead of only the tiles a gesture touched | P2 | **Done — #221** (`1de2e3a`) | #213 follow-up 1; `tiled-layer-assets-contract.md` |
 | W4-6 | **`.pixelforge` v4 storing tiles**: v3 export flattens every tiled version to a PNG, so exporting a long tiled history is slower than before #213; cloud payloads would follow | P2 | **Open** | #213 follow-up 2; `tiled-layer-assets-contract.md`, `export-contract.md` |
-| W4-7 | **Decoded-tile cache**: undo to a version that shares most tiles still decodes every tile Blob | P2 | **Open** | #213 follow-up 3 |
+| W4-7 | **Decoded-tile cache**: undo to a version that shares most tiles still decodes every tile Blob | P2 | **Done — #221** (`1de2e3a`) | #213 follow-up 3 |
 | W4-8 | **Dirty-region previews and partial worker composites** | P2 | **Open** — overlaps W3-8 | #213 follow-up 4; `performance-budgets.md` |
 | W4-9 | **Off-main-thread tile encoding** (`OffscreenCanvas.convertToBlob`) once commits can be asynchronous | P3 | **Open** | #213 follow-up 5 |
-| W4-10 | **Local e2e hazard**: `playwright.config` reuses any server already on port 4173 outside CI (`reuseExistingServer`), so a run can test a preview server started from another worktree; concurrent `npm run test:e2e` runs in one worktree delete each other's `test-results`. Run one suite per worktree and stop stray previews first | P3 | **Open** (local tooling only; CI unaffected) | local runs for #209–#213 |
+| W4-10 | **Local e2e hazard**: `playwright.config` reuses any server already on port 4173 outside CI (`reuseExistingServer`), so a run can test a preview server started from another worktree; concurrent `npm run test:e2e` runs in one worktree delete each other's `test-results`. Run one suite per worktree and stop stray previews first | P3 | **Done — #219** (`a611065`): `PLAYWRIGHT_PORT`, opt-in `PLAYWRIGHT_REUSE_SERVER`, `PLAYWRIGHT_OUTPUT_DIR` | local runs for #209–#213 |
 
 ### Brush Silk strands (branch `feat/brush-silk-strands`)
 
@@ -423,6 +424,65 @@ primary contour of compound paths; Path Selection acts on the active layer
 only; audio has no
 Photoshop/PDF annotation interchange. Status moves to merged/deployed only
 after each PR's protected `CI and deploy` run and a `/release.json` check.
+
+### Fix wave 5 — merged and deployed (2026-11-08/09)
+
+Wave 4 follow-ups plus the bugs and requests raised while painting the
+62-layer 2646×4096 "cosmic eye" poster on the live editor. Every PR passed
+the protected `CI and deploy` workflow on its branch before merge; merge
+SHAs are from `gh pr list --state merged`. All behaviour is a bounded local
+approximation; nothing here claims Photoshop parity.
+
+Evidence is kept separate:
+
+- **Local:** each PR reports lint, typecheck, build, `npm test` and the
+  Playwright specs it ran (desktop + mobile, headless Chromium, one Windows
+  machine that was heavily loaded by parallel runs, so some local runs needed
+  reruns of timeouts). Combined integration branches of #218–#227 passed the
+  full local suite (1649 passed, 0 failed); #245 synced with #244 passed the
+  full suite (1858 passed, 0 failed, 24 skipped). Timings are local only.
+- **CI:** green on every PR head that was merged. Branches were re-synced with
+  `main` and re-run where later merges conflicted.
+- **Deploy:** `CI and deploy` run 42563797660 succeeded for `e5220d0` (#245, contains every PR above); `/release.json` and `/api/readyz.json` reported commit `e5220d0434e8eb48c3003cff2084f7b2e2bb6e48`, version `0.1.1002` (#229 scheme), `ready: true`, built 2026-11-09T04:49Z.
+- **Live:** release identity only; per-feature live acceptance is being run by
+  the handoff session after this record.
+
+| PR | Change | Merge SHA |
+| --- | --- | --- |
+| #218 | Brush/Pencil **Mode** (blend mode) on a separate stroke buffer, stored in brush presets (W4-3) | `06df4a7` |
+| #219 | Local Playwright isolation per port/output dir; no reuse of foreign preview servers (W4-10) | `a611065` |
+| #220 | Paint Symmetry for Stroke Path with Brush, Mixer, History/Art History, Clone Stamp and Healing (W4-1, W4-4) | `e1ce828` |
+| #221 | Dirty-rect tiled commits and a decoded-tile cache (W4-5, W4-7); blend-mode strokes report their writes | `1de2e3a` |
+| #222 | New layers and duplicates go **above the selection** (folder and clipping group aware); empty-layer add/delete reuse the finished composite; clipped-layer results cached so reorders stop recomputing clipping groups | `3888d45` |
+| #223 | Rasterize/Merge/Nest keep clipping; clipped-row indicator; arrange moves past whole clipping groups | `9e5ac24` |
+| #225 | Retouch tools (Dodge/Burn/Sponge/Smudge/Blur/Sharpen/Mixer/History…) process only the brush window per move (local 25-move Dodge 11.3 s → 0.48 s) | `20bcb4d` |
+| #226 | Gaussian/Box/Motion/Lens Blur now blur alpha, so brush strokes over transparency soften | `1d4569c` |
+| #227 | Difference Clouds uses the smooth Clouds noise (transparent = black); reversed Levels output (invert) | `e5bf5f8` |
+| #228 | Editor no longer dims to 50 % on every render (canvas "flash"); canvas resized only on size change; delayed "Rendering…" status | `64fb9d2` |
+| #229 | App version increments on every main deploy (`<major>.<minor>.<run number>`), shown in the app, `/release.json` and `/api/readyz.json` | `493ac59` |
+| #230 | Every coalesced pointer sample applied for all stroke tools, so strokes are identical when the pane is hidden (W3-9) | `093a82a` |
+| #233 | **Tool presets** for 40 tools: save, apply, update, rename, duplicate, reorder, import/export, Reset Tool / Reset All Tools | `ee68504` |
+| #235 | Multi-point Curves (monotone interpolation, keyboard/touch) and decimal selection feather | `9f57eb1` |
+| #236 | Incremental delete/reorder/visibility renders via several prefix snapshots (local 62-layer delete 22 s → 1.6 s) | `916698d` |
+| #237 | Layers panel drag-and-drop reorder, per-row delete, row menu, keyboard reorder, file drops as layers | `320b903` |
+| #238 | Self-hosted font library: 146 families incl. Material Symbols, Font Awesome Free, Noto symbol/math/emoji; picker and Glyphs panel | `38522d4` |
+| #239 | Smudge: carried paint, Strength, Finger Painting, Sample All Layers, modes, tip/pressure/scatter, symmetry, presets | `6e4f341` |
+| #243 | Type engine: versioned rich-text runs, paragraph layout, caret model | `8702634` |
+| #244 | Type tool overhaul: on-canvas editing, Horizontal/Vertical Type and Type Mask tools, Character/Paragraph panels; Move tool after commit; Text section revealed when a text layer is selected | `7a43126` |
+| #245 | Tool-contextual properties sidebar (only the active tool's options; "More panels" strip; phone sheet) and a layer action bar directly under the layers list | `e5220d0` |
+
+Merged in the same period by other sessions (recorded for completeness):
+#224 sidebar auto-scroll (`a35220a`), #231 Rounded Rectangle/Custom Shape
+(`43e5e17`), #232 path selection and anchor tools (`cd8d0a6`), #240 Silk
+strands brush (`754f0c5`), #241 Audio Annotation tool (`4987e74`), #242
+toolbox chart audit docs (`07f2c9c`), #246 auto-hiding scrollbars
+(`37ffe0f`), #247 page-scroll leak fix (`bd0bc37`).
+
+Still open after this wave: W4-2 custom sampled brush tips, W4-6
+`.pixelforge` v4 tiles, W4-8 dirty-region previews, W4-9 off-main-thread
+tile encoding (large features, not started); the remaining W3 items; Tool
+presets do not yet capture the new Smudge and Silk strands options; layers
+above an edited layer are still composited per edit (W3-8/W4-8).
 
 ## Latest protected release evidence
 
