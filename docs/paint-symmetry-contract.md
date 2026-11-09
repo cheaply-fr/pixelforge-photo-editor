@@ -134,3 +134,12 @@ undo/redo; Radial 4 confined to a selection; Off paints one copy), History and
 Art History mirror restores, a Dual-axis Mixer stroke as one undo step, Clone
 Stamp with a mirrored source offset, and Healing Brush copies with selection
 clipping (Spot Healing and Patch show no symmetry controls).
+
+## Smudge (2026-11-09)
+
+Branch `feat/smudge-tool-options`. Smudge shows the same **Symmetry** group and
+on-canvas guides. Every copy is the geometric image of the (scattered,
+jittered) Smudge dab, as for Brush, and carries its own paint load, loaded at
+the copy's own first dab; see [`smudge-tool-contract.md`](./smudge-tool-contract.md).
+Pure evidence: the mirrored-stroke and dual-axis windowed tests in
+`tests/smudge.test.mjs`.

@@ -1,7 +1,8 @@
 # Select and Mask contract
 
 `Select > Select and Mask…` refines an existing selection locally. The dialog
-accepts bounded edge smoothing (0–64 px) and feathering (0–1,000 px). The
+accepts bounded edge smoothing (whole 0–64 px) and feathering (0–1,000 px,
+decimals such as `1.2` or `1,2` allowed). The
 current selection is rendered to a canvas-sized alpha mask, smoothed with the
 deterministic local alpha-average primitive, and stored as a new project asset;
 the source pixels, layers and original selection remain undoable. Feather is

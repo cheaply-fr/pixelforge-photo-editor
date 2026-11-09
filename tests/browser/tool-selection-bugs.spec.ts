@@ -373,7 +373,10 @@ test('a long-open tab offers a non-blocking reload when a new version is deploye
   await notice.getByRole('button', { name: 'Dismiss new version notice' }).click();
   await expect(notice).toHaveCount(0);
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-  await expect(page.getByTestId('release-status')).toHaveAttribute('aria-label', 'v0.1.1. Server online');
+  // The tab still runs its own build until it reloads, so the label keeps
+  // the baked version; the notice is what names the new one.
+  const { version: running } = await (await page.request.get('/release.json')).json();
+  await expect(page.getByTestId('release-status')).toHaveAttribute('aria-label', `v${running}. Server online`);
   await expect(notice).toHaveCount(0);
 
   // A later deploy shows it again; Reload keeps the local draft.

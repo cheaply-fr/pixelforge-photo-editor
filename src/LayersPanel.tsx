@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
+import FontFamilySelect from './FontFamilySelect';
 import {
-  FONTS,
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
   formatMegapixels,
@@ -11,6 +11,7 @@ import {
   type Layer,
   type SelectionOperation,
 } from './document';
+import { SELECTION_FEATHER_STEP, formatSelectionFeather } from './selectionFeather';
 import { MAX_DOCUMENT_LAYERS, detectProjectLimits } from './projectLimits';
 import { CORNER_RADIUS_MAX, type ParametricShapeVariant } from './vectorShapes';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
@@ -431,12 +432,13 @@ export default function LayersPanel({
         </label>
         {frame.selection && (
           <label className="layer-field">
-            Feather {Math.round(frame.selection.feather)} px
+            Feather {formatSelectionFeather(frame.selection.feather)} px
             <input
               aria-label="Selection feather"
               type="range"
               min="0"
               max="100"
+              step={SELECTION_FEATHER_STEP}
               value={frame.selection.feather}
               onChange={(e) => setSelectionFeather(Number(e.target.value))}
             />
@@ -1247,21 +1249,16 @@ export default function LayersPanel({
               onChange={(e) => edit({ text: e.target.value })}
             />
           </label>
-          <label className="layer-field">
+          <div className="layer-field">
             Typeface
-            <select
-              aria-label="Layer font"
+            <FontFamilySelect
+              label="Layer font"
+              className=""
               value={layer.fontFamily}
               disabled={layerLocked}
-              onChange={(e) =>
-                edit({ fontFamily: e.target.value as (typeof FONTS)[number] })
-              }
-            >
-              {FONTS.map((font) => (
-                <option key={font}>{font}</option>
-              ))}
-            </select>
-          </label>
+              onChange={(fontFamily) => edit({ fontFamily })}
+            />
+          </div>
           <label className="layer-field">
             Text orientation
             <select

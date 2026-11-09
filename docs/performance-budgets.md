@@ -323,6 +323,50 @@ measurements; these are local/live observations, not CI budgets.
   stroke and a click on a 1500×1500, 9-layer document (it failed on main with
   effective opacity 0.5).
 
+### Structural layer edits (`perf/incremental-structural-renders`)
+
+Reported live: deleting one non-empty layer of a 62-layer 2646×4096 painting
+took about 65 s. Local probe (`scripts/measure-structural-edits.mjs`,
+release build, headless desktop Chromium, one run each on a shared machine):
+a synthetic 2646×4096 poster with 62 layers (9 full-canvas Clouds layers in
+Overlay/Soft Light, Motion Blur, masked layers with Outer Glow, clipping
+groups with Inner Shadow, folders with Soft Light members, Multiply), edits on
+Layer 37.
+
+- **Cause 1: one snapshot.** The render kept a single prefix snapshot below
+  the active layer. Selecting a layer renders nothing (finished composite
+  reused), so deleting or hiding a layer that was only selected found the
+  snapshot above the change and recomposited all 62 layers. Delete moves the
+  active layer to the top, so its undo missed too; Send Backward changes the
+  layer below the active one and missed as well.
+- **Cause 2: full renders thrash the layer cache.** The layers do not all fit
+  the 512 MB layer budget; every full render recomputed ~47 of them. Masked
+  styled layers stored one full 43 MB frame per Outer Glow pass.
+- **Fix.** Up to 4 snapshots (desktop; 2 on phones, see
+  `layer-pixel-budget-contract.md`) at the active layer, the lowest changed
+  layer and gap-bisecting anchors; render from the highest valid one. Masked
+  styled results move to the frame-result cache cropped to their pixels.
+
+| Edit (render span, s) | Before | After | Layer-cache misses | Layers from a snapshot |
+| --- | --- | --- | --- | --- |
+| Opacity, first edit on Layer 37 | 14.5 | 2.1 | 35 → 10 | 30 |
+| Opacity, repeated | 8.2 | 1.7 | 19 → 8 | 37 |
+| Hide / show (after editing it) | 1.7 / 1.6 | 1.8 / 1.7 | 8 → 8 | 37 |
+| Send Backward / its undo | 21.6 / 9.1 | 2.2 / 2.0 | 48 / 20 → 10 / 8 | 30 / 36 |
+| Delete (after editing it) / its undo | 1.6 / 23.6 | 1.3 / 1.6 | 9 / 48 → 8 / 8 | 37 |
+| Opacity on the top layer | 7.7 | 1.0 | 19 → 4 | 49 |
+| Select Layer 37, then Delete / undo | 22.3 / 13.7 | 1.6 / 1.6 | 47 / 35 → 8 / 8 | 37 |
+| Select Layer 37, then hide / show | 24.8 / 8.6 | 1.4 / 0.2 | 47 / 20 → 8 / 0 | 37 / 61 |
+
+The remaining 8 "misses" per render are lookups of keys that are never
+stored (the unstyled stage of masked styled layers), not recomputed layers.
+
+Retained memory per render context grows from two canvas-sized surfaces (one
+snapshot, the finished composite) to at most five on desktops and three on
+phones. Layers above the change are still composited on every edit (software
+blends read the whole frame); dirty-region compositing stays W3-8 / W4-8. The
+live 65 s case was not re-measured.
+
 ### Radius-heavy filter timings (local, Node 24, 1 MP unless noted)
 
 These are single-run local measurements on a shared development machine
