@@ -386,8 +386,8 @@ versions are bounded local implementations; none claims Photoshop parity.
 | Path Selection | Missing | **Implemented in PR** | #232, `docs/path-edit-tools-contract.md` |
 | Direct Selection | Implemented | Implemented (A now cycles Path → Direct) | #232 |
 | Horizontal Type | Implemented | Implemented | — |
-| Vertical Type | Partial (menu command only) | **Implemented in PR** | #234, `docs/type-tools-contract.md` |
-| Horizontal / Vertical Type Mask | Partial (menu commands only) | **Implemented in PR** (dialog text entry, not live on-canvas) | #234 |
+| Vertical Type | Partial (menu command only) | **Implemented in PR** | #244 (fixes session; #234 closed as duplicate), `docs/type-tool-contract.md` |
+| Horizontal / Vertical Type Mask | Partial (menu commands only) | **Implemented in PR** (on-canvas entry) | #244 |
 | Pen, Freeform Pen | Implemented | Implemented | — |
 | Add Anchor Point, Delete Anchor Point, Convert Point | Partial (Pen modifier clicks only) | **Implemented in PR** (primary contour only) | #232 |
 | Rectangle, Ellipse, Polygon, Line | Implemented | Implemented | — |
@@ -404,7 +404,7 @@ versions are bounded local implementations; none claims Photoshop parity.
 
 Known limits: no `.csh` shape-library import; anchor tools edit only the
 primary contour of compound paths; Path Selection acts on the active layer
-only; vertical type keeps the one-glyph-per-row approximation; audio has no
+only; audio has no
 Photoshop/PDF annotation interchange. Status moves to merged/deployed only
 after each PR's protected `CI and deploy` run and a `/release.json` check.
 
