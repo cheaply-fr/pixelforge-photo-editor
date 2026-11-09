@@ -362,6 +362,52 @@ Limits: Layers-panel sub-sections are not collapsible; the whole e2e suite
 runs with `prefers-reduced-motion: reduce` so reveals are synchronous with
 clicks (the dedicated spec covers the animated path).
 
+### Photoshop 7 toolbox chart audit (2026-11-09)
+
+Every tool on the classic Photoshop 7 toolbox chart (designfreebie tutorial,
+`Untitled-11.png`) was checked against `main` at `1de2e3a`. All PixelForge
+versions are bounded local implementations; none claims Photoshop parity.
+
+| Chart item | Before | Now | PR / evidence |
+| --- | --- | --- | --- |
+| Rectangular, Elliptical, Single Row, Single Column Marquee | Implemented | Implemented | `src/toolPalette.ts` (`marquee` flyout) |
+| Move | Implemented | Implemented | — |
+| Lasso, Polygonal Lasso, Magnetic Lasso | Implemented | Implemented | — |
+| Magic Wand (+ Quick Selection) | Implemented | Implemented | — |
+| Crop, Slice, Slice Select | Implemented | Implemented | — |
+| Healing Brush, Patch (+ Spot Healing, Red Eye) | Implemented | Implemented | — |
+| Brush, Pencil (+ Color Replacement, Mixer) | Implemented | Implemented | — |
+| Clone Stamp, Pattern Stamp | Implemented | Implemented | — |
+| History Brush, Art History Brush | Implemented | Implemented | — |
+| Eraser, Background Eraser, Magic Eraser | Implemented | Implemented | — |
+| Gradient, Paint Bucket | Implemented | Implemented | — |
+| Blur, Sharpen, Smudge | Implemented | Implemented | — |
+| Dodge, Burn, Sponge | Implemented | Implemented | — |
+| Path Selection | Missing | **Implemented in PR** | #232, `docs/path-edit-tools-contract.md` |
+| Direct Selection | Implemented | Implemented (A now cycles Path → Direct) | #232 |
+| Horizontal Type | Implemented | Implemented | — |
+| Vertical Type | Partial (menu command only) | **Implemented in PR** | #234, `docs/type-tools-contract.md` |
+| Horizontal / Vertical Type Mask | Partial (menu commands only) | **Implemented in PR** (dialog text entry, not live on-canvas) | #234 |
+| Pen, Freeform Pen | Implemented | Implemented | — |
+| Add Anchor Point, Delete Anchor Point, Convert Point | Partial (Pen modifier clicks only) | **Implemented in PR** (primary contour only) | #232 |
+| Rectangle, Ellipse, Polygon, Line | Implemented | Implemented | — |
+| Rounded Rectangle | Missing | **Implemented in PR** (editable corner radius) | #231, `docs/shape-tools-contract.md` |
+| Custom Shape | Partial (user presets of basic kinds) | **Implemented in PR** (15-shape built-in library) | #231 |
+| Notes | Implemented | Implemented | — |
+| Audio Annotation | Missing | **Implemented in PR** (local only, never cloud-saved or exported) | #241, `docs/audio-annotation-contract.md` |
+| Eyedropper, Color Sampler, Measure | Implemented | Implemented | — |
+| Hand, Zoom | Implemented | Implemented | — |
+| Foreground/background swatches, swap (X), default (D) | Implemented | Implemented | — |
+| Standard / Quick Mask mode | Implemented | Implemented | — |
+| Screen modes | Implemented | Implemented | — |
+| Jump to ImageReady | Not applicable (separate Adobe application) | Not applicable | — |
+
+Known limits: no `.csh` shape-library import; anchor tools edit only the
+primary contour of compound paths; Path Selection acts on the active layer
+only; vertical type keeps the one-glyph-per-row approximation; audio has no
+Photoshop/PDF annotation interchange. Status moves to merged/deployed only
+after each PR's protected `CI and deploy` run and a `/release.json` check.
+
 ## Latest protected release evidence
 
 The protected workflow run for the current merged release completed
