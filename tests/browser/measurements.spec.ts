@@ -54,15 +54,17 @@ test('ruler reports pixel distance and angle without changing export pixels', as
   expect(saved.history[saved.index].measurements![0]).toMatchObject({ kind: 'ruler' });
 });
 
-test('note tool stores an annotation after the browser prompt', async ({ page }) => {
-  page.once('dialog', async (dialog) => {
-    expect(dialog.type()).toBe('prompt');
-    await dialog.accept('Review horizon');
+test('note tool stores an annotation from the in-app note editor', async ({ page }) => {
+  // window.prompt is never used (it can be blocked); a dialog would fail here.
+  page.on('dialog', () => {
+    throw new Error('Note must not open a native dialog');
   });
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
   await selectTool(page, 'Note');
   await canvas.click({ position: { x: box.width * 0.25, y: box.height * 0.25 } });
+  await page.getByRole('textbox', { name: 'Note text' }).fill('Review horizon');
+  await page.getByTestId('note-editor').getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Note added to the draft')).toBeVisible();
   const saved = await project(page);
   expect(saved.history[saved.index].measurements).toMatchObject([{ kind: 'note', text: 'Review horizon' }]);

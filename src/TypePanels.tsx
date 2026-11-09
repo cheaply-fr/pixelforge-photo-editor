@@ -210,7 +210,7 @@ export function TypeOptionsBar({
 }
 
 export function TypePanels({
-  view, actions, fonts, open, onOpenChange,
+  view, actions, open, onOpenChange,
 }: {
   view: TypeView;
   actions: TypeActions;
@@ -234,9 +234,7 @@ export function TypePanels({
       <details className="type-panel" open={open.character} onToggle={(event) => onOpenChange('character', event.currentTarget.open)}>
         <summary>Character</summary>
         <div className="type-grid">
-          <div className="type-field type-wide"><span>Font</span>
-            <FontFamilySelect label="Character font family" fonts={fonts} value={c.fontFamily} disabled={disabled} onChange={(fontFamily) => { actions.character({ fontFamily }); refocusEditor(view); }} />
-          </div>
+          {/* The font family is chosen with the single Font control above the panels. */}
           <label className="type-field type-wide"><span>Style</span>
             <select aria-label="Character font style" value={styleValue(c)} disabled={disabled} onChange={(event) => { actions.character(styleFromValue(event.target.value)); refocusEditor(view); }}>
               {styleValue(c) === 'mixed' && <option value="mixed">Mixed</option>}

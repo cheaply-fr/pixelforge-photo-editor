@@ -114,7 +114,8 @@ export const BUILT_IN_BRUSH_PRESETS: readonly BuiltInBrushPreset[] = Object.free
     id: 'builtin-silk-smoke',
     label: 'Silk smoke',
     description: 'One drag paints a twisting ribbon of fine, fading light strands for silky smoke',
-    size: 2,
+    // Size is the ribbon width; each strand is 2 px thick.
+    size: 140,
     hardness: 100,
     spacing: 10,
     pressureSize: true,
@@ -126,6 +127,7 @@ export const BUILT_IN_BRUSH_PRESETS: readonly BuiltInBrushPreset[] = Object.free
       enabled: true,
       count: 22,
       width: 140,
+      thickness: 2,
       twists: 1.5,
       wobble: 40,
       opacityJitter: 60,

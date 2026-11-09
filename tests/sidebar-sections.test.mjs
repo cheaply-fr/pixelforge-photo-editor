@@ -47,6 +47,10 @@ const LEGACY_TOOL_OPTIONS_TOOLS = [
   'add-anchor', 'delete-anchor', 'convert-point', 'path-select',
   // Added with their tools (docs/shape-tools-contract.md).
   'rounded-rectangle', 'custom-shape',
+  // Tolerance / Contiguous / Sample All Layers (docs/color-region-contract.md).
+  'fill', 'magic-wand',
+  // Navigation, sampling, measurement and crop options (docs/navigation-tool-options-contract.md).
+  'zoom', 'eyedropper', 'color-sampler', 'ruler', 'note', 'count', 'crop', 'perspective-crop',
 ];
 
 test('every palette tool has exactly one registry entry and nothing else is mapped', () => {
@@ -77,8 +81,10 @@ test('Tool options renders for exactly the legacy tool set', () => {
 });
 
 test('selection tools reveal selection options and Move reveals alignment', () => {
-  for (const tool of ['select', 'ellipse-select', 'row-select', 'column-select', 'lasso', 'polygonal-lasso', 'magnetic-lasso', 'magic-wand'])
+  for (const tool of ['select', 'ellipse-select', 'row-select', 'column-select', 'lasso', 'polygonal-lasso', 'magnetic-lasso'])
     assert.equal(sectionForTool(tool), 'selection-options', tool);
+  // Magic Wand reveals its Tolerance options first, then the selection options.
+  assert.equal(sectionForTool('magic-wand'), 'tool-options');
   assert.equal(sectionForTool('move'), 'layer-alignment');
   assert.equal(sectionForTool('no-such-tool'), null);
 });

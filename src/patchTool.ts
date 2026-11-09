@@ -29,7 +29,21 @@ export type PatchStroke = {
   sourceOffset: PatchPoint;
   /** Optional layer-local selection-mask asset captured at pointer-down. */
   selectionMask?: string;
+  /**
+   * Selection workflow (absent for brush-style strokes). The selection mask
+   * is the patch region and `sourceOffset` is source minus destination:
+   * - `source`: the selection is replaced by pixels from where it was dragged
+   *   to, shifted by the median colour difference between the two regions'
+   *   surrounding rings (a bounded tone match, not Photoshop healing).
+   * - `destination`: the selected pixels are copied, unchanged, to where the
+   *   selection was dragged; the region there is the mask moved by the drag.
+   * `points` holds the press point; `size` and `hardness` are unused.
+   */
+  region?: PatchRegionMode;
 };
+
+export const PATCH_REGION_MODES = ['source', 'destination'] as const;
+export type PatchRegionMode = (typeof PATCH_REGION_MODES)[number];
 
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
@@ -99,6 +113,12 @@ export function validPatchStroke(
       !/^[a-z\d-]{1,160}$/i.test(candidate.selectionMask))
   )
     return false;
+  if (
+    candidate.region !== undefined &&
+    (!(PATCH_REGION_MODES as readonly string[]).includes(candidate.region as string) ||
+      candidate.selectionMask === undefined)
+  )
+    return false;
   return candidate.points.every((point) => validPoint(point, width, height));
 }
 
@@ -131,6 +151,97 @@ function pixelOffset(width: number, x: number, y: number): number {
   return (y * width + x) * 4;
 }
 
+/**
+ * Per-channel median RGB of visible pixels in a 2 px ring just outside the
+ * mask (shifted by `dx`, `dy`). The median ignores a minority of ring pixels
+ * on an object that crosses the selection edge.
+ */
+function ringMedian(
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  mask: ArrayLike<number>,
+  bounds: { left: number; top: number; right: number; bottom: number },
+  dx: number,
+  dy: number,
+): [number, number, number] | null {
+  const inside = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < width && y < height && mask[y * width + x] >= 128;
+  const channels: [number[], number[], number[]] = [[], [], []];
+  for (let y = Math.max(0, bounds.top - 2); y <= Math.min(height - 1, bounds.bottom + 2); y += 1)
+    for (let x = Math.max(0, bounds.left - 2); x <= Math.min(width - 1, bounds.right + 2); x += 1) {
+      if (inside(x, y)) continue;
+      if (!(inside(x - 2, y) || inside(x + 2, y) || inside(x, y - 2) || inside(x, y + 2))) continue;
+      const sx = x + dx, sy = y + dy;
+      if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+      const offset = pixelOffset(width, sx, sy);
+      if (source[offset + 3] <= 0) continue;
+      for (let channel = 0; channel < 3; channel += 1) channels[channel].push(source[offset + channel]);
+    }
+  if (!channels[0].length) return null;
+  return channels.map((values) => {
+    values.sort((a, b) => a - b);
+    return values[values.length >> 1];
+  }) as [number, number, number];
+}
+
+/** Selection-workflow patch: see `PatchStroke.region`. */
+function applyRegionStroke(
+  destination: Uint8ClampedArray,
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  stroke: PatchStroke,
+  mask: ArrayLike<number>,
+): boolean {
+  const samplingSource = source === destination ? new Uint8ClampedArray(source) : source,
+    offsetX = Math.round(stroke.sourceOffset.x),
+    offsetY = Math.round(stroke.sourceOffset.y);
+  if (!offsetX && !offsetY) return false;
+  let left = width, top = height, right = -1, bottom = -1;
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1)
+      if (mask[y * width + x] > 0) {
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+  if (right < 0) return false;
+  const bounds = { left, top, right, bottom };
+  // Source mode writes inside the mask; Destination writes inside the mask
+  // moved by the drag (the mask is read back at destination + offset).
+  const maskShiftX = stroke.region === 'destination' ? offsetX : 0,
+    maskShiftY = stroke.region === 'destination' ? offsetY : 0;
+  let shift: [number, number, number] = [0, 0, 0];
+  if (stroke.region === 'source') {
+    const around = ringMedian(samplingSource, width, height, mask, bounds, 0, 0),
+      donor = ringMedian(samplingSource, width, height, mask, bounds, offsetX, offsetY);
+    if (around && donor) shift = [around[0] - donor[0], around[1] - donor[1], around[2] - donor[2]];
+  }
+  const x0 = Math.max(0, left - maskShiftX), x1 = Math.min(width - 1, right - maskShiftX),
+    y0 = Math.max(0, top - maskShiftY), y1 = Math.min(height - 1, bottom - maskShiftY);
+  let changed = false;
+  for (let y = y0; y <= y1; y += 1)
+    for (let x = x0; x <= x1; x += 1) {
+      const coverage = mask[(y + maskShiftY) * width + x + maskShiftX] / 255;
+      if (coverage <= 0) continue;
+      const sourceX = x + offsetX, sourceY = y + offsetY;
+      if (sourceX < 0 || sourceY < 0 || sourceX >= width || sourceY >= height) continue;
+      const target = pixelOffset(width, x, y), from = pixelOffset(width, sourceX, sourceY),
+        amount = clamp(coverage * stroke.opacity, 0, 1);
+      for (let channel = 0; channel < 3; channel += 1)
+        destination[target + channel] = Math.round(
+          destination[target + channel] * (1 - amount) +
+            clamp(samplingSource[from + channel] + shift[channel], 0, 255) * amount,
+        );
+      if (destination[target + 3] === 0)
+        destination[target] = destination[target + 1] = destination[target + 2] = 0;
+      changed = true;
+    }
+  return changed;
+}
+
 function applyStroke(
   destination: Uint8ClampedArray,
   source: ArrayLike<number>,
@@ -139,6 +250,10 @@ function applyStroke(
   stroke: PatchStroke,
   selectionMask?: ArrayLike<number>,
 ): boolean {
+  if (stroke.region) {
+    if (!selectionMask) throw new Error('Patch selection mask is unavailable');
+    return applyRegionStroke(destination, source, width, height, stroke, selectionMask);
+  }
   const radius = stroke.size / 2;
   // A stroke must never read pixels it has just written. This also makes a
   // source and destination alias deterministic for repeated renders.

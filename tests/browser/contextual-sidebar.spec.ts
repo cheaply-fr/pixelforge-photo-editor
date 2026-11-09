@@ -28,6 +28,7 @@ const MARKERS: Record<string, Marker> = {
   Move: { role: 'button', name: 'Align left' },
   Select: { role: 'combobox', name: 'Selection mode' },
   Clone: { name: 'Option/Alt-click the canvas to set' },
+  Crop: { role: 'combobox', name: 'Crop aspect ratio' },
 };
 
 const marker = (page: Page, key: string) => {
@@ -52,8 +53,9 @@ test('each tool shows only its own options; other tools and large panels are abs
     ['Horizontal Type', 'Text'],
     ['Gradient', 'Gradient'],
     ['Move', 'Move'],
-    ['Crop', null],
-    ['Select', 'Select'],
+    ['Crop', 'Crop'],
+    ['Hand', null],
+    ['Rectangular Marquee', 'Select'],
     ['Clone', 'Clone'],
   ];
   for (const [tool, own] of cases) {
@@ -92,7 +94,7 @@ test('the sidebar is bounded: tool options, Layers, the strip and at most one pa
   test.skip(testInfo.project.name !== 'desktop', 'desktop geometry');
   await page.setViewportSize({ width: 1280, height: 800 });
   const heights: Record<string, { scrollHeight: number; clientHeight: number }> = {};
-  for (const tool of ['Hand', 'Move', 'Select', 'Crop', 'Horizontal Type', 'Gradient', 'Clone', 'Brush']) {
+  for (const tool of ['Hand', 'Move', 'Rectangular Marquee', 'Crop', 'Horizontal Type', 'Gradient', 'Clone', 'Brush']) {
     await selectTool(page, tool);
     const geometry = await inspector(page).evaluate((element) => {
       const body = element.querySelector('.inspector-body')!;
@@ -110,7 +112,7 @@ test('the sidebar is bounded: tool options, Layers, the strip and at most one pa
     // Layers, Layer properties and the tool's own sections (≤ 2) only.
     expect(geometry.sections, tool).toBeLessThanOrEqual(4);
     // The legacy sidebar stacked every panel (≥ 7 300 px at this size).
-    const compact = ['Hand', 'Move', 'Select', 'Crop'].includes(tool);
+    const compact = ['Hand', 'Move', 'Rectangular Marquee', 'Crop'].includes(tool);
     expect(geometry.scrollHeight, tool).toBeLessThan(compact ? 1.8 * geometry.clientHeight : 4000);
   }
   testInfo.annotations.push({ type: 'sidebar-heights', description: JSON.stringify(heights) });

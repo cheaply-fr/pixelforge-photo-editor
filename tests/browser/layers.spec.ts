@@ -449,6 +449,8 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
   await page.getByLabel('Size', { exact: true }).fill('10');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
   await page.getByLabel('Color tolerance', { exact: true }).fill('5');
+  // Normal paints the flat colour; the default Color mode keeps luminosity.
+  await page.getByLabel('Color Replace mode', { exact: true }).selectOption('normal');
   const canvas = page.getByTestId('editor-canvas');
   await canvas.scrollIntoViewIfNeeded();
   const box = (await canvas.boundingBox())!;
@@ -597,15 +599,16 @@ test('ellipse layers stay vector-editable through export and reload', async ({
   await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
   const exported = await project(page),
     ellipse = exported.value.history[exported.value.index].layers[1];
-  expect(ellipse).toMatchObject({ kind: 'ellipse', fill: false });
+  // Shape tools draw filled with the foreground colour by default.
+  expect(ellipse).toMatchObject({ kind: 'ellipse', fill: true });
   expect(ellipse.width).toBeGreaterThan(1);
-  await page.getByLabel('Filled shape', { exact: true }).check();
+  await page.getByLabel('Filled shape', { exact: true }).uncheck();
   await page.reload();
   await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
   const reloaded = await project(page);
   expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject({
     kind: 'ellipse',
-    fill: true,
+    fill: false,
   });
 });
 
@@ -859,7 +862,7 @@ test('single row and column marquees select one pixel across the frame and persi
     box = (await canvas.boundingBox())!;
   await selectTool(page, 'Single Row marquee');
   const rowTool = page.getByRole('button', {
-    name: 'Single Row marquee tool',
+    name: 'Single Row Marquee tool',
     exact: true,
   });
   await canvas.click({ position: { x: box.width * 0.37, y: box.height * 0.45 } });

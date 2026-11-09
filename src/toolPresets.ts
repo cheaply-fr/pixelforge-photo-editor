@@ -95,7 +95,7 @@ export type ToolSettingValues = {
   mixerBrush: MixerBrushSettings;
   historyBrush: HistoryBrushSettings;
   artHistoryBrush: ArtHistoryBrushSettings;
-  gradientMode: 'linear' | 'radial' | 'reflected';
+  gradientMode: 'linear' | 'radial' | 'reflected' | 'angle' | 'diamond';
   gradientEnd: 'transparent' | 'background';
   gradientMidpoint: string;
   gradientMidpointPosition: number;
@@ -207,7 +207,7 @@ export const TOOL_SETTING_FIELDS: { readonly [K in ToolSettingKey]: ToolSettingF
   artHistoryBrush: option<ArtHistoryBrushSettings>('Art History settings', { ...DEFAULT_ART_HISTORY_BRUSH }, (value) =>
     validArtHistoryBrushSettings(value) ? effectiveArtHistoryBrush(value) : undefined,
   ),
-  gradientMode: option<'linear' | 'radial' | 'reflected'>('Gradient type', 'linear', oneOf(['linear', 'radial', 'reflected'] as const)),
+  gradientMode: option<'linear' | 'radial' | 'reflected' | 'angle' | 'diamond'>('Gradient type', 'linear', oneOf(['linear', 'radial', 'reflected', 'angle', 'diamond'] as const)),
   gradientEnd: option<'transparent' | 'background'>('Gradient end', 'transparent', oneOf(['transparent', 'background'] as const)),
   gradientMidpoint: option('Midpoint colour', 'none', (value) => (value === 'none' ? 'none' : hex(value))),
   gradientMidpointPosition: option('Midpoint position', 50, num(1, 99)),
@@ -340,14 +340,14 @@ export const PRESET_TOOL_LABELS: Readonly<Record<PresetTool, string>> = {
   'adjustment-brush': 'Adjustment Brush',
   gradient: 'Gradient',
   text: 'Text',
-  rectangle: 'Shape',
+  rectangle: 'Rectangle',
   ellipse: 'Ellipse',
   line: 'Line',
   polygon: 'Polygon',
-  select: 'Select',
-  'ellipse-select': 'Elliptical marquee',
-  'row-select': 'Single Row marquee',
-  'column-select': 'Single Column marquee',
+  select: 'Rectangular Marquee',
+  'ellipse-select': 'Elliptical Marquee',
+  'row-select': 'Single Row Marquee',
+  'column-select': 'Single Column Marquee',
   lasso: 'Lasso',
   'polygonal-lasso': 'Polygonal Lasso',
   'magnetic-lasso': 'Magnetic Lasso',

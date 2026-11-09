@@ -31,6 +31,20 @@ tests across settings migration, pressure fallback and independent mapping,
 hardness, eraser undo/redo/reload, clone edge clipping, healing bounds, pointer
 release pressure, and touch cancellation.
 
+### Clone/Healing Aligned and Sample (toolbar audit I-16, 2026-11)
+
+`Settings.retouchOptions.cloneAligned` (default on) and `cloneSample`
+(`current` default, `below`, `all`) apply to Clone Stamp and the Healing Brush.
+Aligned keeps the document-space source-minus-destination offset of the first
+stroke after a source is chosen for every later stroke, until a new
+Option/Alt-click; with Aligned off each stroke starts again at the chosen
+source point (the earlier behaviour). Current & Below and All Layers read the
+visible composite of the layers from the bottom up to the active layer, or of
+every layer, rendered once at pointer-down into the active layer's pixel space;
+Current Layer reads only the active layer as before. Older drafts omit the
+options and use the defaults. Evidence: `tests/browser/audit-retouch-stamps.spec.ts`
+(desktop and mobile).
+
 ## Persisted tool state
 
 Extend `Settings` with validated, backward-compatible values:
@@ -80,6 +94,40 @@ Use one shared stamp primitive for Brush, Eraser, Clone and Healing:
    default 25% cadence. Composite the color through that mask with `source-over` for Brush/Clone/
    Healing and `destination-out` for Eraser. Every stamp uses the calculated
    opacity, including Eraser, so partial erasure is reversible and predictable.
+
+### Opacity is a per-stroke ceiling (2026-11 audit, B-08)
+
+Overlapping dabs no longer compound: an Opacity 50 % / Flow 100 % stroke used
+to reach 1 − 0.5⁴ ≈ 94 % where four dabs overlapped. Brush, Pencil, Eraser,
+Clone, Healing and Pattern Stamp now build each stroke in a per-gesture
+`BrushStrokeBuffer` (`src/brush.ts`): a lazily tiled (64 px) coverage buffer
+plus the pre-stroke pixel of every touched pixel. A dab adds
+`e · (1 − s)` to the stroke coverage `s`, where `e` is the dab alpha (Opacity ×
+Flow × tip mask × pressure/texture/jitter) divided by the stroke ceiling
+(Opacity, `strokeOpacity`), and the pixel is recomposited from its pre-stroke
+value at `ceiling × s` (× 0.65 for Healing; `destination-out` arithmetic for
+Eraser). So within one stroke Flow accumulates coverage up to the Opacity
+ceiling and never beyond it; a new stroke starts a new buffer and may darken
+further. Colour-jittered dabs and clone samples are blended into the stroke
+colour, so later dabs replace earlier ones inside the stroke instead of
+stacking. Build-up, wet edges and the other tip modifiers still shape the dab
+mask only. Each paint target of the gesture (layer buffer, selection raw
+stroke, blend-mode paint canvas) has its own buffer, so selections and brush
+blend modes are unchanged. `tests/brush-stroke-opacity.test.mjs` and
+`tests/browser/audit-paint-tools.spec.ts` cover the ceiling for Brush, Eraser,
+Clone, Healing and Pattern Stamp.
+
+### Background layer (2026-11 audit, I-01)
+
+A raster layer may carry `background: true`. While it is the bottom layer it
+behaves like a bounded Photoshop Background: the Move tool refuses to drag it
+(with a notice) and the Eraser paints the background colour through the same
+stamp path instead of erasing to transparency. New documents with a filled
+background and the startup sample create it; transparent documents, imported
+images and drafts saved before the flag existed have no Background, so their
+behaviour is unchanged. Layer > Layer from Background (or renaming the layer)
+removes the flag and renames a layer called "Background" to "Layer 0".
+Numeric transforms, alignment and layer reordering are not locked.
 6. Clone keeps the source-to-destination offset fixed for the complete stroke.
    Healing uses the same mask and a bounded blend/blur operation; it must not
    mutate the source asset while a preview is being drawn.

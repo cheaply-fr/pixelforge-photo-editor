@@ -64,12 +64,17 @@ Top to bottom:
   * Paint, retouch, shape and pen tools → Tool options.
   * Move → Align to canvas (+ distribute). Text → Text. Rotate View → Rotate
     View.
-  * Marquee, lasso and Magic Wand → Selection options (mode, feather,
-    invert/clear selection). Selection Brush and Quick Selection → Tool
+  * Marquee and lasso → Selection options (mode, options-bar Feather for new
+    selections, marquee Style, current-selection feather, invert/clear
+    selection). Selection Brush, Quick Selection and Magic Wand → Tool
     options + Selection options.
-  * Hand, Zoom, measurement tools, Fill, Crop / Perspective Crop, Slice /
-    Slice Select and Frame → none (their controls are on the canvas, status
-    bar or toolbar).
+  * Fill → Tool options (Tolerance, Contiguous, Sample All Layers; see
+    `docs/color-region-contract.md`).
+  * Zoom, Eyedropper, Color Sampler, Ruler, Note, Count, Crop and
+    Perspective Crop → Tool options, titled with the tool name
+    ([navigation tool options](./navigation-tool-options-contract.md)).
+  * Hand, Slice / Slice Select and Frame → none (their controls are on
+    the canvas, status bar or toolbar).
   * History Brush and Art History Brush open History by default.
 * `toolSidebar(tool)` falls back to `DEFAULT_TOOL_SIDEBAR` (no sections, no
   panel) for unknown values such as a stale persisted tool.
@@ -153,7 +158,7 @@ horizontal overflow at 375 px (page and sidebar).
   storage parsing/round trips; `tests/sidebar-sections.test.mjs` keeps the
   #224 registry checks.
 * Browser (desktop + mobile): `tests/browser/contextual-sidebar.spec.ts` —
-  Brush, Text, Gradient, Move, Crop, Select and Clone show only their own
+  Brush, Text, Gradient, Move, Crop, Hand, Select and Clone show only their own
   options (others' labels absent, large panels absent), a retouch and
   selection tool show only their sections, bounded sidebar at 1280×800 (three
   visible blocks, ≤ 4 sections, height bounds), strip opens one panel at a time,

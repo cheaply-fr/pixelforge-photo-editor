@@ -48,6 +48,31 @@ content-aware fill and does not claim broad perspective reconstruction. Future
 work may add a reviewed content-aware model behind explicit privacy, quota,
 offline and cancellation gates.
 
+## Selection workflow: Source / Destination / Brush (toolbar audit I-19, 2026-11)
+
+The Patch menu (`retouchOptions.patchMode`) offers **Source** (default),
+**Destination** and **Brush**. In Source or Destination mode, a press inside
+an active selection drags the selection as the patch region; the stroke is
+stored with `region: 'source' | 'destination'`, the layer-space selection
+snapshot as `selectionMask` (required for region strokes) and the drag as
+`sourceOffset` (source minus destination):
+
+- **Source**: on release the selection is replaced by the pixels under the
+  dragged-to position, shifted by the per-channel median difference between
+  a 2 px ring just outside the selection and the same ring at the drop
+  position. This tone match is a bounded local approximation, not
+  Photoshop's healing blend.
+- **Destination**: the selected pixels are copied unchanged to where the
+  selection was dropped (the mask moved by the drag); the original stays.
+
+A press outside the selection, any press without a selection, and every press
+in **Brush** mode use the original click-source-then-paint workflow described
+above (kept so existing projects, tests and selection-confined brush patches
+keep working). A drag of zero pixels commits nothing. Region strokes count
+against the same 64-stroke limit and replay through undo, reload and project
+files. Evidence: `tests/audit-retouch.test.mjs` and
+`tests/browser/audit-retouch-healing.spec.ts` on desktop and mobile.
+
 ## Required evidence
 
 Pure tests cover source immutability, offset mapping, multi-point strokes,

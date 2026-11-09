@@ -277,5 +277,5 @@ test('tools without options show no presets control', async ({ page }) => {
   await selectTool(page, 'Horizontal Type');
   await expect(status(page)).toContainText('Text · No preset applied');
   await selectTool(page, 'Select');
-  await expect(status(page)).toContainText('Select · No preset applied');
+  await expect(status(page)).toContainText('Rectangular Marquee · No preset applied');
 });

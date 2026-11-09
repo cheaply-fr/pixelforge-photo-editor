@@ -483,7 +483,8 @@ test('the Text sidebar Font and Size edit the selected text layer and the live e
   // matching the Character panel below.
   await expect(font).toHaveValue('Georgia');
   await font.selectOption('Verdana');
-  await expect(section.getByLabel('Character font family', { exact: true })).toHaveValue('Verdana');
+  // The Character panel has no separate font picker (one font control, I-25).
+  await expect(font).toHaveValue('Verdana');
   await size.fill('90');
   await expect(section.getByLabel('Font size', { exact: true })).toHaveValue('90');
   await settle(page);

@@ -110,6 +110,8 @@ import {
   identity,
   colorSelectMask,
   commonLayer,
+  isBackgroundLayer,
+  layerFromBackground,
   isRasterContentLayer,
   isMaskableLayer,
   isVectorMaskableLayer,
@@ -128,7 +130,6 @@ import {
   transformSelection as transformSelectionModel,
   surface,
   transformFrameWithMasks,
-  floodFill,
   drawTextLayer,
   loadTextLayerFonts,
   effectiveTextLayer,
@@ -204,6 +205,26 @@ import {
   normalizeCustomPatternPresets,
   type CustomPatternPreset,
 } from '../src/customPatternPresets';
+import {
+  addImagePattern,
+  capturePatternTile,
+  normalizeImagePatterns,
+  type ImagePattern,
+  type PatternTile,
+} from '../src/imagePatterns';
+import {
+  DEFAULT_RETOUCH_OPTIONS,
+  normalizeRetouchOptions,
+  type CloneSample,
+  type ColorReplaceLimits,
+  type ColorReplaceMode,
+  type ColorReplaceSampling,
+  type PatchMode,
+  type RetouchOptions,
+  type SpotHealingType,
+} from '../src/retouchOptions';
+import { GRADIENT_LOOKUP_SIZE, renderGradientShape } from '../src/gradientShapes';
+import { historySourceLabels } from '../src/historyTimeline';
 import { createCustomShapePreset, normalizeCustomShapePresets, type CustomShapeKind, type CustomShapePreset } from '../src/customShapePresets';
 import { createCustomPathPreset, normalizeCustomPathPresets, type CustomPathPreset } from '../src/customPathPresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
@@ -264,6 +285,24 @@ import {
   formatSelectionFeather,
   normalizeSelectionFeather,
 } from '../src/selectionFeather';
+import { selectionOutline, type SelectionOutline } from '../src/selectionOutline';
+import {
+  DEFAULT_COLOR_REGION_SETTINGS,
+  clearSelectedPixels,
+  colorRegionMask,
+  fillMaskedPixels,
+  frameMaskToLayer,
+  normalizeColorRegionSettings,
+  type ColorRegionSettings,
+} from '../src/colorRegion';
+import {
+  DEFAULT_MARQUEE_OPTIONS,
+  MARQUEE_FEATHER_MAX,
+  marqueeRect,
+  normalizeMarqueeOptions,
+  type MarqueeOptions,
+  type MarqueeStyle,
+} from '../src/marqueeOptions';
 import SaveSelectionDialog from '../src/SaveSelectionDialog';
 import EditFillDialog from '../src/EditFillDialog';
 import { editFillColor, type EditFillOptions } from '../src/editFill';
@@ -470,6 +509,8 @@ import { snapMagneticPoint } from '../src/magneticLasso';
 import { boundSelectionPolygon, ellipsePolygon } from '../src/selectionPolygon';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
+import { DEFAULT_PEN_OPTIONS, PATH_TOOL_HINTS, normalizePenOptions, pathToolOptions, penAutoEditMode, penLayerName, penLayerNotice, penPathStyle, rubberBandNodes, type PathOptionTool, type PenOptions } from '../src/penOptions';
+import { DEFAULT_SHAPE_APPEARANCE, SHAPE_CREATE_MAX, SHAPE_STROKE_WIDTH_MAX, centeredShapeBox, isShapeToolId, lineShapeAppearance, normalizeShapeAppearance, parametricShapeAppearance, parametricShapePathStyle, pathShapeAppearance, shapeLayerName, type ShapeAppearanceSettings, type ShapePaintSource, type ShapeToolId } from '../src/shapeAppearance';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { skySelectionMask, subjectSelectionMask } from '../src/assistedSelection';
@@ -519,6 +560,7 @@ import {
 } from '../src/imageSize';
 import {
   applyRadialStamp,
+  BrushStrokeBuffer,
   BRUSH_DEFAULT_ANGLE,
   BRUSH_DEFAULT_ROUNDNESS,
   BRUSH_DEFAULT_SPACING,
@@ -586,6 +628,8 @@ import {
   BRUSH_STRANDS_MAX_INPUT_POINTS,
   BRUSH_STRANDS_SEED_MAX,
   BRUSH_STRANDS_TWISTS_MAX,
+  BRUSH_STRANDS_THICKNESS_MAX,
+  BRUSH_STRANDS_THICKNESS_MIN,
   BRUSH_STRANDS_WIDTH_MAX,
   BRUSH_STRANDS_WIDTH_MIN,
   DEFAULT_BRUSH_STRANDS,
@@ -623,8 +667,10 @@ import {
   ZOOM_STEPS,
   anchorScrollDelta,
   clampViewZoom,
+  fillViewZoom,
   fitViewZoom,
   formatViewZoom,
+  scrubbyViewZoom,
   nearestZoomStepIndex,
   stepViewZoom,
   validViewZoom,
@@ -749,7 +795,6 @@ import {
   hitTestWholePath,
   isPathAnchorEdit,
   pathAnchorEditNotice,
-  penAnchorEditMode,
   pullPathNodeHandles,
   translatePath,
 } from '../src/pathEditTools';
@@ -789,6 +834,7 @@ import {
   applyHistoryBrushPixels,
   applyMixerBrushPixels,
   applySymmetricRetouchBrush,
+  type MixerBrushState,
   interpolateBrushStrokePoints,
   type HistoryBrushSettings,
   type ArtHistoryBrushSettings,
@@ -801,6 +847,7 @@ import {
   type SpotHealingStroke,
 } from '../src/spotHealing';
 import {
+  PATCH_MAX_OFFSET,
   PATCH_MAX_POINTS,
   PATCH_MAX_STROKES,
   type PatchStroke,
@@ -872,6 +919,7 @@ import {
   planRectangularCrop,
   planSlices,
   warpPerspectiveRgba,
+  type CropPoint,
   type CropQuad,
   type PerspectiveCropPlan,
   type RectangularCropPlan,
@@ -889,16 +937,50 @@ import {
   setArtboardVisibility,
 } from '../src/artboards';
 import { fitLayerToArtboard, type FrameFit } from '../src/artboardFit';
-import { sliceAtPoint } from '../src/slices';
+import { adjustSliceRect, hitTestSliceHandle, sliceAtPoint, type SliceHandle } from '../src/slices';
 import {
+  EYEDROPPER_SAMPLE_SIZES,
+  averageSample,
+  countGroupOf,
+  countGroupTotals,
   formatMeasurement,
   measurementAngle,
   measurementDistance,
   newMeasurementId,
-  nextCountIndex,
+  nextCountIndexInGroup,
+  photoshopAngle,
+  rgbHex,
+  rotationAboutPoint,
+  rulerReadout,
+  straightenRotation,
+  type EyedropperSampleSize,
   type MeasurementAnnotation,
   type MeasurementPoint,
 } from '../src/measurements';
+import {
+  CROP_OVERLAYS,
+  CROP_RATIO_PRESETS,
+  COUNT_LABEL_SIZE_MAX,
+  COUNT_LABEL_SIZE_MIN,
+  CROP_DIMENSION_MAX,
+  CROP_RESOLUTION_MAX,
+  DEFAULT_NAVIGATION_TOOL_SETTINGS,
+  normalizeNavigationToolSettings,
+  updateNavigationToolSetting,
+  type CropOverlay,
+  type CropRatioPreset,
+  type NavigationToolSettings,
+} from '../src/navigationOptions';
+import {
+  constrainCropEnd,
+  cropAspectRatio,
+  inscribedCropAfterRotation,
+  nearestQuadCorner,
+  orderQuadCorners,
+  planCropTrim,
+  rectangleQuad,
+  scaleMeasurements,
+} from '../src/cropOptions';
 import {
   audioAnnotations,
   audioClipBytes,
@@ -1031,6 +1113,7 @@ type Command =
   | 'new-layer'
   | 'new-fill-layer'
   | 'new-adjustment-layer'
+  | 'layer-from-background'
   | 'new-smart-object'
   | 'nest-smart-object'
   | 'replace-smart-object'
@@ -1332,18 +1415,18 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'vertical-text', label: 'Vertical Type', icon: toolIcon('vertical-text'), key: 'T' },
   { id: 'text-mask', label: 'Horizontal Type Mask', icon: toolIcon('text-mask'), key: 'T' },
   { id: 'vertical-text-mask', label: 'Vertical Type Mask', icon: toolIcon('vertical-text-mask'), key: 'T' },
-  { id: 'rectangle', label: 'Shape', icon: toolIcon('rectangle'), key: 'U' },
+  { id: 'rectangle', label: 'Rectangle', icon: toolIcon('rectangle'), key: 'U' },
   { id: 'rounded-rectangle', label: 'Rounded Rectangle', icon: toolIcon('rounded-rectangle'), key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: toolIcon('ellipse'), key: 'U' },
   { id: 'line', label: 'Line', icon: toolIcon('line'), key: 'U' },
   { id: 'polygon', label: 'Polygon', icon: toolIcon('polygon'), key: 'U' },
   { id: 'custom-shape', label: 'Custom Shape', icon: toolIcon('custom-shape'), key: 'U' },
-  { id: 'select', label: 'Select', icon: toolIcon('select'), key: 'M' },
-  { id: 'ellipse-select', label: 'Elliptical marquee', icon: toolIcon('ellipse-select'), key: 'M' },
-  { id: 'row-select', label: 'Single Row marquee', icon: toolIcon('row-select'), key: 'M' },
+  { id: 'select', label: 'Rectangular Marquee', icon: toolIcon('select'), key: 'M' },
+  { id: 'ellipse-select', label: 'Elliptical Marquee', icon: toolIcon('ellipse-select'), key: 'M' },
+  { id: 'row-select', label: 'Single Row Marquee', icon: toolIcon('row-select'), key: 'M' },
   {
     id: 'column-select',
-    label: 'Single Column marquee',
+    label: 'Single Column Marquee',
     icon: toolIcon('column-select'),
     key: 'M',
   },
@@ -1399,18 +1482,33 @@ function fittedDraftZoom(element: HTMLElement | null, draft: Draft) {
   const frame = draft.history[draft.index];
   return frame ? fittedZoom(element, frame.w, frame.h) : undefined;
 }
+/**
+ * Tools whose Tool options section is titled with the tool name and holds
+ * no brush Size (docs/navigation-tool-options-contract.md).
+ */
+const NAMED_OPTION_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
+  'zoom',
+  'eyedropper',
+  'color-sampler',
+  'ruler',
+  'note',
+  'audio-note',
+  'count',
+  'crop',
+  'perspective-crop',
+]);
+/** Tools whose press is a click unless the pointer travels a few pixels. */
+const CLICK_OR_DRAG_TOOLS: ReadonlySet<Tool> = new Set<Tool>(['zoom', 'note', 'perspective-crop', 'slice-select']);
 const toolSelectionNotice = (tool: Tool, label: string) =>
   tool === 'magnetic-lasso'
     ? 'Magnetic Lasso: drag along an edge, release to close'
-    : `${label} tool selected`;
+    : tool === 'perspective-crop'
+      ? 'Perspective Crop: drag a rectangle or click four corners, then drag the corner handles; Enter applies'
+      : tool === 'frame'
+        ? 'Frame (artboard): drag to add a named artboard viewport'
+        : `${label} tool selected`;
 const flyoutToolLabel = (tool: Tool, label: string) =>
-  tool === 'select'
-    ? 'Rectangular Marquee'
-    : tool === 'ellipse-select'
-      ? 'Elliptical Marquee'
-    : tool === 'lasso'
-      ? 'Freeform Lasso'
-      : label;
+  tool === 'lasso' ? 'Freeform Lasso' : label;
 const flyoutToolKey = (tool: Tool, key: string) =>
   tool === 'selection-brush' ? 'W' : key;
 
@@ -1426,6 +1524,13 @@ const discardPreviewAsset = (assets: Assets, id: string | undefined) => {
   if (id) delete assets[id];
 };
 
+/** Status names for lasso-family selections (a freeform lasso is not "Polygonal"). */
+const LASSO_CREATED_LABELS = {
+  Lasso: 'Lasso',
+  'Polygonal lasso': 'Polygonal',
+  'Magnetic Lasso': 'Magnetic',
+  'Elliptical marquee': 'Elliptical',
+} as const;
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -1608,6 +1713,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
+    { label: 'Layer from Background', command: 'layer-from-background' },
     { label: 'Layer Mask', command: 'mask-selection' },
     { label: 'Mask All Objects', command: 'mask-all-objects' },
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
@@ -1861,6 +1967,24 @@ const STROKE_SAMPLING_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
   'lasso', 'magnetic-lasso', 'freeform-pen',
 ]);
 
+type GradientType = NonNullable<Settings['gradientMode']>;
+
+/**
+ * Patch selection workflow: the stored offset is source minus destination.
+ * Source mode reads from where the selection was dragged to; Destination
+ * mode writes there, reading the original selection.
+ */
+const patchRegionOffset = (
+  mode: 'source' | 'destination',
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) => {
+  const clampOffset = (value: number) => Math.max(-PATCH_MAX_OFFSET, Math.min(PATCH_MAX_OFFSET, Math.round(value))),
+    x = clampOffset(end.x - start.x),
+    y = clampOffset(end.y - start.y);
+  return mode === 'source' ? { x, y } : { x: -x, y: -y };
+};
+
 type Gesture = {
   tool: Tool;
   /** The owning press was released; the commit may still be waiting. */
@@ -1871,6 +1995,12 @@ type Gesture = {
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  /** Mixer Brush paint reservoirs for this stroke, one per symmetry copy. */
+  mixerStates?: MixerBrushState[];
+  /** Eraser on the Background layer paints the background colour. */
+  eraseToBackground?: boolean;
+  /** Per-stroke coverage buffers keyed by paint target (Opacity ceiling). */
+  strokeBuffers?: WeakMap<HTMLCanvasElement, BrushStrokeBuffer>;
   /** Immutable source captured at pointer-down for Mixer/History Brush. */
   sourcePixels?: Uint8ClampedArray;
   historySourceIndex?: number;
@@ -1885,8 +2015,15 @@ type Gesture = {
   maskPreviewAsset?: string;
   patternId?: PatternId;
   patternTileSize?: number;
+  /** Pattern Stamp: selection-defined tile and non-aligned phase anchor. */
+  patternTile?: PatternTile;
+  patternAnchor?: { x: number; y: number };
   redEyeThreshold?: number;
   redEyeAmount?: number;
+  /** Patch: the press point is being tested against the selection. */
+  patchRegionPending?: boolean;
+  /** Color Replace: options fixed at pointer-down. */
+  colorReplace?: Pick<RetouchOptions, 'colorReplaceMode' | 'colorReplaceSampling' | 'colorReplaceLimits'>;
   /** Local-space nondestructive context-aware cleanup metadata. */
   spotHealingStroke?: SpotHealingStroke;
   /** Gradient drag: decoded layer and selection, prepared at pointer-down. */
@@ -1976,6 +2113,18 @@ type Gesture = {
   lastPressure?: number;
   pointerType?: string;
   moved: boolean;
+  /** Scrubby Zoom: zoom and client point at pointer-down. */
+  zoomStart?: number;
+  zoomOut?: boolean;
+  /** Note tool: the note being dragged. */
+  noteId?: string;
+  /** Perspective Crop: the corner handle being dragged. */
+  quadCorner?: number;
+  /** Crop: the drag draws a Straighten line instead of a crop box. */
+  cropStraighten?: boolean;
+  /** Slice Select: grabbed handle and the slice at pointer-down. */
+  sliceHandle?: SliceHandle;
+  sliceOrigin?: SliceRect;
 };
 
 /** Layer pixels and selection coverage a gradient drag renders over. */
@@ -2049,6 +2198,28 @@ type StampCanvasOptions = {
   source?: HTMLCanvasElement;
   sourceX?: number;
   sourceY?: number;
+  /** Per-gesture stroke buffers: Opacity becomes a per-stroke ceiling. */
+  strokeBuffers?: BrushStrokeBuffers;
+  /** Stroke opacity ceiling (0..1); defaults to `opacity`. */
+  strokeOpacity?: number;
+};
+
+/** One `BrushStrokeBuffer` per paint target (layer buffer, selection raw, blend paint). */
+type BrushStrokeBuffers = WeakMap<HTMLCanvasElement, BrushStrokeBuffer>;
+const brushStrokeTarget = (
+  buffers: BrushStrokeBuffers | undefined,
+  target: HTMLCanvasElement,
+  ceiling: number,
+  originX: number,
+  originY: number,
+) => {
+  if (!buffers) return undefined;
+  let buffer = buffers.get(target);
+  if (!buffer) {
+    buffer = new BrushStrokeBuffer(target.width, target.height, Math.max(0, Math.min(1, ceiling)));
+    buffers.set(target, buffer);
+  }
+  return { buffer, originX, originY };
 };
 
 /** Apply one bounded local radial stamp without allocating a full-canvas mask. */
@@ -2096,6 +2267,7 @@ const stampCanvas = (
     sourceX = (options.sourceX ?? options.x) - sourceLeft;
     sourceY = (options.sourceY ?? options.y) - sourceTop;
   }
+  const stroke = brushStrokeTarget(options.strokeBuffers, target, options.strokeOpacity ?? options.opacity, left, top);
   const result = applyRadialStamp(image.data, {
     width,
     height,
@@ -2122,7 +2294,7 @@ const stampCanvas = (
     source,
     sourceX,
     sourceY,
-  });
+  }, stroke);
   let changed = result.changed;
   const secondary = options.secondaryPreset && options.secondaryPreset !== 'none'
     ? brushPresetById(options.secondaryPreset)
@@ -2155,7 +2327,7 @@ const stampCanvas = (
       source,
       sourceX,
       sourceY,
-    });
+    }, stroke);
     changed = secondaryResult.changed || changed;
   }
   if (changed) {
@@ -2370,6 +2542,13 @@ const patternCanvas = (
     tileSize: number;
     foreground: BrushColor;
     background: BrushColor;
+    /** Non-aligned strokes restart the tile phase at the stroke start. */
+    anchorX?: number;
+    anchorY?: number;
+    /** Selection-defined image tile replacing the procedural pattern. */
+    tile?: PatternTile;
+    strokeBuffers?: BrushStrokeBuffers;
+    strokeOpacity?: number;
   },
 ) => {
   const radius = resolveBrushStamp(options).radius,
@@ -2406,7 +2585,10 @@ const patternCanvas = (
       background: options.background,
       originX: left,
       originY: top,
-    });
+      anchorX: options.anchorX,
+      anchorY: options.anchorY,
+      tile: options.tile,
+    }, brushStrokeTarget(options.strokeBuffers, target, options.strokeOpacity ?? options.opacity, left, top));
   if (result.changed) context.putImageData(image, left, top);
   return result.changed;
 };
@@ -2460,8 +2642,12 @@ const redEyeCanvasSegment = (
       threshold: options.threshold,
       amount: options.amount,
     });
-  if (result.changed) context.putImageData(image, left, top);
-  return result.changed;
+  // removeRedEye never mutates its input: write the corrected copy back.
+  if (!result.changed) return false;
+  image.data.set(result.pixels);
+  context.putImageData(image, left, top);
+  noteCanvasWrite(target, left, top, width, height);
+  return true;
 };
 
 const redEyeCanvasStroke = (
@@ -2616,6 +2802,35 @@ const smudgeCompositeSample = async (
   return { data: context.getImageData(0, 0, width, height).data, width, height, x: 0, y: 0 };
 };
 
+/**
+ * Clone/Healing Sample Current & Below or All Layers: the visible composite
+ * of the bottom layers up to and including `layer` (or of every layer),
+ * rendered into the layer's local pixel space.
+ */
+const compositeSampleCanvas = async (
+  frame: Frame,
+  layer: Layer,
+  assets: Assets,
+  width: number,
+  height: number,
+  sample: 'below' | 'all',
+): Promise<HTMLCanvasElement> => {
+  const index = frame.layers.findIndex((item) => item.id === layer.id),
+    rendered = await renderFrame(
+      sample === 'below' && index >= 0 ? { ...frame, layers: frame.layers.slice(0, index + 1) } : frame,
+      assets,
+    ),
+    local = surface(width, height),
+    context = local.getContext('2d')!,
+    inverse = invertAffine(layer.matrix as unknown as SymmetryAffine);
+  if (inverse) {
+    context.imageSmoothingEnabled = false;
+    context.setTransform(inverse[0], inverse[1], inverse[2], inverse[3], inverse[4], inverse[5]);
+    context.drawImage(rendered, 0, 0);
+  }
+  return local;
+};
+
 /** Apply one immutable Blur or Sharpen segment to the gesture buffer (windowed). */
 const retouchCanvasSegment = (
   source: HTMLCanvasElement,
@@ -2664,6 +2879,7 @@ const mixerHistoryCanvasDabs = (
   points: readonly BrushStrokePoint[],
   settings: MixerBrushSettings | HistoryBrushSettings | ArtHistoryBrushSettings,
   selectionMask?: Uint8ClampedArray,
+  mixerState?: MixerBrushState,
 ) =>
   windowedCanvasStroke(
     destination,
@@ -2679,7 +2895,7 @@ const mixerHistoryCanvasDabs = (
       const local = points.map((point) => windowPoint(point, rect));
       return {
         pixels: tool === 'mixer-brush'
-          ? applyMixerBrushPixels(pixels, source!, width, height, local, settings as MixerBrushSettings, mask)
+          ? applyMixerBrushPixels(pixels, source!, width, height, local, settings as MixerBrushSettings, mask, mixerState)
           : tool === 'history-brush'
           ? applyHistoryBrushPixels(pixels, source!, width, height, local, settings as HistoryBrushSettings, mask)
           : applyArtHistoryBrushPixels(pixels, source!, width, height, local, settings as ArtHistoryBrushSettings, mask),
@@ -2899,9 +3115,15 @@ const stampGestureSegment = (
   g: Gesture,
   from: { x: number; y: number },
   to: { x: number; y: number },
-  options: Parameters<typeof stampCanvasSegment>[3],
+  strokeOptions: Parameters<typeof stampCanvasSegment>[3],
 ) => {
-  const reach = brushStampReach(options.size, options.scatter),
+  // One stroke buffer set per gesture caps the stroke at its Opacity.
+  const options = {
+      ...strokeOptions,
+      strokeBuffers: g.strokeBuffers ??= new WeakMap(),
+      strokeOpacity: strokeOptions.strokeOpacity ?? strokeOptions.opacity,
+    },
+    reach = brushStampReach(options.size, options.scatter),
     symmetry = g.paintSymmetry;
   if (!symmetry || symmetry.length < 2)
     return confinedGestureEdit(g, from, to, reach, (target) =>
@@ -2986,7 +3208,11 @@ const patternGestureSegment = (
   options: Parameters<typeof patternCanvasSegment>[3],
 ) =>
   confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
-    patternCanvasSegment(target, from, to, options));
+    patternCanvasSegment(target, from, to, {
+      ...options,
+      strokeBuffers: g.strokeBuffers ??= new WeakMap(),
+      strokeOpacity: options.strokeOpacity ?? options.opacity,
+    }));
 /** Red Eye counterpart of `stampGestureSegment`. */
 const redEyeGestureStroke = (
   g: Gesture,
@@ -3012,7 +3238,11 @@ const sampledGestureStroke = (
   confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
     options.kind === 'replace'
       ? replaceColorStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
-        options.color, options.size, options.tolerance, options.opacity)
+        options.color, options.size, options.tolerance, options.opacity, {
+          mode: g.colorReplace?.colorReplaceMode,
+          sampling: g.colorReplace?.colorReplaceSampling,
+          limits: g.colorReplace?.colorReplaceLimits,
+        })
       : eraseBackgroundStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
         options.size, options.tolerance, options.opacity));
 const selectionMaskForLayer = async (
@@ -3250,6 +3480,8 @@ export default function Home() {
     [toolPresets, setToolPresets] = useState<ToolPreset[]>(() => readStoredToolPresets(browserPresetStorage())),
     [appliedToolPresets, setAppliedToolPresets] = useState<Partial<Record<PresetTool, string>>>({}),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
+    [imagePatterns, setImagePatterns] = useState<ImagePattern[]>([]),
+    [retouchOptions, setRetouchOptions] = useState<RetouchOptions>(() => ({ ...DEFAULT_RETOUCH_OPTIONS })),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
     [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
@@ -3259,6 +3491,8 @@ export default function Home() {
     [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
     [shapeCornerRadius, setShapeCornerRadius] = useState(16),
     [customShapeId, setCustomShapeId] = useState<string>(DEFAULT_CUSTOM_SHAPE_ID),
+    [shapeAppearance, setShapeAppearance] = useState<ShapeAppearanceSettings>(() => ({ ...DEFAULT_SHAPE_APPEARANCE })),
+    [penOptions, setPenOptions] = useState<PenOptions>(() => ({ ...DEFAULT_PEN_OPTIONS })),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
@@ -3272,7 +3506,7 @@ export default function Home() {
     [brushBuildUp, setBrushBuildUp] = useState(BRUSH_BUILD_UP_DEFAULT),
     [secondaryBrushPreset, setSecondaryBrushPreset] = useState<SecondaryBrushPreset>('none'),
     [brushFlow, setBrushFlow] = useState(100),
-    [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
+    [gradientMode, setGradientMode] = useState<GradientType>('linear'),
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
     [gradientMidpoint, setGradientMidpoint] = useState('none'),
     [gradientMidpointPosition, setGradientMidpointPosition] = useState(50),
@@ -3291,11 +3525,15 @@ export default function Home() {
     [redEyeThreshold, setRedEyeThreshold] = useState(36),
     [redEyeAmount, setRedEyeAmount] = useState(100),
     [colorTolerance, setColorTolerance] = useState(24),
+    [colorRegion, setColorRegion] = useState<ColorRegionSettings>(DEFAULT_COLOR_REGION_SETTINGS),
+    [marqueeOptions, setMarqueeOptions] = useState<MarqueeOptions>(DEFAULT_MARQUEE_OPTIONS),
     [tonalExposure, setTonalExposure] = useState(50),
     [tonalRange, setTonalRange] = useState<TonalRange>('midtones'),
     [spongeMode, setSpongeMode] = useState<SpongeMode>('saturate'),
     [spongeVibrance, setSpongeVibrance] = useState(50),
     [mixerBrush, setMixerBrush] = useState<MixerBrushSettings>({ ...DEFAULT_MIXER_BRUSH }),
+    // Adjustment Brush paints the adjustment in (reveal) or out (conceal); Alt flips it per stroke.
+    [adjustmentBrushMode, setAdjustmentBrushMode] = useState<'reveal' | 'conceal'>('reveal'),
     [smudgeSettings, setSmudgeSettings] = useState<SmudgeSettings>(() => ({ ...DEFAULT_SMUDGE_SETTINGS })),
     [historyBrush, setHistoryBrush] = useState<HistoryBrushSettings>({ ...DEFAULT_HISTORY_BRUSH }),
     [artHistoryBrush, setArtHistoryBrush] = useState<ArtHistoryBrushSettings>({ ...DEFAULT_ART_HISTORY_BRUSH }),
@@ -3526,6 +3764,11 @@ export default function Home() {
   // even before React re-renders (an Alt-click right after a stroke on a
   // large document must not be lost or read stale).
   const cloneSourceRef = useRef<{ x: number; y: number; matrix: Matrix } | null>(null);
+  /**
+   * Aligned Clone/Healing: the document-space source-minus-destination offset
+   * of the first stroke after a source was chosen, tied to that source.
+   */
+  const cloneOffsetRef = useRef<{ source: object; x: number; y: number } | null>(null);
   /** Stored selection snapshots, reused by selection value and by mask content. */
   const selectionSnapshots = useRef(new SelectionSnapshotCache());
   /**
@@ -3582,6 +3825,103 @@ export default function Home() {
     const [a, b, c, d, e, f] = source.matrix;
     const documentPoint = { x: a * source.x + c * source.y + e, y: b * source.x + d * source.y + f };
     return inversePoint(matrix, documentPoint) || { x: source.x, y: source.y };
+  };
+  /**
+   * The source point for a Clone/Healing stroke starting at `start` (layer
+   * pixels). Non-aligned strokes always restart at the chosen source; aligned
+   * strokes keep the first stroke's offset until a new source is chosen.
+   */
+  const cloneStrokeSource = (
+    start: { x: number; y: number },
+    matrix: Matrix,
+    aligned: boolean,
+  ): { x: number; y: number } | null => {
+    const anchor = cloneSourceIn(matrix), source = cloneSourceRef.current;
+    if (!anchor || !source || !aligned) return anchor;
+    const [a, b, c, d, e, f] = matrix,
+      toDocument = (point: { x: number; y: number }) => ({
+        x: a * point.x + c * point.y + e,
+        y: b * point.x + d * point.y + f,
+      }),
+      startDocument = toDocument(start);
+    const offset = cloneOffsetRef.current;
+    if (!offset || offset.source !== source) {
+      const anchorDocument = toDocument(anchor);
+      cloneOffsetRef.current = {
+        source,
+        x: anchorDocument.x - startDocument.x,
+        y: anchorDocument.y - startDocument.y,
+      };
+      return anchor;
+    }
+    return inversePoint(matrix, { x: startDocument.x + offset.x, y: startDocument.y + offset.y }) || anchor;
+  };
+  /** Decoded selection-defined Pattern Stamp tiles, by pattern id. */
+  const imagePatternTiles = useRef(new Map<string, PatternTile>());
+  const imagePatternTile = async (id: string | null): Promise<PatternTile | undefined> => {
+    const pattern = id ? imagePatterns.find((item) => item.id === id) : undefined;
+    if (!pattern) return undefined;
+    const known = imagePatternTiles.current.get(pattern.id);
+    if (known) return known;
+    const image = new Image();
+    image.src = pattern.url;
+    await image.decode();
+    const canvas = surface(pattern.width, pattern.height),
+      context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const tile = { width: pattern.width, height: pattern.height, data: context.getImageData(0, 0, pattern.width, pattern.height).data };
+    imagePatternTiles.current.set(pattern.id, tile);
+    return tile;
+  };
+  /**
+   * Pattern Stamp "Define pattern from selection": the selected pixels of
+   * the active raster layer become a small local image pattern (see
+   * src/imagePatterns.ts) and the Pattern Stamp source.
+   */
+  const definePatternFromSelection = async () => {
+    const frame = current(),
+      layer = frame?.layers.find((item) => item.id === frame.active);
+    if (!frame?.selection) {
+      setNotice('Make a selection before defining a pattern from it');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster') {
+      setNotice('Select a raster layer before defining a pattern');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        canvas = surface(width, height),
+        context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const mask = await selectionMaskForLayer(frame.selection, frame, layer, assets.current, width, height),
+        tile = mask && capturePatternTile(context.getImageData(0, 0, width, height).data, width, height, mask);
+      if (!tile) {
+        setNotice('The selection contains no visible pixels on this layer');
+        return;
+      }
+      const tileCanvas = surface(tile.width, tile.height);
+      const tileContext = tileCanvas.getContext('2d')!,
+        tileImage = tileContext.createImageData(tile.width, tile.height);
+      tileImage.data.set(tile.data);
+      tileContext.putImageData(tileImage, 0, 0);
+      const pattern: ImagePattern = {
+        id: crypto.randomUUID(),
+        label: `Selection pattern ${imagePatterns.length + 1}`,
+        width: tile.width,
+        height: tile.height,
+        url: tileCanvas.toDataURL('image/png'),
+      };
+      const next = addImagePattern(imagePatterns, pattern);
+      imagePatternTiles.current.set(pattern.id, tile);
+      setImagePatterns(next);
+      setRetouchOptions((options) => ({ ...options, patternImage: pattern.id }));
+      setNotice(`${pattern.label} defined (${tile.width}×${tile.height} px)`);
+    } catch {
+      setNotice('Could not define a pattern from this selection');
+    }
   };
   const clearCloneSource = () => {
     cloneSourceRef.current = null;
@@ -3790,7 +4130,8 @@ export default function Home() {
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
-    [savedSelectionName, setSavedSelectionName] = useState('Selection 1');
+    [savedSelectionName, setSavedSelectionName] = useState('Selection 1'),
+    [selectionOutlineState, setSelectionOutlineState] = useState<{ selection: Selection; outline: SelectionOutline } | null>(null);
   const quickMaskRef = useRef<QuickMask | null>(null),
     quickMaskGesture = useRef<{
       frame: Frame;
@@ -3802,6 +4143,80 @@ export default function Home() {
     start: MeasurementPoint;
     end: MeasurementPoint;
   } | null>(null);
+  // Navigation / sampling / measurement / crop tool options
+  // (docs/navigation-tool-options-contract.md), persisted with the draft.
+  const [navigationTools, setNavigationTools] = useState<NavigationToolSettings>(() => ({
+    ...DEFAULT_NAVIGATION_TOOL_SETTINGS,
+  }));
+  const setNavigationTool = <K extends keyof NavigationToolSettings>(key: K, value: NavigationToolSettings[K]) =>
+    setNavigationTools((settings) => updateNavigationToolSetting(settings, key, value));
+  /** Crop aspect constraint (width / height) for a frame, or null for Free. */
+  const currentCropRatio = (f: { w: number; h: number }) =>
+    cropAspectRatio(navigationTools.cropRatio, {
+      canvasWidth: f.w,
+      canvasHeight: f.h,
+      width: navigationTools.cropWidth,
+      height: navigationTools.cropHeight,
+    });
+  /** In-app note editor (replaces window.prompt); `id` edits an existing note. */
+  const [noteEditor, setNoteEditor] = useState<{
+    id?: string;
+    x: number;
+    y: number;
+    text: string;
+    color: string;
+  } | null>(null);
+  // Focus the note text when the editor opens (not on every keystroke).
+  const noteTextRef = useRef<HTMLTextAreaElement>(null);
+  const noteEditorKey = noteEditor ? `${noteEditor.id ?? 'new'}:${noteEditor.x}:${noteEditor.y}` : '';
+  useEffect(() => {
+    if (!noteEditorKey) return;
+    // After the opening press finishes (its mousedown would take focus back).
+    const handle = requestAnimationFrame(() => noteTextRef.current?.focus());
+    return () => cancelAnimationFrame(handle);
+  }, [noteEditorKey]);
+  /** Live position of a note while it is dragged. */
+  const [noteDrag, setNoteDrag] = useState<{ id: string; x: number; y: number } | null>(null);
+  /** Live composite values under each Color Sampler marker. */
+  const [samplerLive, setSamplerLive] = useState<Record<string, { color: string; alpha: number }>>({});
+  /** Perspective Crop corner clicks collected before the fourth. */
+  const [perspectiveClicks, setPerspectiveClicks] = useState<CropPoint[]>([]);
+  /** Crop Straighten: the next crop drag draws a horizon line. */
+  const [cropStraightenArmed, setCropStraightenArmed] = useState(false);
+  // Switching tools drops half-finished click sequences and editors
+  // (adjusted during render, React's pattern for state derived from props).
+  const [navigationToolSeen, setNavigationToolSeen] = useState(tool);
+  if (navigationToolSeen !== tool) {
+    setNavigationToolSeen(tool);
+    setPerspectiveClicks([]);
+    setCropStraightenArmed(false);
+    if (tool !== 'note') setNoteEditor(null);
+  }
+  // Color Sampler readouts are live: once a render settles, re-read the
+  // composite under every sampler (the stored value is the placement value).
+  const readSamplerValues = (value: Frame) => {
+    const context = canvas.current?.getContext('2d');
+    if (!context) return;
+    const next: Record<string, { color: string; alpha: number }> = {};
+    for (const item of value.measurements || []) {
+      if (item.kind !== 'sample') continue;
+      const x = Math.min(value.w - 1, Math.max(0, Math.floor(item.x))),
+        y = Math.min(value.h - 1, Math.max(0, Math.floor(item.y)));
+      const data = context.getImageData(x, y, 1, 1).data;
+      next[item.id] = { color: rgbHex({ r: data[0], g: data[1], b: data[2] }), alpha: data[3] };
+    }
+    setSamplerLive(next);
+  };
+  const readSamplerValuesRef = useRef(readSamplerValues);
+  useLayoutEffect(() => {
+    readSamplerValuesRef.current = readSamplerValues;
+  });
+  useEffect(() => {
+    if (tool !== 'color-sampler' || !frame || doc.rendering) return;
+    if (!frame.measurements?.some((item) => item.kind === 'sample')) return;
+    const handle = requestAnimationFrame(() => readSamplerValuesRef.current(frame));
+    return () => cancelAnimationFrame(handle);
+  }, [tool, frame, doc.rendering]);
 
   /**
    * Menus use a small roving-focus model rather than relying on browser tab
@@ -3979,16 +4394,17 @@ export default function Home() {
   const buildGestureStrands = (g: Gesture, preview = false): Strand[] => {
     if (!g.strands || !g.layer) return [];
     const matrix = g.layer.matrix,
+      // Size is the overall ribbon width; strands are spread across it.
       settings = normalizeBrushStrands({
         ...g.strands.settings,
-        width: Math.min(BRUSH_STRANDS_WIDTH_MAX, Math.max(BRUSH_STRANDS_WIDTH_MIN, localSize(matrix, g.strands.settings.width))),
+        width: Math.min(BRUSH_STRANDS_WIDTH_MAX, Math.max(BRUSH_STRANDS_WIDTH_MIN, localSize(matrix, size))),
       }),
       path = smoothStrandPath(g.strands.points, {
         ...strandPathOptions(settings),
         ...(preview ? { maxSamples: STRAND_PREVIEW_MAX_SAMPLES } : {}),
       });
     return buildStrands(path, settings, {
-      strandWidth: localSize(matrix, size),
+      strandWidth: localSize(matrix, settings.thickness),
       sizeAt: pressureSize ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
       opacityAt: pressureOpacity ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
     });
@@ -4122,9 +4538,14 @@ export default function Home() {
     buffer.getContext('2d')!.drawImage(layerCanvas, 0, 0);
     // Render the gradient on its own surface, then composite it onto the
     // layer with the chosen Mode and Opacity (Normal paints over).
-    const gradientSurface = surface(buffer.width, buffer.height),
+    const shaped = gradientMode === 'angle' || gradientMode === 'diamond',
+      // Angle and Diamond are rendered per pixel from a lookup row that uses
+      // the same colour stops as Linear (src/gradientShapes.ts).
+      gradientSurface = surface(shaped ? GRADIENT_LOOKUP_SIZE : buffer.width, shaped ? 1 : buffer.height),
       context = gradientSurface.getContext('2d')!,
-      gradient = gradientMode === 'radial'
+      gradient = shaped
+        ? context.createLinearGradient(0, 0, GRADIENT_LOOKUP_SIZE, 0)
+        : gradientMode === 'radial'
         ? context.createRadialGradient(
           start.x,
           start.y,
@@ -4147,8 +4568,13 @@ export default function Home() {
       stops: gradientStops,
     })) gradient.addColorStop(stop.offset, stop.color);
     context.fillStyle = gradient;
-    context.fillRect(0, 0, buffer.width, buffer.height);
-    let gradientPixels: Uint8ClampedArray = context.getImageData(0, 0, buffer.width, buffer.height).data;
+    context.fillRect(0, 0, gradientSurface.width, gradientSurface.height);
+    let gradientPixels: Uint8ClampedArray = shaped
+      ? renderGradientShape(
+        gradientMode as 'angle' | 'diamond', buffer.width, buffer.height, start, end,
+        context.getImageData(0, 0, GRADIENT_LOOKUP_SIZE, 1).data,
+      )
+      : context.getImageData(0, 0, buffer.width, buffer.height).data;
     if (gradientNoise > 0 || gradientDither > 0) {
       gradientPixels = applyGradientNoise(gradientPixels, buffer.width, buffer.height, gradientNoise);
       gradientPixels = applyGradientDither(gradientPixels, buffer.width, buffer.height, gradientDither);
@@ -4300,6 +4726,8 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    imagePatterns,
+    retouchOptions,
     customShapePresets,
     customPathPresets,
     polygonVariant,
@@ -4307,6 +4735,8 @@ export default function Home() {
     polygonInnerRadius,
     shapeCornerRadius,
     customShapeId,
+    shapeAppearance,
+    penOptions,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -4329,6 +4759,7 @@ export default function Home() {
     gradientNoise,
     gradientBlend,
     gradientOpacity,
+    navigationTools,
     gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -4339,6 +4770,8 @@ export default function Home() {
     redEyeThreshold,
     redEyeAmount,
     colorTolerance,
+    colorRegion,
+    marquee: marqueeOptions,
     tonalExposure,
     tonalRange,
     spongeMode,
@@ -4416,6 +4849,8 @@ export default function Home() {
     // Keep this device's library and add any presets carried by the draft/project.
     setCustomBrushPresets((currentPresets) => mergeBrushPresetLibraries(currentPresets, s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
+    setImagePatterns(normalizeImagePatterns(s.imagePatterns));
+    setRetouchOptions(normalizeRetouchOptions(s.retouchOptions));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
     setSelectedCustomPathPresetId('');
@@ -4424,6 +4859,8 @@ export default function Home() {
     setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
     setShapeCornerRadius(Math.max(0, Math.min(CORNER_RADIUS_MAX, Number(s.shapeCornerRadius ?? 16))));
     setCustomShapeId(validCustomShapeChoice(s.customShapeId) ? s.customShapeId : DEFAULT_CUSTOM_SHAPE_ID);
+    setShapeAppearance(normalizeShapeAppearance(s.shapeAppearance));
+    setPenOptions(normalizePenOptions(s.penOptions));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
@@ -4438,6 +4875,7 @@ export default function Home() {
     setSecondaryBrushPreset(normalizeSecondaryBrushPreset(s.secondaryBrushPreset));
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
+    setNavigationTools(normalizeNavigationToolSettings(s.navigationTools));
     setGradientEnd(s.gradientEnd ?? 'transparent');
     setGradientMidpoint(s.gradientMidpoint ?? 'none');
     setGradientMidpointPosition(s.gradientMidpointPosition ?? 50);
@@ -4456,6 +4894,8 @@ export default function Home() {
     setRedEyeThreshold(s.redEyeThreshold ?? 36);
     setRedEyeAmount(s.redEyeAmount ?? 100);
     setColorTolerance(s.colorTolerance ?? 24);
+    setColorRegion(normalizeColorRegionSettings(s.colorRegion));
+    setMarqueeOptions(normalizeMarqueeOptions(s.marquee));
     setTonalExposure(s.tonalExposure ?? 50);
     setTonalRange(s.tonalRange ?? 'midtones');
     setSpongeMode(s.spongeMode ?? 'saturate');
@@ -4674,7 +5114,14 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Brush preset could not be saved');
     }
   };
+  const setRetouchOption = <K extends keyof RetouchOptions>(key: K, value: RetouchOptions[K]) =>
+    setRetouchOptions((options) => ({ ...options, [key]: value }));
+  /** The selected selection-defined pattern, if it still exists. */
+  const activeImagePattern = retouchOptions.patternImage
+    ? imagePatterns.find((item) => item.id === retouchOptions.patternImage)
+    : undefined;
   const applyCustomPatternPreset = (preset: CustomPatternPreset) => {
+    setRetouchOption('patternImage', null);
     setPatternId(preset.pattern);
     setPatternTileSize(preset.tileSize);
     setColor(preset.foreground);
@@ -4731,7 +5178,7 @@ export default function Home() {
     customShapePathPreset()?.label ?? customShapeEntry(customShapeId)?.label ?? 'Custom Shape';
   /** Shift keeps proportions (a square, or the shape's own aspect); Alt drags from the centre. */
   const newShapeDragBox = (
-    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    shapeTool: Exclude<ShapeToolId, 'line'>,
     start: { x: number; y: number },
     end: { x: number; y: number },
     modifiers: { shiftKey: boolean; altKey: boolean },
@@ -4750,36 +5197,107 @@ export default function Home() {
     }
     return shapeDragBox(start, end, { proportional: modifiers.shiftKey, fromCenter: modifiers.altKey, aspect });
   };
-  /** Build the editable layer a Rounded Rectangle or Custom Shape drag creates. */
+  /**
+   * Build the editable layer any U-family shape tool creates. Every tool
+   * uses the shared Fill / Stroke / Stroke width options (default: filled
+   * with the foreground colour, no stroke); `undefined` when both are None.
+   */
   const newShapeLayer = (
-    shapeTool: 'rounded-rectangle' | 'custom-shape',
+    shapeTool: ShapeToolId,
     box: { left: number; top: number; width: number; height: number },
     name: string,
   ): Layer | undefined => {
     const width = Math.max(1, Math.min(16000, Math.round(box.width))),
       height = Math.max(1, Math.min(16000, Math.round(box.height))),
       matrix: Matrix = [1, 0, 0, 1, Math.round(box.left), Math.round(box.top)];
-    if (shapeTool === 'rounded-rectangle')
+    if (shapeTool === 'line') {
+      const line = lineShapeAppearance(shapeAppearance, color, backgroundColor);
+      return { ...commonLayer(name), kind: 'line', width, height, ...line, matrix };
+    }
+    if (shapeTool === 'custom-shape') {
+      const style = pathShapeAppearance(shapeAppearance, color, backgroundColor);
+      if (!style) return undefined;
+      try {
+        const preset = customShapePathPreset();
+        const path = preset
+          ? fitPathToBox(preset.path, width, height, color)
+          : customShapePath(customShapeEntry(customShapeId) ? customShapeId : DEFAULT_CUSTOM_SHAPE_ID, width, height, color);
+        return { ...commonLayer(name), kind: 'path', path: validatePath({ ...path, ...style }), matrix };
+      } catch {
+        return undefined;
+      }
+    }
+    const look = parametricShapeAppearance(shapeAppearance, color, backgroundColor);
+    if (!look) return undefined;
+    if (shapeTool === 'ellipse') return { ...commonLayer(name), kind: 'ellipse', width, height, ...look, matrix };
+    if (shapeTool === 'polygon')
       return {
         ...commonLayer(name),
-        kind: 'rectangle',
+        kind: 'polygon',
         width,
         height,
-        stroke: Math.max(1, size / 3),
-        color,
-        fill: true,
-        cornerRadius: shapeCornerRadius,
+        ...look,
+        sides: polygonSides,
+        variant: polygonVariant,
+        innerRadius: polygonInnerRadius,
         matrix,
       };
-    try {
-      const preset = customShapePathPreset();
-      const path = preset
-        ? fitPathToBox(preset.path, width, height, color)
-        : customShapePath(customShapeEntry(customShapeId) ? customShapeId : DEFAULT_CUSTOM_SHAPE_ID, width, height, color);
-      return { ...commonLayer(name), kind: 'path', path, matrix };
-    } catch {
-      return undefined;
+    return {
+      ...commonLayer(name),
+      kind: 'rectangle',
+      width,
+      height,
+      ...look,
+      ...(shapeTool === 'rounded-rectangle' ? { cornerRadius: shapeCornerRadius } : {}),
+      matrix,
+    };
+  };
+  /** Add a finished shape layer, or explain why nothing was drawn. */
+  const addShapeLayer = (shapeTool: ShapeToolId, box: { left: number; top: number; width: number; height: number }) => {
+    const f = current();
+    const name = shapeLayerName(shapeTool, f.layers.length, customShapeLabel());
+    const layer = newShapeLayer(shapeTool, box, name);
+    if (!layer) {
+      void paint(f);
+      setNotice('Choose a fill or a stroke colour before drawing a shape');
+      return false;
     }
+    if (!addLayer(layer)) return false;
+    setNotice((value) => (value === 'Layer added' ? `${name} added` : value));
+    return true;
+  };
+  /** Fill or Stroke paint row in the shape Tool options. */
+  const shapePaintRow = (kind: 'fill' | 'stroke') => {
+    const colorKey = kind === 'fill' ? 'fillColor' : 'strokeColor';
+    return (
+      <div className="select-row shape-paint-row">
+        <span>{kind === 'fill' ? 'Fill' : 'Stroke'}</span>
+        <select
+          aria-label={`Shape ${kind}`}
+          value={shapeAppearance[kind]}
+          onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, [kind]: event.target.value as ShapePaintSource }))}
+        >
+          <option value="foreground">Foreground colour</option>
+          <option value="background">Background colour</option>
+          <option value="custom">Custom colour</option>
+          <option value="none">None</option>
+        </select>
+        {shapeAppearance[kind] === 'custom' && (
+          <input
+            type="color"
+            aria-label={`Shape ${kind} colour`}
+            value={shapeAppearance[colorKey]}
+            onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, [colorKey]: event.target.value }))}
+          />
+        )}
+      </div>
+    );
+  };
+  /** Tool options "Create W×H": a shape of the numeric size centred on the canvas. */
+  const createNumericShape = () => {
+    if (!isShapeToolId(tool)) return;
+    const f = current();
+    addShapeLayer(tool, centeredShapeBox(f.w, f.h, shapeAppearance.createWidth, shapeAppearance.createHeight));
   };
   const defineCustomShape = () => {
     const label = window.prompt('Name this custom shape', 'Custom shape');
@@ -4923,13 +5441,7 @@ export default function Home() {
         y: point.y + layer.stroke / 2,
       }));
     }
-    return booleanPathFromPoints(points.map(map), {
-      fill: layer.fill,
-      stroke: true,
-      strokeWidth: layer.stroke,
-      fillColor: layer.color,
-      strokeColor: layer.color,
-    });
+    return booleanPathFromPoints(points.map(map), parametricShapePathStyle(layer));
   };
   const combineSelectedShapes = (operation: PathBooleanOperation) => {
     const f = current(), selected = selectedLayersForFrame(f);
@@ -5001,6 +5513,30 @@ export default function Home() {
     )
       setNotice('Selected layers isolated; undo restores visibility');
   };
+  /**
+   * Delete Cropped Pixels: plain raster layers placed on whole pixels are
+   * trimmed to the canvas (a lossless copy). Type, shape, smart object,
+   * scaled/rotated and metadata-bearing layers keep their content.
+   */
+  const deleteCroppedPixels = async (next: Frame): Promise<Frame> => {
+    const layers = await Promise.all(
+      next.layers.map(async (layer) => {
+        if (layer.kind !== 'raster' || !canExpandRasterLayer(layer)) return layer;
+        const asset = assets.current[layer.asset];
+        if (!asset) return layer;
+        const plan = planCropTrim(layer.matrix, asset.w, asset.h, next.w, next.h);
+        if (!plan) return layer;
+        if (plan.empty) {
+          return { ...layer, asset: addAsset(assets.current, surface(1, 1)), matrix: [1, 0, 0, 1, 0, 0] as Matrix };
+        }
+        const image = await decodeAsset(asset),
+          trimmed = surface(plan.crop.width, plan.crop.height);
+        trimmed.getContext('2d')!.drawImage(image, -plan.crop.x, -plan.crop.y);
+        return { ...layer, asset: addAsset(assets.current, trimmed), matrix: plan.matrix as Matrix };
+      }),
+    );
+    return { ...next, layers };
+  };
   const cancelCropPreview = () => {
     if (!cropPreview) return;
     cropPreviewId.current += 1;
@@ -5018,33 +5554,59 @@ export default function Home() {
       setNotice('Crop preview expired because the document changed');
       return;
     }
-    if (!preview.changed) {
+    // W × H mode resamples the crop to a fixed size; a resolution (ppi) is
+    // written to the image size metadata when one is set.
+    const options = navigationTools;
+    const sized = options.cropRatio === 'size';
+    const outputWidth = sized ? options.cropWidth : preview.width,
+      outputHeight = sized ? options.cropHeight : preview.height;
+    const resolution = options.cropResolution > 0 ? options.cropResolution : undefined;
+    if (
+      !preview.changed &&
+      outputWidth === preview.width &&
+      outputHeight === preview.height &&
+      (!resolution || effectiveImageSize(f.imageSize).resolution === resolution)
+    ) {
       setCropPreview(null);
       setNotice('Crop already matches the canvas; document unchanged');
+      return;
+    }
+    if (outputWidth * outputHeight > 16_000_000) {
+      setNotice('Crop output exceeds 16 megapixels; choose a smaller W × H');
       return;
     }
     const expectedPreviewId = cropPreviewId.current;
     setCropApplying(true);
     try {
-      const next = await transformFrameWithMasks(
+      const sx = outputWidth / preview.width,
+        sy = outputHeight / preview.height;
+      let next = await transformFrameWithMasks(
         f,
-        [1, 0, 0, 1, -preview.left, -preview.top],
+        [sx, 0, 0, sy, -preview.left * sx, -preview.top * sy],
         assets.current,
-        preview.width,
-        preview.height,
+        outputWidth,
+        outputHeight,
       );
+      if (options.cropDeletePixels) next = await deleteCroppedPixels(next);
+      if (resolution)
+        next = { ...next, imageSize: { ...effectiveImageSize(next.imageSize), resolution } };
       if (current() !== f || cropPreviewId.current !== expectedPreviewId) {
         void paint(current());
         setNotice('Crop cancelled because the preview or document changed');
         return;
       }
+      const cropped = cropMeasurements(f.measurements, preview);
       const changed = commit({
         ...next,
-        measurements: cropMeasurements(f.measurements, preview),
+        measurements: sized ? scaleMeasurements(cropped, sx, sy) : cropped,
       });
       if (changed) {
         setCropPreview(null);
-        setNotice(`Crop applied: ${preview.width} × ${preview.height} px`);
+        setNotice(
+          `Crop applied: ${outputWidth} × ${outputHeight} px` +
+            (sized ? ` (resampled from ${preview.width} × ${preview.height})` : '') +
+            (options.cropDeletePixels ? ' · cropped pixels deleted' : ''),
+        );
       }
     } catch {
       setNotice('Could not apply crop preview');
@@ -5355,6 +5917,534 @@ export default function Home() {
     if (commit({ ...f, measurements: [...(f.measurements || []), annotation] }))
       return true;
     return false;
+  };
+  /** Remove matching annotations in one undoable step. */
+  const removeMeasurements = (
+    matches: (item: MeasurementAnnotation) => boolean,
+    done: string,
+    nothing: string,
+  ) => {
+    const f = current(),
+      all = f.measurements || [],
+      kept = all.filter((item) => !matches(item));
+    if (kept.length === all.length) {
+      setNotice(nothing);
+      return;
+    }
+    if (commit({ ...f, measurements: kept })) setNotice(done);
+  };
+  const latestRuler = (f: Frame) => {
+    const found = [...(f.measurements || [])].reverse().find((item) => item.kind === 'ruler');
+    return found?.kind === 'ruler' ? found : undefined;
+  };
+  /**
+   * Ruler → Straighten Layer: rotate the active layer about the ruler's
+   * midpoint so the ruler line becomes horizontal, and clear the ruler (as
+   * Photoshop does). One undoable step; a layer mask turns with the layer.
+   */
+  const straightenLayerToRuler = async () => {
+    const f = current(),
+      ruler = latestRuler(f),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!ruler) {
+      setNotice('Draw a ruler line along the edge that should be level first');
+      return;
+    }
+    if (!layer || layer.kind === 'adjustment' || layerIsLocked(f, layer)) {
+      setNotice('Select an unlocked pixel, type, shape or smart object layer to straighten');
+      return;
+    }
+    const degrees = straightenRotation(ruler.start, ruler.end);
+    if (Math.abs(degrees) < 0.05) {
+      setNotice('The ruler is already level');
+      return;
+    }
+    const rotation = rotationAboutPoint(
+      degrees,
+      (ruler.start.x + ruler.end.x) / 2,
+      (ruler.start.y + ruler.end.y) / 2,
+    ) as Matrix;
+    let mask = isMaskableLayer(layer) ? layer.mask : undefined;
+    try {
+      if (mask && assets.current[mask]) {
+        const image = await decodeAsset(assets.current[mask]),
+          turned = surface(f.w, f.h),
+          context = turned.getContext('2d')!;
+        context.setTransform(...rotation);
+        context.drawImage(image, 0, 0);
+        mask = addAsset(assets.current, turned);
+      }
+    } catch {
+      setNotice('Could not rotate this layer mask');
+      return;
+    }
+    if (current() !== f) {
+      setNotice('Straighten cancelled because the document changed');
+      return;
+    }
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id
+            ? { ...item, matrix: multiply(rotation, item.matrix), ...(mask && isMaskableLayer(item) ? { mask } : {}) }
+            : item,
+        ),
+        measurements: (f.measurements || []).filter((item) => item.kind !== 'ruler'),
+      })
+    )
+      setNotice(`Layer straightened: rotated ${degrees > 0 ? 'clockwise' : 'counter-clockwise'} ${Math.abs(degrees).toFixed(1)}°`);
+  };
+  /**
+   * Crop → Straighten: rotate every layer about the canvas centre so the
+   * drawn line is level (one undoable step), then stage a crop of the
+   * largest rectangle without transparent corners.
+   */
+  const straightenDocument = async (f: Frame, start: CropPoint, end: CropPoint) => {
+    const degrees = straightenRotation(start, end);
+    if (Math.abs(degrees) < 0.05) {
+      setNotice('That line is already level; nothing to straighten');
+      return;
+    }
+    try {
+      const rotation = rotationAboutPoint(degrees, f.w / 2, f.h / 2) as Matrix;
+      const next = await transformFrameWithMasks(f, rotation, assets.current, f.w, f.h);
+      if (current() !== f) {
+        setNotice('Straighten cancelled because the document changed');
+        return;
+      }
+      if (!commit({ ...next, measurements: f.measurements })) return;
+      const inner = inscribedCropAfterRotation(f.w, f.h, degrees);
+      const plan = planRectangularCrop(f.w, f.h, { x: inner.left, y: inner.top }, {
+        x: inner.left + inner.width,
+        y: inner.top + inner.height,
+      });
+      cropPreviewId.current += 1;
+      setCropPreview({ frame: current(), ...plan });
+      setNotice(
+        `Straightened ${Math.abs(degrees).toFixed(1)}° · crop preview ${plan.width} × ${plan.height} px removes the empty corners; Enter applies`,
+      );
+    } catch {
+      setNotice('Could not straighten the document');
+    }
+  };
+  const saveNoteEditor = () => {
+    const editor = noteEditor;
+    if (!editor) return;
+    const text = editor.text.trim().slice(0, 500);
+    if (!text) {
+      setNotice('Type a note before saving, or Cancel');
+      return;
+    }
+    const f = current();
+    if (editor.id) {
+      const exists = (f.measurements || []).some((item) => item.id === editor.id);
+      if (
+        exists &&
+        commit({
+          ...f,
+          measurements: (f.measurements || []).map((item) =>
+            item.id === editor.id && item.kind === 'note' ? { ...item, text, color: editor.color } : item,
+          ),
+        })
+      ) {
+        setNoteEditor(null);
+        setNotice('Note updated');
+      }
+      return;
+    }
+    if (
+      appendMeasurement({
+        id: newMeasurementId(),
+        kind: 'note',
+        x: editor.x,
+        y: editor.y,
+        text,
+        color: editor.color,
+      })
+    ) {
+      setNoteEditor(null);
+      setNotice('Note added to the draft');
+    } else setNotice('Note could not be saved (check for control characters)');
+  };
+  const deleteNote = (id: string) => {
+    setNoteEditor(null);
+    removeMeasurements((item) => item.id === id, 'Note deleted', 'Note already removed');
+  };
+  /** Draft text of the Count group name field until it is committed. */
+  const [countGroupDraft, setCountGroupDraft] = useState<string | null>(null);
+  const commitCountGroupDraft = () => {
+    if (countGroupDraft === null) return;
+    const name = countGroupDraft.trim().replace(/\s+/g, ' ').slice(0, 40);
+    setCountGroupDraft(null);
+    if (name) setNavigationTool('countGroup', name);
+  };
+  /**
+   * Tool options for Zoom, Eyedropper, Color Sampler, Ruler, Note, Count,
+   * Crop and Perspective Crop (docs/navigation-tool-options-contract.md).
+   */
+  const renderNavigationToolOptions = () => {
+    const options = navigationTools;
+    const measurements = frame?.measurements || [];
+    if (tool === 'zoom')
+      return (
+        <div className="nav-tool-options" data-testid="zoom-options">
+          <label className="select-row">
+            <span>Zoom mode</span>
+            <select
+              aria-label="Zoom mode"
+              value={options.zoomMode}
+              onChange={(event) => setNavigationTool('zoomMode', event.target.value as NavigationToolSettings['zoomMode'])}
+            >
+              <option value="in">Zoom In</option>
+              <option value="out">Zoom Out</option>
+            </select>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              aria-label="Scrubby Zoom"
+              checked={options.scrubbyZoom}
+              onChange={(event) => setNavigationTool('scrubbyZoom', event.target.checked)}
+            />
+            Scrubby Zoom
+          </label>
+          <div className="option-buttons">
+            <button type="button" onClick={actualPixels}>100%</button>
+            <button type="button" onClick={fitToScreen}>Fit Screen</button>
+            <button type="button" onClick={fillScreen}>Fill Screen</button>
+          </div>
+          <p className="adjust-note">
+            Click zooms {options.zoomMode === 'in' ? 'in' : 'out'}; Alt-click zooms {options.zoomMode === 'in' ? 'out' : 'in'}.
+            {options.scrubbyZoom ? ' Drag right to zoom in, left to zoom out.' : ''} Ctrl/⌘+0 fits, Ctrl/⌘+1 shows 100%.
+          </p>
+        </div>
+      );
+    if (tool === 'eyedropper')
+      return (
+        <div className="nav-tool-options" data-testid="eyedropper-options">
+          <label className="select-row">
+            <span>Sample size</span>
+            <select
+              aria-label="Sample size"
+              value={options.eyedropperSize}
+              onChange={(event) => setNavigationTool('eyedropperSize', Number(event.target.value) as EyedropperSampleSize)}
+            >
+              {EYEDROPPER_SAMPLE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size === 1 ? 'Point Sample' : `${size} by ${size} Average`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="select-row">
+            <span>Sample</span>
+            <select
+              aria-label="Eyedropper sample"
+              value={options.eyedropperSample}
+              onChange={(event) => setNavigationTool('eyedropperSample', event.target.value as NavigationToolSettings['eyedropperSample'])}
+            >
+              <option value="all">All Layers</option>
+              <option value="current">Current Layer</option>
+            </select>
+          </label>
+          <p className="adjust-note">Click sets the foreground color; Alt-click sets the background color.</p>
+        </div>
+      );
+    if (tool === 'color-sampler') {
+      const samples = measurements.filter((item) => item.kind === 'sample');
+      return (
+        <div className="nav-tool-options" data-testid="color-sampler-options">
+          {samples.length ? (
+            <ol className="measure-list" aria-label="Color samplers">
+              {samples.map((item, index) => {
+                if (item.kind !== 'sample') return null;
+                const live = samplerLive[item.id] ?? { color: item.color, alpha: item.alpha };
+                const rgb = [1, 3, 5].map((offset) => parseInt(live.color.slice(offset, offset + 2), 16));
+                return (
+                  <li key={item.id} data-testid="color-sampler-row">
+                    <i className="measure-swatch" style={{ background: live.color }} aria-hidden="true" />
+                    <b>#{index + 1}</b>
+                    <span>
+                      R {rgb[0]} G {rgb[1]} B {rgb[2]} · {live.color.toUpperCase()} · α {live.alpha}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Delete color sampler ${index + 1}`}
+                      title="Delete sampler"
+                      onClick={() =>
+                        removeMeasurements((entry) => entry.id === item.id, `Color sampler ${index + 1} deleted`, 'Sampler already removed')
+                      }
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="adjust-note">Click the image to place color samplers; their values update as you edit.</p>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={!samples.length}
+            onClick={() => removeMeasurements((item) => item.kind === 'sample', 'All color samplers cleared', 'No color samplers to clear')}
+          >
+            Clear All
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'ruler') {
+      const ruler = frame ? latestRuler(frame) : undefined;
+      const line = measurementPreview ?? (ruler ? { start: ruler.start, end: ruler.end } : null);
+      const readout = line ? rulerReadout(line.start, line.end) : null;
+      return (
+        <div className="nav-tool-options" data-testid="ruler-options">
+          <dl className="measure-readout" data-testid="ruler-readout" aria-live="polite">
+            <div><dt>Length</dt><dd>{readout ? `${readout.length.toFixed(1)} px` : '—'}</dd></div>
+            <div><dt>Angle</dt><dd>{readout ? `${readout.angle.toFixed(1)}°` : '—'}</dd></div>
+            <div><dt>Δx</dt><dd>{readout ? `${readout.dx.toFixed(1)} px` : '—'}</dd></div>
+            <div><dt>Δy</dt><dd>{readout ? `${readout.dy.toFixed(1)} px` : '—'}</dd></div>
+          </dl>
+          <div className="option-buttons">
+            <button type="button" disabled={!ruler} onClick={() => void straightenLayerToRuler()}>
+              Straighten Layer
+            </button>
+            <button
+              type="button"
+              disabled={!ruler}
+              onClick={() => removeMeasurements((item) => item.kind === 'ruler', 'Ruler cleared', 'No ruler to clear')}
+            >
+              Clear
+            </button>
+          </div>
+          <p className="adjust-note">
+            Angles follow Photoshop: a line rising to the right is positive. Δy is measured downwards in image pixels.
+          </p>
+        </div>
+      );
+    }
+    if (tool === 'note') {
+      const notes = measurements.filter((item) => item.kind === 'note');
+      return (
+        <div className="nav-tool-options" data-testid="note-options">
+          <label className="select-row">
+            <span>Note color</span>
+            <input
+              type="color"
+              aria-label="Note color"
+              value={options.noteColor}
+              onChange={(event) => setNavigationTool('noteColor', event.target.value)}
+            />
+          </label>
+          <p className="adjust-note">
+            Click the image to add a note. Click a note to edit, recolor or delete it; drag it to move it.
+          </p>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!notes.length}
+            onClick={() => removeMeasurements((item) => item.kind === 'note', 'All notes cleared', 'No notes to clear')}
+          >
+            Clear notes ({notes.length})
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'count') {
+      const totals = countGroupTotals(measurements);
+      const groupCount = totals.find((entry) => entry.group === options.countGroup)?.count ?? 0;
+      return (
+        <div className="nav-tool-options" data-testid="count-options">
+          <label className="select-row">
+            <span>Count group</span>
+            <input
+              className="text-input"
+              aria-label="Count group name"
+              list="count-group-names"
+              maxLength={40}
+              value={countGroupDraft ?? options.countGroup}
+              onChange={(event) => setCountGroupDraft(event.target.value)}
+              onBlur={commitCountGroupDraft}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  commitCountGroupDraft();
+                }
+              }}
+            />
+          </label>
+          <datalist id="count-group-names">
+            {totals.map((entry) => (
+              <option key={entry.group} value={entry.group}>{entry.group}</option>
+            ))}
+          </datalist>
+          <label className="select-row">
+            <span>Group color</span>
+            <input
+              type="color"
+              aria-label="Count group color"
+              value={options.countColor}
+              onChange={(event) => setNavigationTool('countColor', event.target.value)}
+            />
+          </label>
+          <Slider
+            label="Label size"
+            value={options.countLabelSize}
+            min={COUNT_LABEL_SIZE_MIN}
+            max={COUNT_LABEL_SIZE_MAX}
+            set={(value) => setNavigationTool('countLabelSize', Math.round(value))}
+            suffix=" px"
+          />
+          {totals.length > 0 && (
+            <ul className="measure-list" aria-label="Count groups">
+              {totals.map((entry) => (
+                <li key={entry.group}>
+                  <i className="measure-swatch" style={{ background: entry.color ?? '#ff5c35' }} aria-hidden="true" />
+                  <span>{entry.group}</span>
+                  <b>{entry.count}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={!groupCount}
+            onClick={() =>
+              removeMeasurements(
+                (item) => item.kind === 'count' && countGroupOf(item) === options.countGroup,
+                `Count cleared for ${options.countGroup}`,
+                'No count markers in this group',
+              )
+            }
+          >
+            Clear count
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'crop') {
+      const ratioLabels: Record<CropRatioPreset, string> = {
+        free: 'Ratio (free)',
+        original: 'Original ratio',
+        '1:1': '1 : 1 (square)',
+        '4:5': '4 : 5 (8 : 10)',
+        '5:7': '5 : 7',
+        '2:3': '2 : 3 (4 : 6)',
+        '3:4': '3 : 4',
+        '16:9': '16 : 9',
+        ratio: 'Custom ratio',
+        size: 'W × H px (resample)',
+      };
+      const custom = options.cropRatio === 'ratio' || options.cropRatio === 'size';
+      return (
+        <div className="nav-tool-options" data-testid="crop-options">
+          <label className="select-row">
+            <span>Ratio</span>
+            <select
+              aria-label="Crop aspect ratio"
+              value={options.cropRatio}
+              onChange={(event) => setNavigationTool('cropRatio', event.target.value as CropRatioPreset)}
+            >
+              {CROP_RATIO_PRESETS.map((preset) => (
+                <option key={preset} value={preset}>{ratioLabels[preset]}</option>
+              ))}
+            </select>
+          </label>
+          {custom && (
+            <div className="select-row crop-size-row">
+              <span>{options.cropRatio === 'size' ? 'W × H px' : 'W : H'}</span>
+              <IntegerField
+                label="Crop width"
+                value={options.cropWidth}
+                min={1}
+                max={CROP_DIMENSION_MAX}
+                set={(value) => setNavigationTool('cropWidth', value)}
+              />
+              <i aria-hidden="true">×</i>
+              <IntegerField
+                label="Crop height"
+                value={options.cropHeight}
+                min={1}
+                max={CROP_DIMENSION_MAX}
+                set={(value) => setNavigationTool('cropHeight', value)}
+              />
+            </div>
+          )}
+          <div className="select-row">
+            <span>Resolution (ppi, 0 keeps)</span>
+            <IntegerField
+              label="Crop resolution"
+              value={options.cropResolution}
+              min={0}
+              max={CROP_RESOLUTION_MAX}
+              set={(value) => setNavigationTool('cropResolution', value)}
+            />
+          </div>
+          <label className="select-row">
+            <span>Overlay</span>
+            <select
+              aria-label="Crop overlay"
+              value={options.cropOverlay}
+              onChange={(event) => setNavigationTool('cropOverlay', event.target.value as CropOverlay)}
+            >
+              {CROP_OVERLAYS.map((overlay) => (
+                <option key={overlay} value={overlay}>
+                  {overlay === 'thirds' ? 'Rule of thirds' : overlay === 'grid' ? 'Grid' : 'None'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              aria-label="Delete cropped pixels"
+              checked={options.cropDeletePixels}
+              onChange={(event) => setNavigationTool('cropDeletePixels', event.target.checked)}
+            />
+            Delete Cropped Pixels
+          </label>
+          <div className="option-buttons">
+            <button
+              type="button"
+              aria-pressed={cropStraightenArmed}
+              onClick={() => {
+                setCropStraightenArmed((armed) => !armed);
+                setNotice(cropStraightenArmed ? 'Straighten cancelled' : 'Straighten: drag along a line that should be level');
+              }}
+            >
+              Straighten
+            </button>
+          </div>
+          <p className="adjust-note">
+            {options.cropDeletePixels
+              ? 'Raster layers placed on whole pixels are trimmed to the crop; type, shapes, smart objects and transformed layers keep their content.'
+              : 'Pixels outside the crop stay on their layers and can be moved back into view.'}
+          </p>
+        </div>
+      );
+    }
+    if (tool === 'perspective-crop')
+      return (
+        <div className="nav-tool-options" data-testid="perspective-crop-options">
+          <p className="adjust-note">
+            {perspectiveCropPreview
+              ? 'Drag the corner handles on the canvas or edit the corner fields, then Apply or press Enter.'
+              : perspectiveClicks.length
+                ? `Corner ${perspectiveClicks.length} of 4 placed; click the remaining corners.`
+                : 'Drag a rectangle, or click four corners of the surface, then drag the corner handles.'}
+          </p>
+          {perspectiveClicks.length > 0 && !perspectiveCropPreview && (
+            <button type="button" className="secondary" onClick={() => setPerspectiveClicks([])}>
+              Reset corners
+            </button>
+          )}
+        </div>
+      );
+    return null;
   };
   // Audio Annotation (docs/audio-annotation-contract.md): markers are frame
   // measurements (undoable, never rendered); clips are draft-level.
@@ -5811,13 +6901,18 @@ export default function Home() {
     }
     return result;
   };
-  const editLayer = (patch: Partial<Layer>) => {
+  const editLayer = (requested: Partial<Layer>) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before editing layers');
       return false;
     }
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
+    // Renaming the Background turns it into an ordinary layer, as in Photoshop.
+    const patch: Partial<Layer> = 'name' in requested && layer.kind === 'raster' && layer.background === true &&
+      requested.name !== layer.name
+      ? ({ ...requested, background: undefined } as Partial<Layer>)
+      : requested;
     const group = groupForLayer(f, layer);
     if (
       group?.locked ||
@@ -5847,6 +6942,7 @@ export default function Home() {
       patch.kind && patch.kind !== layer.kind
         ? (patch as Layer)
         : ({ ...layer, ...patch } as Layer);
+    if (patch !== requested) next = layerFromBackground(next);
     // Plain-text edits (Layers panel field) keep character styles aligned.
     if (next.kind === 'text' && layer.kind === 'text' && next.text !== layer.text && !('rich' in patch))
       next = withTextRemapped(layer, next.text, next);
@@ -6294,7 +7390,7 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Could not create a Type Mask selection');
     }
   };
-  const setSelection = (selection: Selection | undefined) => {
+  const setSelection = (selection: Selection | undefined, createdLabel?: string) => {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
     // A deselect keeps the exact editable snapshot needed by Select > Reselect.
@@ -6309,11 +7405,12 @@ export default function Home() {
         };
     if (commit(next)) {
       const label =
-        selection?.shape === 'ellipse'
+        createdLabel ??
+        (selection?.shape === 'ellipse'
           ? 'Elliptical'
           : selection?.shape === 'polygon'
             ? 'Polygonal'
-            : 'Rectangular';
+            : 'Rectangular');
       setNotice(selection ? `${label} selection created` : 'Selection cleared');
     }
   };
@@ -6919,7 +8016,16 @@ export default function Home() {
     points: selection.points,
     operation: 'replace',
   });
-  const mergeSelection = (next: Selection) => {
+  /**
+   * Merge a marquee/lasso selection with the current one. The options-bar
+   * Feather (docs/selection-feather-contract.md) applies to every new marquee
+   * and lasso selection except the one-pixel Single Row/Column marquees.
+   */
+  const mergeSelection = (created: Selection, createdLabel?: string) => {
+    const next =
+      marqueeOptions.feather > 0 && tool !== 'row-select' && tool !== 'column-select' && !created.feather
+        ? { ...created, feather: marqueeOptions.feather }
+        : created;
     const frame = current(),
       frameIndex = index.current,
       workToken = ++selectionWorkToken.current,
@@ -6927,7 +8033,7 @@ export default function Home() {
       sourceAssets = assets.current,
       currentSelection = frame.selection;
     if (!currentSelection || operation === 'replace') {
-      setSelection({ ...next, parts: [selectionPart(next)] });
+      setSelection({ ...next, parts: [selectionPart(next)] }, createdLabel);
       return;
     }
     // Keep simple geometry editable. Once either side is an alpha mask or has
@@ -6948,7 +8054,7 @@ export default function Home() {
       ];
       parts.push({ ...selectionPart(next), operation });
       if (isCurrentSelectionOperation(frame, frameIndex, workToken))
-        setSelection({ ...next, parts });
+        setSelection({ ...next, parts }, createdLabel);
       return;
     }
     void (async () => {
@@ -6973,7 +8079,7 @@ export default function Home() {
           frameIndex,
           workToken,
           candidate,
-          `${next.shape === 'ellipse' ? 'Elliptical' : next.shape === 'polygon' ? 'Polygonal' : 'Rectangular'} selection created`,
+          `${createdLabel ?? (next.shape === 'ellipse' ? 'Elliptical' : next.shape === 'polygon' ? 'Polygonal' : 'Rectangular')} selection created`,
         );
       } catch {
         if (isCurrentSelectionOperation(frame, frameIndex, workToken))
@@ -7011,7 +8117,7 @@ export default function Home() {
       points: bounded.points,
       feather: 0,
       inverted: false,
-    });
+    }, LASSO_CREATED_LABELS[label]);
     return true;
   };
   const finishPolygonalLasso = (g: Gesture) => {
@@ -7034,6 +8140,39 @@ export default function Home() {
     }
     if (f.selection && commit({ ...f, selection: { ...f.selection, feather } }))
       setNotice(`Selection feather set to ${formatSelectionFeather(feather)} px`);
+  };
+  /**
+   * Delete/Backspace with an active selection: clear the selected pixels of
+   * the active raster layer to transparency as one undoable history step
+   * (docs/selection-outline-contract.md). Feathered coverage clears partially.
+   */
+  const clearSelectedLayerPixels = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) return;
+    if (!layer || layer.kind !== 'raster' || !layer.visible || layerIsLocked(f, layer)) {
+      setNotice('Select a visible, unlocked raster layer to clear the selected pixels');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        buffer = surface(image.naturalWidth, image.naturalHeight),
+        context = buffer.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height);
+      if (current() !== f) return;
+      const pixels = context.getImageData(0, 0, buffer.width, buffer.height);
+      if (!mask || !clearSelectedPixels(pixels.data, mask)) {
+        setNotice('The selection has no pixels to clear on this layer');
+        return;
+      }
+      context.putImageData(pixels, 0, 0);
+      const asset = addAsset(assets.current, buffer);
+      if (commit({ ...f, layers: f.layers.map((item) => (item.id === layer.id ? { ...item, asset } : item)) }))
+        setNotice('Selected pixels cleared; undo restores them');
+    } catch {
+      setNotice('Could not clear the selected pixels');
+    }
   };
   const createMaskFromSelection = async () => {
     const f = current(),
@@ -8178,8 +9317,8 @@ export default function Home() {
     setCloud(undefined);
     setCloudMessage('');
   };
-  const startRaster = (image: HTMLCanvasElement, title: string) => {
-    const f = rasterFrame(image, assets.current);
+  const startRaster = (image: HTMLCanvasElement, title: string, background = false) => {
+    const f = rasterFrame(image, assets.current, 'Background', background);
     if (commit(f, true)) {
       clearClipboard();
       setDraftId(createDraftId());
@@ -8197,7 +9336,8 @@ export default function Home() {
       image.getContext('2d')!.fillStyle = '#fff';
       image.getContext('2d')!.fillRect(0, 0, 1200, 800);
     }
-    startRaster(image, transparent ? 'untitled-transparent' : 'untitled');
+    // A filled document starts with a locked-position Background layer.
+    startRaster(image, transparent ? 'untitled-transparent' : 'untitled', !transparent);
     setNotice(transparent ? 'New transparent document' : 'New document');
   };
   /** File → New…: a document of any allowed size and background. */
@@ -8209,7 +9349,7 @@ export default function Home() {
       context.fillStyle = fill;
       context.fillRect(0, 0, request.width, request.height);
     }
-    if (startRaster(image, request.name || 'untitled')) {
+    if (startRaster(image, request.name || 'untitled', Boolean(fill))) {
       setNewDocumentOpen(false);
       setNotice(`New document ${request.width} × ${request.height} px`);
     }
@@ -8343,7 +9483,7 @@ export default function Home() {
         x.bezierCurveTo(350, y - 38, 610, y + 34, 980, y - 6);
         x.stroke();
       }
-      commitDocument(rasterFrame(c, assets.current), true);
+      commitDocument(rasterFrame(c, assets.current, 'Background', true), true);
       setViewZoomState(fittedZoom(stage.current, c.width, c.height));
       setReady(true);
     })();
@@ -8387,6 +9527,8 @@ export default function Home() {
         brushPreset,
         customBrushPresets,
         customPatternPresets,
+        imagePatterns,
+        retouchOptions,
         customShapePresets,
         customPathPresets,
         polygonVariant,
@@ -8394,6 +9536,8 @@ export default function Home() {
         polygonInnerRadius,
         shapeCornerRadius,
         customShapeId,
+        shapeAppearance,
+        penOptions,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
@@ -8417,6 +9561,7 @@ export default function Home() {
         gradientNoise,
         gradientBlend,
         gradientOpacity,
+        navigationTools,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -8426,6 +9571,8 @@ export default function Home() {
         redEyeThreshold,
         redEyeAmount,
         colorTolerance,
+        colorRegion,
+        marquee: marqueeOptions,
         tonalExposure,
         tonalRange,
         spongeMode,
@@ -8515,6 +9662,8 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    imagePatterns,
+    retouchOptions,
     customShapePresets,
     customPathPresets,
     polygonVariant,
@@ -8522,6 +9671,8 @@ export default function Home() {
     polygonInnerRadius,
     shapeCornerRadius,
     customShapeId,
+    shapeAppearance,
+    penOptions,
     brushSpacing,
     brushSmoothing,
     brushScatter,
@@ -8545,6 +9696,7 @@ export default function Home() {
     gradientNoise,
     gradientBlend,
     gradientOpacity,
+    navigationTools,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -8554,6 +9706,8 @@ export default function Home() {
     redEyeThreshold,
     redEyeAmount,
     colorTolerance,
+    colorRegion,
+    marqueeOptions,
     tonalExposure,
     tonalRange,
     spongeMode,
@@ -8580,6 +9734,32 @@ export default function Home() {
   useEffect(() => {
     if (quickMasking && quickMask) drawQuickMaskOverlay(quickMask);
   }, [quickMasking, quickMask]);
+  // Marching ants (docs/selection-outline-contract.md): trace the rendered
+  // selection once per selection change; the overlay only animates a dash.
+  const outlineSelection = frame?.selection,
+    outlineWidth = frame?.w ?? 0,
+    outlineHeight = frame?.h ?? 0;
+  useEffect(() => {
+    if (!outlineSelection || !outlineWidth || !outlineHeight) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void frameSelectionMask(outlineSelection, { w: outlineWidth, h: outlineHeight } as Frame, assets.current)
+        .then((mask) => {
+          if (cancelled || !mask) return;
+          setSelectionOutlineState({
+            selection: outlineSelection,
+            outline: selectionOutline(mask, outlineWidth, outlineHeight),
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setSelectionOutlineState(null);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [outlineSelection, outlineWidth, outlineHeight, assets]);
   useEffect(() => {
     if (!ready) return;
     if (!frame?.quickMask?.active) {
@@ -9695,11 +10875,7 @@ export default function Home() {
           ? transformPath({
               nodes: roundedRectNodes(layer.width, layer.height, layer.cornerRadius),
               closed: true,
-              fill: layer.fill,
-              stroke: true,
-              strokeWidth: layer.stroke,
-              fillColor: layer.color,
-              strokeColor: layer.color,
+              ...parametricShapePathStyle(layer),
             }, layer.matrix)
           : booleanOperand(layer),
         f.w,
@@ -10102,7 +11278,12 @@ export default function Home() {
         // the commit hashes only the tiles the path touched. A blend-mode
         // path rewrites the whole buffer at once and is scanned in full.
         if (!selectionMask && !blendMode) trackCanvasWrites(buffer);
+        // Like a pointer stroke: Opacity caps the whole path; the Eraser
+        // paints the background colour on the Background layer.
+        const eraseToBackground = tool === 'eraser' && isBackgroundLayer(f, layer);
         changed = stampStrokePathSamples(target, plan.samples, {
+          strokeBuffers: new WeakMap(),
+          strokeOpacity: brushOpacity / 100,
           size: brushSize,
           hardness: tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
@@ -10119,8 +11300,8 @@ export default function Home() {
           roundness: tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
           flipY: brushFlipY,
-          mode: tool === 'eraser' ? 'destination-out' : 'source-over',
-          color: tool === 'eraser' ? undefined : brushColor(color),
+          mode: tool === 'eraser' && !eraseToBackground ? 'destination-out' : 'source-over',
+          color: tool !== 'eraser' ? brushColor(color) : eraseToBackground ? brushColor(backgroundColor) : undefined,
           colorBackground: brushColor(backgroundColor),
           symmetry,
         });
@@ -11618,11 +12799,12 @@ export default function Home() {
     context.setLineDash([]);
     context.restore();
   };
-  const previewPenPath = (g: Gesture) => {
+  /** `pointer` adds the Rubber Band segment from the last anchor to the pointer. */
+  const previewPenPath = (g: Gesture, pointer?: { x: number; y: number }) => {
     const points = g.points || [];
     if (!points.length) return;
     const preview: PathModel = {
-      nodes: points,
+      nodes: rubberBandNodes(points, pointer),
       closed: false,
       fill: false,
       stroke: true,
@@ -11648,8 +12830,8 @@ export default function Home() {
         drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
     });
   };
-  const previewCurvaturePath = (g: Gesture) => {
-    const points = g.points || [];
+  const previewCurvaturePath = (g: Gesture, pointer?: { x: number; y: number }) => {
+    const points = pointer && g.points?.length ? appendCurvaturePoint(g.points, pointer) : g.points || [];
     if (points.length < 2) return previewPenPath(g);
     const preview = buildCurvaturePath(points, {
       strokeWidth: Math.max(1, size / 3),
@@ -11667,17 +12849,14 @@ export default function Home() {
       return;
     }
     try {
-      const path = buildFreeformPath(g.points, {
-        strokeWidth: Math.max(1, size / 3),
-        fillColor: color,
-        strokeColor: color,
-      });
+      const style = penPathStyle(penOptions.mode, false, Math.max(1, size / 3), color);
+      const path = validatePath({ ...buildFreeformPath(g.points, style), ...style });
       const added = addLayer({
-        ...commonLayer('Freeform Path ' + g.frame.layers.length),
+        ...commonLayer(penLayerName('freeform-pen', penOptions.mode, g.frame.layers.length)),
         kind: 'path',
         path,
       });
-      if (added) setNotice('Editable freeform path layer added');
+      if (added) setNotice(penLayerNotice('freeform-pen', penOptions.mode));
     } catch {
       setNotice('Could not create a freeform path');
     }
@@ -11689,21 +12868,14 @@ export default function Home() {
       return;
     }
     try {
-      const path = buildCurvaturePath(
-        g.points,
-        {
-          strokeWidth: Math.max(1, size / 3),
-          fillColor: color,
-          strokeColor: color,
-        },
-        closed,
-      );
+      const style = penPathStyle(penOptions.mode, closed, Math.max(1, size / 3), color);
+      const path = validatePath({ ...buildCurvaturePath(g.points, style, closed), ...style });
       const added = addLayer({
-        ...commonLayer('Curvature Path ' + g.frame.layers.length),
+        ...commonLayer(penLayerName('curvature-pen', penOptions.mode, g.frame.layers.length)),
         kind: 'path',
         path,
       });
-      if (added) setNotice('Editable curvature path layer added');
+      if (added) setNotice(penLayerNotice('curvature-pen', penOptions.mode));
     } catch {
       void paint(g.frame);
       setNotice('Could not create a curvature path');
@@ -11976,19 +13148,15 @@ export default function Home() {
           const path: PathModel = {
             nodes,
             closed: true,
-            fill: true,
-            stroke: true,
-            strokeWidth: Math.max(1, size / 3),
-            fillColor: color,
-            strokeColor: color,
+            ...penPathStyle(penOptions.mode, true, Math.max(1, size / 3), color),
           };
           if (validatePath(path)) {
             const added = addLayer({
-              ...commonLayer('Path ' + g.frame.layers.length),
+              ...commonLayer(penLayerName('pen', penOptions.mode, g.frame.layers.length)),
               kind: 'path',
               path,
             });
-            if (added) setNotice('Editable path layer added');
+            if (added) setNotice(penLayerNotice('pen', penOptions.mode));
           }
         }
       } else {
@@ -12042,15 +13210,13 @@ export default function Home() {
           0.0001,
         );
         // Shared with the dedicated Add/Delete Anchor Point and Convert
-        // Point tools (src/pathEditTools.ts). A click that edits nothing
-        // falls through and starts a new path, as it always has.
-        const edit = editPathAnchor(
-          validatePath(activeLayer.path),
-          localPath,
-          12 / scale,
-          penAnchorEditMode(e),
-        );
-        if (isPathAnchorEdit(edit)) {
+        // Point tools (src/pathEditTools.ts). Auto Add/Delete makes an
+        // unmodified click on an anchor delete it and on a segment add one;
+        // a click that edits nothing falls through and starts a new path.
+        const editPath = validatePath(activeLayer.path);
+        const editMode = penAutoEditMode(editPath, localPath, 12 / scale, e, penOptions.autoAddDelete);
+        const edit = editMode ? editPathAnchor(editPath, localPath, 12 / scale, editMode) : null;
+        if (edit && isPathAnchorEdit(edit)) {
           if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: edit.path } : item) }))
             setNotice(pathAnchorEditNotice(edit));
           return;
@@ -12351,7 +13517,12 @@ export default function Home() {
       // released its pointer; the tool still runs at the recorded point.
     }
     if (tool === 'slice-select') {
-      const selected = sliceAtPoint(f.slices, p.x, p.y);
+      // The selected slice's edges and corners (a few screen pixels either
+      // side) resize it; its interior, or any slice's interior, moves it.
+      const tolerance = (8 * 100) / Math.max(1, viewZoomRef.current);
+      const activeSlice = f.slices?.find((item) => item.id === f.activeSliceId);
+      const activeHandle = activeSlice ? hitTestSliceHandle(activeSlice, p.x, p.y, tolerance) : null;
+      const selected = activeHandle && activeSlice ? { ...activeSlice } : sliceAtPoint(f.slices, p.x, p.y);
       if (!selected) {
         setSlicePreview(null);
         setSlicePreviewMode('draft');
@@ -12365,6 +13536,15 @@ export default function Home() {
       setSliceName(selected.name);
       void paint(current());
       setNotice(`Slice selected: ${selected.name} · ${selected.width} × ${selected.height} px`);
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: current(),
+        moved: false,
+        sliceHandle: activeHandle ?? 'move',
+        sliceOrigin: { ...selected },
+      };
       return;
     }
     if (tool === 'frame') {
@@ -12392,13 +13572,18 @@ export default function Home() {
         );
         return;
       }
-      if (!layer.mask) {
+      // A fresh adjustment layer has no mask: the Adjustment Brush creates
+      // one on its first stroke (empty to paint the adjustment in, full to
+      // paint it out). Mask Brush/Eraser still refine an existing mask only.
+      if (!layer.mask && tool !== 'adjustment-brush') {
         setNotice('Create a layer mask or remove a background before refining');
         return;
       }
+      const adjustmentConceal = tool === 'adjustment-brush' &&
+        (adjustmentBrushMode === 'conceal') !== e.altKey;
       const mode: MaskRefinementMode =
-          tool === 'mask-eraser' ? 'conceal' : 'reveal',
-        maskAsset = assets.current[layer.mask],
+          tool === 'mask-eraser' || adjustmentConceal ? 'conceal' : 'reveal',
+        maskAsset = layer.mask ? assets.current[layer.mask] : undefined,
         initialPoint = {
           x: p.x,
           y: p.y,
@@ -12426,14 +13611,19 @@ export default function Home() {
       gesture.current = g;
       g.pending = (async () => {
         try {
-          const image = await decodeAsset(maskAsset);
-          if (image.naturalWidth !== f.w || image.naturalHeight !== f.h)
+          const image = maskAsset ? await decodeAsset(maskAsset) : undefined;
+          if (image && (image.naturalWidth !== f.w || image.naturalHeight !== f.h))
             throw new Error('Layer mask dimensions do not match the canvas');
           const buffer = surface(f.w, f.h),
             context = buffer.getContext('2d');
           if (!context) throw new Error('Mask refinement canvas is unavailable');
           context.imageSmoothingEnabled = false;
-          context.drawImage(image, 0, 0);
+          if (image) context.drawImage(image, 0, 0);
+          else if (mode === 'conceal') {
+            // New full-reveal mask: a conceal stroke paints the adjustment out.
+            context.fillStyle = '#fff';
+            context.fillRect(0, 0, f.w, f.h);
+          }
           const selectionMask = await frameSelectionMask(f.selection, f, assets.current);
           if (gesture.current !== g) return;
           g.maskBuffer = buffer;
@@ -12596,7 +13786,23 @@ export default function Home() {
       return;
     }
     if (tool === 'zoom') {
-      const out = e.altKey;
+      // The Zoom out mode flips the click direction; Alt flips it back.
+      const out = (navigationTools.zoomMode === 'out') !== e.altKey;
+      if (navigationTools.scrubbyZoom) {
+        // Scrubby Zoom: a horizontal drag zooms continuously; a click still steps.
+        gesture.current = {
+          tool,
+          start: p,
+          last: p,
+          frame: f,
+          moved: false,
+          lastClientX: e.clientX,
+          lastClientY: e.clientY,
+          zoomStart: viewZoomRef.current,
+          zoomOut: out,
+        };
+        return;
+      }
       const next = zoomBy(out ? -1 : 1, { x: e.clientX, y: e.clientY });
       setNotice(`Zoomed ${out ? 'out' : 'in'} to ${formatViewZoom(next)}`);
       return;
@@ -12621,22 +13827,77 @@ export default function Home() {
     if (tool === 'eyedropper' && current().reference?.sample && current().reference?.visible) {
       const sampled = await sampleReference(p.x, p.y);
       if (sampled) {
-        setColor(sampled);
-        setNotice('Color sampled from reference image');
+        if (e.altKey) setBackgroundColor(sampled);
+        else setColor(sampled);
+        setNotice(e.altKey ? 'Background color sampled from reference image' : 'Color sampled from reference image');
       } else setNotice('No reference pixel here; reference not sampled');
       return;
     }
     if (tool === 'eyedropper') {
-      const pixel = canvas
-        .current!.getContext('2d')!
-        .getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
-      setColor(
-        '#' +
-          [pixel[0], pixel[1], pixel[2]]
-            .map((value) => value.toString(16).padStart(2, '0'))
-            .join(''),
+      // Sample Size averages a square around the click (alpha-weighted);
+      // Sample chooses the rendered image or the active layer's own pixels.
+      const sampleSize = navigationTools.eyedropperSize;
+      const half = Math.floor(sampleSize / 2);
+      const readSquare = (source: CanvasImageSource, x: number, y: number, width: number, height: number) => {
+        const square = surface(sampleSize, sampleSize),
+          context = square.getContext('2d', { willReadFrequently: true })!;
+        const left = Math.floor(x) - half,
+          top = Math.floor(y) - half;
+        context.drawImage(source, -left, -top);
+        // Pixels beyond the source edge stay transparent and count as clipped.
+        const data = context.getImageData(0, 0, sampleSize, sampleSize).data;
+        const clipLeft = Math.max(0, -left),
+          clipTop = Math.max(0, -top),
+          clipRight = Math.min(sampleSize, width - left),
+          clipBottom = Math.min(sampleSize, height - top);
+        if (clipRight <= clipLeft || clipBottom <= clipTop) return null;
+        const clipped = new Uint8ClampedArray((clipRight - clipLeft) * (clipBottom - clipTop) * 4);
+        for (let row = clipTop; row < clipBottom; row += 1)
+          clipped.set(
+            data.subarray((row * sampleSize + clipLeft) * 4, (row * sampleSize + clipRight) * 4),
+            (row - clipTop) * (clipRight - clipLeft) * 4,
+          );
+        return averageSample(
+          clipped,
+          clipRight - clipLeft,
+          clipBottom - clipTop,
+          half - clipLeft,
+          half - clipTop,
+          sampleSize,
+        );
+      };
+      let sampled: ReturnType<typeof averageSample> | null = null;
+      let from = 'image';
+      if (navigationTools.eyedropperSample === 'current') {
+        if (!isRasterContentLayer(layer) || !assets.current[layer.asset]) {
+          setNotice('Sample: Current Layer needs a raster layer; choose All Layers or a pixel layer');
+          return;
+        }
+        const at = inversePoint(layer.matrix, p);
+        if (!at) {
+          setNotice('This layer transform cannot be sampled');
+          return;
+        }
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]);
+          sampled = readSquare(image, at.x, at.y, image.naturalWidth, image.naturalHeight);
+        } catch {
+          setNotice('Could not read the current layer');
+          return;
+        }
+        from = 'current layer';
+      } else if (canvas.current) sampled = readSquare(canvas.current, p.x, p.y, f.w, f.h);
+      if (!sampled || sampled.a === 0) {
+        setNotice(`No visible pixel to sample on the ${from}`);
+        return;
+      }
+      const hex = rgbHex(sampled);
+      if (e.altKey) setBackgroundColor(hex);
+      else setColor(hex);
+      setNotice(
+        `${e.altKey ? 'Background color' : 'Color'} sampled from ${from}` +
+          `${sampleSize > 1 ? ` (${sampleSize} × ${sampleSize} average)` : ''}`,
       );
-      setNotice('Color sampled from image');
       return;
     }
     if (tool === 'color-sampler') {
@@ -12669,19 +13930,20 @@ export default function Home() {
       return;
     }
     if (tool === 'note') {
-      const text = window.prompt('Note for this image', '');
-      if (text?.trim()) {
-        if (
-          appendMeasurement({
-            id: newMeasurementId(),
-            kind: 'note',
-            x: p.x,
-            y: p.y,
-            text: text.trim().slice(0, 500),
-          })
-        )
-          setNotice('Note added to the draft');
-      } else setNotice('Note cancelled');
+      // In-app editor instead of window.prompt (which can be blocked): a
+      // click on a note opens it, a drag moves it, elsewhere starts a new one.
+      const tolerance = (12 * 100) / Math.max(1, viewZoomRef.current);
+      const hit = [...(f.measurements || [])]
+        .reverse()
+        .find(
+          (item) => item.kind === 'note' && Math.hypot(item.x - p.x, item.y - p.y) <= tolerance,
+        );
+      if (hit) {
+        gesture.current = { tool, start: p, last: p, frame: f, moved: false, noteId: hit.id };
+        return;
+      }
+      setNoteEditor({ x: p.x, y: p.y, text: '', color: navigationTools.noteColor });
+      setNotice('Type the note, then Save');
       return;
     }
     if (tool === 'audio-note') {
@@ -12690,7 +13952,9 @@ export default function Home() {
       return;
     }
     if (tool === 'count') {
-      const index = nextCountIndex(f.measurements || []);
+      // Markers are numbered per count group and carry the group's colour.
+      const group = navigationTools.countGroup;
+      const index = nextCountIndexInGroup(f.measurements || [], group);
       if (
         appendMeasurement({
           id: newMeasurementId(),
@@ -12698,9 +13962,11 @@ export default function Home() {
           x: p.x,
           y: p.y,
           index,
+          group,
+          color: navigationTools.countColor,
         })
       )
-        setNotice(`Count marker ${index} added`);
+        setNotice(`Count marker ${index} added to ${group}`);
       return;
     }
     if (tool === 'hand') {
@@ -12736,10 +14002,31 @@ export default function Home() {
           setNotice('Click inside the selection to fill');
           return;
         }
-        if (!floodFill(buffer, local.x, local.y, color)) {
-          setNotice('No contiguous pixels matched at that point');
+        // Tolerance / Contiguous / Sample All Layers (docs/color-region-contract.md).
+        const context = buffer.getContext('2d')!,
+          pixels = context.getImageData(0, 0, buffer.width, buffer.height);
+        let region: Uint8Array | null;
+        if (colorRegion.sampleAllLayers) {
+          const merged = await renderFrame(f, assets.current),
+            mergedPixels = merged.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+            frameRegion = colorRegionMask(mergedPixels, f.w, f.h, p.x, p.y, {
+              tolerance: colorTolerance,
+              contiguous: colorRegion.contiguous,
+            });
+          region = frameRegion && frameMaskToLayer(frameRegion, f.w, f.h, layer.matrix, buffer.width, buffer.height);
+        } else
+          region = colorRegionMask(pixels.data, buffer.width, buffer.height, local.x, local.y, {
+            tolerance: colorTolerance,
+            contiguous: colorRegion.contiguous,
+          });
+        const rgb = /^#([a-f\d]{6})$/i.exec(color)?.[1];
+        if (!region || !rgb || !fillMaskedPixels(pixels.data, region, [
+          parseInt(rgb.slice(0, 2), 16), parseInt(rgb.slice(2, 4), 16), parseInt(rgb.slice(4, 6), 16),
+        ])) {
+          setNotice(colorRegion.contiguous ? 'No contiguous pixels matched at that point' : 'No pixels matched that colour');
           return;
         }
+        context.putImageData(pixels, 0, 0);
         if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
@@ -13008,6 +14295,7 @@ export default function Home() {
         moved: false,
         brushPoints: [{ x: local.x, y: local.y, pressure: pressure(e) }],
         queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        mixerStates: [],
         // Paint Symmetry is fixed for the stroke at pointer-down.
         paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
       };
@@ -13021,7 +14309,7 @@ export default function Home() {
           buffer.getContext('2d')!.drawImage(currentImage, 0, 0);
           let sourceIndex = index.current;
           if (tool === 'history-brush' || tool === 'art-history-brush') {
-            sourceIndex = Math.max(0, Math.min(history.current.length - 1, historySourceIndex ?? index.current));
+            sourceIndex = Math.max(0, Math.min(history.current.length - 1, historySourceIndex ?? 0));
             const sourceFrame = history.current[sourceIndex];
             const sourceLayer = sourceFrame?.layers.find((item) => item.id === layer.id) ||
               (tool === 'history-brush' ? sourceFrame?.layers.find((item) => item.id === sourceFrame.active) : undefined);
@@ -13062,13 +14350,14 @@ export default function Home() {
           if ((g.paintSymmetry?.length ?? 0) > 1) {
             // Paint Symmetry copies are applied over the whole buffer (#220).
             const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
-            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry);
-            if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
+            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry, g.mixerStates);
+            if (tool !== 'history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
             buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
           } else {
             // Without symmetry only the brush's reach is read and written.
-            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask);
-            if (tool === 'art-history-brush') g.changed = changed;
+            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask,
+              g.mixerStates && (g.mixerStates[0] ??= {}));
+            if (tool !== 'history-brush') g.changed = changed;
           }
           g.last = points.at(-1) || g.last;
           g.queued = undefined;
@@ -13185,6 +14474,7 @@ export default function Home() {
             size: localSize(layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
+            type: retouchOptions.spotHealingType,
           },
         };
       gesture.current = g;
@@ -13224,8 +14514,13 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before Patch');
         return;
       }
+      // Source/Destination: a press inside an active selection drags the
+      // selection as the patch region (decided once the mask is sampled);
+      // otherwise, and always in Brush mode, the click-source-then-paint
+      // brush workflow applies.
+      const regionMode = retouchOptions.patchMode !== 'brush' && f.selection ? retouchOptions.patchMode : undefined;
       const cloneSource = cloneSourceIn(layer.matrix);
-      if (!cloneSource) {
+      if (!cloneSource && !regionMode) {
         chooseCloneSource(local, layer.matrix);
         setNotice('Patch source set; drag on the image to paint the patch');
         return;
@@ -13253,8 +14548,8 @@ export default function Home() {
             hardness,
             opacity: brushOpacity / 100,
             sourceOffset: {
-              x: cloneSource.x - x,
-              y: cloneSource.y - y,
+              x: cloneSource ? cloneSource.x - x : 0,
+              y: cloneSource ? cloneSource.y - y : 0,
             },
           },
         };
@@ -13272,11 +14567,31 @@ export default function Home() {
         // Any selection shape is captured in layer space (also for moved or
         // scaled layers), so replay stays aligned after reload.
         g.selectionPending = true;
+        g.patchRegionPending = Boolean(regionMode);
         g.pending = (async () => {
           try {
+            if (regionMode) {
+              const mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, asset.w, asset.h);
+              if (gesture.current !== g) return;
+              g.patchRegionPending = false;
+              if (mask && mask[Math.floor(y) * asset.w + Math.floor(x)] > 0) {
+                g.patchStroke = {
+                  ...g.patchStroke!,
+                  points: [{ x, y }],
+                  sourceOffset: patchRegionOffset(regionMode, g.start, g.last),
+                  region: regionMode,
+                };
+              } else if (!cloneSource) {
+                gesture.current = null;
+                chooseCloneSource(local, layer.matrix);
+                setNotice('Patch source set; drag on the image to paint the patch');
+                return;
+              }
+            }
             const selectionMask = await captureSelectionSnapshot(f, layer);
             g.selectionPending = false;
             if (selectionMask && g.patchStroke) g.patchStroke.selectionMask = selectionMask;
+            if (g.patchStroke?.region && !selectionMask) throw new Error('Patch region needs a selection');
           } catch {
             if (gesture.current === g) gesture.current = null;
             setNotice('Could not read the selection for Patch');
@@ -13301,12 +14616,13 @@ export default function Home() {
       }
       // Option/Alt-click is handled before the gesture guard above so a
       // source click is never dropped; a first plain click also sets it.
-      const sourceAnchor = cloneSourceIn(layer.matrix);
+      const sourceAnchor = cloneStrokeSource(local, layer.matrix, retouchOptions.cloneAligned);
       if (!sourceAnchor) {
         chooseCloneSource(local, layer.matrix);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
+      const cloneSample = retouchOptions.cloneSample;
       const g = {
         tool,
         start: local,
@@ -13334,6 +14650,17 @@ export default function Home() {
           if (gesture.current !== g) return;
           const buffer = surface(source.width, source.height);
           buffer.getContext('2d')!.drawImage(source, 0, 0);
+          if (cloneSample !== 'current') {
+            // Sample Current & Below / All Layers: read the visible composite
+            // of those layers, rendered once into this layer's pixel space.
+            const composite = await compositeSampleCanvas(
+              f, layer, assets.current, source.width, source.height, cloneSample,
+            );
+            if (gesture.current !== g) return;
+            const sourceContext = source.getContext('2d')!;
+            sourceContext.clearRect(0, 0, source.width, source.height);
+            sourceContext.drawImage(composite, 0, 0);
+          }
           // Photoshop confines Clone Stamp and Healing Brush to the selection.
           const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
           if (gesture.current !== g) return;
@@ -13399,6 +14726,9 @@ export default function Home() {
         pointerType: e.pointerType,
         patternId,
         patternTileSize,
+        // Aligned keeps one canvas-wide tiling; otherwise each stroke
+        // restarts the tile at its own start point.
+        patternAnchor: retouchOptions.patternAligned ? undefined : { x: Math.round(local.x), y: Math.round(local.y) },
         moved: false,
         spacingState: { started: false, carry: 0 },
         queued: [
@@ -13406,6 +14736,7 @@ export default function Home() {
         ],
       } as Gesture;
       gesture.current = g;
+      const patternImage = retouchOptions.patternImage;
       g.pending = (async () => {
         try {
           const sourceImage = await decodeAsset(assets.current[layer.asset]),
@@ -13414,6 +14745,8 @@ export default function Home() {
               sourceImage.naturalHeight,
             );
           buffer.getContext('2d')!.drawImage(sourceImage, 0, 0);
+          if (gesture.current !== g) return;
+          g.patternTile = await imagePatternTile(patternImage);
           if (gesture.current !== g) return;
           const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
           if (gesture.current !== g) return;
@@ -13445,6 +14778,9 @@ export default function Home() {
                 flipY: brushFlipY,
                 pattern: g.patternId!,
                 tileSize: g.patternTileSize!,
+                tile: g.patternTile,
+                anchorX: g.patternAnchor?.x,
+                anchorY: g.patternAnchor?.y,
                 foreground: brushColor(color),
                 background: brushColor(backgroundColor),
               }) || Boolean(g.changed);
@@ -13497,11 +14833,11 @@ export default function Home() {
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [g.start]) {
-            redEyeGestureStroke(g, from, point, {
+            g.changed = redEyeGestureStroke(g, from, point, {
               radius: localSize(layer.matrix, size) / 2,
               threshold: g.redEyeThreshold ?? 36,
               amount: (g.redEyeAmount ?? 100) / 100,
-            });
+            }) || Boolean(g.changed);
             from = point;
           }
           g.queued = undefined;
@@ -13532,6 +14868,11 @@ export default function Home() {
         frame: f,
         layer,
         moved: false,
+        colorReplace: {
+          colorReplaceMode: retouchOptions.colorReplaceMode,
+          colorReplaceSampling: retouchOptions.colorReplaceSampling,
+          colorReplaceLimits: retouchOptions.colorReplaceLimits,
+        },
       } as Gesture;
       gesture.current = g;
       g.pending = (async () => {
@@ -13543,7 +14884,11 @@ export default function Home() {
             );
           source.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
-          const sample = source
+          // Background Swatch sampling replaces the background colour;
+          // Once and Continuous start from the pixel under the press.
+          const sample = g.colorReplace?.colorReplaceSampling === 'background'
+            ? [...brushColor(backgroundColor).slice(0, 3), 255]
+            : source
             .getContext('2d')!
             .getImageData(
               Math.max(0, Math.min(source.width - 1, Math.floor(local.x))),
@@ -13626,10 +14971,10 @@ export default function Home() {
         sourceAssets = assets.current;
       try {
         const source = await renderFrame(
-            { ...f, layers: [layer] },
+            colorRegion.sampleAllLayers ? f : { ...f, layers: [layer] },
             sourceAssets,
           ),
-          mask = colorSelectMask(source, p.x, p.y);
+          mask = colorSelectMask(source, p.x, p.y, colorTolerance, colorRegion.contiguous);
         if (!isCurrentSelectionOperation(f, frameIndex, workToken)) return;
         const next: Selection = {
           shape: 'rectangle',
@@ -13652,7 +14997,7 @@ export default function Home() {
           frameIndex,
           workToken,
           candidate,
-          'Color selection created from contiguous pixels',
+          `Magic Wand selection created (tolerance ${colorTolerance}${colorRegion.contiguous ? ', contiguous' : ''}${colorRegion.sampleAllLayers ? ', all layers' : ''})`,
         );
       } catch {
         if (isCurrentSelectionOperation(f, frameIndex, workToken))
@@ -13779,6 +15124,25 @@ export default function Home() {
       tool === 'perspective-crop' ||
       tool === 'slice'
     ) {
+      if (tool === 'perspective-crop' && perspectiveCropPreview) {
+        // Corner handles of the staged quad are dragged directly.
+        const corner = nearestQuadCorner(
+          perspectiveCropPreview.quad,
+          p,
+          (14 * 100) / Math.max(1, viewZoomRef.current),
+        );
+        if (corner !== null) {
+          gesture.current = { tool, start: p, last: p, frame: f, moved: false, quadCorner: corner };
+          setNotice('Perspective crop: drag the corner, release to keep it');
+          return;
+        }
+      }
+      if (tool === 'crop' && cropStraightenArmed) {
+        gesture.current = { tool, start: p, last: p, frame: f, moved: false, cropStraighten: true };
+        setMeasurementPreview({ start: p, end: p });
+        setNotice('Straighten: drag along a line that should be horizontal');
+        return;
+      }
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
     }
@@ -13791,6 +15155,10 @@ export default function Home() {
       layer.kind !== 'raster'
     ) {
       setNotice('Add a paint layer, or rasterize this layer before painting');
+      return;
+    }
+    if (tool === 'move' && isBackgroundLayer(f, layer)) {
+      setNotice('The Background layer is position-locked; use Layer > Layer from Background to move it');
       return;
     }
     const rasterAsset = layer.kind === 'raster' ? layer.asset : null;
@@ -13809,6 +15177,7 @@ export default function Home() {
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
+      g.eraseToBackground = tool === 'eraser' && isBackgroundLayer(f, layer);
       // Paint Symmetry is fixed for the stroke at pointer-down.
       g.paintSymmetry = paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix);
       if (tool === 'brush' && brushStrands.enabled) {
@@ -13846,6 +15215,7 @@ export default function Home() {
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: (brushOpacity / 100) * (brushFlow / 100),
+              strokeOpacity: brushOpacity / 100,
               pointerType: point.pointerType,
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
@@ -13864,8 +15234,8 @@ export default function Home() {
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
               flipY: brushFlipY,
-              mode: tool === 'eraser' ? 'destination-out' : 'source-over',
-              color: tool === 'eraser' ? undefined : brushColor(color),
+              mode: tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+              color: tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
               colorBackground: brushColor(backgroundColor),
             });
             from = destination;
@@ -13946,6 +15316,14 @@ export default function Home() {
         : p;
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
+    // Click-or-drag tools only start a drag after a few screen pixels, so a
+    // jittery tap still counts as a click.
+    if (
+      !g.moved &&
+      CLICK_OR_DRAG_TOOLS.has(g.tool) &&
+      Math.hypot(p.x - g.start.x, p.y - g.start.y) * (viewZoomRef.current / 100) < 3
+    )
+      return;
     g.moved = true;
     if (g.strands) {
       // Silk strands: collect the sample and redraw only the overlay preview.
@@ -14023,6 +15401,20 @@ export default function Home() {
       });
       return;
     }
+    if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke?.region) {
+      // Selection workflow: the drag moves the patch region.
+      g.last = { x: local.x, y: local.y };
+      g.patchStroke.sourceOffset = patchRegionOffset(g.patchStroke.region, g.start, g.last);
+      if (g.selectionPending || intermediate) return;
+      const stroke = g.patchStroke;
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id
+          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
+          : item),
+      });
+      return;
+    }
     if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke) {
       const asset = assets.current[g.layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
@@ -14092,16 +15484,70 @@ export default function Home() {
       g.last = p;
       return;
     }
-    if (g.tool === 'ruler') {
+    if (g.tool === 'ruler' || (g.tool === 'crop' && g.cropStraighten)) {
       g.moved = true;
       g.last = p;
       setMeasurementPreview({ start: g.start, end: p });
+      return;
+    }
+    if (g.tool === 'zoom' && g.zoomStart !== undefined) {
+      const dx = e.clientX - (g.lastClientX ?? e.clientX);
+      setZoomAround(scrubbyViewZoom(g.zoomStart, dx), {
+        x: g.lastClientX ?? e.clientX,
+        y: g.lastClientY ?? e.clientY,
+      });
+      return;
+    }
+    if (g.tool === 'note' && g.noteId) {
+      g.last = p;
+      setNoteDrag({
+        id: g.noteId,
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      });
+      return;
+    }
+    if (g.tool === 'slice-select' && g.sliceOrigin && g.sliceHandle) {
+      const next = adjustSliceRect(g.sliceOrigin, g.sliceHandle, p.x - g.start.x, p.y - g.start.y, g.frame.w, g.frame.h);
+      g.last = p;
+      if (
+        next.x === g.sliceOrigin.x && next.y === g.sliceOrigin.y &&
+        next.width === g.sliceOrigin.width && next.height === g.sliceOrigin.height
+      ) return;
+      g.moved = true;
+      setSlicePreview({ frame: g.frame, ...next });
+      return;
+    }
+    if (g.tool === 'perspective-crop' && g.quadCorner !== undefined && perspectiveCropPreview) {
+      const quad = perspectiveCropPreview.quad.map((corner) => ({ ...corner })) as CropQuad;
+      quad[g.quadCorner] = {
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      };
+      g.last = p;
+      g.moved = true;
+      // A fold or concave drag is ignored; the last convex quad stays staged.
+      try {
+        const next = planPerspectiveCrop(perspectiveCropPreview.frame.w, perspectiveCropPreview.frame.h, { quad });
+        setPerspectiveCropPreview({ frame: perspectiveCropPreview.frame, ...next });
+      } catch {
+        // keep the previous quad
+      }
       return;
     }
     // Holding Shift while dragging a Pen point creates an outgoing cubic
     // handle. Alt mirrors the handle to the incoming side, matching the
     // familiar Photoshop tangent workflow while keeping click-only paths
     // perfectly backward compatible.
+    // Rubber Band: while no button is held, preview the next segment from
+    // the last anchor to the pointer (Pen) or the next smooth curve
+    // (Curvature Pen). Placing anchors still happens on press.
+    if (penOptions.rubberBand && (g.tool === 'pen' || g.tool === 'curvature-pen') && e.buttons === 0 && g.points?.length) {
+      const bounded = { x: Math.max(0, Math.min(g.frame.w, p.x)), y: Math.max(0, Math.min(g.frame.h, p.y)) };
+      if (g.tool === 'curvature-pen') previewCurvaturePath(g, bounded);
+      else previewPenPath(g, bounded);
+      return;
+    }
     if (g.tool === 'pen' && (e.shiftKey || e.altKey) && g.points?.length) {
       const node = g.points[g.points.length - 1];
       node.outHandle = { x: p.x, y: p.y };
@@ -14208,6 +15654,9 @@ export default function Home() {
           flipY: brushFlipY,
           pattern: g.patternId!,
           tileSize: g.patternTileSize!,
+          tile: g.patternTile,
+          anchorX: g.patternAnchor?.x,
+          anchorY: g.patternAnchor?.y,
           foreground: brushColor(color),
           background: brushColor(backgroundColor),
         }) || Boolean(g.changed);
@@ -14216,11 +15665,11 @@ export default function Home() {
       return;
     }
     if (g.tool === 'red-eye' && g.buffer) {
-      redEyeGestureStroke(g, g.last, local, {
+      g.changed = redEyeGestureStroke(g, g.last, local, {
         radius: localSize(g.layer!.matrix, size) / 2,
         threshold: g.redEyeThreshold ?? 36,
         amount: (g.redEyeAmount ?? 100) / 100,
-      });
+      }) || Boolean(g.changed);
       previewGesture(g);
       g.last = local;
       return;
@@ -14375,12 +15824,13 @@ export default function Home() {
             retouchOptions,
             g.selectionMask,
             g.paintSymmetry,
+            g.mixerStates,
           );
-          changed = g.tool === 'art-history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
+          changed = g.tool !== 'history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
           g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
         } else
-          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask
-        );
+          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask,
+            g.mixerStates && (g.mixerStates[0] ??= {}));
       } catch (error) {
         if (g.tool !== 'art-history-brush') throw error;
         gesture.current = null;
@@ -14388,7 +15838,7 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Art History Brush stroke cancelled');
         return;
       }
-      if (g.tool === 'art-history-brush') g.changed = Boolean(g.changed || changed);
+      if (g.tool !== 'history-brush') g.changed = Boolean(g.changed || changed);
       g.brushPoints = [...(g.brushPoints || []), ...segmentPoints];
       g.moved = true;
       g.last = local;
@@ -14495,6 +15945,7 @@ export default function Home() {
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: (brushOpacity / 100) * (brushFlow / 100),
+        strokeOpacity: brushOpacity / 100,
         pointerType: g.pointerType,
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
@@ -14513,16 +15964,21 @@ export default function Home() {
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
         flipY: brushFlipY,
-        mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
-        color: g.tool === 'eraser' ? undefined : brushColor(color),
+        mode: g.tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+        color: g.tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
         colorBackground: brushColor(backgroundColor),
       });
       previewGesture(g);
       g.smoothedLast = destination;
       g.last = local;
-    } else if (g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') {
-      const box = newShapeDragBox(g.tool, g.start, p, e);
-      const layer = newShapeLayer(g.tool, box, 'Shape preview');
+    } else if (isShapeToolId(g.tool)) {
+      // Every shape tool previews the real layer it will create, so Fill,
+      // Stroke and Stroke width show while dragging, plus a dashed drag box.
+      const shapeTool = g.tool;
+      const box = shapeTool === 'line'
+        ? { left: Math.min(p.x, g.start.x), top: Math.min(p.y, g.start.y), width: Math.abs(p.x - g.start.x), height: Math.abs(p.y - g.start.y) }
+        : newShapeDragBox(shapeTool, g.start, p, e);
+      const layer = newShapeLayer(shapeTool, box, 'Shape preview');
       void paint(layer ? { ...g.frame, layers: [...g.frame.layers, layer] } : g.frame).then(() => {
         if (gesture.current !== g) return;
         const context = canvas.current!.getContext('2d')!;
@@ -14530,101 +15986,14 @@ export default function Home() {
         context.strokeStyle = '#fff';
         context.lineWidth = 1;
         context.setLineDash([6, 4]);
-        context.strokeRect(box.left, box.top, box.width, box.height);
+        if (shapeTool === 'line') {
+          context.beginPath();
+          context.moveTo(box.left, box.top);
+          context.lineTo(box.left + box.width, box.top + box.height);
+          context.stroke();
+        } else context.strokeRect(box.left, box.top, box.width, box.height);
         context.restore();
       });
-    } else if (
-      g.tool === 'rectangle' ||
-      g.tool === 'ellipse' ||
-      g.tool === 'line' ||
-      g.tool === 'polygon'
-    ) {
-      const width = Math.abs(p.x - g.start.x),
-        height = Math.abs(p.y - g.start.y);
-      const layer: Layer =
-        g.tool === 'line'
-          ? {
-              ...commonLayer('Line'),
-              kind: 'line',
-              width: Math.max(1, width),
-              height: Math.max(1, height),
-              stroke: Math.max(1, size / 3),
-              color,
-              matrix: [
-                1,
-                0,
-                0,
-                1,
-                Math.min(p.x, g.start.x),
-                Math.min(p.y, g.start.y),
-              ],
-            }
-          : ({
-              ...commonLayer(g.tool === 'polygon' ? 'Polygon' : 'Shape'),
-              kind:
-                g.tool === 'ellipse'
-                  ? 'ellipse'
-                  : g.tool === 'polygon'
-                    ? 'polygon'
-                    : 'rectangle',
-              width: Math.max(1, width),
-              height: Math.max(1, height),
-              stroke: Math.max(1, size / 3),
-              color,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : { fill: false }),
-              matrix: [
-                1,
-                0,
-                0,
-                1,
-                Math.min(p.x, g.start.x),
-                Math.min(p.y, g.start.y),
-              ],
-            } as Layer);
-      const context = canvas.current!.getContext('2d')!;
-      context.save();
-      context.strokeStyle = color;
-      context.lineWidth = Math.max(1, size / 3);
-      context.setLineDash([8, 5]);
-      context.beginPath();
-      if (g.tool === 'line') {
-        context.moveTo(g.start.x, g.start.y);
-        context.lineTo(p.x, p.y);
-      } else if (g.tool === 'polygon') {
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          cx = left + width / 2,
-          cy = top + height / 2,
-          rx = Math.max(1, width / 2),
-          ry = Math.max(1, height / 2);
-        for (let i = 0; i < 5; i += 1) {
-          const angle = -Math.PI / 2 + (i * Math.PI * 2) / 5,
-            x = cx + Math.cos(angle) * rx,
-            y = cy + Math.sin(angle) * ry;
-          if (i === 0) context.moveTo(x, y);
-          else context.lineTo(x, y);
-        }
-        context.closePath();
-      } else if (g.tool === 'ellipse') {
-        context.ellipse(
-          Math.min(p.x, g.start.x) + width / 2,
-          Math.min(p.y, g.start.y) + height / 2,
-          width / 2,
-          height / 2,
-          0,
-          0,
-          Math.PI * 2,
-        );
-      } else
-        context.rect(
-          Math.min(p.x, g.start.x),
-          Math.min(p.y, g.start.y),
-          width,
-          height,
-        );
-      context.stroke();
-      context.restore();
-      void paint({ ...g.frame, layers: [...g.frame.layers, layer] });
     } else if (g.tool === 'select' || g.tool === 'ellipse-select') {
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
@@ -14634,10 +16003,7 @@ export default function Home() {
         x.strokeStyle = '#fff';
         x.lineWidth = 2;
         x.setLineDash([8, 5]);
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          width = Math.abs(p.x - g.start.x),
-          height = Math.abs(p.y - g.start.y);
+        const { left, top, width, height } = marqueeRect(g.start, p, marqueeOptions);
         if (g.tool === 'ellipse-select') {
           x.beginPath();
           x.ellipse(
@@ -14723,36 +16089,31 @@ export default function Home() {
       });
     } else if (g.tool === 'crop') {
       const c = canvas.current!,
-        x = c.getContext('2d')!;
+        x = c.getContext('2d')!,
+        end = constrainCropEnd(g.start, p, currentCropRatio(g.frame), g.frame.w, g.frame.h);
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         x.save();
         x.strokeStyle = '#ffffff';
         x.lineWidth = 2;
         x.setLineDash([10, 6]);
-        x.strokeRect(g.start.x, g.start.y, p.x - g.start.x, p.y - g.start.y);
+        x.strokeRect(g.start.x, g.start.y, end.x - g.start.x, end.y - g.start.y);
         x.restore();
       });
     } else if (g.tool === 'perspective-crop') {
       const c = canvas.current!,
         x = c.getContext('2d')!;
+      // A drag stages a plain rectangle; its corners are adjusted afterwards.
+      const quad = rectangleQuad(g.start, p, g.frame.w, g.frame.h);
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          right = Math.max(g.start.x, p.x),
-          bottom = Math.max(g.start.y, p.y),
-          insetX = Math.max(0, (right - left) * 0.08),
-          insetY = Math.max(0, (bottom - top) * 0.08);
         x.save();
         x.strokeStyle = '#ffb099';
         x.lineWidth = 2;
         x.setLineDash([10, 6]);
         x.beginPath();
-        x.moveTo(left + insetX, top);
-        x.lineTo(right - insetX, top + insetY);
-        x.lineTo(right, bottom - insetY);
-        x.lineTo(left, bottom);
+        x.moveTo(quad[0].x, quad[0].y);
+        for (const corner of quad.slice(1)) x.lineTo(corner.x, corner.y);
         x.closePath();
         x.stroke();
         x.restore();
@@ -14897,7 +16258,8 @@ export default function Home() {
         : undefined;
     if (latest !== f || (g.layer && latestLayer !== g.layer)) {
       if (g.strands) clearStrandPreview();
-      if (g.tool === 'ruler') setMeasurementPreview(null);
+      if (g.tool === 'ruler' || g.cropStraighten) setMeasurementPreview(null);
+      if (g.noteId) setNoteDrag(null);
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(latest);
       setNotice('Gesture cancelled because the document changed');
@@ -14907,7 +16269,9 @@ export default function Home() {
       if (g.strands) clearStrandPreview();
       if (g.tool === 'rotate-view')
         setViewRotation(normalizeViewRotation(g.viewRotationStart ?? 0));
-      if (g.tool === 'ruler') setMeasurementPreview(null);
+      if (g.tool === 'ruler' || g.cropStraighten) setMeasurementPreview(null);
+      if (g.noteId) setNoteDrag(null);
+      if (g.sliceOrigin) setSlicePreview({ frame: f, ...g.sliceOrigin });
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(current());
       setNotice('Gesture cancelled');
@@ -14915,6 +16279,70 @@ export default function Home() {
     }
     if (g.tool === 'rotate-view') {
       setNotice(`Rotate View: ${normalizeViewRotation(viewRotation)}°`);
+      return;
+    }
+    if (g.tool === 'zoom') {
+      if (g.moved) {
+        setNotice(`Scrubby Zoom: ${formatViewZoom(viewZoomRef.current)}`);
+        return;
+      }
+      const next = zoomBy(g.zoomOut ? -1 : 1, { x: e.clientX, y: e.clientY });
+      setNotice(`Zoomed ${g.zoomOut ? 'out' : 'in'} to ${formatViewZoom(next)}`);
+      return;
+    }
+    if (g.tool === 'note' && g.noteId) {
+      setNoteDrag(null);
+      const note = f.measurements?.find((item) => item.id === g.noteId);
+      if (!note || note.kind !== 'note') return;
+      if (!g.moved) {
+        setNoteEditor({ id: note.id, x: note.x, y: note.y, text: note.text, color: note.color ?? navigationTools.noteColor });
+        setNotice('Note opened: edit, recolour or delete it');
+        return;
+      }
+      const x = Math.max(0, Math.min(f.w, p.x)),
+        y = Math.max(0, Math.min(f.h, p.y));
+      if (
+        commit({
+          ...f,
+          measurements: (f.measurements || []).map((item) => (item.id === note.id ? { ...note, x, y } : item)),
+        })
+      )
+        setNotice('Note moved');
+      return;
+    }
+    if (g.tool === 'slice-select') {
+      if (!g.sliceOrigin || !g.sliceHandle) return;
+      const next = adjustSliceRect(g.sliceOrigin, g.sliceHandle, p.x - g.start.x, p.y - g.start.y, f.w, f.h);
+      const origin = g.sliceOrigin;
+      if (next.x === origin.x && next.y === origin.y && next.width === origin.width && next.height === origin.height)
+        return;
+      if (
+        commit({
+          ...f,
+          slices: (f.slices || []).map((item) => (item.id === origin.id ? { ...item, ...next } : item)),
+          activeSliceId: origin.id,
+        })
+      ) {
+        setSlicePreview({ frame: current(), ...next });
+        setSlicePreviewMode('selected');
+        setNotice(
+          `Slice ${g.sliceHandle === 'move' ? 'moved' : 'resized'}: ${next.name} · ${next.width} × ${next.height} px at ${next.x}, ${next.y}`,
+        );
+      } else setSlicePreview({ frame: f, ...origin });
+      return;
+    }
+    if (g.tool === 'perspective-crop' && g.quadCorner !== undefined) {
+      setNotice('Perspective crop corner moved · press Enter or Apply');
+      return;
+    }
+    if (g.tool === 'crop' && g.cropStraighten) {
+      setMeasurementPreview(null);
+      setCropStraightenArmed(false);
+      if (!g.moved || measurementDistance(g.start, p) < 2) {
+        setNotice('Straighten needs a drag along the horizon');
+        return;
+      }
+      await straightenDocument(f, g.start, p);
       return;
     }
     if (g.tool === 'quick-selection' && g.quickSelectionSource) {
@@ -15017,7 +16445,9 @@ export default function Home() {
       if (changed)
         setNotice(
             g.tool === 'adjustment-brush'
-              ? 'Adjustment Brush applied to the adjustment mask'
+              ? g.maskRefinementStroke.mode === 'reveal'
+                ? 'Adjustment Brush applied to the adjustment mask'
+                : 'Adjustment Brush concealed the adjustment'
               : g.maskRefinementStroke.mode === 'reveal'
                 ? 'Mask Brush revealed masked pixels'
                 : 'Mask Eraser concealed pixels',
@@ -15043,7 +16473,7 @@ export default function Home() {
         })
       )
         setNotice(
-          `Ruler: ${formatMeasurement(pixels, measurementAngle(g.start, p))}`,
+          `Ruler: ${formatMeasurement(pixels, photoshopAngle(g.start, p))}`,
         );
       return;
     }
@@ -15122,6 +16552,11 @@ export default function Home() {
       })) setNotice('Spot Healing applied nondestructively');
     } else if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke) {
       const stroke = g.patchStroke;
+      if (stroke.region && (!g.moved || (!stroke.sourceOffset.x && !stroke.sourceOffset.y))) {
+        void paint(f);
+        setNotice('Drag the selection to where the patch should come from or go');
+        return;
+      }
       if (!g.moved) {
         void paint(f);
         setNotice('Patch needs a drag after setting a source');
@@ -15173,6 +16608,7 @@ export default function Home() {
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
+          strokeOpacity: brushOpacity / 100,
           pointerType: g.pointerType,
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
@@ -15191,8 +16627,8 @@ export default function Home() {
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
           flipY: brushFlipY,
-          mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
-          color: g.tool === 'eraser' ? undefined : brushColor(color),
+          mode: g.tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+          color: g.tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
           colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
@@ -15240,71 +16676,20 @@ export default function Home() {
               ? 'Mask Brush revealed masked pixels'
               : 'Mask Eraser concealed pixels',
         );
-    } else if ((g.tool === 'rounded-rectangle' || g.tool === 'custom-shape') && g.moved) {
-      const box = newShapeDragBox(g.tool, g.start, p, e);
-      const layer = newShapeLayer(
+    } else if (isShapeToolId(g.tool) && g.moved) {
+      addShapeLayer(
         g.tool,
-        box,
-        `${g.tool === 'custom-shape' ? customShapeLabel() : 'Rounded Rectangle'} ${f.layers.length}`,
-      );
-      if (layer) addLayer(layer);
-      else void paint(current());
-    } else if (
-      (g.tool === 'rectangle' ||
-        g.tool === 'ellipse' ||
-        g.tool === 'line' ||
-        g.tool === 'polygon') &&
-      g.moved
-    ) {
-      const width = Math.max(1, Math.round(Math.abs(p.x - g.start.x))),
-        height = Math.max(1, Math.round(Math.abs(p.y - g.start.y))),
-        matrix = [
-          1,
-          0,
-          0,
-          1,
-          Math.min(p.x, g.start.x),
-          Math.min(p.y, g.start.y),
-        ] as Matrix;
-      addLayer(
         g.tool === 'line'
-          ? {
-              ...commonLayer('Line ' + f.layers.length),
-              kind: 'line',
-              width,
-              height,
-              stroke: Math.max(1, size / 3),
-              color,
-              matrix,
-            }
-          : ({
-              ...commonLayer(
-                (g.tool === 'polygon' ? 'Polygon ' : 'Shape ') +
-                  f.layers.length,
-              ),
-              kind:
-                g.tool === 'ellipse'
-                  ? 'ellipse'
-                  : g.tool === 'polygon'
-                    ? 'polygon'
-                    : 'rectangle',
-              width,
-              height,
-              stroke: Math.max(1, size / 3),
-              color,
-              fill: false,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : {}),
-              matrix,
-            } as Layer),
+          ? { left: Math.min(p.x, g.start.x), top: Math.min(p.y, g.start.y), width: Math.abs(p.x - g.start.x), height: Math.abs(p.y - g.start.y) }
+          : newShapeDragBox(g.tool, g.start, p, e),
       );
     } else if (
       (g.tool === 'select' || g.tool === 'ellipse-select') &&
-      g.moved
+      (g.moved || marqueeOptions.style === 'fixed-size')
     ) {
-      const left = Math.min(g.start.x, p.x),
-        top = Math.min(g.start.y, p.y),
-        width = Math.abs(p.x - g.start.x),
-        height = Math.abs(p.y - g.start.y),
+      // Marquee Style (docs/selection-feather-contract.md): Fixed Size also
+      // places its box on a plain click.
+      const { left, top, width, height } = marqueeRect(g.start, p, marqueeOptions),
         x = Math.max(0, left),
         y = Math.max(0, top),
         w = Math.min(f.w, left + width) - x,
@@ -15337,7 +16722,12 @@ export default function Home() {
       else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       try {
-        const plan = planRectangularCrop(f.w, f.h, g.start, p);
+        const plan = planRectangularCrop(
+          f.w,
+          f.h,
+          g.start,
+          constrainCropEnd(g.start, p, currentCropRatio(f), f.w, f.h),
+        );
         // Keep the source frame and history untouched until the user confirms
         // the crop.  This makes accidental touch drags recoverable and keeps
         // export/undo semantics identical to every other committed edit.
@@ -15352,29 +16742,46 @@ export default function Home() {
         setNotice('Crop needs at least one pixel inside the image');
       }
     } else if (g.tool === 'perspective-crop' && g.moved) {
+      setPerspectiveClicks([]);
       try {
-        const left = Math.max(0, Math.min(g.start.x, p.x)),
-          top = Math.max(0, Math.min(g.start.y, p.y)),
-          right = Math.min(f.w, Math.max(g.start.x, p.x)),
-          bottom = Math.min(f.h, Math.max(g.start.y, p.y)),
-          insetX = Math.max(1, (right - left) * 0.08),
-          insetY = Math.max(1, (bottom - top) * 0.08),
-          quad: CropQuad = [
-            { x: left + insetX, y: top },
-            { x: right - insetX, y: top + insetY },
-            { x: right, y: bottom - insetY },
-            { x: left, y: bottom },
-          ],
+        // A drag stages an axis-aligned rectangle; drag its corner handles
+        // (or edit the corner fields) to match the perspective.
+        const quad = rectangleQuad(g.start, p, f.w, f.h),
           plan = planPerspectiveCrop(f.w, f.h, { quad });
         perspectiveCropPreviewId.current += 1;
         setPerspectiveCropPreview({ frame: f, ...plan });
         void paint(f);
         setNotice(
-          `Perspective crop preview: ${plan.width} × ${plan.height} px · edit corners or press Enter to apply`,
+          `Perspective crop preview: ${plan.width} × ${plan.height} px · drag the corners, then press Enter to apply`,
         );
       } catch {
         void paint(f);
         setNotice('Perspective crop needs a convex selection inside the image');
+      }
+    } else if (g.tool === 'perspective-crop') {
+      // Four clicks define the corners, in any order.
+      const clicked = [
+        ...perspectiveClicks,
+        { x: Math.max(0, Math.min(f.w, p.x)), y: Math.max(0, Math.min(f.h, p.y)) },
+      ];
+      if (perspectiveCropPreview)
+        setNotice('Drag a corner handle to adjust the crop, or Cancel to start again');
+      else if (clicked.length < 4) {
+        setPerspectiveClicks(clicked);
+        setNotice(`Perspective crop: corner ${clicked.length} of 4 placed`);
+      } else {
+        setPerspectiveClicks([]);
+        try {
+          const plan = planPerspectiveCrop(f.w, f.h, { quad: orderQuadCorners(clicked) });
+          perspectiveCropPreviewId.current += 1;
+          setPerspectiveCropPreview({ frame: f, ...plan });
+          void paint(f);
+          setNotice(
+            `Perspective crop preview: ${plan.width} × ${plan.height} px · drag the corners, then press Enter to apply`,
+          );
+        } catch {
+          setNotice('Those four corners do not form a convex shape; click four new corners');
+        }
       }
     } else if (g.tool === 'slice' && g.moved) {
       try {
@@ -15454,6 +16861,12 @@ export default function Home() {
         setNotice('No Art History Brush change');
         return;
       }
+      // No paint under the stroke to carry (or nothing moved): no history step.
+      if (g.tool === 'mixer-brush' && !g.changed) {
+        void paint(f);
+        setNotice('No Mixer Brush change: drag across painted pixels to mix them');
+        return;
+      }
       const asset = addPaintedAsset(g.buffer);
       if (commit({
         ...f,
@@ -15461,8 +16874,8 @@ export default function Home() {
       })) {
         const label = g.tool === 'mixer-brush' ? 'Mixer Brush stroke applied' :
           g.tool === 'history-brush'
-            ? `History Brush restored source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : index.current + 1}`
-            : `Art History Brush applied from source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : index.current + 1}`;
+            ? `History Brush restored source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : 1}`
+            : `Art History Brush applied from source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : 1}`;
         setNotice(label);
       }
     } else if (
@@ -15502,6 +16915,9 @@ export default function Home() {
             flipY: brushFlipY,
             pattern: g.patternId!,
             tileSize: g.patternTileSize!,
+            tile: g.patternTile,
+            anchorX: g.patternAnchor?.x,
+            anchorY: g.patternAnchor?.y,
             foreground: brushColor(color),
             background: brushColor(backgroundColor),
           }) || Boolean(g.changed);
@@ -15574,11 +16990,17 @@ export default function Home() {
         setNotice('Selection Brush selection created');
     } else if (g.tool === 'red-eye' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
-        redEyeGestureStroke(g, g.last, local, {
+        g.changed = redEyeGestureStroke(g, g.last, local, {
           radius: localSize(g.layer.matrix, size) / 2,
           threshold: g.redEyeThreshold ?? 36,
           amount: (g.redEyeAmount ?? 100) / 100,
-        });
+        }) || Boolean(g.changed);
+      // Nothing matched the red-eye test: no pixels, no history step.
+      if (!g.changed) {
+        void paint(f);
+        setNotice('No red-eye pixels found under the brush');
+        return;
+      }
       const asset = addPaintedAsset(g.buffer);
       if (
         commit({
@@ -15813,6 +17235,24 @@ export default function Home() {
   const fitToScreen = () => {
       const next = fitZoom();
       setNotice(`Fit to screen (${formatViewZoom(next)})`);
+    },
+    fillScreen = () => {
+      const element = stage.current;
+      if (!element || !frame) return;
+      const style = window.getComputedStyle(element);
+      const next = setZoomAround(
+        fillViewZoom({
+          imageWidth: frame.w,
+          imageHeight: frame.h,
+          stageWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+          stageHeight: element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+        }),
+      );
+      setNotice(`Fill screen (${formatViewZoom(next)})`);
+    },
+    actualPixels = () => {
+      setZoomAround(100);
+      setNotice('Actual size (100%)');
     },
     openFile = () => file.current?.click();
   const setWorkspaceScreenMode = (next: ScreenMode) => {
@@ -16063,6 +17503,16 @@ export default function Home() {
         else setNotice('Exit Quick Mask mode before changing the document');
         return;
       }
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        !command && !e.altKey && !e.defaultPrevented &&
+        !quickMasking && !gesture.current && current().selection &&
+        !(e.target instanceof Element && e.target.closest('[role="menu"], [role="dialog"], dialog'))
+      ) {
+        e.preventDefault();
+        void clearSelectedLayerPixels();
+        return;
+      }
       const customTool = Object.entries(toolShortcutBindings).find(([, binding]) =>
         toolShortcutMatches(binding, e),
       )?.[0] as Tool | undefined;
@@ -16103,6 +17553,28 @@ export default function Home() {
         if (k === 'l' && e.shiftKey && command) {
           e.preventDefault();
           void autoCorrect('tone');
+          return;
+        }
+        // Ctrl/Cmd+0 fits, Ctrl/Cmd+1 shows 100% and Ctrl/Cmd +/- step the
+        // zoom; preventDefault keeps the browser's own page zoom out of it.
+        if (!e.altKey && !e.shiftKey && (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) {
+          e.preventDefault();
+          fitToScreen();
+          return;
+        }
+        if (!e.altKey && !e.shiftKey && (e.key === '1' || e.code === 'Digit1' || e.code === 'Numpad1')) {
+          e.preventDefault();
+          actualPixels();
+          return;
+        }
+        if (!e.altKey && (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd')) {
+          e.preventDefault();
+          zoomBy(1);
+          return;
+        }
+        if (!e.altKey && (e.key === '-' || e.code === 'NumpadSubtract')) {
+          e.preventDefault();
+          zoomBy(-1);
           return;
         }
         const browserImagePaste = k === 'v' && !e.shiftKey && !hasClipboard;
@@ -16392,6 +17864,18 @@ export default function Home() {
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
+    else if (command === 'layer-from-background') {
+      const f = current(),
+        layer = f.layers.find((item) => item.id === f.active);
+      if (!layer || layer.kind !== 'raster' || layer.background !== true)
+        setNotice('The selected layer is not a Background layer');
+      else if (commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...layerFromBackground(item), name: item.name === 'Background' ? 'Layer 0' : item.name } : item),
+      }))
+        setNotice('Background converted to a normal layer; it can now move and erase to transparency');
+    }
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
     else if (command === 'nest-smart-object') return nestSelectedAsSmartObject();
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
@@ -16443,10 +17927,10 @@ export default function Home() {
       setNotice('Mixer Brush selected; drag to blend the immutable source snapshot');
     } else if (command === 'history-brush-tool') {
       activateTool('history-brush');
-      setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
+      setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}`);
     } else if (command === 'art-history-brush-tool') {
       activateTool('art-history-brush');
-      setNotice(`Art History Brush selected; local painterly source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
+      setNotice(`Art History Brush selected; local painterly source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}`);
     } else if (command === 'set-history-source') {
       setHistorySourceIndex(index.current);
       setNotice(`History Brush source set to snapshot ${index.current + 1}`);
@@ -16825,10 +18309,7 @@ export default function Home() {
     else if (command === 'zoom-in') zoomBy(1);
     else if (command === 'zoom-out') zoomBy(-1);
     else if (command === 'fit') fitToScreen();
-    else if (command === 'actual') {
-      setZoomAround(100);
-      setNotice('Actual size (100%)');
-    }
+    else if (command === 'actual') actualPixels();
   };
   const runActionRecipe = async (id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
@@ -18358,7 +19839,7 @@ export default function Home() {
                               toolFlyoutAnchor?.dataset.toolId === id
                             : undefined
                         }
-                        title={`${label}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
+                        title={`${label}${id === 'frame' ? ' (artboard)' : ''}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
@@ -18458,6 +19939,9 @@ export default function Home() {
             <small>Background</small>
           </label>
         </aside>
+        {/* The zoom pill sits on this non-scrolling shell so it stays pinned to
+            the visible stage while the canvas scrolls (audit B-03). */}
+        <div className="stage-shell">
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
           {isTypeTool(tool) && (
             <TypeOptionsBar
@@ -18505,116 +19989,6 @@ export default function Home() {
                 type="button"
                 data-testid="crop-cancel"
                 onClick={cancelCropPreview}
-              >
-                Cancel
-              </button>
-            </fieldset>
-          )}
-          {perspectiveCropPreview && (
-            <fieldset
-              className="crop-preview-controls perspective-crop-controls"
-              aria-label="Perspective crop controls"
-              data-testid="perspective-crop-controls"
-            >
-              <span>
-                Perspective crop · {perspectiveCropPreview.width} ×{' '}
-                {perspectiveCropPreview.height} px
-              </span>
-              <div className="perspective-crop-fields">
-                {(
-                  [
-                    'Top left',
-                    'Top right',
-                    'Bottom right',
-                    'Bottom left',
-                  ] as const
-                ).map((label, index) => (
-                    <span key={label}>
-                      <label>
-                        {label} X
-                        <input
-                          aria-label={`${label} X`}
-                          type="number"
-                          min="0"
-                          max={perspectiveCropPreview.frame.w}
-                          value={Math.round(perspectiveCropPreview.quad[index].x)}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            if (!Number.isFinite(value)) return;
-                          const quad = perspectiveCropPreview.quad.map(
-                            (point) => ({ ...point }),
-                          ) as CropQuad;
-                            quad[index] = { ...quad[index], x: value };
-                            updatePerspectiveCropPreview({ quad });
-                          }}
-                        />
-                      </label>
-                      <label>
-                        {label} Y
-                        <input
-                          aria-label={`${label} Y`}
-                          type="number"
-                          min="0"
-                          max={perspectiveCropPreview.frame.h}
-                          value={Math.round(perspectiveCropPreview.quad[index].y)}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            if (!Number.isFinite(value)) return;
-                          const quad = perspectiveCropPreview.quad.map(
-                            (point) => ({ ...point }),
-                          ) as CropQuad;
-                            quad[index] = { ...quad[index], y: value };
-                            updatePerspectiveCropPreview({ quad });
-                          }}
-                        />
-                      </label>
-                    </span>
-                ))}
-                <label>
-                  Output width
-                  <input
-                    aria-label="Perspective output width"
-                    type="number"
-                    min="1"
-                    max="16000"
-                    value={perspectiveCropPreview.width}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value))
-                        updatePerspectiveCropPreview({ width: value });
-                    }}
-                  />
-                </label>
-                <label>
-                  Output height
-                  <input
-                    aria-label="Perspective output height"
-                    type="number"
-                    min="1"
-                    max="16000"
-                    value={perspectiveCropPreview.height}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value))
-                        updatePerspectiveCropPreview({ height: value });
-                    }}
-                  />
-                </label>
-              </div>
-              <button
-                type="button"
-                data-testid="perspective-crop-apply"
-                disabled={perspectiveCropApplying}
-                onClick={() => void applyPerspectiveCropPreview()}
-              >
-                {perspectiveCropApplying
-                  ? 'Applying…'
-                  : 'Apply perspective crop'}
-              </button>
-              <button
-                type="button"
-                data-testid="perspective-crop-cancel"
-                onClick={cancelPerspectiveCropPreview}
               >
                 Cancel
               </button>
@@ -18716,69 +20090,6 @@ export default function Home() {
               </button>
             </fieldset>
           )}
-          {frame?.artboards?.length ? (
-            <fieldset className="artboard-controls" aria-label="Artboard controls" data-testid="artboard-controls">
-              <label>
-                <span>Active artboard</span>
-                <select
-                  aria-label="Active artboard"
-                  value={frame.activeArtboardId || frame.artboards[0].id}
-                  onChange={(event) => selectArtboard(event.target.value)}
-                >
-                  {frame.artboards.map((item) => (
-                    <option key={item.id} value={item.id} disabled={!item.visible}>
-                      {item.name} ({item.w} × {item.h} px)
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="artboard-visibility-list" aria-label="Artboard visibility">
-                {frame.artboards.map((item) => (
-                  <label key={item.id} className="artboard-visibility-option">
-                    <input
-                      type="checkbox"
-                      aria-label={`Show ${item.name} artboard`}
-                      checked={item.visible}
-                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
-                    />
-                    <span>{item.name}</span>
-                  </label>
-                ))}
-              </div>
-              <label>
-                <span>Fit active layer</span>
-                <select
-                  aria-label="Artboard fit mode"
-                  defaultValue="cover"
-                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
-                >
-                  <option value="cover">Cover</option>
-                  <option value="contain">Contain</option>
-                  <option value="stretch">Stretch</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                data-testid="artboard-fit-active"
-                onClick={() => fitActiveLayerToArtboard('cover')}
-              >
-                Fit active layer to artboard
-              </button>
-              <button
-                type="button"
-                data-testid="artboard-replace-fit"
-                disabled={
-                  !frame.active ||
-                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
-                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
-                }
-                onClick={() => chooseSmartObjectFile(true, true)}
-              >
-                Replace smart object and fit
-              </button>
-              <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
-            </fieldset>
-          ) : null}
           {audioPlayer.element}
           {tool === 'audio-note' && audioDraft && frame && (
             <AudioRecordPanel
@@ -18877,6 +20188,23 @@ export default function Home() {
                   );
                 })()
               : null}
+            {frame?.selection &&
+              selectionOutlineState?.selection === frame.selection &&
+              !selectionOutlineState.outline.empty &&
+              !quickMasking && (
+              <svg
+                className="selection-outline"
+                data-testid="selection-outline"
+                data-segments={selectionOutlineState.outline.segments}
+                data-step={selectionOutlineState.outline.step}
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path className="selection-outline-base" d={selectionOutlineState.outline.path} />
+                <path className="selection-outline-ants" d={selectionOutlineState.outline.path} />
+              </svg>
+            )}
             {frame?.reference?.visible && isPngAsset(assets.current[frame.reference.asset]) && (
               <img
                 className="reference-overlay"
@@ -19016,26 +20344,42 @@ export default function Home() {
                           y2={item.end.y}
                         />
                         <text x={labelX} y={labelY}>
-                          {formatMeasurement(item.pixels, item.angle)}
+                          {formatMeasurement(item.pixels, photoshopAngle(item.start, item.end))}
                         </text>
                       </g>
                     );
                   }
                   // Audio markers are interactive HTML (AudioAnnotationMarkers).
                   if (item.kind === 'audio') return null;
-                  if (item.kind === 'note')
+                  if (item.kind === 'note') {
+                    const at = noteDrag?.id === item.id ? noteDrag : item;
                     return (
-                      <g key={item.id} className="measurement-note">
-                        <circle cx={item.x} cy={item.y} r="7" />
-                        <text x={item.x + 11} y={item.y + 4}>
+                      <g
+                        key={item.id}
+                        className="measurement-note"
+                        data-testid="note-marker"
+                        data-note-id={item.id}
+                        data-x={Math.round(at.x)}
+                        data-y={Math.round(at.y)}
+                      >
+                        <circle cx={at.x} cy={at.y} r="7" style={item.color ? { fill: item.color } : undefined} />
+                        <text x={at.x + 11} y={at.y + 4}>
                           {item.text}
                         </text>
                       </g>
                     );
+                  }
+                  // Count label size is a view option; the circle scales with it.
+                  const countSize = navigationTools.countLabelSize;
                   return (
-                    <g key={item.id} className="measurement-count">
-                      <circle cx={item.x} cy={item.y} r="11" />
-                      <text x={item.x} y={item.y + 4}>
+                    <g key={item.id} className="measurement-count" data-group={countGroupOf(item)}>
+                      <circle
+                        cx={item.x}
+                        cy={item.y}
+                        r={Math.round(countSize * 0.92)}
+                        style={item.color ? { fill: item.color } : undefined}
+                      />
+                      <text x={item.x} y={item.y + countSize / 3} style={{ fontSize: `${countSize}px` }}>
                         {item.index}
                       </text>
                     </g>
@@ -19067,7 +20411,7 @@ export default function Home() {
                           measurementPreview.start,
                           measurementPreview.end,
                         ),
-                        measurementAngle(
+                        photoshopAngle(
                           measurementPreview.start,
                           measurementPreview.end,
                         ),
@@ -19122,34 +20466,31 @@ export default function Home() {
                   width={cropPreview.width}
                   height={cropPreview.height}
                 />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left + cropPreview.width / 3}
-                  y1={cropPreview.top}
-                  x2={cropPreview.left + cropPreview.width / 3}
-                  y2={cropPreview.top + cropPreview.height}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left + (cropPreview.width * 2) / 3}
-                  y1={cropPreview.top}
-                  x2={cropPreview.left + (cropPreview.width * 2) / 3}
-                  y2={cropPreview.top + cropPreview.height}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left}
-                  y1={cropPreview.top + cropPreview.height / 3}
-                  x2={cropPreview.left + cropPreview.width}
-                  y2={cropPreview.top + cropPreview.height / 3}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left}
-                  y1={cropPreview.top + (cropPreview.height * 2) / 3}
-                  x2={cropPreview.left + cropPreview.width}
-                  y2={cropPreview.top + (cropPreview.height * 2) / 3}
-                />
+                {(() => {
+                  // Overlay option: rule of thirds, an 8 × 8 grid, or none.
+                  const parts = navigationTools.cropOverlay === 'grid' ? 8 : navigationTools.cropOverlay === 'thirds' ? 3 : 0;
+                  return Array.from({ length: Math.max(0, parts - 1) }, (_, index) => {
+                    const t = (index + 1) / parts;
+                    return (
+                      <Fragment key={index}>
+                        <line
+                          className="crop-preview-guide"
+                          x1={cropPreview.left + cropPreview.width * t}
+                          y1={cropPreview.top}
+                          x2={cropPreview.left + cropPreview.width * t}
+                          y2={cropPreview.top + cropPreview.height}
+                        />
+                        <line
+                          className="crop-preview-guide"
+                          x1={cropPreview.left}
+                          y1={cropPreview.top + cropPreview.height * t}
+                          x2={cropPreview.left + cropPreview.width}
+                          y2={cropPreview.top + cropPreview.height * t}
+                        />
+                      </Fragment>
+                    );
+                  });
+                })()}
               </svg>
             )}
             {perspectiveCropPreview && (
@@ -19181,6 +20522,81 @@ export default function Home() {
                   />
                 ))}
               </svg>
+            )}
+            {frame && perspectiveClicks.length > 0 && !perspectiveCropPreview && (
+              <svg
+                className="crop-preview-overlay perspective-crop-overlay"
+                data-testid="perspective-crop-clicks"
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-label={`Perspective crop: ${perspectiveClicks.length} of 4 corners placed`}
+              >
+                <polyline
+                  className="perspective-crop-border"
+                  points={perspectiveClicks.map((corner) => `${corner.x},${corner.y}`).join(' ')}
+                />
+                {perspectiveClicks.map((corner, index) => (
+                  <circle key={index} className="perspective-crop-handle" cx={corner.x} cy={corner.y} r="7" />
+                ))}
+              </svg>
+            )}
+            {frame && noteEditor && (
+              <form
+                className="note-editor"
+                aria-label={noteEditor.id ? 'Edit note' : 'New note'}
+                data-testid="note-editor"
+                data-side={noteEditor.x > frame.w * 0.6 ? 'left' : 'right'}
+                style={{ left: `${(noteEditor.x / frame.w) * 100}%`, top: `${(noteEditor.y / frame.h) * 100}%` }}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveNoteEditor();
+                }}
+              >
+                <textarea
+                  aria-label="Note text"
+                  ref={noteTextRef}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setNoteEditor(null);
+                      setNotice('Note cancelled');
+                    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                      event.preventDefault();
+                      saveNoteEditor();
+                    }
+                  }}
+                  rows={3}
+                  maxLength={500}
+                  value={noteEditor.text}
+                  onChange={(event) => setNoteEditor({ ...noteEditor, text: event.target.value })}
+                />
+                <div className="note-editor-actions">
+                  <input
+                    type="color"
+                    aria-label="Note marker color"
+                    value={noteEditor.color}
+                    onChange={(event) => setNoteEditor({ ...noteEditor, color: event.target.value })}
+                  />
+                  {noteEditor.id && (
+                    <button type="button" onClick={() => deleteNote(noteEditor.id!)}>
+                      Delete
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNoteEditor(null);
+                      setNotice('Note cancelled');
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="primary">
+                    Save
+                  </button>
+                </div>
+              </form>
             )}
             {slicePreview && (
               <svg
@@ -19291,7 +20707,8 @@ export default function Home() {
               </svg>
             )}
           </div>
-          <div className="zoom">
+        </section>
+          <div className="zoom" data-testid="zoom-control">
             <button
               aria-label="Zoom out"
               onClick={() => zoomBy(-1)}
@@ -19316,7 +20733,72 @@ export default function Home() {
               <ZoomIn />
             </button>
           </div>
-        </section>
+          {/* Pinned to the visible stage like the zoom pill; hidden while a
+              crop, slice or frame preview bar or the type bar uses that spot. */}
+          {frame?.artboards?.length && !cropPreview && !slicePreview && !framePreview && !isTypeTool(tool) ? (
+            <fieldset className="artboard-controls" aria-label="Artboard controls" data-testid="artboard-controls">
+              <label>
+                <span>Active artboard</span>
+                <select
+                  aria-label="Active artboard"
+                  value={frame.activeArtboardId || frame.artboards[0].id}
+                  onChange={(event) => selectArtboard(event.target.value)}
+                >
+                  {frame.artboards.map((item) => (
+                    <option key={item.id} value={item.id} disabled={!item.visible}>
+                      {item.name} ({item.w} × {item.h} px)
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="artboard-visibility-list" aria-label="Artboard visibility">
+                {frame.artboards.map((item) => (
+                  <label key={item.id} className="artboard-visibility-option">
+                    <input
+                      type="checkbox"
+                      aria-label={`Show ${item.name} artboard`}
+                      checked={item.visible}
+                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
+                    />
+                    <span>{item.name}</span>
+                  </label>
+                ))}
+              </div>
+              <label>
+                <span>Fit active layer</span>
+                <select
+                  aria-label="Artboard fit mode"
+                  defaultValue="cover"
+                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
+                >
+                  <option value="cover">Cover</option>
+                  <option value="contain">Contain</option>
+                  <option value="stretch">Stretch</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                data-testid="artboard-fit-active"
+                onClick={() => fitActiveLayerToArtboard('cover')}
+              >
+                Fit active layer to artboard
+              </button>
+              <button
+                type="button"
+                data-testid="artboard-replace-fit"
+                disabled={
+                  !frame.active ||
+                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
+                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
+                }
+                onClick={() => chooseSmartObjectFile(true, true)}
+              >
+                Replace smart object and fit
+              </button>
+              <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
+            </fieldset>
+          ) : null}
+        </div>
         <aside
           className="inspector"
           ref={inspectorRef}
@@ -19353,7 +20835,7 @@ export default function Home() {
                 action="Exit"
                 onClick={exitQuickMask}
               />
-              <label>
+              <label className="check-row">
                 <input
                   type="checkbox"
                   checked={quickMaskReveal}
@@ -19374,6 +20856,118 @@ export default function Home() {
             data-testid="tool-options-area"
             tabIndex={-1}
           >
+            {/* Perspective Crop corners are edited here, docked off the canvas so
+                the panel never covers a corner handle (audit B-06). */}
+          {perspectiveCropPreview && (
+            <fieldset
+              className="panel perspective-crop-controls"
+              aria-label="Perspective crop controls"
+              data-testid="perspective-crop-controls"
+            >
+              <span>
+                Perspective crop · {perspectiveCropPreview.width} ×{' '}
+                {perspectiveCropPreview.height} px
+              </span>
+              <div className="perspective-crop-fields">
+                {(
+                  [
+                    'Top left',
+                    'Top right',
+                    'Bottom right',
+                    'Bottom left',
+                  ] as const
+                ).map((label, index) => (
+                    <span key={label}>
+                      <label>
+                        {label} X
+                        <input
+                          aria-label={`${label} X`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.w}
+                          value={Math.round(perspectiveCropPreview.quad[index].x)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
+                            quad[index] = { ...quad[index], x: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                      <label>
+                        {label} Y
+                        <input
+                          aria-label={`${label} Y`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.h}
+                          value={Math.round(perspectiveCropPreview.quad[index].y)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
+                            quad[index] = { ...quad[index], y: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                    </span>
+                ))}
+                <label>
+                  Output width
+                  <input
+                    aria-label="Perspective output width"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.width}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ width: value });
+                    }}
+                  />
+                </label>
+                <label>
+                  Output height
+                  <input
+                    aria-label="Perspective output height"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.height}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ height: value });
+                    }}
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                data-testid="perspective-crop-apply"
+                disabled={perspectiveCropApplying}
+                onClick={() => void applyPerspectiveCropPreview()}
+              >
+                {perspectiveCropApplying
+                  ? 'Applying…'
+                  : 'Apply perspective crop'}
+              </button>
+              <button
+                type="button"
+                data-testid="perspective-crop-cancel"
+                onClick={cancelPerspectiveCropPreview}
+              >
+                Cancel
+              </button>
+            </fieldset>
+          )}
             {/* Tool presets (#233) sit above the active tool's options. */}
             {presetTool && (
               <ToolPresetsControl
@@ -19427,7 +21021,7 @@ export default function Home() {
                 <button type="button" aria-label="Rotate view right 15 degrees" onClick={() => rotateViewBy(15)}>
                   <RotateCw />
                 </button>
-                <button type="button" className="secondary" aria-label="Reset view rotation" onClick={resetViewRotation}>
+                <button type="button" className="secondary view-reset" aria-label="Reset view rotation" onClick={resetViewRotation}>
                   Reset view
                 </button>
               </div>
@@ -19443,10 +21037,11 @@ export default function Home() {
             <SidebarSection
               id="tool-options"
               icon={Brush}
-              title="Tool options"
+              title={NAMED_OPTION_TOOLS.has(tool) ? `${activeToolLabel} options` : 'Tool options'}
               collapsed={collapsedSections.has('tool-options')}
               onToggle={toggleSidebarSection}
             >
+              {NAMED_OPTION_TOOLS.has(tool) && renderNavigationToolOptions()}
               {tool === 'audio-note' && (
                 <AudioAnnotationList
                   items={audioAnnotations(frame)}
@@ -19462,11 +21057,13 @@ export default function Home() {
                   <select
                     aria-label="Gradient type"
                     value={gradientMode}
-                    onChange={(event) => setGradientMode(event.target.value as 'linear' | 'radial' | 'reflected')}
+                    onChange={(event) => setGradientMode(event.target.value as GradientType)}
                   >
                     <option value="linear">Linear</option>
                     <option value="radial">Radial</option>
+                    <option value="angle">Angle</option>
                     <option value="reflected">Reflected</option>
+                    <option value="diamond">Diamond</option>
                   </select>
                 </label>
               )}
@@ -19650,6 +21247,42 @@ export default function Home() {
                   </button>
                 </label>
               )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && (
+                <p className="adjust-note" data-testid="path-tool-hint">{PATH_TOOL_HINTS[tool as PathOptionTool]}</p>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('mode') && (
+                <label className="select-row">
+                  <span>Pen mode</span>
+                  <select
+                    aria-label="Pen mode"
+                    value={penOptions.mode}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, mode: event.target.value === 'path' ? 'path' : 'shape' }))}
+                  >
+                    <option value="shape">Shape (filled layer)</option>
+                    <option value="path">Path (work path, no fill)</option>
+                  </select>
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('autoAddDelete') && (
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={penOptions.autoAddDelete}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, autoAddDelete: event.target.checked }))}
+                  />
+                  Auto Add/Delete
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('rubberBand') && (
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={penOptions.rubberBand}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, rubberBand: event.target.checked }))}
+                  />
+                  Rubber Band
+                </label>
+              )}
               {PATH_TOOL_OPTION_TOOLS.includes(tool) && customPathPresets.length > 0 && (
                 <label className="select-row">
                   <span>Saved path preset</span>
@@ -19697,15 +21330,14 @@ export default function Home() {
               )}
               {tool === 'rounded-rectangle' && (
                 <p className="adjust-note">
-                  Draws a filled rectangle in the foreground colour. The radius is clamped to half the
-                  shorter side and stays editable in Layer properties. Shift draws a square; Alt draws
-                  from the centre.
+                  The radius is clamped to half the shorter side and stays editable in Layer
+                  properties. Shift draws a square; Alt draws from the centre.
                 </p>
               )}
               {tool === 'custom-shape' && (
                 <fieldset className="custom-shape-picker">
                   <legend>Custom shape</legend>
-                  <div className="custom-shape-grid">
+                  <div className="custom-shape-grid" role="radiogroup" aria-label="Custom shape">
                     {CUSTOM_SHAPE_LIBRARY.map((entry) => (
                       <label
                         key={entry.id}
@@ -19744,8 +21376,8 @@ export default function Home() {
                     </label>
                   )}
                   <p className="adjust-note">
-                    Drag to draw {customShapeLabel()} as an editable path filled with the foreground
-                    colour. Shift keeps its proportions; Alt draws from the centre.
+                    Drag to draw {customShapeLabel()} as an editable path with the Fill and Stroke
+                    options below. Shift keeps its proportions; Alt draws from the centre.
                   </p>
                 </fieldset>
               )}
@@ -19783,8 +21415,81 @@ export default function Home() {
                   suffix="%"
                 />
               )}
-              {tool !== 'magic-eraser' && (
+              {isShapeToolId(tool) && (
+                <fieldset className="shape-appearance" aria-label="Shape fill and stroke">
+                  {tool !== 'line' && shapePaintRow('fill')}
+                  {shapePaintRow('stroke')}
+                  <Slider
+                    label="Stroke width"
+                    value={shapeAppearance.strokeWidth}
+                    min={1}
+                    max={SHAPE_STROKE_WIDTH_MAX}
+                    set={(strokeWidth) => setShapeAppearance((value) => ({ ...value, strokeWidth }))}
+                    suffix=" px"
+                  />
+                  <div className="select-row shape-create-row">
+                    <span>New</span>
+                    <input
+                      type="number"
+                      aria-label="New shape width"
+                      min={1}
+                      max={SHAPE_CREATE_MAX}
+                      value={shapeAppearance.createWidth}
+                      onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, createWidth: Number(event.target.value) || value.createWidth }))}
+                    />
+                    <span aria-hidden="true">×</span>
+                    <input
+                      type="number"
+                      aria-label="New shape height"
+                      min={1}
+                      max={SHAPE_CREATE_MAX}
+                      value={shapeAppearance.createHeight}
+                      onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, createHeight: Number(event.target.value) || value.createHeight }))}
+                    />
+                    <button type="button" className="secondary" onClick={createNumericShape}>Create</button>
+                  </div>
+                  <p className="adjust-note">
+                    {tool === 'line'
+                      ? 'Lines use the Stroke colour (the foreground colour when Stroke is None) at the Stroke width.'
+                      : 'Default: filled with the foreground colour, no stroke. Create adds a shape of this size centred on the canvas.'}
+                  </p>
+                </fieldset>
+              )}
+              {tool !== 'magic-eraser' && tool !== 'fill' && tool !== 'magic-wand' && !isShapeToolId(tool) && !NAMED_OPTION_TOOLS.has(tool) &&
+                (!PATH_TOOL_OPTION_TOOLS.includes(tool) || pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('strokeWidth')) && (
                 <BrushSizeControl value={size} set={setSize} />
+              )}
+              {(tool === 'magic-wand' || tool === 'fill') && (
+                <>
+                <Slider
+                  label="Color tolerance"
+                  value={colorTolerance}
+                  min={0}
+                  max={255}
+                  set={setColorTolerance}
+                  suffix=""
+                />
+                <div className="select-row color-region-options" data-testid="color-region-options">
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Contiguous"
+                      checked={colorRegion.contiguous}
+                      onChange={(event) => setColorRegion((value) => ({ ...value, contiguous: event.target.checked }))}
+                    />
+                    <span>Contiguous</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Sample All Layers"
+                      checked={colorRegion.sampleAllLayers}
+                      onChange={(event) => setColorRegion((value) => ({ ...value, sampleAllLayers: event.target.checked }))}
+                    />
+                    <span>Sample All Layers</span>
+                  </label>
+                </div>
+                </>
               )}
               {(tool === 'brush' ||
                 tool === 'pencil' ||
@@ -19881,11 +21586,30 @@ export default function Home() {
                       />
                     )}
                   {tool === 'spot-heal' && (
-                    <p className="adjust-note">
-                      Samples a bounded local context ring and keeps the
-                      source and alpha channel unchanged. Use Remove Background
-                      for edge-connected backdrop removal.
-                    </p>
+                    <>
+                      <label className="select-row">
+                        <span>Type</span>
+                        <select
+                          aria-label="Spot Healing type"
+                          value={retouchOptions.spotHealingType}
+                          onChange={(event) => setRetouchOption('spotHealingType', event.target.value as SpotHealingType)}
+                        >
+                          <option value="content-aware">Content-Aware</option>
+                          <option value="texture">Create Texture</option>
+                          <option value="proximity">Proximity Match</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        {retouchOptions.spotHealingType === 'content-aware'
+                          ? 'Content-Aware interpolates the pixels around the whole stroke across it, so gradients continue. '
+                          : retouchOptions.spotHealingType === 'texture'
+                            ? 'Create Texture fills with the surrounding tone plus fine detail borrowed from a nearby area. '
+                            : 'Proximity Match takes the median of a ring just outside each brush position. '}
+                        Each type samples a bounded local context ring (a local
+                        approximation); the source and alpha channel stay unchanged.
+                        Use Remove Background for edge-connected backdrop removal.
+                      </p>
+                    </>
                   )}
                   {(tool === 'blur' || tool === 'sharpen') && (
                     <p className="adjust-note">
@@ -19896,20 +21620,53 @@ export default function Home() {
                     </p>
                   )}
                   {tool === 'patch' && (
-                    <p className="adjust-note">
-                      Click a source area, then drag over a destination. Patch
-                      copies a bounded local neighbourhood while keeping the
-                      source asset and alpha channel unchanged.
-                    </p>
+                    <>
+                      <label className="select-row">
+                        <span>Patch</span>
+                        <select
+                          aria-label="Patch mode"
+                          value={retouchOptions.patchMode}
+                          onChange={(event) => setRetouchOption('patchMode', event.target.value as PatchMode)}
+                        >
+                          <option value="source">Source</option>
+                          <option value="destination">Destination</option>
+                          <option value="brush">Brush</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        {retouchOptions.patchMode === 'source'
+                          ? 'Drag inside a selection to the area that should replace it; the patch is tone-matched to its surroundings. '
+                          : retouchOptions.patchMode === 'destination'
+                            ? 'Drag inside a selection to copy it to where you release. '
+                            : ''}
+                        Click a source area, then drag over a destination
+                        {retouchOptions.patchMode === 'brush' ? '' : ' to patch outside a selection'}.
+                        Patch keeps the source asset and alpha channel unchanged.
+                      </p>
+                    </>
                   )}
                   {(tool === 'mask-brush' ||
                     tool === 'mask-eraser' ||
                     tool === 'adjustment-brush') && (
                     <p className="adjust-note">
                       {tool === 'adjustment-brush'
-                        ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable.'
+                        ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable. Without a mask, the first Reveal stroke limits the adjustment to the painted area and the first Conceal stroke removes it there. Alt-drag uses the other mode.'
                         : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
                     </p>
+                  )}
+                  {tool === 'adjustment-brush' && (
+                    <label className="select-row">
+                      <span>Paint</span>
+                      <select
+                        aria-label="Adjustment Brush mode"
+                        title="Reveal paints the adjustment in; Conceal paints it out (Alt-drag uses the other mode)"
+                        value={adjustmentBrushMode}
+                        onChange={(event) => setAdjustmentBrushMode(event.target.value === 'conceal' ? 'conceal' : 'reveal')}
+                      >
+                        <option value="reveal">Reveal adjustment</option>
+                        <option value="conceal">Conceal adjustment</option>
+                      </select>
+                    </label>
                   )}
                   {(tool === 'brush' || tool === 'pencil') && (
                     <label className="select-row">
@@ -20058,9 +21815,10 @@ export default function Home() {
                               {brushStrands.enabled && (
                                 <>
                                   <p className="adjust-note" data-testid="strand-note">
-                                    One drag paints a twisting ribbon of fine strands. Size and pen pressure set strand
-                                    thickness; the strands are previewed while you drag and painted on release. A
-                                    bounded local approximation, not a smoke simulation.
+                                    One drag paints a twisting ribbon of fine strands. Size sets the ribbon width;
+                                    Strand thickness (scaled by pen pressure) sets each strand. The strands are previewed
+                                    while you drag and painted on release. A bounded local approximation, not a smoke
+                                    simulation.
                                   </p>
                                   <Slider
                                     label="Strands"
@@ -20071,12 +21829,13 @@ export default function Home() {
                                     set={(count) => setBrushStrands((current) => normalizeBrushStrands({ ...current, count }))}
                                   />
                                   <Slider
-                                    label="Ribbon width"
-                                    value={brushStrands.width}
-                                    min={BRUSH_STRANDS_WIDTH_MIN}
-                                    max={BRUSH_STRANDS_WIDTH_MAX}
+                                    label="Strand thickness"
+                                    value={brushStrands.thickness}
+                                    min={BRUSH_STRANDS_THICKNESS_MIN}
+                                    max={BRUSH_STRANDS_THICKNESS_MAX}
+                                    step={0.5}
                                     suffix=" px"
-                                    set={(width) => setBrushStrands((current) => normalizeBrushStrands({ ...current, width }))}
+                                    set={(thickness) => setBrushStrands((current) => normalizeBrushStrands({ ...current, thickness }))}
                                   />
                                   <Slider
                                     label="Twists"
@@ -20381,6 +22140,47 @@ export default function Home() {
                       suffix=""
                     />
                   )}
+                  {tool === 'color-replace' && (
+                    <>
+                      <label className="select-row">
+                        <span>Mode</span>
+                        <select
+                          aria-label="Color Replace mode"
+                          value={retouchOptions.colorReplaceMode}
+                          onChange={(event) => setRetouchOption('colorReplaceMode', event.target.value as ColorReplaceMode)}
+                        >
+                          <option value="color">Color</option>
+                          <option value="hue">Hue</option>
+                          <option value="saturation">Saturation</option>
+                          <option value="luminosity">Luminosity</option>
+                          <option value="normal">Normal</option>
+                        </select>
+                      </label>
+                      <label className="select-row">
+                        <span>Sampling</span>
+                        <select
+                          aria-label="Color Replace sampling"
+                          value={retouchOptions.colorReplaceSampling}
+                          onChange={(event) => setRetouchOption('colorReplaceSampling', event.target.value as ColorReplaceSampling)}
+                        >
+                          <option value="continuous">Continuous</option>
+                          <option value="once">Once</option>
+                          <option value="background">Background Swatch</option>
+                        </select>
+                      </label>
+                      <label className="select-row">
+                        <span>Limits</span>
+                        <select
+                          aria-label="Color Replace limits"
+                          value={retouchOptions.colorReplaceLimits}
+                          onChange={(event) => setRetouchOption('colorReplaceLimits', event.target.value as ColorReplaceLimits)}
+                        >
+                          <option value="contiguous">Contiguous</option>
+                          <option value="discontiguous">Discontiguous</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
                   {(tool === 'dodge' || tool === 'burn') && (
                     <>
                       <Slider
@@ -20447,12 +22247,12 @@ export default function Home() {
                       <Slider label="History flow" value={historyBrush.flow} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, flow: value }))} suffix="%" />
                       <label className="select-row">
                         <span>History source</span>
-                        <select aria-label="History source" value={String(historySourceIndex ?? index.current)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
-                          {history.current.map((_, snapshot) => <option key={snapshot} value={snapshot}>Snapshot {snapshot + 1}</option>)}
+                        <select aria-label="History source" value={String(historySourceIndex ?? 0)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
+                          {historySourceLabels(history.current).map((label, snapshot) => <option key={snapshot} value={snapshot}>{label}</option>)}
                         </select>
                       </label>
                       <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
-                      <p className="adjust-note">Source snapshot: {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1} of {history.current.length}. Restore is painted through the brush and remains undoable; discarded snapshots cannot be recovered.</p>
+                      <p className="adjust-note">Source snapshot: {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1} of {history.current.length}. Restore is painted through the brush and remains undoable; discarded snapshots cannot be recovered.</p>
                     </>
                   )}
                   {tool === 'art-history-brush' && (
@@ -20463,12 +22263,12 @@ export default function Home() {
                       <Slider label="Fidelity" value={artHistoryBrush.fidelity} min={0} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, fidelity: value }))} suffix="%" />
                       <label className="select-row">
                         <span>Art History source</span>
-                        <select aria-label="Art History source" value={String(historySourceIndex ?? index.current)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
-                          {history.current.map((_, snapshot) => <option key={snapshot} value={snapshot}>Snapshot {snapshot + 1}</option>)}
+                        <select aria-label="Art History source" value={String(historySourceIndex ?? 0)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
+                          {historySourceLabels(history.current).map((label, snapshot) => <option key={snapshot} value={snapshot}>{label}</option>)}
                         </select>
                       </label>
                       <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`Art History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
-                      <p className="adjust-note">Local deterministic painterly approximation from snapshot {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}. Source pixels remain immutable and the committed stroke is undoable; bristle and wet-media dynamics are staged.</p>
+                      <p className="adjust-note">Local deterministic painterly approximation from snapshot {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}. Source pixels remain immutable and the committed stroke is undoable; bristle and wet-media dynamics are staged.</p>
                     </>
                   )}
                   {tool === 'pattern-stamp' && (
@@ -20477,17 +22277,44 @@ export default function Home() {
                         <span>Pattern</span>
                         <select
                           aria-label="Pattern source"
-                          value={patternId}
-                          onChange={(event) =>
-                            setPatternId(event.target.value as PatternId)
-                          }
+                          value={activeImagePattern ? `image:${activeImagePattern.id}` : patternId}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (value.startsWith('image:')) setRetouchOption('patternImage', value.slice(6));
+                            else {
+                              setPatternId(value as PatternId);
+                              setRetouchOption('patternImage', null);
+                            }
+                          }}
                         >
                           {PATTERN_IDS.map((id) => (
                             <option key={id} value={id}>
                               {id[0].toUpperCase() + id.slice(1)}
                             </option>
                           ))}
+                          {imagePatterns.map((pattern) => (
+                            <option key={pattern.id} value={`image:${pattern.id}`}>
+                              {pattern.label} ({pattern.width}×{pattern.height})
+                            </option>
+                          ))}
                         </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!frame?.selection}
+                        onClick={() => void definePatternFromSelection()}
+                      >
+                        Define pattern from selection
+                      </button>
+                      <label className="check-row">
+                        <input
+                          aria-label="Pattern aligned"
+                          type="checkbox"
+                          checked={retouchOptions.patternAligned}
+                          onChange={(event) => setRetouchOption('patternAligned', event.target.checked)}
+                        />
+                        Aligned
                       </label>
                       {customPatternPresets.length > 0 && (
                         <label className="select-row">
@@ -20516,19 +22343,44 @@ export default function Home() {
                         suffix="px"
                       />
                       <p className="adjust-note">
-                        Pattern Stamp generates a bounded local tile from the
-                        foreground/background wells. No source image leaves this
-                        device.
+                        {activeImagePattern
+                          ? 'Pattern Stamp repeats the pixels captured from a selection (at most 128 px per side).'
+                          : 'Pattern Stamp generates a bounded local tile from the foreground/background wells.'}
+                        {' '}No source image leaves this device.
                       </p>
                     </>
                   )}
                   {(tool === 'clone' || tool === 'heal') && (
-                    <p className="adjust-note">
-                      Option/Alt-click the canvas to set or re-anchor the
-                      source point. Drag to paint with a fixed source offset;
-                      the source pixels stay unchanged until you commit the
-                      stroke.
-                    </p>
+                    <>
+                      <label className="check-row">
+                        <input
+                          aria-label="Clone aligned"
+                          type="checkbox"
+                          checked={retouchOptions.cloneAligned}
+                          onChange={(event) => setRetouchOption('cloneAligned', event.target.checked)}
+                        />
+                        Aligned
+                      </label>
+                      <label className="select-row">
+                        <span>Sample</span>
+                        <select
+                          aria-label="Clone sample"
+                          value={retouchOptions.cloneSample}
+                          onChange={(event) => setRetouchOption('cloneSample', event.target.value as CloneSample)}
+                        >
+                          <option value="current">Current Layer</option>
+                          <option value="below">Current &amp; Below</option>
+                          <option value="all">All Layers</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        Option/Alt-click the canvas to set or re-anchor the
+                        source point. Aligned keeps the source offset between
+                        strokes; otherwise each stroke starts again at the source
+                        point. The source pixels stay unchanged until you commit
+                        the stroke.
+                      </p>
+                    </>
                   )}
                   {tool === 'selection-brush' && (
                     <p className="adjust-note">
@@ -20593,6 +22445,10 @@ export default function Home() {
                 />
               </label>
               <div className="select-row font-select-row" data-type-keep=""><span>Font</span><FontFamilySelect label="Text tool font" value={textFields.fontFamily} disabled={typeView.locked} onChange={chooseTextToolFont} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <p className="adjust-note" data-testid="font-control-note">
+                Font sets the font for new type and restyles the selected type layer (or the selected
+                characters while editing).
+              </p>
               <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
               {/* The check covers the new-type font, so it shows only while the picker shows that font. */}
               {fontAvailability === 'fallback' && textFields.fontFamily === fontFamily && (
@@ -20623,6 +22479,57 @@ export default function Home() {
           )}
           {section === 'selection-options' && frame && (
             <section className="panel layers-part-panel" aria-label="Selection options">
+              {(MARQUEE_TOOLS.includes(tool) || tool === 'lasso' || tool === 'polygonal-lasso' || tool === 'magnetic-lasso') && (
+                <div className="layer-actions marquee-options" data-testid="marquee-options">
+                  {tool !== 'row-select' && tool !== 'column-select' && (
+                    <Slider
+                      label="Feather (new selections)"
+                      value={marqueeOptions.feather}
+                      min={0}
+                      max={MARQUEE_FEATHER_MAX}
+                      set={(feather) => setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, feather }))}
+                      suffix="px"
+                    />
+                  )}
+                  {(tool === 'select' || tool === 'ellipse-select') && (
+                    <>
+                      <label className="select-row">
+                        <span>Style</span>
+                        <select
+                          aria-label="Marquee style"
+                          value={marqueeOptions.style}
+                          onChange={(event) =>
+                            setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, style: event.target.value as MarqueeStyle }))
+                          }
+                        >
+                          <option value="normal">Normal</option>
+                          <option value="fixed-ratio">Fixed Ratio</option>
+                          <option value="fixed-size">Fixed Size</option>
+                        </select>
+                      </label>
+                      {marqueeOptions.style !== 'normal' && (
+                        <div className="select-row marquee-size">
+                          {(['width', 'height'] as const).map((side) => (
+                            <label key={side}>
+                              <span>{side === 'width' ? 'W' : 'H'}</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={30000}
+                                aria-label={`Marquee ${marqueeOptions.style === 'fixed-size' ? 'size' : 'ratio'} ${side}`}
+                                value={marqueeOptions[side]}
+                                onChange={(event) =>
+                                  setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, [side]: Number(event.target.value) }))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               {renderLayersPanel(frame, 'selection')}
             </section>
           )}
@@ -22469,7 +24376,7 @@ export default function Home() {
           <i />
           {notice}
         </span>
-        <span>{tool[0].toUpperCase() + tool.slice(1)} tool</span>
+        <span>{activeToolLabel} tool</span>
         <output
           aria-label="Render status"
           data-testid="render-status"
@@ -22564,6 +24471,42 @@ function Slider({
         onChange={(e) => set(+e.target.value)}
       />
     </label>
+  );
+}
+
+/**
+ * Whole-number field that keeps the typed text while it is being edited and
+ * only passes valid values in [min, max] on; blur restores the last value.
+ */
+function IntegerField({
+  label,
+  value,
+  min,
+  max,
+  set,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  set: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      aria-label={label}
+      min={min}
+      max={max}
+      step={1}
+      value={draft ?? String(value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const parsed = Number(event.target.value);
+        if (event.target.value.trim() !== '' && Number.isInteger(parsed) && parsed >= min && parsed <= max) set(parsed);
+      }}
+      onBlur={() => setDraft(null)}
+    />
   );
 }
 

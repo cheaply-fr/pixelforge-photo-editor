@@ -38,6 +38,33 @@ export function buildCurvaturePath(
   if (points.length < 2 || points.length > CURVATURE_MAX_POINTS)
     throw new Error('Curvature path must contain 2 to 1000 points');
   if (!points.every(finitePoint)) throw new Error('Curvature points are invalid');
-  const path = buildFreeformPath(points, style);
-  return validatePath({ ...path, closed, fill: closed, stroke: true });
+  if (!closed) {
+    const path = buildFreeformPath(points, style);
+    return validatePath({ ...path, closed, fill: false, stroke: true });
+  }
+  // A closed path wraps around: every anchor, including the first and last,
+  // takes its tangent from its cyclic neighbours, so the closing segment is
+  // curved like the others instead of a straight chord.
+  const count = points.length;
+  const nodes = points.map((point, index) => {
+    const previous = points[(index - 1 + count) % count];
+    const next = points[(index + 1) % count];
+    const dx = (next.x - previous.x) / 6;
+    const dy = (next.y - previous.y) / 6;
+    return {
+      x: point.x,
+      y: point.y,
+      inHandle: { x: point.x - dx, y: point.y - dy },
+      outHandle: { x: point.x + dx, y: point.y + dy },
+    };
+  });
+  return validatePath({
+    nodes,
+    closed: true,
+    fill: true,
+    stroke: true,
+    strokeWidth: style.strokeWidth,
+    fillColor: style.fillColor,
+    strokeColor: style.strokeColor,
+  });
 }

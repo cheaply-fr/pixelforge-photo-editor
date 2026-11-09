@@ -90,7 +90,7 @@ test('family tools show Photoshop-style submenu arrows while singleton tools sta
   await openEditor(page);
 
   for (const label of [
-    'Select tool',
+    'Rectangular Marquee tool',
     'Lasso tool',
     'Crop tool',
     'Brush tool',
@@ -242,7 +242,7 @@ test('a touch press held for 420 ms opens one family and touch can choose a subt
 test('M/L/W flyouts retain Photoshop tool names and shortcuts', async ({ page }) => {
   await openEditor(page);
 
-  const marquee = page.getByRole('button', { name: 'Select tool', exact: true });
+  const marquee = page.getByRole('button', { name: 'Rectangular Marquee tool', exact: true });
   await marquee.focus();
   await page.keyboard.press('ArrowDown');
   let flyout = page.locator('[role="menu"]:visible');

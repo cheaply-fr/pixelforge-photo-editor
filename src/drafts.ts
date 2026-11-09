@@ -6,6 +6,8 @@ import {
 } from './projectLimits.ts';
 import { validCornerRadius } from './vectorShapes.ts';
 import { validCustomShapeChoice } from './customShapeLibrary.ts';
+import { validShapeAppearance, type ShapeAppearanceSettings } from './shapeAppearance.ts';
+import { validPenOptions, type PenOptions } from './penOptions.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -105,9 +107,14 @@ import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
 import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
 import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.ts';
 import { validSmudgeSettings, type SmudgeSettings } from './smudge.ts';
+import type { ColorRegionSettings } from './colorRegion.ts';
+import type { MarqueeOptions } from './marqueeOptions.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
 import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
+import { validRetouchOptions, type RetouchOptions } from './retouchOptions.ts';
+import { normalizeImagePatterns, type ImagePattern } from './imagePatterns.ts';
+import { validNavigationToolSettings, type NavigationToolSettings } from './navigationOptions.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -209,6 +216,10 @@ export type Settings = {
   customBrushPresets?: CustomBrushPreset[];
   /** User-authored local Pattern Stamp presets; source pixels never leave the device. */
   customPatternPresets?: CustomPatternPreset[];
+  /** Selection-defined Pattern Stamp tiles (small local PNGs, at most eight). */
+  imagePatterns?: ImagePattern[];
+  /** Clone/Pattern Stamp, Spot Healing, Patch and Color Replace options; absent keys use defaults. */
+  retouchOptions?: Partial<RetouchOptions>;
   /** User-authored local vector shape presets; geometry remains editable. */
   customShapePresets?: CustomShapePreset[];
   /** User-authored local editable Pen paths; source pixels never leave the device. */
@@ -223,6 +234,10 @@ export type Settings = {
   shapeCornerRadius?: number;
   /** Custom Shape tool choice: a built-in library id or `path-preset:<id>`. */
   customShapeId?: string;
+  /** Shape tools' Fill / Stroke / Stroke width / W×H options; absent keys use the defaults. */
+  shapeAppearance?: Partial<ShapeAppearanceSettings>;
+  /** Pen family Mode, Auto Add/Delete and Rubber Band; absent keys use the defaults. */
+  penOptions?: Partial<PenOptions>;
   /** Spacing between brush dabs as a percent of diameter (1–1,000). */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -232,7 +247,7 @@ export type Settings = {
   /** Scatter axes, Count, Count jitter and size/angle/opacity jitter; absent keys use legacy defaults. */
   brushDynamics?: Partial<BrushDynamics>;
   /** Gradient geometry for the Gradient tool. */
-  gradientMode?: 'linear' | 'radial' | 'reflected';
+  gradientMode?: 'linear' | 'radial' | 'reflected' | 'angle' | 'diamond';
   /** Gradient endpoint behaviour. */
   gradientEnd?: 'transparent' | 'background';
   /** Optional authored colour stop at the midpoint; `none` preserves the legacy two-stop gradient. */
@@ -282,6 +297,10 @@ export type Settings = {
   redEyeThreshold?: number;
   redEyeAmount?: number;
   colorTolerance?: number;
+  /** Magic Wand / Fill Contiguous and Sample All Layers; omitted → contiguous, active layer. */
+  colorRegion?: Partial<ColorRegionSettings>;
+  /** Marquee/Lasso options-bar Feather (next selections) and marquee Style. */
+  marquee?: Partial<MarqueeOptions>;
   /** Tonal retouch settings persisted with the active tool. */
   tonalExposure?: number;
   tonalRange?: 'shadows' | 'midtones' | 'highlights';
@@ -300,6 +319,8 @@ export type Settings = {
   artHistoryBrush?: ArtHistoryBrushSettings;
   /** Index into the local undo history used as the History Brush source. */
   historySourceIndex?: number;
+  /** Zoom, Eyedropper, Count, Note and Crop options (docs/navigation-tool-options-contract.md). */
+  navigationTools?: Partial<NavigationToolSettings>;
   exportFormat?: ExportFormat;
   exportQuality?: number;
   /** Optional lossy-export target in bytes; absent means manual quality mode. */
@@ -493,6 +514,9 @@ function validSettings(settings: unknown): settings is Settings {
       normalizeCustomBrushPresets(candidate.customBrushPresets).length !== candidate.customBrushPresets.length) ||
     (candidate.customPatternPresets !== undefined &&
       normalizeCustomPatternPresets(candidate.customPatternPresets).length !== candidate.customPatternPresets.length) ||
+    (candidate.imagePatterns !== undefined &&
+      normalizeImagePatterns(candidate.imagePatterns).length !== candidate.imagePatterns.length) ||
+    (candidate.retouchOptions !== undefined && !validRetouchOptions(candidate.retouchOptions)) ||
     (candidate.customShapePresets !== undefined &&
       normalizeCustomShapePresets(candidate.customShapePresets).length !== candidate.customShapePresets.length) ||
     (candidate.customPathPresets !== undefined &&
@@ -547,7 +571,7 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
-  if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected'].includes(candidate.gradientMode)) return false;
+  if (candidate.gradientMode !== undefined && !['linear', 'radial', 'reflected', 'angle', 'diamond'].includes(candidate.gradientMode)) return false;
   if (candidate.defaultTypeStyle !== undefined) {
     try {
       normalizeTypeStyle(candidate.defaultTypeStyle);
@@ -557,6 +581,7 @@ function validSettings(settings: unknown): settings is Settings {
   }
   if (!validCornerRadius(candidate.shapeCornerRadius)) return false;
   if (candidate.customShapeId !== undefined && !validCustomShapeChoice(candidate.customShapeId)) return false;
+  if (!validShapeAppearance(candidate.shapeAppearance) || !validPenOptions(candidate.penOptions)) return false;
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
@@ -571,10 +596,14 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
   if (candidate.smudge !== undefined && !validSmudgeSettings(candidate.smudge)) return false;
+  // Loaded through normalizers, so only the container shape is checked here.
+  if (candidate.colorRegion !== undefined && !record(candidate.colorRegion)) return false;
+  if (candidate.marquee !== undefined && !record(candidate.marquee)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
   if (candidate.historySourceIndex !== undefined &&
     (!Number.isInteger(candidate.historySourceIndex) || candidate.historySourceIndex < 0 || candidate.historySourceIndex > 23)) return false;
+  if (candidate.navigationTools !== undefined && !validNavigationToolSettings(candidate.navigationTools)) return false;
   return (
     ranges.every(
       ([value, min, max]) =>

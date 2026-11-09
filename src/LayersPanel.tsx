@@ -36,6 +36,7 @@ import {
 import { SELECTION_FEATHER_STEP, formatSelectionFeather } from './selectionFeather';
 import { MAX_DOCUMENT_LAYERS, detectProjectLimits } from './projectLimits';
 import { CORNER_RADIUS_MAX, type ParametricShapeVariant } from './vectorShapes';
+import { shapeOutlineColor } from './shapeAppearance';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import {
   planLayerArrange,
@@ -1219,6 +1220,11 @@ export default function LayersPanel({
           Embedded source · {layer.sourceName || 'untitled image'} · replaceable without changing transforms
         </p>
       )}
+      {layer.kind === 'raster' && layer.background === true && (
+        <p className="mask-status" data-testid="background-layer-status">
+          Background · position locked, Eraser paints the background colour · Layer &gt; Layer from Background or rename to unlock
+        </p>
+      )}
       <div className="layer-properties" data-sidebar-section="layer-properties">
       <label className="layer-field">
         Layer name
@@ -1287,7 +1293,7 @@ export default function LayersPanel({
         </label>
         {frame.selection && (
           <label className="layer-field">
-            Feather {formatSelectionFeather(frame.selection.feather)} px
+            Current selection feather {formatSelectionFeather(frame.selection.feather)} px
             <input
               aria-label="Selection feather"
               type="range"
@@ -1948,8 +1954,8 @@ export default function LayersPanel({
               onChange={(e) => edit({ text: e.target.value })}
             />
           </label>
-          <div className="layer-field">
-            Typeface
+          <div className="layer-field" title="Applies to the whole layer. The Text section Font also restyles the selected type and sets the font for new type.">
+            Layer font (whole layer)
             <FontFamilySelect
               label="Layer font"
               className=""
@@ -2205,6 +2211,35 @@ export default function LayersPanel({
             disabled={layerLocked}
             onChange={(e) => edit({ color: e.target.value })}
           />
+          <label title={layer.fill ? undefined : 'An unfilled shape always draws its outline'}>
+            <input
+              type="checkbox"
+              checked={Boolean(shapeOutlineColor(layer))}
+              disabled={layerLocked || !layer.fill}
+              onChange={(e) => edit({ strokeColor: e.target.checked ? layer.strokeColor ?? '#000000' : undefined })}
+            />
+            Layer stroke
+          </label>
+          {shapeOutlineColor(layer) && (
+            <>
+              <input
+                type="color"
+                aria-label="Layer stroke color"
+                value={shapeOutlineColor(layer)}
+                disabled={layerLocked}
+                onChange={(e) => edit({ strokeColor: e.target.value })}
+              />
+              <NumberField
+                key={layer.id + 'stroke' + layer.stroke}
+                label="Layer stroke width"
+                value={layer.stroke}
+                min={1}
+                max={100}
+                disabled={layerLocked}
+                apply={(stroke) => edit({ stroke })}
+              />
+            </>
+          )}
           {layer.kind === 'polygon' && (
             <>
               <label className="layer-field">

@@ -7,8 +7,14 @@ conceals it. Adjustment parameters remain editable and underlying raster assets
 are never rewritten.
 
 An adjustment layer can receive a mask from the current selection through the
-Layer panel or Layer menu. The Adjustment Brush then requires a visible,
-unlocked adjustment layer with an enabled canvas-sized mask. Brush size,
+Layer panel or Layer menu. The Adjustment Brush requires a visible, unlocked
+adjustment layer. A fresh adjustment layer has no mask: the first stroke
+creates a canvas-sized one, empty for a Reveal stroke (the adjustment then
+applies only where painted) and fully revealing for a Conceal stroke (the
+adjustment is removed where painted). The **Paint** option chooses Reveal or
+Conceal; Alt-dragging uses the other mode for one stroke. An existing mask is
+refined in place. Before the 2026-11 audit (B-11) every stroke on a fresh
+adjustment layer was refused with the Mask Brush message. Brush size,
 hardness, opacity and pen/touch pressure sampling use the existing bounded mask
 refinement implementation. Each completed stroke is one undoable history entry;
 cancelled and no-op gestures do not create history.

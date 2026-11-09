@@ -69,3 +69,35 @@ cover all four commands, disabled open-path guards and a reload round trip.
 
 Raster export uses the same affine, opacity, blend, and adjustment pipeline as
 other editable layers.
+
+## Pen options
+
+Pen-family options persist in the draft as `settings.penOptions`
+(`src/penOptions.ts`); missing keys load the defaults so older drafts work.
+They are bounded local approximations of Photoshop's options.
+
+- **Pen mode** (Pen, Freeform Pen, Curvature Pen): **Shape** (default) keeps
+  the behaviour above — closing fills the path in the foreground colour with a
+  Size/3 outline. **Path** creates an unfilled **work path** layer named
+  "Work Path N" with a 1 px foreground hairline so it stays visible and
+  selectable; use Stroke Path or the Layers panel fill/stroke settings to give it
+  paint. There is no separate Paths panel.
+- **Auto Add/Delete** (Pen, default on): an unmodified Pen press on the active
+  visible, unlocked path deletes the anchor under the pointer or adds one on a
+  segment; Alt/Option still deletes and Shift still converts. Off, an
+  unmodified press always starts a new path.
+- **Rubber Band** (Pen and Curvature Pen, default off): while placing anchors
+  and no button is held, the preview includes the next segment (or smooth
+  curve) from the last anchor to the pointer. Touch input has no hover, so it
+  only applies to mouse and hovering pens.
+- A closed **Curvature Pen** path takes every anchor's tangent from its cyclic
+  neighbours, so the closing segment is curved like the others (it used to stay
+  straight). Open curvature paths are unchanged.
+- Tool options are tailored per tool: Pen shows Mode, Size (Shape mode), Auto
+  Add/Delete and Rubber Band; Curvature Pen shows Mode, Size and Rubber Band;
+  Freeform Pen shows Mode and Size; Add/Delete Anchor Point, Convert Point,
+  Path Selection and Direct Selection show only a one-line hint plus the saved
+  path presets and Stroke Path. Every pen/path tool shows a hint.
+
+Evidence: `tests/audit-vector.test.mjs` and
+`tests/browser/audit-vector-pen.spec.ts` (desktop and mobile).

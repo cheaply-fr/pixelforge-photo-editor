@@ -66,6 +66,7 @@ import {
   type ParametricShapeVariant,
   type RoundedRectNode,
 } from './vectorShapes.ts';
+import { shapeOutlineColor } from './shapeAppearance.ts';
 
 /** Trace one closed contour whose nodes may carry cubic handles. */
 function traceShapeNodes(
@@ -184,8 +185,11 @@ import {
 } from './layerStyles.ts';
 import { GROUP_BLEND_MODES } from './groupCompositing.ts';
 import { blendPixelsInPlace, isNativeCanvasBlendMode } from './blendModes.ts';
+import { replaceColorWindow } from './colorReplace.ts';
+import type { ColorReplaceLimits, ColorReplaceMode, ColorReplaceSampling } from './retouchOptions.ts';
 import { validSelectedLayerIds } from './layerSelection.ts';
 import { strokeWindow, strokeWindowReach } from './strokeWindow.ts';
+import { colorRegionMask } from './colorRegion.ts';
 import {
   COMPOSITE_CACHE_MIN_LAYERS,
   compositeCheckpointTargets,
@@ -373,7 +377,18 @@ type Common = {
 };
 export type Layer = Common &
   (
-    | { kind: 'raster'; asset: string; /** Optional editable solid-fill source color. */ fillColor?: string }
+    | {
+        kind: 'raster';
+        asset: string;
+        /** Optional editable solid-fill source color. */
+        fillColor?: string;
+        /**
+         * Photoshop-style Background: while it is the bottom layer its position
+         * is locked and the Eraser paints the background colour. Omitted in
+         * legacy drafts (ordinary layer); Layer from Background removes it.
+         */
+        background?: true;
+      }
     | {
         /** Embedded, source-retaining raster content with an editable transform. */
         kind: 'smart-object';
@@ -438,6 +453,8 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+        /** Outline colour drawn in addition to any fill; absent keeps the legacy rule (outline in `color` when unfilled). */
+        strokeColor?: string;
         /** Rounded-rectangle corner radius in local px; legacy drafts omit it (square). */
         cornerRadius?: number;
       }
@@ -448,6 +465,8 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+        /** See the rectangle `strokeColor`. */
+        strokeColor?: string;
       }
     | {
         /** A parametric segment from the layer origin to width/height. */
@@ -465,6 +484,8 @@ export type Layer = Common &
         color: string;
         stroke: number;
         fill: boolean;
+        /** See the rectangle `strokeColor`. */
+        strokeColor?: string;
         sides: number;
         /** Legacy drafts omit this and render as a regular polygon. */
         variant?: ParametricShapeVariant;
@@ -850,6 +871,20 @@ export function layerTransformMatrix(
     values,
   );
 }
+/**
+ * Whether `layer` is the frame's Background: a flagged raster layer that is
+ * still the bottom layer. Its position is locked and erasing paints the
+ * background colour; anywhere else the flag has no effect.
+ */
+export const isBackgroundLayer = (frame: Pick<Frame, 'layers'>, layer: Layer | undefined): boolean =>
+  Boolean(layer && layer.kind === 'raster' && layer.background === true && frame.layers[0]?.id === layer.id);
+/** The same layer as an ordinary layer (Layer > Layer from Background). */
+export const layerFromBackground = (layer: Layer): Layer => {
+  if (layer.kind !== 'raster' || layer.background === undefined) return layer;
+  const rest = { ...layer };
+  delete rest.background;
+  return rest;
+};
 export const commonLayer = (name: string): Common => ({
   id: crypto.randomUUID(),
   name,
@@ -1750,6 +1785,8 @@ export function validateFrame(
       (layer.clippingTo !== undefined &&
         typeof layer.clippingTo !== 'string') ||
       (layer.layerLinkId !== undefined && !validId(layer.layerLinkId)) ||
+      ((layer as Record<string, unknown>).background !== undefined &&
+        ((layer as Record<string, unknown>).background !== true || layer.kind !== 'raster')) ||
       (layer.groupId !== undefined &&
         (!validId(layer.groupId) || !groupIds.has(layer.groupId)))
     )
@@ -1955,6 +1992,8 @@ export function validateFrame(
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         (layer.kind !== 'line' &&
           (!('fill' in layer) || typeof layer.fill !== 'boolean')) ||
+        ('strokeColor' in layer && (layer.kind === 'line' || (layer.strokeColor !== undefined &&
+          (typeof layer.strokeColor !== 'string' || !/^#[a-f\d]{6}$/i.test(layer.strokeColor))))) ||
         (layer.kind === 'rectangle' && !validCornerRadius(layer.cornerRadius)) ||
         (layer.kind === 'polygon' &&
           (!integer(layer.sides, 3, 32) ||
@@ -2255,11 +2294,14 @@ export function rasterFrame(
   canvas: HTMLCanvasElement,
   assets: Assets,
   name = 'Background',
+  /** Mark the layer as the document's locked-position Background. */
+  background = false,
 ): Frame {
   const layer: Layer = {
     ...commonLayer(name),
     kind: 'raster',
     asset: addAsset(assets, canvas),
+    ...(background ? { background: true as const } : {}),
   };
   return {
     w: canvas.width,
@@ -2623,7 +2665,9 @@ export function floodFill(
 /**
  * Replaces sampled colors under a circular brush stroke while preserving the
  * source alpha. The source surface remains immutable so repeated pointer
- * events cannot gradually widen the sampled color range.
+ * events cannot gradually widen the sampled color range. Without `options`
+ * the legacy behaviour applies (Normal mode, the `target` sampled once,
+ * Discontiguous); see `src/colorReplace.ts` for the other choices.
  */
 export function replaceColorStroke(
   source: HTMLCanvasElement,
@@ -2637,6 +2681,11 @@ export function replaceColorStroke(
   size: number,
   tolerance = 24,
   opacity = 1,
+  options: {
+    mode?: ColorReplaceMode;
+    sampling?: ColorReplaceSampling;
+    limits?: ColorReplaceLimits;
+  } = {},
 ) {
   const match = color.match(/^#([a-f\d]{6})$/i);
   if (!match) throw new Error('Replacement color is invalid');
@@ -2665,82 +2714,52 @@ export function replaceColorStroke(
     outputData = image.data,
     distance = Math.hypot(x2 - x1, y2 - y1),
     steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5))),
-    amount = Math.max(0, Math.min(1, opacity));
-  let changed = false;
-  const matches = (offset: number) =>
-    sourceData[offset + 3] > 0 &&
-    Math.max(
-      Math.abs(sourceData[offset] - target[0]),
-      Math.abs(sourceData[offset + 1] - target[1]),
-      Math.abs(sourceData[offset + 2] - target[2]),
-      Math.abs(sourceData[offset + 3] - target[3]),
-    ) <= tolerance;
-  for (let step = 0; step <= steps; step += 1) {
-    const cx = x1 + ((x2 - x1) * step) / steps,
-      cy = y1 + ((y2 - y1) * step) / steps,
-      left = Math.max(0, Math.floor(cx - radius)),
-      right = Math.min(width - 1, Math.ceil(cx + radius)),
-      top = Math.max(0, Math.floor(cy - radius)),
-      bottom = Math.min(height - 1, Math.ceil(cy + radius));
-    for (let y = top; y <= bottom; y += 1) {
-      for (let x = left; x <= right; x += 1) {
-        if (Math.hypot(x - cx, y - cy) > radius) continue;
-        const offset = ((y - window.y) * window.width + x - window.x) * 4;
-        if (!matches(offset)) continue;
-        for (let channel = 0; channel < 3; channel += 1)
-          outputData[offset + channel] = Math.round(
-            sourceData[offset + channel] * (1 - amount) +
-              replacement[channel] * amount,
-          );
-        outputData[offset + 3] = sourceData[offset + 3];
-        changed = true;
-      }
-    }
-  }
+    dabs = Array.from({ length: steps + 1 }, (_, step) => ({
+      x: x1 + ((x2 - x1) * step) / steps,
+      y: y1 + ((y2 - y1) * step) / steps,
+    }));
+  const changed = replaceColorWindow({
+    source: sourceData,
+    output: outputData,
+    window,
+    layerWidth: width,
+    layerHeight: height,
+    dabs,
+    radius,
+    paint: replacement as [number, number, number],
+    tolerance,
+    opacity,
+    mode: options.mode ?? 'normal',
+    sampling: options.sampling ?? 'once',
+    target,
+    limits: options.limits ?? 'discontiguous',
+  });
   if (changed) context.putImageData(image, window.x, window.y);
   return changed;
 }
 
-/** Creates a canvas-sized alpha mask for a contiguous color selection. */
+/**
+ * Creates a canvas-sized alpha mask for a colour selection (Magic Wand). With
+ * `contiguous` false every matching pixel is selected (src/colorRegion.ts).
+ */
 export function colorSelectMask(
   canvas: HTMLCanvasElement,
   x: number,
   y: number,
   tolerance = 24,
+  contiguous = true,
 ) {
   const context = canvas.getContext('2d')!,
     source = context.getImageData(0, 0, canvas.width, canvas.height),
     output = context.createImageData(canvas.width, canvas.height),
-    data = source.data,
-    startX = Math.max(0, Math.min(canvas.width - 1, Math.floor(x))),
-    startY = Math.max(0, Math.min(canvas.height - 1, Math.floor(y))),
-    start = (startY * canvas.width + startX) * 4,
-    target = [data[start], data[start + 1], data[start + 2], data[start + 3]],
-    same = (index: number) =>
-      Math.max(
-        Math.abs(data[index] - target[0]),
-        Math.abs(data[index + 1] - target[1]),
-        Math.abs(data[index + 2] - target[2]),
-        Math.abs(data[index + 3] - target[3]),
-      ) <= tolerance;
-  if (!same(start)) return surface(canvas.width, canvas.height);
-  const seen = new Uint8Array(canvas.width * canvas.height),
-    queue = [startX, startY];
-  while (queue.length) {
-    const cy = queue.pop()!,
-      cx = queue.pop()!,
-      pixel = cy * canvas.width + cx,
-      offset = pixel * 4;
-    if (seen[pixel] || !same(offset)) continue;
-    seen[pixel] = 1;
-    output.data[offset] = 255;
-    output.data[offset + 1] = 255;
-    output.data[offset + 2] = 255;
-    output.data[offset + 3] = 255;
-    if (cx > 0) queue.push(cx - 1, cy);
-    if (cx + 1 < canvas.width) queue.push(cx + 1, cy);
-    if (cy > 0) queue.push(cx, cy - 1);
-    if (cy + 1 < canvas.height) queue.push(cx, cy + 1);
+    region = colorRegionMask(source.data, canvas.width, canvas.height,
+      Math.max(0, Math.min(canvas.width - 1, Math.floor(x))),
+      Math.max(0, Math.min(canvas.height - 1, Math.floor(y))),
+      { tolerance, contiguous });
+  if (!region) return surface(canvas.width, canvas.height);
+  for (let pixel = 0; pixel < region.length; pixel += 1) {
+    if (!region[pixel]) continue;
+    output.data.fill(255, pixel * 4, pixel * 4 + 4);
   }
   const mask = surface(canvas.width, canvas.height);
   mask.getContext('2d')!.putImageData(output, 0, 0);
@@ -4118,20 +4137,23 @@ export async function renderFrame(
       }
     }
     if (layer.kind === 'rectangle') {
+      const outline = shapeOutlineColor(layer);
       context.fillStyle = layer.color;
-      context.strokeStyle = layer.color;
+      context.strokeStyle = outline ?? layer.color;
       context.lineWidth = layer.stroke;
       if (clampCornerRadius(layer.cornerRadius, layer.width, layer.height) > 0) {
         context.beginPath();
         traceShapeNodes(context, roundedRectNodes(layer.width, layer.height, layer.cornerRadius));
         if (layer.fill) context.fill();
-        else context.stroke();
-      } else if (layer.fill) context.fillRect(0, 0, layer.width, layer.height);
-      else context.strokeRect(0, 0, layer.width, layer.height);
+        if (outline) context.stroke();
+      } else {
+        if (layer.fill) context.fillRect(0, 0, layer.width, layer.height);
+        if (outline) context.strokeRect(0, 0, layer.width, layer.height);
+      }
     }
     if (layer.kind === 'ellipse') {
       context.fillStyle = layer.color;
-      context.strokeStyle = layer.color;
+      context.strokeStyle = shapeOutlineColor(layer) ?? layer.color;
       context.lineWidth = layer.stroke;
       context.beginPath();
       context.ellipse(
@@ -4144,7 +4166,7 @@ export async function renderFrame(
         Math.PI * 2,
       );
       if (layer.fill) context.fill();
-      else context.stroke();
+      if (shapeOutlineColor(layer)) context.stroke();
     }
     if (layer.kind === 'line') {
       context.strokeStyle = layer.color;
@@ -4157,7 +4179,7 @@ export async function renderFrame(
     }
     if (layer.kind === 'polygon') {
       context.fillStyle = layer.color;
-      context.strokeStyle = layer.color;
+      context.strokeStyle = shapeOutlineColor(layer) ?? layer.color;
       context.lineWidth = layer.stroke;
       context.beginPath();
       const points = shapePoints(
@@ -4176,7 +4198,7 @@ export async function renderFrame(
       });
       context.closePath();
       if (layer.fill) context.fill();
-      else context.stroke();
+      if (shapeOutlineColor(layer)) context.stroke();
     }
     if (layer.kind === 'path') {
       context.beginPath();

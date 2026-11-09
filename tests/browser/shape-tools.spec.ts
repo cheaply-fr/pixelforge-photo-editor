@@ -222,13 +222,13 @@ test('Custom Shape with Shift keeps the shape proportions and Alt draws from the
 test('U cycles through the shape family and the flyout lists every shape tool', async ({ page }) => {
   await selectTool(page, 'Shape');
   const palette = page.getByTestId('tool-palette');
-  const expected = ['Rounded Rectangle', 'Ellipse', 'Line', 'Polygon', 'Custom Shape', 'Shape'];
+  const expected = ['Rounded Rectangle', 'Ellipse', 'Line', 'Polygon', 'Custom Shape', 'Rectangle'];
   await canvas(page).focus().catch(() => undefined);
   for (const label of expected) {
     await page.keyboard.press('u');
     await expect(palette.getByRole('button', { name: `${label} tool`, exact: true })).toHaveAttribute('aria-pressed', 'true');
   }
-  const representative = palette.getByRole('button', { name: 'Shape tool', exact: true });
+  const representative = palette.getByRole('button', { name: 'Rectangle tool', exact: true });
   await representative.click({ button: 'right' });
   const flyout = page.locator('.tool-flyout[role="menu"]');
   await expect(flyout).toBeVisible();
