@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 /**
  * A noisy photo makes every raster history step a multi-megabyte PNG asset,
@@ -64,6 +65,7 @@ async function openNoisyPhoto(page: Page, photo = SIZE) {
   });
   await expect(canvas(page)).toHaveAttribute('width', String(size));
   await settled(page);
+  await openPanel(page, 'History');
   await expect(position(page)).toHaveText('1 / 1');
 }
 
@@ -191,6 +193,7 @@ test('local saves persist the newest history window and reload restores it', asy
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
   await expect(canvas(page)).toHaveAttribute('width', String(size));
+  await openPanel(page, 'History');
   await expect(position(page)).toHaveText(`${persisted} / ${persisted}`);
   await expectMarks(page, STROKES);
   await expect(note).toHaveCount(0);

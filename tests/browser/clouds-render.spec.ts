@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -62,6 +63,7 @@ test('Render Clouds fills an empty layer from the drawing and background colours
   await setColor(page, 'Drawing color', '#e08a30');
   await setColor(page, 'Background color', '#080c28');
   await menu(page, 'Filter', 'Clouds');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('clouds');
   await expect(page.getByLabel('Cloud foreground colour', { exact: true })).toHaveValue('#e08a30');
   await expect(page.getByLabel('Cloud background colour', { exact: true })).toHaveValue('#080c28');
@@ -105,6 +107,7 @@ test('colour clouds controls persist through reload and project round trip', asy
   await menu(page, 'Filter', 'Clouds');
   await setColor(page, 'Cloud foreground colour', '#3060ff');
   await setColor(page, 'Cloud background colour', '#000000');
+  await openPanel(page, 'Filters');
   const size = page.getByLabel('Cloud size', { exact: true });
   await size.fill('1500');
   await expect(size).toHaveValue('1500');
@@ -118,6 +121,7 @@ test('colour clouds controls persist through reload and project round trip', asy
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Cloud foreground colour', { exact: true })).toHaveValue('#3060ff');
   await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('1500');
   expect(await sample(page)).toEqual(before);
@@ -133,6 +137,7 @@ test('a large 2646×4096 canvas gets large clouds by default', async ({ page }) 
   await expect(page.getByTestId('editor-canvas')).toHaveJSProperty('height', 4096);
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await menu(page, 'Filter', 'Clouds');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('662');
   // 10.8 MP of colour clouds renders in about 3 s on a desktop CPU.
   await settled(page, 60_000);

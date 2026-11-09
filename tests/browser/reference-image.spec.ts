@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 // 4×4 PNG: left half pure blue, right half pure yellow.
 const SPLIT_PNG = Buffer.from(
@@ -28,6 +29,7 @@ const prepare = async (page: Page) => {
 };
 
 const placeReference = async (page: Page) => {
+  await openPanel(page, 'Reference image');
   const panel = page.getByTestId('reference-panel');
   await expect(panel.getByRole('button', { name: 'Place reference image…' })).toBeVisible();
   await page.getByTestId('reference-input').setInputFiles({
@@ -165,12 +167,14 @@ test('the reference persists in projects, drafts and project import', async ({ p
   await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Reference image');
   await expect(page.getByTestId('reference-name')).toHaveText('guide.png');
   await expect(page.getByTestId('reference-overlay')).toHaveCSS('opacity', '0.35');
 
   // Project import into a fresh document restores the reference.
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Reference image');
   await expect(page.getByRole('button', { name: 'Place reference image…' })).toBeVisible();
   await page.getByTestId('project-input').setInputFiles(projectPath);
   await expect(page.getByTestId('reference-name')).toHaveText('guide.png');
@@ -187,5 +191,6 @@ test('projects without a reference still open with no reference', async ({ page 
   const path = (await (await pending).path())!;
   await page.getByTestId('project-input').setInputFiles(path);
   await expect(page.getByRole('heading', { name: /Layers 1 \// })).toBeVisible();
+  await openPanel(page, 'Reference image');
   await expect(page.getByRole('button', { name: 'Place reference image…' })).toBeVisible();
 });

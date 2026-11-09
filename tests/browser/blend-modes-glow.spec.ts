@@ -3,6 +3,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { blendRgb, type LayerBlendMode } from '../../src/blendModes.ts';
+import { openPanel } from './sidebar-panels';
 
 type Layer = { name: string; blend: string; styles?: Record<string, Record<string, unknown>> };
 type Project = { history: Array<{ layers: Layer[] }>; index: number };
@@ -158,6 +159,7 @@ test('Outer and Inner Glow render a falloff, export identically and survive undo
   const outside: Array<[number, number]> = [0.505, 0.512, 0.52, 0.53, 0.545, 0.6].map((x) => [x, row]);
   const before = await samples(page, outside);
 
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable outer glow', { exact: true }).check();
   await page.getByLabel('Outer glow color', { exact: true }).fill('#ff0000');
   await page.getByLabel('Outer glow blend mode', { exact: true }).selectOption('source-over');
@@ -216,6 +218,7 @@ test('Outer and Inner Glow render a falloff, export identically and survive undo
   });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable outer glow', { exact: true })).toBeChecked();
   await expect(page.getByLabel('Outer glow size', { exact: true })).toHaveValue('48');
   await expect.poll(() => samples(page, points)).toEqual(canvasPixels);

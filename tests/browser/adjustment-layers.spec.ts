@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 type Project = {
   history: Array<{
@@ -80,6 +81,7 @@ test('adjustment layer corrects composite below without copying source pixels', 
   const baseline = await pixels(page);
 
   await page.getByRole('button', { name: 'Add adjustment layer', exact: true }).click();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('120');
   await expect.poll(() => pixels(page)).not.toEqual(baseline);
   const adjusted = await project(page);
@@ -122,6 +124,7 @@ test('Adjustment Brush paints a nondestructive adjustment mask and survives relo
   const sourceAsset = sourceProject.history[sourceProject.index].layers.at(-1)!.asset!;
 
   await page.getByRole('button', { name: 'Add adjustment layer', exact: true }).click();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('120');
   await expect.poll(() => pixels(page)).not.toEqual(baseline);
   const fullyAdjusted = await pixels(page);

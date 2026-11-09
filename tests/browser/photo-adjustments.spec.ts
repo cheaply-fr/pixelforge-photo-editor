@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 type RGBA = [number, number, number, number];
 type Asset = { url: string; w: number; h: number };
@@ -146,6 +147,7 @@ test('photo finishing controls are nondestructive, persisted and undoable', asyn
 }) => {
   const before = await project(page);
   const sourceAsset = before.history[before.index].layers.at(-1)?.asset;
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Exposure', { exact: true }).fill('1.5');
   await page.getByLabel('Vibrance', { exact: true }).fill('35');
   await page.getByLabel('Black and White', { exact: true }).check();
@@ -206,6 +208,7 @@ test('photo finishing controls are nondestructive, persisted and undoable', asyn
 test('Exposure changes imported RGBA pixels in stops, preserves alpha and survives undo/reload/project import', async ({ page }) => {
   const source = await importFixture(page, [[64, 96, 128, 255], [32, 48, 64, 128], [9, 17, 31, 0]], 'exposure-rgba');
   const before = await pixels(page);
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Exposure', { exact: true }).fill('1');
   await expect.poll(async () => (await pixels(page))[0]).toEqual([128, 192, 255, 255]);
   const changedPixels = await pixels(page);
@@ -227,6 +230,7 @@ test('Vibrance increases muted chroma conservatively and desaturates without cha
   const source = await importFixture(page, [[110, 100, 90, 255], [255, 0, 0, 128], [99, 15, 77, 0]], 'vibrance-rgba');
   const before = await pixels(page);
   const chroma = (pixel: number[]) => Math.max(...pixel.slice(0, 3)) - Math.min(...pixel.slice(0, 3));
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Vibrance', { exact: true }).fill('80');
   await expect.poll(async () => chroma((await pixels(page))[0])).toBeGreaterThan(chroma(before[0]));
   const vibrant = await pixels(page);
@@ -250,6 +254,7 @@ test('Vibrance increases muted chroma conservatively and desaturates without cha
 test('Black and White converts imported colors to perceptual gray while preserving transparency and source data', async ({ page }) => {
   const source = await importFixture(page, [[64, 96, 128, 255], [40, 100, 160, 128], [255, 80, 10, 0]], 'black-white-rgba');
   const before = await pixels(page);
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Black and White', { exact: true }).check();
   await expect.poll(async () => (await pixels(page))[0]).toEqual([92, 92, 92, 255]);
   const gray = await pixels(page);
@@ -278,6 +283,7 @@ test('photo finishing respects raster masks and partial alpha without baking eit
   expect(before[1][3]).toBe(128);
   expect(before[2][3]).toBe(0);
   const masked = await project(page), mask = activeLayer(masked).mask!;
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Exposure', { exact: true }).fill('1');
   await expect.poll(async () => (await pixels(page))[0]).toEqual([96, 128, 160, 255]);
   const exposed = await pixels(page);
@@ -304,6 +310,7 @@ test('photo finishing composes with Hue on editable translucent vector shapes wi
   await page.getByLabel('Filled shape', { exact: true }).check();
   await page.getByLabel('Shape color', { exact: true }).fill('#403020');
   await page.getByLabel('Layer opacity', { exact: true }).fill('65');
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Hue', { exact: true }).fill('60');
   const points = [[0.4, 0.5], [0.95, 0.5]];
   const before = await pixels(page, points);
@@ -318,6 +325,7 @@ test('photo finishing composes with Hue on editable translucent vector shapes wi
   expect(exposed.map((pixel) => pixel[3])).toEqual(before.map((pixel) => pixel[3]));
   // Decorated vector layers must still render when several existing
   // nondestructive adjustments are stacked with the new photo controls.
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('RGB midpoint', { exact: true }).fill('180');
   await page.getByLabel('Shadows cyan/red', { exact: true }).fill('20');
   await page.getByLabel('Sharpen amount', { exact: true }).fill('18');

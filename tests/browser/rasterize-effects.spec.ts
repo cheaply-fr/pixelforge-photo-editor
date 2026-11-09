@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -81,6 +82,7 @@ test('Rasterize bakes a live filter effect into new pixels and undo restores it'
   const source = (await project(page)).history.at(-1)!.layers.at(-1)!.asset!;
 
   await menu(page, 'Filter', 'Clouds');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('clouds');
   await expect.poll(async () => distinctReds(await pixels(page))).toBeGreaterThan(4);
   await settled(page);
@@ -126,6 +128,7 @@ test('a rasterized effect survives reload without being applied twice', async ({
   await expect.poll(async () => distinctReds(await pixels(page))).toBeGreaterThan(4);
   await settled(page);
   await menu(page, 'Layer', 'Rasterize');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await settled(page);
   const baked = await pixels(page);
@@ -136,6 +139,7 @@ test('a rasterized effect survives reload without being applied twice', async ({
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   expect(await pixels(page)).toEqual(baked);
 });
@@ -143,6 +147,7 @@ test('a rasterized effect survives reload without being applied twice', async ({
 test('Rasterize leaves a locked layer and its live effect untouched', async ({ page }) => {
   await importFlatGrey(page);
   await menu(page, 'Filter', 'Clouds');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('clouds');
   await settled(page);
   const before = await pixels(page);

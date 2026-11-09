@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -182,6 +183,7 @@ test('committed worker session reuses one worker across latest-wins edits', asyn
     typeof createImageBitmap === 'function' && Boolean(new OffscreenCanvas(1, 1).getContext('2d')),
   );
   test.skip(!supported, 'OffscreenCanvas document rendering is unavailable in this browser');
+  await openPanel(page, 'Adjust selected layer');
   const brightness = page.getByLabel('Brightness', { exact: true });
   await brightness.press('Home');
   await brightness.press('End');
@@ -202,6 +204,7 @@ test('fallback renders the latest adjustment and preserves it through reload aft
   });
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Adjust selected layer');
   const brightness = page.getByLabel('Brightness', { exact: true });
   await brightness.press('Home');
   await brightness.press('End');

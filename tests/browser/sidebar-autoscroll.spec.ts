@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 import { SIDEBAR_SECTIONS, TOOL_SECTIONS, type SidebarSectionId } from '../../src/sidebarSections.ts';
 import type { Tool } from '../../src/drafts.ts';
 
@@ -71,6 +72,8 @@ type SectionBox = {
   /** On-screen part of the scrollport (the stacked mobile sidebar starts below the canvas). */
   bandTop: number;
   bandBottom: number;
+  /** Height of sticky headers at the top of the sidebar (the phone sheet handle). */
+  sticky: number;
 };
 
 const sectionBox = (page: Page, section: SidebarSectionId): Promise<SectionBox> =>
@@ -83,7 +86,14 @@ const sectionBox = (page: Page, section: SidebarSectionId): Promise<SectionBox> 
     const hiddenAbove = Math.max(0, -origin);
     const hiddenBelow = Math.max(0, origin + container.clientHeight - window.innerHeight);
     const onScreen = container.clientHeight - hiddenAbove - hiddenBelow >= 64;
+    let sticky = 0;
+    for (const header of container.querySelectorAll('[data-sidebar-sticky]')) {
+      const position = getComputedStyle(header).position;
+      if ((position === 'sticky' || position === 'fixed') && header.getAttribute('data-sidebar-sticky') !== 'bottom')
+        sticky += header.getBoundingClientRect().height;
+    }
     return {
+      sticky,
       top: rect.top - origin,
       bottom: rect.bottom - origin,
       clientHeight: container.clientHeight,
@@ -96,14 +106,17 @@ const sectionBox = (page: Page, section: SidebarSectionId): Promise<SectionBox> 
 
 /** Header at the top (±1 px), or the sidebar is clamped at its end with the header visible. */
 function expectHeaderAligned(box: SectionBox, inset = 0) {
-  const expected = Math.max(inset, box.bandTop);
+  const expected = Math.max(inset, box.bandTop, box.sticky);
   const aligned = Math.abs(box.top - expected) <= 1.5;
   const clampedAtEnd = box.scrollTop >= box.maxScroll - 1.5 && box.top >= expected - 1.5 && box.top < box.bandBottom;
-  expect(aligned || clampedAtEnd, JSON.stringify(box)).toBe(true);
+  // The tool options now sit at the very top of the sidebar, so an inset
+  // larger than the content above them clamps the offset at 0.
+  const clampedAtStart = box.scrollTop <= 1.5 && box.top >= -1.5 && box.top <= expected + 1.5;
+  expect(aligned || clampedAtEnd || clampedAtStart, JSON.stringify(box)).toBe(true);
 }
 
 function expectFullyVisible(box: SectionBox) {
-  expect(box.top, JSON.stringify(box)).toBeGreaterThanOrEqual(box.bandTop - 1.5);
+  expect(box.top, JSON.stringify(box)).toBeGreaterThanOrEqual(Math.max(box.bandTop, box.sticky) - 1.5);
   expect(box.bottom, JSON.stringify(box)).toBeLessThanOrEqual(box.bandBottom + 1.5);
 }
 
@@ -138,7 +151,9 @@ test.describe('every toolbar tool reveals the section that owns its controls', (
       const state = await settledReveal(page, before);
       if (section === null) {
         expect(state.outcome).toBe('no-section');
-        expect(await inspector(page).evaluate((element) => element.scrollTop)).toBe(start);
+        // The previous tool's sections unmount (contextual sidebar), which can
+        // only clamp the offset; the reveal itself never scrolls.
+        expect(await inspector(page).evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(start);
       } else {
         expect(state.section).toBe(section);
         expect(['scrolled', 'visible', 'aligned']).toContain(state.outcome);
@@ -234,6 +249,7 @@ test('Layer > Layer Style focuses Enable outline and keeps it visible', async ({
 });
 
 test('enabling a layer style reveals its controls without hiding the checkbox', async ({ page }) => {
+  await openPanel(page, 'Layer styles');
   // Put the Outer glow checkbox, fully visible, just above the bottom edge:
   // the glow controls it reveals will open below the fold.
   await inspector(page).evaluate((container) => {
@@ -266,13 +282,15 @@ test('selecting a layer reveals its properties; additive selection does not move
   expect(state.section).toBe('layer-properties');
   expect(['scrolled', 'visible']).toContain(state.outcome);
   expectFullyVisible(await sectionBox(page, 'layer-properties'));
-  // Ctrl/Cmd-click builds a multi-selection: the list must stay put.
-  await scrollSidebarTo(page, 'top');
+  // Ctrl/Cmd-click builds a multi-selection: the list must stay put. (Layers
+  // sits below the active tool's options, so bring the row on screen first.)
+  await rows.nth(0).scrollIntoViewIfNeeded();
+  const listTop = await inspector(page).evaluate((element) => element.scrollTop);
   before = (await revealState(page)).sequence;
   await rows.nth(0).click({ modifiers: ['ControlOrMeta'] });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   expect((await revealState(page)).sequence).toBe(before);
-  expect(await inspector(page).evaluate((element) => element.scrollTop)).toBe(0);
+  expect(await inspector(page).evaluate((element) => element.scrollTop)).toBe(listTop);
 });
 
 test('a collapsed section is expanded before it is revealed, and the choice persists', async ({ page }) => {
@@ -300,7 +318,9 @@ test('a collapsed section is expanded before it is revealed, and the choice pers
 });
 
 test('a section that is already fully visible does not move', async ({ page }) => {
-  await selectTool(page, 'Brush');
+  // Align to canvas renders only for Move (contextual sidebar); clicking the
+  // active tool again re-targets it.
+  await selectTool(page, 'Move');
   // Bring the whole sidebar on screen (it sits below the canvas on mobile).
   await page.evaluate(() => {
     const top = document.querySelector('aside.inspector')!.getBoundingClientRect().top;
@@ -310,8 +330,9 @@ test('a section that is already fully visible does not move', async ({ page }) =
     const section = container.querySelector('[data-sidebar-section="layer-alignment"]')!;
     const rect = section.getBoundingClientRect();
     const box = container.getBoundingClientRect();
-    // Leave the Align fieldset fully visible but well below the top.
-    container.scrollTop += rect.top - box.top - 40;
+    // Leave the Align fieldset fully visible but well below the top (and below
+    // the phone sheet handle).
+    container.scrollTop += rect.top - box.top - 60;
     return container.scrollTop;
   });
   const geometry = await sectionBox(page, 'layer-alignment');
@@ -359,7 +380,8 @@ test('a section-less tool cancels a reveal that is still pending', async ({ page
   const state = await settledReveal(page, before);
   expect(state.sequence - before).toBe(2);
   expect(state.outcome).toBe('no-section');
-  expect(await inspector(page).evaluate((element) => element.scrollTop)).toBe(start);
+  // Unmounting the previous tool's sections can only clamp the offset.
+  expect(await inspector(page).evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(start);
 });
 
 test('animated reveal: smooth, monotonic, highlighted with motion', async ({ page }) => {
@@ -483,7 +505,7 @@ test('no auto-scroll while a pointer is held: the reveal waits for release', asy
   const view = () =>
     inspector(page).evaluate((container) => ({
       scrollTop: container.scrollTop,
-      anchor: Math.round(container.querySelector('.cloud-panel')!.getBoundingClientRect().top),
+      anchor: Math.round(container.querySelector('[data-testid="sidebar-panel-strip"]')!.getBoundingClientRect().top),
     }));
   const start = await view();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -561,8 +583,13 @@ test('sticky headers and scroll-padding offset the landing position', async ({ p
 });
 
 test('collapsible headers are accessible disclosures', async ({ page }) => {
+  // Every collapsible section is contextual now: show the Brush options and
+  // the Filters panel, then check each rendered disclosure.
+  await selectTool(page, 'Brush');
+  await openPanel(page, 'Filters');
+  const rendered = ['tool-options', 'quick-filters', 'filter-effects'];
   for (const [id, spec] of Object.entries(SIDEBAR_SECTIONS)) {
-    if (!spec.collapsible || spec.conditional) continue;
+    if (!spec.collapsible || !rendered.includes(id)) continue;
     const section = inspector(page).locator(`[data-sidebar-section="${id}"]`);
     await expect(section).toHaveCount(1);
     const toggle = section.locator('[data-sidebar-section-toggle]');

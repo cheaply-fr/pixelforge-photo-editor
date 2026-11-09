@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -79,6 +80,7 @@ test('Hue/Saturation rotates pixels nondestructively with undo and project persi
   const sourceAsset = sourceLayer.asset!;
   expect(sourceLayer.adjustments.hue).toBe(0);
 
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Hue', { exact: true }).fill('120');
   await expect
     .poll(async () => {
@@ -108,6 +110,7 @@ test('Hue/Saturation rotates pixels nondestructively with undo and project persi
     'aria-busy',
     'false',
   );
+  await openPanel(page, 'Adjust selected layer');
   await expect(page.getByLabel('Hue', { exact: true })).toHaveValue('120');
   await expect.poll(async () => {
     const pixel = await page.getByTestId('editor-canvas').evaluate(
@@ -126,6 +129,7 @@ test('Hue bounds, reset and Image menu command remain keyboard and mobile safe',
   page,
 }) => {
   await makeRedFill(page);
+  await openPanel(page, 'Adjust selected layer');
   const hue = page.getByLabel('Hue', { exact: true });
   await hue.fill('-180');
   await expect

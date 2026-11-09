@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 // Difference Clouds renders smooth clouds into transparent layers with a
 // Clouds-sized scale, and Levels output black above output white inverts.
@@ -60,6 +61,7 @@ test('Difference Clouds renders smooth clouds into a transparent layer with a Cl
   expect((await rowStats(page)).opaqueShare).toBe(0);
 
   await menu(page, 'Filter', 'Difference Clouds');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('difference-clouds');
   // Same default and range as Clouds: a quarter of the 800 px side, up to 2048.
   const size = page.getByLabel('Cloud size', { exact: true });
@@ -93,6 +95,7 @@ test('Difference Clouds renders smooth clouds into a transparent layer with a Cl
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('1500');
   expect(await rowStats(page)).toEqual(broad);
 });
@@ -116,6 +119,7 @@ const sample = (page: Page) =>
 test('Levels output black above output white inverts the layer and survives reload', async ({ page }) => {
   await filledGrey(page, '#402010');
   await expect.poll(() => sample(page)).toEqual([64, 32, 16, 255]);
+  await openPanel(page, 'Adjust selected layer');
   const black = page.getByLabel('Levels output black', { exact: true });
   const white = page.getByLabel('Levels output white', { exact: true });
   await expect(black).toHaveAttribute('max', '255');
@@ -146,6 +150,7 @@ test('Levels output black above output white inverts the layer and survives relo
 test('an adjustment layer with reversed Levels output inverts the composite below', async ({ page }) => {
   await filledGrey(page, '#402010');
   await page.getByRole('button', { name: 'Add adjustment layer', exact: true }).click();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels output black', { exact: true }).fill('255');
   await page.getByLabel('Levels output white', { exact: true }).fill('0');
   await expect.poll(() => sample(page)).toEqual([191, 223, 239, 255]);

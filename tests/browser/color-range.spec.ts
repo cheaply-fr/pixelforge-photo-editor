@@ -143,6 +143,7 @@ test('geometric selection subtracts from a soft Color Range mask and keeps alpha
   await page.getByLabel('Color Range fuzziness', { exact: true }).fill('32');
   await page.getByRole('button', { name: 'Apply Color Range', exact: true }).click();
   await expect(page.getByText('Color Range selection created (fuzziness 32)', { exact: true })).toBeVisible();
+  await selectTool(page, 'Select');
   await page.getByLabel('Selection mode', { exact: true }).selectOption('subtract');
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;

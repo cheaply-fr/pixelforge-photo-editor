@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 const beforeEachEditor = async (page: Page) => {
   await page.route(
@@ -102,6 +103,7 @@ test('RGB Curves changes representative pixels, keeps source editable, and survi
   const sourceLayer = source.history[source.index].layers.at(-1)!;
   const beforeAsset = sourceLayer.asset;
 
+  await openPanel(page, 'Adjust selected layer');
   const midpoint = page.getByLabel('RGB midpoint', { exact: true });
   await midpoint.fill('220');
   await expect.poll(pixel).toEqual([220, 220, 220, 255]);
@@ -127,6 +129,7 @@ test('RGB Curves changes representative pixels, keeps source editable, and survi
 test('Curve graph supports pointer editing and a deterministic channel reset', async ({
   page,
 }) => {
+  await openPanel(page, 'Adjust selected layer');
   const graph = page.getByTestId('rgb-curve-graph');
   const midpoint = page.getByLabel('RGB midpoint', { exact: true });
   await midpoint.fill('210');

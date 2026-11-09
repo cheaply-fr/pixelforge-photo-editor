@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 type Asset = { url: string; w: number; h: number };
 type Project = {
@@ -193,6 +194,7 @@ test('Remove Background segments native raster bounds before mapping a translate
     buffer: Buffer.from(encoded, 'base64'),
   });
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('300');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await page.getByLabel('Layer Y', { exact: true }).fill('200');

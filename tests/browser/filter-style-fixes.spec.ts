@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 type Layer = {
   kind: string;
@@ -116,6 +117,7 @@ test('a second Filter-menu effect stacks the live Clouds instead of failing vali
   await settled(page);
   await menu(page, 'Filter', 'Clouds');
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('clouds');
   const cloudsOnly = await digest(page);
 
@@ -154,6 +156,7 @@ test('a second Filter-menu effect stacks the live Clouds instead of failing vali
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('clouds');
 });
 
@@ -196,6 +199,7 @@ test('layer styles follow the layer mask, Inner Shadow is directional, and Raste
   // Inner Shadow with a downward offset: the masked ellipse is shaded along
   // its top inner edge only (the old renderer used the unmasked full-canvas
   // alpha, so nothing changed inside the ellipse).
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable inner shadow', { exact: true }).check();
   await settled(page);
   for (const [label, value] of [['Inner shadow X', '0'], ['Inner shadow Y', '20']] as const) {

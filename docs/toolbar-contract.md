@@ -59,3 +59,14 @@ tests assert category completeness, family cycling, explicit menu names,
 single-popup anchoring, viewport bounds, short activation, press-and-hold and
 touch selection, roving menu focus, Escape/outside dismissal, and preservation
 of two/three-column touch targets.
+
+## Contextual properties sidebar
+
+Selecting a tool (click, flyout, shortcut or menu) changes the properties
+sidebar to that tool's options only; other tools' settings are not rendered.
+The tool → sections table lives in `src/sidebarPanels.ts` (`TOOL_SIDEBAR`,
+exhaustive over `Tool`), so a new toolbar tool must register its sidebar
+sections, and optionally a default panel, to typecheck. Toolbar families,
+icons, flyouts and their keyboard behaviour are unchanged. See
+[`contextual-sidebar-contract.md`](contextual-sidebar-contract.md).
+

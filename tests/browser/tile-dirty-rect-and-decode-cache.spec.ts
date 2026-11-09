@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import zlib from 'node:zlib';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 // W4-5 / W4-7 (docs/tiled-layer-assets-contract.md): a paint commit on a
 // tiled layer reads back and hashes only the tiles its dirty rectangle
@@ -126,6 +127,7 @@ async function digest(page: Page) {
 
 /** A horizontal stroke at document row y (from x0 to x1). */
 async function stroke(page: Page, pointerId: number, x0: number, x1: number, y: number) {
+  await openPanel(page, 'History');
   const before = await historyPosition(page).innerText();
   await canvas(page).scrollIntoViewIfNeeded();
   await canvas(page).evaluate(
@@ -184,11 +186,13 @@ async function blur(page: Page) {
   await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined));
 }
 async function undo(page: Page) {
+  await openPanel(page, 'History');
   const before = await historyPosition(page).innerText();
   await page.keyboard.press('Control+z');
   await expect(historyPosition(page)).not.toHaveText(before);
 }
 async function redo(page: Page) {
+  await openPanel(page, 'History');
   const before = await historyPosition(page).innerText();
   await page.keyboard.press('Control+Shift+z');
   await expect(historyPosition(page)).not.toHaveText(before);

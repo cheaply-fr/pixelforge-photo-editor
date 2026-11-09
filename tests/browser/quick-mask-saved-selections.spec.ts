@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 const prepare = async (page: Page) => {
   await page.route(
@@ -168,6 +169,7 @@ test('saved selections are named, loaded, renamed, deleted and retained in proje
 }) => {
   await selectTool(page, 'Select');
   await drag(page, [0.15, 0.2], [0.45, 0.55]);
+  await openPanel(page, 'Saved selections');
   await page
     .getByLabel('Saved selection name', { exact: true })
     .fill('Subject area');

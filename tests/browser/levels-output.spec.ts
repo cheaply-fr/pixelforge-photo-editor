@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -65,6 +66,7 @@ test('Levels output range is source-safe, undoable and survives reload/project r
   await openFilledDocument(page);
   const source = await downloadProject(page);
   const sourceLayer = source.history[source.index].layers.at(-1)!;
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels output black', { exact: true }).fill('32');
   await page.getByLabel('Levels output white', { exact: true }).fill('200');
   await expect.poll(() => sample(page)).toEqual([116, 116, 116, 255]);
@@ -86,6 +88,7 @@ test('Levels output range is source-safe, undoable and survives reload/project r
   await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Adjust selected layer');
   await expect(page.getByLabel('Levels output black', { exact: true })).toHaveValue('32');
   await expect(page.getByLabel('Levels output white', { exact: true })).toHaveValue('200');
   await expect.poll(() => sample(page)).toEqual([116, 116, 116, 255]);

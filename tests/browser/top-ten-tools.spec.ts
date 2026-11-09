@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 /**
  * High-use Photoshop workflow acceptance coverage.
@@ -284,8 +285,10 @@ test('8. Levels, Curves and photo color controls stay nondestructive and persist
   await expect(page.locator('footer')).toContainText('Area filled', { timeout: 10000 });
   const source = await project(page);
   const sourceLayer = source.history[source.index].layers.at(-1)!;
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('128');
   expect((await pixelAt(page))[0]).toBe(0);
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('RGB midpoint', { exact: true }).fill('210');
   await page.getByLabel('Brightness', { exact: true }).fill('120');
   await page.getByLabel('Saturation', { exact: true }).fill('70');
@@ -303,6 +306,7 @@ test('8. Levels, Curves and photo color controls stay nondestructive and persist
   );
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Adjust selected layer');
   expect(await page.getByLabel('Levels black point', { exact: true }).inputValue()).toBe('128');
   expect(await page.getByLabel('Brightness', { exact: true }).inputValue()).toBe('120');
   expect(await page.getByLabel('Saturation', { exact: true }).inputValue()).toBe('70');

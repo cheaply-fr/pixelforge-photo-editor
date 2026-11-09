@@ -6,6 +6,16 @@ section** into view, expands it if it is collapsed, and briefly highlights it.
 It never moves the canvas, never interrupts a stroke or drag, and never takes
 focus away from where the user is working.
 
+> **Contextual sidebar.** Since the contextual sidebar
+> ([`contextual-sidebar-contract.md`](contextual-sidebar-contract.md)), the
+> sidebar renders only the active tool's sections, Layers, a "More panels"
+> strip and at most one open panel. A reveal whose target lives in a panel
+> (Filters, Adjust selected layer, Layer styles, …) **opens that panel first**
+> (and expands the phone sheet); the coordinator below then lands on the
+> section once the panel has committed. Placement comes from
+> `src/sidebarPanels.ts` (`sectionPlacement` / `panelForSection`). Because the
+> sidebar is now short, many reveals end `visible` instead of `scrolled`.
+
 ## Architecture
 
 | Layer | File | Responsibility |
@@ -25,10 +35,12 @@ focus away from where the user is working.
   (typed over exactly the `null` tools). Today: Hand, Zoom, Eyedropper, Color
   Sampler, Ruler, Note, Count, Fill, Crop, Perspective Crop, Slice, Slice
   Select and Frame.
-* The page renders *Tool options*, *Text* and *Rotate View* with
-  `toolShowsSection(tool, …)` from the same map, so "which tools show Tool
-  options" and "where a tool click scrolls" cannot disagree. The pure suite
-  pins the exact 35-tool Tool options set that existed before the registry.
+* The page renders the tool options area from `TOOL_SIDEBAR` in
+  `src/sidebarPanels.ts`, whose first section per tool must equal
+  `TOOL_SECTIONS[tool]` (checked by `tests/sidebar-panels.test.mjs`), so
+  "which sections a tool shows" and "where a tool click reveals" cannot
+  disagree. The pure suite pins the exact 35-tool Tool options set that
+  existed before the registry.
 * `FILTER_SECTIONS` is derived from `FILTER_EFFECT_TYPES`; every filter
   effect's controls render in *Filter effects*.
 * `STYLE_SECTIONS` is `satisfies Record<keyof LayerStyles, SidebarSectionId>`;
@@ -125,7 +137,8 @@ Shift layer clicks build a multi-selection and do not move the list.
     “<Section> section shown in the properties sidebar”. Already-visible
     reveals stay silent.
 12. **Desktop and mobile.** On desktop the sidebar column is the scroll
-    container. In the stacked mobile layout (≤ 680 px) the sidebar is now a
+    container. In the stacked mobile layout (≤ 680 px) the sidebar is a
+    collapsible bottom sheet (sticky handle, marked `data-sidebar-sticky`) and a
     bounded scroll region (`max-height: 100svh`), so a reveal scrolls the
     sidebar internally and never moves the page or the canvas under the
     user's finger. Only the top of that region is on screen below the canvas,
@@ -179,8 +192,9 @@ on these instead of sleeping.
   document state, history or persistence other than the collapsed-section
   preference.
 * Sections owned by `LayersPanel` (Layers, Align to canvas, Selection options,
-  Layer properties, Layer styles and the per-style blocks) are not
-  collapsible.
+  Layer properties, Layer details, Layer styles and the per-style blocks) are
+  not collapsible. History, Reference image and My projects are registered,
+  non-collapsible panel sections.
 * Tool shortcuts are already ignored by the editor during a canvas gesture,
   so the deferral path is reached through other held pointers (sliders, layer
   drags, presses outside the canvas).

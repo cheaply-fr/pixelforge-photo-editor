@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -56,6 +57,7 @@ test('editing a layer below a Motion Blur and a styled layer reuses both cached 
   }
   await menu(page, 'Filter', 'Clouds');
   await settled(page);
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable inner shadow', { exact: true }).check();
   await settled(page);
   const layerButtons = page.getByRole('button', { name: /^Select layer / });

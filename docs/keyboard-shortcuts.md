@@ -68,6 +68,7 @@ yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View 
 | `+` / `-` | Zoom in/out |
 | `F` | Cycle Standard Screen Mode, Full Screen with Menu and Full Screen |
 | `Escape` | Exit a reduced screen mode, or close an open menu |
+| `F6` or `Cmd/Ctrl+.` | Move focus into the active tool's options in the properties sidebar |
 
 Quick Mask mode uses the current selection as its starting alpha. Paint hides
 selected pixels with the standard red overlay; hold `Alt` or enable Reveal in
