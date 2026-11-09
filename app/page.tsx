@@ -934,6 +934,7 @@ import {
 import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
 import FontFamilySelect from '../src/FontFamilySelect';
+import { textSidebarFields } from '../src/textSidebarFields';
 import { ALL_FONT_FAMILIES, fontFamilyKind, isSelectableFontFamily, missingFontFamilies } from '../src/fontLibrary';
 import { ensureTextLayerFonts, sharedFontLoader } from '../src/fontLoader';
 import { currentTextCaretAdapter, planGlyphInsert, registerTextCaretAdapter } from '../src/glyphInsert';
@@ -11771,11 +11772,12 @@ export default function Home() {
     editing: Boolean(typeSession),
     mask: Boolean(typeSession?.mask),
   };
+  // The sidebar's top Font/Size follow the type being edited, like the Character panel.
+  const textFields = textSidebarFields(typeSource, typeView.character, { fontFamily, fontSize });
   const typeActions: TypeActions = {
     character: (patch) => {
       // Like Photoshop, options-bar changes also become the defaults for new type.
-      if (typeof patch.fontFamily === 'string' && (FONTS as readonly string[]).includes(patch.fontFamily))
-        setFontFamily(patch.fontFamily as (typeof FONTS)[number]);
+      if (typeof patch.fontFamily === 'string' && isSelectableFontFamily(patch.fontFamily)) setFontFamily(patch.fontFamily);
       if (typeof patch.fontSize === 'number') setFontSize(Math.max(16, Math.min(160, Math.round(patch.fontSize))));
       if (typeof patch.color === 'string') setColor(patch.color);
       if (patch.fontWeight !== undefined) setTypeDefaults((value) => ({ ...value, bold: (patch.fontWeight ?? 400) >= 600 }));
@@ -20580,22 +20582,26 @@ export default function Home() {
                   onChange={(e) => setText(e.target.value)}
                 />
               </label>
-              <div className="select-row font-select-row"><span>Font</span><FontFamilySelect label="Text tool font" value={fontFamily} onChange={setFontFamily} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <div className="select-row font-select-row" data-type-keep=""><span>Font</span><FontFamilySelect label="Text tool font" value={textFields.fontFamily} disabled={typeView.locked} onChange={(family) => (textFields.target === 'type' ? typeActions.character({ fontFamily: family }) : setFontFamily(family))} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
               <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
-              {fontAvailability === 'fallback' && (
+              {/* The check covers the new-type font, so it shows only while the picker shows that font. */}
+              {fontAvailability === 'fallback' && textFields.fontFamily === fontFamily && (
                 <output data-testid="font-fallback-warning" className="adjust-note">
                   “{fontFamily}” is unavailable; browser fallback rendering is active.
                 </output>
               )}
               <label className="select-row"><span>Preview</span><select aria-label="Font preview size" className="text-input" value={fontPreviewSize} onChange={(event) => setFontPreviewSize(normalizeFontPreviewSize(event.target.value))}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
-              <Slider
-                label="Size"
-                value={fontSize}
-                min={16}
-                max={160}
-                set={setFontSize}
-                suffix="px"
-              />
+              {/* data-type-keep: changing these mid-edit styles the selected characters instead of committing. */}
+              <div data-type-keep="">
+                <Slider
+                  label="Size"
+                  value={textFields.fontSize}
+                  min={textFields.sizeMin}
+                  max={textFields.sizeMax}
+                  set={(size) => (textFields.target === 'type' ? typeActions.character({ fontSize: size }) : setFontSize(size))}
+                  suffix={textFields.sizeMixed ? 'px (mixed)' : 'px'}
+                />
+              </div>
               <TypePanels
                 view={typeView}
                 actions={typeActions}

@@ -461,3 +461,50 @@ test('selecting a text layer reveals the Text section without taking focus; re-s
   await page.waitForTimeout(400);
   expect(await inspector.evaluate((container) => container.scrollTop)).toBe(parked);
 });
+
+test('the Text sidebar Font and Size edit the selected text layer and the live edit', async ({ page }) => {
+  const section = page.locator('[data-sidebar-section="text"]');
+  const font = section.getByLabel('Text tool font', { exact: true });
+  const size = section.getByRole('slider', { name: 'Size', exact: true });
+  await startType(page, '');
+  // No layer selected: the top controls set the defaults for new type.
+  await font.selectOption('Georgia');
+  await size.fill('60');
+  await clickCanvas(page, 0.2, 0.3);
+  await page.keyboard.type('Sidebar font');
+  await page.keyboard.press(`${mod}+Enter`);
+  await expect(page.getByRole('button', { name: 'Move tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  let [layer] = textLayers(await project(page)) as Array<TextLayer & { fontFamily: string }>;
+  expect(layer.fontFamily).toBe('Georgia');
+  expect(layer.fontSize).toBe(60);
+
+  // The committed layer stays selected: the top controls now show and edit it,
+  // matching the Character panel below.
+  await expect(font).toHaveValue('Georgia');
+  await font.selectOption('Verdana');
+  await expect(section.getByLabel('Character font family', { exact: true })).toHaveValue('Verdana');
+  await size.fill('90');
+  await expect(section.getByLabel('Font size', { exact: true })).toHaveValue('90');
+  await settle(page);
+  [layer] = textLayers(await project(page)) as Array<TextLayer & { fontFamily: string }>;
+  expect(layer.fontFamily).toBe('Verdana');
+  expect(layer.fontSize).toBe(90);
+  expect(textLayers(await project(page))).toHaveLength(1);
+
+  // During an edit they style the selected characters without committing it.
+  await selectTool(page, 'Horizontal Type');
+  await clickCanvas(page, 0.22, 0.31);
+  await expect(overlay(page)).toBeVisible();
+  await page.keyboard.press(`${mod}+A`);
+  await font.selectOption('Courier New');
+  await expect(overlay(page)).toBeVisible();
+  await expect(font).toHaveValue('Courier New');
+  await page.getByRole('button', { name: 'Commit type', exact: true }).click();
+  await settle(page);
+  const saved = textLayers(await project(page)) as Array<TextLayer & { fontFamily: string }>;
+  expect(saved).toHaveLength(1);
+  const runs = saved[0].rich?.runs ?? [];
+  const families = new Set([saved[0].fontFamily, ...runs.map((run) => run.style?.fontFamily).filter(Boolean)]);
+  expect(saved[0].fontFamily === 'Courier New' || (runs.length > 0 && runs.every((run) => run.style?.fontFamily === 'Courier New'))).toBe(true);
+  expect(families.has('Courier New')).toBe(true);
+});
