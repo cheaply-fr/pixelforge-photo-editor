@@ -17,16 +17,16 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
 });
 
-async function newDocument(page: Page) {
+async function newDocument(page: Page, width = 400, height = 300) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New…', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New document' });
-  await dialog.getByLabel('New document width (px)').fill('400');
-  await dialog.getByLabel('New document height (px)').fill('300');
+  await dialog.getByLabel('New document width (px)').fill(String(width));
+  await dialog.getByLabel('New document height (px)').fill(String(height));
   await dialog.getByLabel('Background contents').selectOption('black');
   await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(canvas(page)).toHaveJSProperty('width', 400);
+  await expect(canvas(page)).toHaveJSProperty('width', width);
   await settled(page);
 }
 
@@ -258,4 +258,31 @@ test('strands twist and cross over, and the same seed repaints identically', asy
   expect((await column(page, 200)).every((value) => value < 10)).toBe(true);
   await drag(page);
   expect(await snapshot(page)).toEqual(first);
+});
+
+test('a stroke on a tiled (1 MP or more) layer is kept by the dirty-tile commit and survives undo/redo', async ({ page }) => {
+  // 1,200 × 1,000 px: the Background is stored as tiles, so the commit only
+  // re-encodes the tiles the strands reported as written.
+  await newDocument(page, 1200, 1000);
+  await setupSilk(page, { count: '10', width: '200', twists: '1', seed: '4' });
+  await canvas(page).scrollIntoViewIfNeeded();
+  const points: [number, number][] = [[150, 500], [450, 430], [750, 560], [1050, 500]];
+  const start = await at(page, ...points[0]);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  for (const point of points.slice(1)) {
+    const next = await at(page, ...point);
+    await page.mouse.move(next.x, next.y, { steps: 4 });
+  }
+  await page.mouse.up();
+  await expect(page.locator('footer')).toContainText('Silk strands painted (10 strands)', { timeout: 20000 });
+  await settled(page);
+  const painted = await snapshot(page);
+  expect(painted.lit).toBeGreaterThan(2000);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+  await settled(page);
+  expect((await snapshot(page)).lit).toBe(0);
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+Shift+z');
+  await settled(page);
+  expect(await snapshot(page)).toEqual(painted);
 });
