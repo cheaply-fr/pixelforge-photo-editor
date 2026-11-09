@@ -1,4 +1,13 @@
-import { useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
+import { Ellipsis, GripVertical, Trash2 } from 'lucide-react';
 import FontFamilySelect from './FontFamilySelect';
 import {
   TEXT_ALIGNS,
@@ -39,6 +48,19 @@ import {
   clippingGroupBase,
   isClippingSourceLayer,
 } from './layerClipping';
+import {
+  describeFileDrop,
+  describeLayerDrop,
+  describeLayerMove,
+  dropPositionFromPointer,
+  layerDeleteNotice,
+  layerDeleteReason,
+  layerStackDescription,
+  planLayerDelete,
+  planLayerDrop,
+  type LayerDragSource,
+  type LayerDropTarget,
+} from './layerDragReorder';
 
 type Props = {
   frame: Frame;
@@ -58,9 +80,16 @@ type Props = {
   nestSelectedAsSmartObject: () => void;
   replaceSmartObject: () => void;
   duplicate: () => void;
-  remove: () => void;
+  /** Delete the selected layers (returns false when refused). */
+  remove: () => boolean | void;
   reorder: (direction: number) => void;
-  arrange: (mode: LayerArrangeMode) => void;
+  arrange: (mode: LayerArrangeMode) => boolean | void;
+  /** Commit one drag-and-drop move; returns the moved IDs or false. */
+  moveLayers?: (source: LayerDragSource, target: LayerDropTarget) => string[] | false;
+  /** Replace the layer selection without a history step. */
+  setLayerSelection?: (ids: readonly string[], activeId?: string) => void;
+  /** Files dropped on the panel at a drop line. */
+  dropFiles?: (files: File[], target: LayerDropTarget) => void;
   groupActive: () => void;
   ungroupActive: () => void;
   editGroup: (id: string, patch: Partial<Group>) => void;
@@ -84,6 +113,39 @@ type Props = {
   setSelectionOperation: (operation: SelectionOperation) => void;
   setSelectionFeather: (feather: number) => void;
 };
+/** One pointer gesture on a row: pending until it moves (mouse) or long-presses (touch). */
+type DragSession = {
+  pointerId: number;
+  source: LayerDragSource;
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+  active: boolean;
+  target?: LayerDropTarget;
+  ok: boolean;
+  end: (drop: boolean) => void;
+};
+type DropState = {
+  target: LayerDropTarget;
+  label: string;
+  /** ok: a valid drop; idle: nothing would change; refused: locked. */
+  state: 'ok' | 'idle' | 'refused';
+  x: number;
+  y: number;
+};
+type MenuState = { id: string; x: number; y: number; trigger: HTMLElement | null };
+type RowMenuAction =
+  | 'duplicate'
+  | 'delete'
+  | LayerArrangeMode
+  | 'clip'
+  | 'release-clip'
+  | 'group'
+  | 'rename'
+  | 'visibility'
+  | 'lock';
+
 export default function LayersPanel({
   frame,
   pixelUsage,
@@ -101,6 +163,9 @@ export default function LayersPanel({
   remove,
   reorder,
   arrange,
+  moveLayers,
+  setLayerSelection,
+  dropFiles,
   groupActive,
   ungroupActive,
   editGroup,
@@ -125,6 +190,49 @@ export default function LayersPanel({
   setSelectionFeather,
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
+  // Drag-and-drop, keyboard reorder, delete and row menu state. See
+  // docs/layers-panel-interaction-contract.md.
+  const listRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef(frame);
+  const dragSession = useRef<DragSession | null>(null);
+  const pendingMove = useRef<{ ids: string[]; focusId?: string } | null>(null);
+  const pendingFocus = useRef<string | null>(null);
+  const suppressClick = useRef(false);
+  const suppressTimer = useRef<number | undefined>(undefined);
+  /** Swallow the click that follows a drag or long press. */
+  const suppressClicksFor = (ms: number) => {
+    suppressClick.current = true;
+    window.clearTimeout(suppressTimer.current);
+    suppressTimer.current = window.setTimeout(() => {
+      suppressClick.current = false;
+    }, ms);
+  };
+  const [dropState, setDropState] = useState<DropState | null>(null);
+  const [draggingIds, setDraggingIds] = useState<ReadonlySet<string> | null>(null);
+  const [menuState, setMenuState] = useState<MenuState | null>(null);
+  const [liveMessage, setLiveMessage] = useState('');
+  useEffect(() => {
+    frameRef.current = frame;
+    const focusRow = (id: string | undefined) => {
+      if (!id) return;
+      const row = listRef.current?.querySelector<HTMLElement>(
+        `[data-layer-row-id="${CSS.escape(id)}"]`,
+      );
+      row?.focus({ preventScroll: false });
+    };
+    const pending = pendingMove.current;
+    if (pending) {
+      pendingMove.current = null;
+      const message = describeLayerMove(frame, pending.ids);
+      if (message) setLiveMessage(message);
+      focusRow(pending.focusId);
+    }
+    if (pendingFocus.current) {
+      focusRow(pendingFocus.current);
+      pendingFocus.current = null;
+    }
+  }, [frame]);
+  useEffect(() => () => dragSession.current?.end(false), []);
   const layer = frame.layers.find((item) => item.id === frame.active)!;
   const groups = frame.groups || [];
   const groupById = new Map(groups.map((group) => [group.id, group]));
@@ -193,6 +301,310 @@ export default function LayersPanel({
     !distributionCandidates.some((item) => item.groupId && item.groupId !== [...selectedGroupIds][0]) &&
     !distributionGroup?.locked && distributionGroup?.visible !== false &&
     distributableCount >= 3;
+  // ---- Layers panel interactions -----------------------------------------
+  /** The rows an action on `id` applies to: the selection when it includes the row. */
+  const idsFor = (id: string) => (selectedIds.has(id) ? [...selectedIds] : [id]);
+  /** Make `id` part of (and active in) the selection before a panel action. */
+  const prepareRow = (id: string) => {
+    if (!setLayerSelection) {
+      if (!selectedIds.has(id)) select(id);
+      return;
+    }
+    if (!selectedIds.has(id)) setLayerSelection([id], id);
+    else if (frame.active !== id) setLayerSelection([...selectedIds], id);
+  };
+  const arrangeRow = (id: string, mode: LayerArrangeMode, focus: boolean) => {
+    const ids = idsFor(id);
+    prepareRow(id);
+    pendingMove.current = { ids, ...(focus ? { focusId: id } : {}) };
+    if (arrange(mode) === false) {
+      pendingMove.current = null;
+      const plan = planLayerArrange({ ...frame, active: id, selectedLayerIds: ids }, mode);
+      if (!plan.ok)
+        setLiveMessage(
+          plan.reason === 'boundary'
+            ? 'Already at that end of the stack'
+            : plan.reason === 'locked-selection'
+              ? 'Unlock the layers before moving them'
+              : 'Those layers cannot be moved',
+        );
+    }
+  };
+  const deleteRow = (id: string) => {
+    const ids = idsFor(id);
+    const plan = planLayerDelete({ ...frame, active: id, selectedLayerIds: ids }, ids);
+    prepareRow(id);
+    const result = remove();
+    if (!plan.ok) {
+      setLiveMessage(layerDeleteReason(plan.reason));
+      return;
+    }
+    if (result === false) return;
+    setLiveMessage(layerDeleteNotice(plan));
+    pendingFocus.current = plan.frame.active;
+  };
+  const openMenu = (id: string, x: number, y: number, trigger: HTMLElement | null) => {
+    dragSession.current?.end(false);
+    setMenuState({ id, x, y, trigger });
+  };
+  const rowButtons = () =>
+    Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-layer-row-id]') || []);
+  const onRowKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, item: Layer) => {
+    const command = event.ctrlKey || event.metaKey;
+    let mode: LayerArrangeMode | undefined;
+    if (command && !event.altKey && (event.code === 'BracketRight' || event.code === 'BracketLeft'))
+      mode =
+        event.code === 'BracketRight'
+          ? event.shiftKey ? 'front' : 'forward'
+          : event.shiftKey ? 'back' : 'backward';
+    else if (event.altKey && !command && (event.key === 'ArrowUp' || event.key === 'ArrowDown'))
+      mode =
+        event.key === 'ArrowUp'
+          ? event.shiftKey ? 'front' : 'forward'
+          : event.shiftKey ? 'back' : 'backward';
+    if (mode) {
+      event.preventDefault();
+      event.stopPropagation();
+      arrangeRow(item.id, mode, true);
+      return;
+    }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !command && !event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteRow(item.id);
+      return;
+    }
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      event.stopPropagation();
+      const box = event.currentTarget.getBoundingClientRect();
+      openMenu(item.id, box.left + 24, box.bottom, event.currentTarget);
+      return;
+    }
+    if (
+      !command &&
+      !event.altKey &&
+      !event.shiftKey &&
+      (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+    ) {
+      // Move focus between rows (top of the list = top of the stack).
+      const buttons = rowButtons();
+      const next = buttons[buttons.indexOf(event.currentTarget) + (event.key === 'ArrowUp' ? -1 : 1)];
+      if (next) {
+        event.preventDefault();
+        next.focus();
+      }
+    }
+  };
+  /** Resolve the row under a viewport point into a drop target. */
+  const resolveTarget = (x: number, y: number): LayerDropTarget | undefined => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    const rect = list.getBoundingClientRect();
+    const probeX = Math.min(rect.right - 6, Math.max(rect.left + 6, x));
+    const probeY = Math.min(rect.bottom - 2, Math.max(rect.top + 2, y));
+    const row = document.elementFromPoint(probeX, probeY)?.closest<HTMLElement>('[data-drop-row]');
+    if (!row || !list.contains(row)) return undefined;
+    const box = row.getBoundingClientRect();
+    if (row.dataset.dropRow === 'group' && row.dataset.groupId) {
+      const position = dropPositionFromPointer('group', box.top, box.height, y);
+      return { kind: 'group', id: row.dataset.groupId, position: position === 'above' ? 'above' : 'into' };
+    }
+    if (!row.dataset.layerId) return undefined;
+    const position = dropPositionFromPointer('layer', box.top, box.height, y);
+    return { kind: 'layer', id: row.dataset.layerId, position: position === 'above' ? 'above' : 'below' };
+  };
+  const updateDrag = (session: DragSession) => {
+    const target = resolveTarget(session.x, session.y) ?? session.target;
+    if (!target) return;
+    session.target = target;
+    const plan = planLayerDrop(frameRef.current, session.source, target);
+    session.ok = plan.ok;
+    setDropState({
+      target,
+      label: describeLayerDrop(plan, frameRef.current),
+      state: plan.ok
+        ? 'ok'
+        : plan.reason === 'no-change' || plan.reason === 'onto-self'
+          ? 'idle'
+          : 'refused',
+      x: session.x,
+      y: session.y,
+    });
+  };
+  const beginPointer = (
+    event: ReactPointerEvent<HTMLElement>,
+    rowKind: 'layer' | 'group',
+    rowId: string,
+  ) => {
+    if (event.button !== 0 || dragSession.current || !moveLayers) return;
+    const origin = event.target as HTMLElement;
+    if (origin.closest('.layer-row-action, input, select, textarea, label, [role="menu"]')) return;
+    const handle = Boolean(origin.closest('[data-drag-handle]'));
+    if (rowKind === 'group' && !handle && !origin.closest('.group-toggle')) return;
+    const touch = event.pointerType === 'touch';
+    const wasSelected = rowKind === 'layer' && selectedIds.has(rowId);
+    const source: LayerDragSource =
+      rowKind === 'group' ? { kind: 'group', id: rowId } : { kind: 'layers', ids: idsFor(rowId) };
+    let scrollTimer: number | undefined;
+    let pressTimer: number | undefined;
+    const session: DragSession = {
+      pointerId: event.pointerId,
+      source,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
+      ok: false,
+      end: () => undefined,
+    };
+    const activate = () => {
+      session.active = true;
+      suppressClicksFor(10_000);
+      setMenuState(null);
+      const frameNow = frameRef.current;
+      setDraggingIds(
+        new Set(
+          source.kind === 'group'
+            ? frameNow.layers.filter((item) => item.groupId === source.id).map((item) => item.id)
+            : source.ids,
+        ),
+      );
+      setLiveMessage('Dragging. Release to drop, Escape to cancel');
+      scrollTimer = window.setInterval(() => {
+        const list = listRef.current;
+        if (!list) return;
+        const rect = list.getBoundingClientRect(),
+          edge = 28,
+          before = list.scrollTop;
+        if (session.y < rect.top + edge)
+          list.scrollTop -= Math.ceil((rect.top + edge - session.y) / 3) + 2;
+        else if (session.y > rect.bottom - edge)
+          list.scrollTop += Math.ceil((session.y - (rect.bottom - edge)) / 3) + 2;
+        if (list.scrollTop !== before) updateDrag(session);
+      }, 30);
+      updateDrag(session);
+    };
+    const onMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== session.pointerId) return;
+      session.x = moveEvent.clientX;
+      session.y = moveEvent.clientY;
+      const distance = Math.hypot(session.x - session.startX, session.y - session.startY);
+      if (!session.active) {
+        if (touch) {
+          if (distance > 10) session.end(false);
+          return;
+        }
+        if (distance < 5) return;
+        activate();
+      }
+      moveEvent.preventDefault();
+      updateDrag(session);
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId === session.pointerId) session.end(session.active);
+    };
+    const onCancel = (cancelEvent: PointerEvent) => {
+      if (cancelEvent.pointerId !== session.pointerId) return;
+      if (session.active) setLiveMessage('Reorder cancelled');
+      session.end(false);
+    };
+    const onKey = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      if (session.active) setLiveMessage('Reorder cancelled; the layer order is unchanged');
+      session.end(false);
+    };
+    session.end = (drop: boolean) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+      window.clearInterval(scrollTimer);
+      window.clearTimeout(pressTimer);
+      if (dragSession.current === session) dragSession.current = null;
+      const wasActive = session.active;
+      session.active = false;
+      if (wasActive) {
+        suppressClicksFor(400);
+        setDropState(null);
+        setDraggingIds(null);
+      }
+      if (!drop || !wasActive || !session.target) return;
+      const moved = moveLayers(source, session.target);
+      if (!moved) {
+        if (!session.ok)
+          setLiveMessage(
+            describeLayerDrop(planLayerDrop(frameRef.current, source, session.target), frameRef.current),
+          );
+        return;
+      }
+      pendingMove.current = { ids: moved };
+      if (rowKind === 'layer' && !wasSelected && setLayerSelection) setLayerSelection(moved, rowId);
+    };
+    dragSession.current = session;
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey, true);
+    if (touch)
+      // Touch: a long press on the handle starts a drag; a long press
+      // elsewhere on a layer row opens the row menu.
+      pressTimer = window.setTimeout(
+        () => {
+          if (handle) activate();
+          else {
+            session.end(false);
+            if (rowKind !== 'layer') return;
+            suppressClicksFor(800);
+            openMenu(rowId, session.x, session.y, null);
+          }
+        },
+        handle ? 300 : 550,
+      );
+  };
+  const fileDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!dropFiles || !Array.from(event.dataTransfer.types).includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    const target = resolveTarget(event.clientX, event.clientY) ?? dropState?.target;
+    if (!target) return;
+    const label = describeFileDrop(frame, target);
+    if (
+      dropState?.label !== label ||
+      dropState.target.kind !== target.kind ||
+      dropState.target.id !== target.id ||
+      dropState.target.position !== target.position
+    )
+      setDropState({
+        target,
+        label,
+        state: label.startsWith('Locked') ? 'refused' : 'ok',
+        x: event.clientX,
+        y: event.clientY,
+      });
+  };
+  const fileDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!dropFiles || event.shiftKey) {
+      // Shift-drop opens the file as a document (handled by the editor).
+      setDropState(null);
+      return;
+    }
+    const files = Array.from(event.dataTransfer.files);
+    const target = resolveTarget(event.clientX, event.clientY) ?? dropState?.target;
+    setDropState(null);
+    if (!files.length || !target) return;
+    event.preventDefault();
+    dropFiles(files, target);
+  };
+  const dropClass = (kind: LayerDropTarget['kind'], id: string) => {
+    const target = dropState?.target;
+    if (!target || target.kind !== kind || target.id !== id) return '';
+    return ` drop-${target.position}${dropState.state === 'refused' ? ' drop-refused' : ''}`;
+  };
+  const menuLayer = menuState ? frame.layers.find((item) => item.id === menuState.id) : undefined;
   const renderedGroups = new Set<string>();
   const rows: ReactNode[] = [];
   for (const item of [...frame.layers].reverse()) {
@@ -205,19 +617,53 @@ export default function LayersPanel({
           group={group}
           editGroup={editGroup}
           selected={activeGroup?.id === group.id}
+          dropClass={dropClass('group', group.id)}
+          dragging={Boolean(draggingIds && frame.layers.some((member) => member.groupId === group.id && draggingIds.has(member.id)))}
+          onPointerDown={moveLayers ? (event) => beginPointer(event, 'group', group.id) : undefined}
+          ignoreClick={() => suppressClick.current}
         />,
       );
       renderedGroups.add(group.id);
     }
     if (!group || !group.collapsed || hasSearchQuery) {
       // Clipped rows are indented under their clipping group's base with a
-      // ↳ glyph; the base name is exposed as the row's accessible description
-      // so the row's accessible name stays "Select layer <name>".
+      // ↳ glyph; the base name and the stack position are the row's
+      // accessible description, so its accessible name stays
+      // "Select layer <name>".
       const clippedTo = item.clippingTo !== undefined ? clippingGroupBase(frame, item) : undefined;
-      const clipDescriptionId = clippedTo ? `layer-clip-${item.id}` : undefined;
+      const descriptionId = `layer-desc-${item.id}`;
+      const name = item.name || 'Untitled layer';
+      const locked = item.locked || Boolean(group?.locked);
       rows.push(
-        <button
+        // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+        <div
           key={item.id}
+          className={
+            'layer-row-item' +
+            (clippedTo ? ' clipped' : '') +
+            (draggingIds?.has(item.id) ? ' dragging' : '') +
+            dropClass('layer', item.id)
+          }
+          data-drop-row="layer"
+          data-layer-id={item.id}
+          onPointerDown={(event) => beginPointer(event, 'layer', item.id)}
+          onContextMenu={(event) => {
+            if ((event.target as HTMLElement).closest('input, select, textarea')) return;
+            event.preventDefault();
+            openMenu(item.id, event.clientX, event.clientY, event.target as HTMLElement);
+          }}
+        >
+          {moveLayers && (
+            <span
+              className="layer-drag-handle"
+              data-drag-handle="true"
+              aria-hidden="true"
+              title="Drag to reorder (long-press on touch)"
+            >
+              <GripVertical size={14} />
+            </span>
+          )}
+        <button
           className={
             (item.id === layer.id
               ? 'layer-row selected'
@@ -226,25 +672,27 @@ export default function LayersPanel({
                 : 'layer-row') + (clippedTo ? ' clipped' : '')
           }
           data-clipped={clippedTo ? 'true' : undefined}
-          aria-describedby={clipDescriptionId}
-          onClick={(event) =>
+          data-layer-row-id={item.id}
+          aria-describedby={descriptionId}
+          onClick={(event) => {
+            if (suppressClick.current) return;
             select(item.id, {
               additive: event.metaKey || event.ctrlKey,
               range: event.shiftKey,
-            })
-          }
+            });
+          }}
+          onKeyDown={(event) => onRowKeyDown(event, item)}
           aria-pressed={selectedIds.has(item.id)}
           data-selected={selectedIds.has(item.id) ? 'true' : 'false'}
           aria-label={`Select layer ${item.name}`}
         >
           {clippedTo && (
-            <>
-              <span className="layer-clip-glyph" aria-hidden="true">↳</span>
-              <span id={clipDescriptionId} className="sr-only">
-                Clipped to {clippedTo.name || 'Untitled layer'}
-              </span>
-            </>
+            <span className="layer-clip-glyph" aria-hidden="true">↳</span>
           )}
+          <span id={descriptionId} className="sr-only">
+            {clippedTo ? `Clipped to ${clippedTo.name || 'Untitled layer'}; ` : ''}
+            {layerStackDescription(frame, item.id)}
+          </span>
           <span className="layer-type">
             {item.kind === 'text'
               ? 'T'
@@ -270,7 +718,31 @@ export default function LayersPanel({
               {group ? ` · ${group.name}` : ''}
             </small>
           </span>
-        </button>,
+        </button>
+          <button
+            type="button"
+            className={'layer-row-action layer-row-delete' + (locked ? ' refused' : '')}
+            aria-label={`Delete ${name}`}
+            title={locked ? 'Locked: unlock to delete' : 'Delete layer'}
+            onClick={() => deleteRow(item.id)}
+          >
+            <Trash2 size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="layer-row-action layer-row-more"
+            aria-label={`Layer options for ${name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuState?.id === item.id}
+            onClick={(event) => {
+              const box = event.currentTarget.getBoundingClientRect();
+              if (menuState?.id === item.id) setMenuState(null);
+              else openMenu(item.id, box.right, box.bottom, event.currentTarget);
+            }}
+          >
+            <Ellipsis size={14} aria-hidden="true" />
+          </button>
+        </div>,
       );
     }
   }
@@ -283,6 +755,8 @@ export default function LayersPanel({
         group={group}
         editGroup={editGroup}
         selected={activeGroup?.id === group.id}
+        dropClass={dropClass('group', group.id)}
+        dragging={false}
       />,
     );
   }
@@ -378,7 +852,99 @@ export default function LayersPanel({
           </small>
         )}
       </label>
-      <div className="layer-list">{rows}</div>
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions */}
+      <div
+        className={'layer-list' + (dropState ? ' drag-active' : '')}
+        ref={listRef}
+        data-file-drop-zone="layers"
+        onDragOver={fileDragOver}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropState(null);
+        }}
+        onDrop={fileDrop}
+      >
+        {rows}
+      </div>
+      <p className="sr-only" aria-live="polite" data-testid="layers-live">
+        {liveMessage}
+      </p>
+      {dropState && (
+        <div
+          className={'layer-drop-hint' + (dropState.state === 'refused' ? ' refused' : '')}
+          data-testid="layer-drop-hint"
+          data-state={dropState.state}
+          aria-hidden="true"
+          style={{
+            left: Math.max(8, Math.min(dropState.x + 14, window.innerWidth - 220)),
+            top: Math.max(8, Math.min(dropState.y + 14, window.innerHeight - 40)),
+          }}
+        >
+          {dropState.label}
+        </div>
+      )}
+      {menuState && menuLayer && (
+        <LayerRowMenu
+          frame={frame}
+          layer={menuLayer}
+          ids={idsFor(menuLayer.id)}
+          x={menuState.x}
+          y={menuState.y}
+          close={(restoreFocus) => {
+            const trigger = menuState.trigger;
+            setMenuState(null);
+            if (restoreFocus && trigger?.isConnected) trigger.focus();
+          }}
+          run={(action) => {
+            const id = menuLayer.id;
+            setMenuState(null);
+            switch (action) {
+              case 'duplicate':
+                prepareRow(id);
+                duplicate();
+                break;
+              case 'delete':
+                deleteRow(id);
+                break;
+              case 'front':
+              case 'forward':
+              case 'backward':
+              case 'back':
+                arrangeRow(id, action, true);
+                break;
+              case 'clip':
+                prepareRow(id);
+                createClipping();
+                break;
+              case 'release-clip':
+                prepareRow(id);
+                releaseClipping();
+                break;
+              case 'group':
+                prepareRow(id);
+                groupActive();
+                break;
+              case 'rename': {
+                const next = window.prompt('Layer name', menuLayer.name);
+                if (next === null) break;
+                prepareRow(id);
+                edit({ name: next.slice(0, 160) });
+                pendingFocus.current = id;
+                break;
+              }
+              case 'visibility':
+                prepareRow(id);
+                edit({ visible: !menuLayer.visible });
+                pendingFocus.current = id;
+                break;
+              case 'lock':
+                prepareRow(id);
+                edit({ locked: !menuLayer.locked });
+                pendingFocus.current = id;
+                break;
+            }
+          }}
+        />
+      )}
       {searchQuery.trim() && filteredLayers.length === 0 && (
         <p className="layer-search-empty">No layers match this search.</p>
       )}
@@ -1700,24 +2266,180 @@ export default function LayersPanel({
     </section>
   );
 }
+/**
+ * Row menu (right-click, long-press on touch, the row's "⋯" button, or the
+ * ContextMenu key / Shift+F10). Actions apply to the selection when it
+ * includes the row, otherwise to the row alone.
+ */
+function LayerRowMenu({
+  frame,
+  layer,
+  ids,
+  x,
+  y,
+  close,
+  run,
+}: {
+  frame: Frame;
+  layer: Layer;
+  ids: string[];
+  x: number;
+  y: number;
+  close: (restoreFocus: boolean) => void;
+  run: (action: RowMenuAction) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const scoped: Frame = { ...frame, active: layer.id, selectedLayerIds: ids };
+  const group = layer.groupId ? frame.groups?.find((item) => item.id === layer.groupId) : undefined;
+  const locked = layer.locked || Boolean(group?.locked);
+  const candidate = clippingCandidateBase(frame, layer);
+  const selected = frame.layers.filter((item) => ids.includes(item.id));
+  const anyLocked = selected.some(
+    (item) => item.locked || Boolean(item.groupId && frame.groups?.find((g) => g.id === item.groupId)?.locked),
+  );
+  const items: Array<{ action: RowMenuAction; label: string; disabled: boolean; separator?: boolean }> = [
+    { action: 'duplicate', label: 'Duplicate', disabled: frame.layers.length + ids.length > MAX_DOCUMENT_LAYERS },
+    { action: 'delete', label: ids.length > 1 ? `Delete ${ids.length} layers` : 'Delete', disabled: !planLayerDelete(scoped, ids).ok },
+    { action: 'front', label: 'Bring to Front', disabled: !planLayerArrange(scoped, 'front').ok, separator: true },
+    { action: 'forward', label: 'Bring Forward', disabled: !planLayerArrange(scoped, 'forward').ok },
+    { action: 'backward', label: 'Send Backward', disabled: !planLayerArrange(scoped, 'backward').ok },
+    { action: 'back', label: 'Send to Back', disabled: !planLayerArrange(scoped, 'back').ok },
+    layer.clippingTo
+      ? { action: 'release-clip', label: 'Release Clipping Mask', disabled: locked, separator: true }
+      : {
+          action: 'clip',
+          label: 'Create Clipping Mask',
+          disabled:
+            !isClippingSourceLayer(layer) ||
+            !candidate ||
+            locked ||
+            !layer.visible ||
+            Boolean(candidate && (candidate.locked || !candidate.visible)),
+          separator: true,
+        },
+    {
+      action: 'group',
+      label: 'Group into Folder',
+      disabled: anyLocked || selected.some((item) => item.groupId !== undefined),
+    },
+    { action: 'rename', label: 'Rename…', disabled: locked, separator: true },
+    { action: 'visibility', label: layer.visible ? 'Hide' : 'Show', disabled: Boolean(group?.locked) },
+    { action: 'lock', label: layer.locked ? 'Unlock' : 'Lock', disabled: Boolean(group?.locked) },
+  ];
+  const closeRef = useRef(close);
+  useEffect(() => {
+    closeRef.current = close;
+  });
+  useEffect(() => {
+    // Focus the first item once on open; a pointer press outside closes.
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) closeRef.current(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, []);
+  const width = 216,
+    height = items.length * 32 + 16;
+  const left = Math.max(8, Math.min(x, window.innerWidth - width - 8));
+  const top = y + height > window.innerHeight - 8 ? Math.max(8, window.innerHeight - height - 8) : y;
+  return (
+    <div
+      ref={menuRef}
+      className="layer-row-menu"
+      role="menu"
+      tabIndex={-1}
+      aria-label={`Layer options for ${layer.name || 'Untitled layer'}`}
+      style={{ left, top }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          close(true);
+          return;
+        }
+        if (event.key === 'Tab') {
+          close(false);
+          return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          event.stopPropagation();
+          const buttons = Array.from(
+            menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') || [],
+          );
+          if (!buttons.length) return;
+          const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+          const next =
+            event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? buttons.length - 1
+                : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[next].focus();
+        }
+      }}
+    >
+      {items.map((item) => (
+        <button
+          key={item.action}
+          type="button"
+          role="menuitem"
+          className={item.separator ? 'separated' : undefined}
+          disabled={item.disabled}
+          onClick={() => run(item.action)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 function GroupRow({
   group,
   editGroup,
   selected,
+  dropClass = '',
+  dragging = false,
+  onPointerDown,
+  ignoreClick,
 }: {
   group: Group;
   editGroup: (id: string, patch: Partial<Group>) => void;
   selected: boolean;
+  dropClass?: string;
+  dragging?: boolean;
+  onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  ignoreClick?: () => boolean;
 }) {
   const action = group.collapsed ? 'Expand' : 'Collapse';
   return (
-    <div className={selected ? 'group-row selected' : 'group-row'}>
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+    <div
+      className={(selected ? 'group-row selected' : 'group-row') + (dragging ? ' dragging' : '') + dropClass}
+      data-drop-row="group"
+      data-group-id={group.id}
+      onPointerDown={onPointerDown}
+    >
       <button
         className="group-toggle"
         aria-label={`${action} group ${group.name}`}
         aria-expanded={!group.collapsed}
-        onClick={() => editGroup(group.id, { collapsed: !group.collapsed })}
+        onClick={() => {
+          if (ignoreClick?.()) return;
+          editGroup(group.id, { collapsed: !group.collapsed });
+        }}
       >
+        {onPointerDown && (
+          <span
+            className="layer-drag-handle"
+            data-drag-handle="true"
+            aria-hidden="true"
+            title="Drag to move the folder (long-press on touch)"
+          >
+            <GripVertical size={14} />
+          </span>
+        )}
         <span aria-hidden="true">{group.collapsed ? '▸' : '▾'}</span>
         <b>{group.name || 'Untitled group'}</b>
       </button>

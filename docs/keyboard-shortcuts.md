@@ -58,6 +58,10 @@ yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View 
 | `Cmd/Ctrl+G` | Put the active layer in a new group |
 | `Cmd/Ctrl+Shift+G` | Remove the active layer from its group |
 | `Cmd/Ctrl+J` | Duplicate the active layer |
+| `Cmd/Ctrl+]` / `Cmd/Ctrl+[` | Bring Forward / Send Backward the selected layers |
+| `Cmd/Ctrl+Shift+]` / `Cmd/Ctrl+Shift+[` | Bring to Front / Send to Back the selected layers |
+| `Alt+↑` / `Alt+↓` (Layers panel row focused) | Bring Forward / Send Backward that row; add `Shift` for front/back |
+| `Delete` / `Backspace` (Layers panel row focused) | Delete that row (or the selection it belongs to) |
 | `Cmd/Ctrl+Alt+I` | Open image resize |
 | `0` | Fit to screen |
 | `1` | Actual size |
