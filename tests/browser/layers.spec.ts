@@ -859,7 +859,7 @@ test('single row and column marquees select one pixel across the frame and persi
     box = (await canvas.boundingBox())!;
   await selectTool(page, 'Single Row marquee');
   const rowTool = page.getByRole('button', {
-    name: 'Single Row marquee tool',
+    name: 'Single Row Marquee tool',
     exact: true,
   });
   await canvas.click({ position: { x: box.width * 0.37, y: box.height * 0.45 } });

@@ -85,6 +85,8 @@ export function ToolFlyout({
           key={item.id}
           role="menuitem"
           aria-label={item.label}
+          aria-current={selected === item.id ? 'true' : undefined}
+          data-checked={selected === item.id ? 'true' : 'false'}
           className={selected === item.id ? 'active' : ''}
           onClick={() => {
             onSelect(item.id);

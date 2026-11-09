@@ -123,7 +123,7 @@ test('freehand Lasso dragged past the canvas edge is clipped and fills only insi
     at(0.3, 0.7),
     at(0.3, 0.32),
   ]);
-  await expect(page.locator('footer')).toContainText('Polygonal selection created');
+  await expect(page.locator('footer')).toContainText('Lasso selection created');
   await expect(page.locator('footer')).not.toContainText('Invalid layer document');
 
   const frame = await project(page);
@@ -166,7 +166,7 @@ test('Lasso points placed on the canvas border survive screen-to-canvas rounding
     at(0.7, 0.7),
     at(0.7, 0.32),
   ]);
-  await expect(page.locator('footer')).toContainText('Polygonal selection created');
+  await expect(page.locator('footer')).toContainText('Lasso selection created');
   await expect(page.locator('footer')).not.toContainText('Invalid layer document');
   const frame = await project(page);
   expect(frame.selection.shape).toBe('polygon');
@@ -190,7 +190,7 @@ test('Lasso add mode keeps combining with an off-canvas loop', async ({ page }, 
     at(0.3, 0.5),
     at(0.3, 0.32),
   ]);
-  await expect(page.locator('footer')).toContainText('Polygonal selection created');
+  await expect(page.locator('footer')).toContainText('Lasso selection created');
   await expect(page.locator('footer')).not.toContainText('Invalid layer document');
   const frame = await project(page);
   expect(frame.selection.shape).toBe('polygon');

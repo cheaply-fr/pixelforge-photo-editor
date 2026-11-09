@@ -27,8 +27,10 @@ Mask** (`vertical-text-mask`). Each has its own icon.
 
 ## Editing session
 
-Clicking existing type with a Type tool (or double-clicking it with Move)
-starts an on-canvas editing session. The session mirrors the layer text in a
+Clicking existing type with Horizontal or Vertical Type (or double-clicking
+it with Move) starts an on-canvas editing session. Horizontal and Vertical
+Type Mask never open or change an existing text layer: a click on existing
+type starts a new type-mask entry at that point, exactly as on empty canvas. The session mirrors the layer text in a
 hidden `<textarea>` (`aria-label="Type layer text editor"`), so typing, IME
 composition, plain-text clipboard, browser spell check (`spellcheck`) and the
 mobile virtual keyboard come from the browser. The canvas shows the caret,

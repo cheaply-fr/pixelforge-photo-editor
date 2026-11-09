@@ -95,7 +95,7 @@ test('Toolbar settings persist individual tool ordering without duplicating slot
 test('Toolbar settings can reset columns, spacing, categories and tool order', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByRole('button', { name: 'Select tool', exact: true }).focus();
+  await page.getByRole('button', { name: 'Rectangular Marquee tool', exact: true }).focus();
   await page.keyboard.press('ArrowDown');
   await page.locator('[role="menu"]:visible').getByRole('menuitem', { name: 'Elliptical Marquee', exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -111,5 +111,5 @@ test('Toolbar settings can reset columns, spacing, categories and tool order', a
   await dialog.getByRole('button', { name: 'Apply', exact: true }).click();
   await expect(page.getByTestId('tool-palette')).toHaveAttribute('data-toolbar-density', 'compact');
   await expect(page.getByRole('region', { name: 'Measure tools' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Select tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Rectangular Marquee tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });

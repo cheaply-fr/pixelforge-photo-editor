@@ -23,9 +23,9 @@ const TOOL_LABELS: Record<Tool, string> = {
   dodge: 'Dodge', burn: 'Burn', sponge: 'Sponge', smudge: 'Smudge', blur: 'Blur', sharpen: 'Sharpen',
   pen: 'Pen', 'freeform-pen': 'Freeform Pen', 'curvature-pen': 'Curvature Pen',
   'add-anchor': 'Add Anchor Point', 'delete-anchor': 'Delete Anchor Point', 'convert-point': 'Convert Point',
-  'path-select': 'Path Selection', 'direct-select': 'Direct Selection', text: 'Horizontal Type', 'vertical-text': 'Vertical Type', 'text-mask': 'Horizontal Type Mask', 'vertical-text-mask': 'Vertical Type Mask', rectangle: 'Shape', ellipse: 'Ellipse',
-  line: 'Line', polygon: 'Polygon', 'rounded-rectangle': 'Rounded Rectangle', 'custom-shape': 'Custom Shape', select: 'Select', 'ellipse-select': 'Elliptical marquee',
-  'row-select': 'Single Row marquee', 'column-select': 'Single Column marquee', lasso: 'Lasso',
+  'path-select': 'Path Selection', 'direct-select': 'Direct Selection', text: 'Horizontal Type', 'vertical-text': 'Vertical Type', 'text-mask': 'Horizontal Type Mask', 'vertical-text-mask': 'Vertical Type Mask', rectangle: 'Rectangle', ellipse: 'Ellipse',
+  line: 'Line', polygon: 'Polygon', 'rounded-rectangle': 'Rounded Rectangle', 'custom-shape': 'Custom Shape', select: 'Rectangular Marquee', 'ellipse-select': 'Elliptical Marquee',
+  'row-select': 'Single Row Marquee', 'column-select': 'Single Column Marquee', lasso: 'Lasso',
   'polygonal-lasso': 'Polygonal Lasso', 'magnetic-lasso': 'Magnetic Lasso',
   'selection-brush': 'Selection Brush', 'quick-selection': 'Quick Selection', 'magic-wand': 'Magic Wand',
 };

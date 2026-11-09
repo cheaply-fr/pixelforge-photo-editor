@@ -64,10 +64,13 @@ Top to bottom:
   * Paint, retouch, shape and pen tools → Tool options.
   * Move → Align to canvas (+ distribute). Text → Text. Rotate View → Rotate
     View.
-  * Marquee, lasso and Magic Wand → Selection options (mode, feather,
-    invert/clear selection). Selection Brush and Quick Selection → Tool
+  * Marquee and lasso → Selection options (mode, options-bar Feather for new
+    selections, marquee Style, current-selection feather, invert/clear
+    selection). Selection Brush, Quick Selection and Magic Wand → Tool
     options + Selection options.
-  * Hand, Zoom, measurement tools, Fill, Crop / Perspective Crop, Slice /
+  * Fill → Tool options (Tolerance, Contiguous, Sample All Layers; see
+    `docs/color-region-contract.md`).
+  * Hand, Zoom, measurement tools, Crop / Perspective Crop, Slice /
     Slice Select and Frame → none (their controls are on the canvas, status
     bar or toolbar).
   * History Brush and Art History Brush open History by default.

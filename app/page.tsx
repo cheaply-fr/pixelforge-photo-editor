@@ -128,7 +128,6 @@ import {
   transformSelection as transformSelectionModel,
   surface,
   transformFrameWithMasks,
-  floodFill,
   drawTextLayer,
   loadTextLayerFonts,
   effectiveTextLayer,
@@ -264,6 +263,24 @@ import {
   formatSelectionFeather,
   normalizeSelectionFeather,
 } from '../src/selectionFeather';
+import { selectionOutline, type SelectionOutline } from '../src/selectionOutline';
+import {
+  DEFAULT_COLOR_REGION_SETTINGS,
+  clearSelectedPixels,
+  colorRegionMask,
+  fillMaskedPixels,
+  frameMaskToLayer,
+  normalizeColorRegionSettings,
+  type ColorRegionSettings,
+} from '../src/colorRegion';
+import {
+  DEFAULT_MARQUEE_OPTIONS,
+  MARQUEE_FEATHER_MAX,
+  marqueeRect,
+  normalizeMarqueeOptions,
+  type MarqueeOptions,
+  type MarqueeStyle,
+} from '../src/marqueeOptions';
 import SaveSelectionDialog from '../src/SaveSelectionDialog';
 import EditFillDialog from '../src/EditFillDialog';
 import { editFillColor, type EditFillOptions } from '../src/editFill';
@@ -1331,18 +1348,18 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'vertical-text', label: 'Vertical Type', icon: toolIcon('vertical-text'), key: 'T' },
   { id: 'text-mask', label: 'Horizontal Type Mask', icon: toolIcon('text-mask'), key: 'T' },
   { id: 'vertical-text-mask', label: 'Vertical Type Mask', icon: toolIcon('vertical-text-mask'), key: 'T' },
-  { id: 'rectangle', label: 'Shape', icon: toolIcon('rectangle'), key: 'U' },
+  { id: 'rectangle', label: 'Rectangle', icon: toolIcon('rectangle'), key: 'U' },
   { id: 'rounded-rectangle', label: 'Rounded Rectangle', icon: toolIcon('rounded-rectangle'), key: 'U' },
   { id: 'ellipse', label: 'Ellipse', icon: toolIcon('ellipse'), key: 'U' },
   { id: 'line', label: 'Line', icon: toolIcon('line'), key: 'U' },
   { id: 'polygon', label: 'Polygon', icon: toolIcon('polygon'), key: 'U' },
   { id: 'custom-shape', label: 'Custom Shape', icon: toolIcon('custom-shape'), key: 'U' },
-  { id: 'select', label: 'Select', icon: toolIcon('select'), key: 'M' },
-  { id: 'ellipse-select', label: 'Elliptical marquee', icon: toolIcon('ellipse-select'), key: 'M' },
-  { id: 'row-select', label: 'Single Row marquee', icon: toolIcon('row-select'), key: 'M' },
+  { id: 'select', label: 'Rectangular Marquee', icon: toolIcon('select'), key: 'M' },
+  { id: 'ellipse-select', label: 'Elliptical Marquee', icon: toolIcon('ellipse-select'), key: 'M' },
+  { id: 'row-select', label: 'Single Row Marquee', icon: toolIcon('row-select'), key: 'M' },
   {
     id: 'column-select',
-    label: 'Single Column marquee',
+    label: 'Single Column Marquee',
     icon: toolIcon('column-select'),
     key: 'M',
   },
@@ -1403,13 +1420,7 @@ const toolSelectionNotice = (tool: Tool, label: string) =>
     ? 'Magnetic Lasso: drag along an edge, release to close'
     : `${label} tool selected`;
 const flyoutToolLabel = (tool: Tool, label: string) =>
-  tool === 'select'
-    ? 'Rectangular Marquee'
-    : tool === 'ellipse-select'
-      ? 'Elliptical Marquee'
-    : tool === 'lasso'
-      ? 'Freeform Lasso'
-      : label;
+  tool === 'lasso' ? 'Freeform Lasso' : label;
 const flyoutToolKey = (tool: Tool, key: string) =>
   tool === 'selection-brush' ? 'W' : key;
 
@@ -1425,6 +1436,13 @@ const discardPreviewAsset = (assets: Assets, id: string | undefined) => {
   if (id) delete assets[id];
 };
 
+/** Status names for lasso-family selections (a freeform lasso is not "Polygonal"). */
+const LASSO_CREATED_LABELS = {
+  Lasso: 'Lasso',
+  'Polygonal lasso': 'Polygonal',
+  'Magnetic Lasso': 'Magnetic',
+  'Elliptical marquee': 'Elliptical',
+} as const;
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -3290,6 +3308,8 @@ export default function Home() {
     [redEyeThreshold, setRedEyeThreshold] = useState(36),
     [redEyeAmount, setRedEyeAmount] = useState(100),
     [colorTolerance, setColorTolerance] = useState(24),
+    [colorRegion, setColorRegion] = useState<ColorRegionSettings>(DEFAULT_COLOR_REGION_SETTINGS),
+    [marqueeOptions, setMarqueeOptions] = useState<MarqueeOptions>(DEFAULT_MARQUEE_OPTIONS),
     [tonalExposure, setTonalExposure] = useState(50),
     [tonalRange, setTonalRange] = useState<TonalRange>('midtones'),
     [spongeMode, setSpongeMode] = useState<SpongeMode>('saturate'),
@@ -3789,7 +3809,8 @@ export default function Home() {
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
-    [savedSelectionName, setSavedSelectionName] = useState('Selection 1');
+    [savedSelectionName, setSavedSelectionName] = useState('Selection 1'),
+    [selectionOutlineState, setSelectionOutlineState] = useState<{ selection: Selection; outline: SelectionOutline } | null>(null);
   const quickMaskRef = useRef<QuickMask | null>(null),
     quickMaskGesture = useRef<{
       frame: Frame;
@@ -4338,6 +4359,8 @@ export default function Home() {
     redEyeThreshold,
     redEyeAmount,
     colorTolerance,
+    colorRegion,
+    marquee: marqueeOptions,
     tonalExposure,
     tonalRange,
     spongeMode,
@@ -4455,6 +4478,8 @@ export default function Home() {
     setRedEyeThreshold(s.redEyeThreshold ?? 36);
     setRedEyeAmount(s.redEyeAmount ?? 100);
     setColorTolerance(s.colorTolerance ?? 24);
+    setColorRegion(normalizeColorRegionSettings(s.colorRegion));
+    setMarqueeOptions(normalizeMarqueeOptions(s.marquee));
     setTonalExposure(s.tonalExposure ?? 50);
     setTonalRange(s.tonalRange ?? 'midtones');
     setSpongeMode(s.spongeMode ?? 'saturate');
@@ -6293,7 +6318,7 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Could not create a Type Mask selection');
     }
   };
-  const setSelection = (selection: Selection | undefined) => {
+  const setSelection = (selection: Selection | undefined, createdLabel?: string) => {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
     // A deselect keeps the exact editable snapshot needed by Select > Reselect.
@@ -6308,11 +6333,12 @@ export default function Home() {
         };
     if (commit(next)) {
       const label =
-        selection?.shape === 'ellipse'
+        createdLabel ??
+        (selection?.shape === 'ellipse'
           ? 'Elliptical'
           : selection?.shape === 'polygon'
             ? 'Polygonal'
-            : 'Rectangular';
+            : 'Rectangular');
       setNotice(selection ? `${label} selection created` : 'Selection cleared');
     }
   };
@@ -6918,7 +6944,16 @@ export default function Home() {
     points: selection.points,
     operation: 'replace',
   });
-  const mergeSelection = (next: Selection) => {
+  /**
+   * Merge a marquee/lasso selection with the current one. The options-bar
+   * Feather (docs/selection-feather-contract.md) applies to every new marquee
+   * and lasso selection except the one-pixel Single Row/Column marquees.
+   */
+  const mergeSelection = (created: Selection, createdLabel?: string) => {
+    const next =
+      marqueeOptions.feather > 0 && tool !== 'row-select' && tool !== 'column-select' && !created.feather
+        ? { ...created, feather: marqueeOptions.feather }
+        : created;
     const frame = current(),
       frameIndex = index.current,
       workToken = ++selectionWorkToken.current,
@@ -6926,7 +6961,7 @@ export default function Home() {
       sourceAssets = assets.current,
       currentSelection = frame.selection;
     if (!currentSelection || operation === 'replace') {
-      setSelection({ ...next, parts: [selectionPart(next)] });
+      setSelection({ ...next, parts: [selectionPart(next)] }, createdLabel);
       return;
     }
     // Keep simple geometry editable. Once either side is an alpha mask or has
@@ -6947,7 +6982,7 @@ export default function Home() {
       ];
       parts.push({ ...selectionPart(next), operation });
       if (isCurrentSelectionOperation(frame, frameIndex, workToken))
-        setSelection({ ...next, parts });
+        setSelection({ ...next, parts }, createdLabel);
       return;
     }
     void (async () => {
@@ -6972,7 +7007,7 @@ export default function Home() {
           frameIndex,
           workToken,
           candidate,
-          `${next.shape === 'ellipse' ? 'Elliptical' : next.shape === 'polygon' ? 'Polygonal' : 'Rectangular'} selection created`,
+          `${createdLabel ?? (next.shape === 'ellipse' ? 'Elliptical' : next.shape === 'polygon' ? 'Polygonal' : 'Rectangular')} selection created`,
         );
       } catch {
         if (isCurrentSelectionOperation(frame, frameIndex, workToken))
@@ -7010,7 +7045,7 @@ export default function Home() {
       points: bounded.points,
       feather: 0,
       inverted: false,
-    });
+    }, LASSO_CREATED_LABELS[label]);
     return true;
   };
   const finishPolygonalLasso = (g: Gesture) => {
@@ -7033,6 +7068,39 @@ export default function Home() {
     }
     if (f.selection && commit({ ...f, selection: { ...f.selection, feather } }))
       setNotice(`Selection feather set to ${formatSelectionFeather(feather)} px`);
+  };
+  /**
+   * Delete/Backspace with an active selection: clear the selected pixels of
+   * the active raster layer to transparency as one undoable history step
+   * (docs/selection-outline-contract.md). Feathered coverage clears partially.
+   */
+  const clearSelectedLayerPixels = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) return;
+    if (!layer || layer.kind !== 'raster' || !layer.visible || layerIsLocked(f, layer)) {
+      setNotice('Select a visible, unlocked raster layer to clear the selected pixels');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        buffer = surface(image.naturalWidth, image.naturalHeight),
+        context = buffer.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height);
+      if (current() !== f) return;
+      const pixels = context.getImageData(0, 0, buffer.width, buffer.height);
+      if (!mask || !clearSelectedPixels(pixels.data, mask)) {
+        setNotice('The selection has no pixels to clear on this layer');
+        return;
+      }
+      context.putImageData(pixels, 0, 0);
+      const asset = addAsset(assets.current, buffer);
+      if (commit({ ...f, layers: f.layers.map((item) => (item.id === layer.id ? { ...item, asset } : item)) }))
+        setNotice('Selected pixels cleared; undo restores them');
+    } catch {
+      setNotice('Could not clear the selected pixels');
+    }
   };
   const createMaskFromSelection = async () => {
     const f = current(),
@@ -8425,6 +8493,8 @@ export default function Home() {
         redEyeThreshold,
         redEyeAmount,
         colorTolerance,
+        colorRegion,
+        marquee: marqueeOptions,
         tonalExposure,
         tonalRange,
         spongeMode,
@@ -8553,6 +8623,8 @@ export default function Home() {
     redEyeThreshold,
     redEyeAmount,
     colorTolerance,
+    colorRegion,
+    marqueeOptions,
     tonalExposure,
     tonalRange,
     spongeMode,
@@ -8579,6 +8651,32 @@ export default function Home() {
   useEffect(() => {
     if (quickMasking && quickMask) drawQuickMaskOverlay(quickMask);
   }, [quickMasking, quickMask]);
+  // Marching ants (docs/selection-outline-contract.md): trace the rendered
+  // selection once per selection change; the overlay only animates a dash.
+  const outlineSelection = frame?.selection,
+    outlineWidth = frame?.w ?? 0,
+    outlineHeight = frame?.h ?? 0;
+  useEffect(() => {
+    if (!outlineSelection || !outlineWidth || !outlineHeight) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void frameSelectionMask(outlineSelection, { w: outlineWidth, h: outlineHeight } as Frame, assets.current)
+        .then((mask) => {
+          if (cancelled || !mask) return;
+          setSelectionOutlineState({
+            selection: outlineSelection,
+            outline: selectionOutline(mask, outlineWidth, outlineHeight),
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setSelectionOutlineState(null);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [outlineSelection, outlineWidth, outlineHeight, assets]);
   useEffect(() => {
     if (!ready) return;
     if (!frame?.quickMask?.active) {
@@ -12733,10 +12831,31 @@ export default function Home() {
           setNotice('Click inside the selection to fill');
           return;
         }
-        if (!floodFill(buffer, local.x, local.y, color)) {
-          setNotice('No contiguous pixels matched at that point');
+        // Tolerance / Contiguous / Sample All Layers (docs/color-region-contract.md).
+        const context = buffer.getContext('2d')!,
+          pixels = context.getImageData(0, 0, buffer.width, buffer.height);
+        let region: Uint8Array | null;
+        if (colorRegion.sampleAllLayers) {
+          const merged = await renderFrame(f, assets.current),
+            mergedPixels = merged.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+            frameRegion = colorRegionMask(mergedPixels, f.w, f.h, p.x, p.y, {
+              tolerance: colorTolerance,
+              contiguous: colorRegion.contiguous,
+            });
+          region = frameRegion && frameMaskToLayer(frameRegion, f.w, f.h, layer.matrix, buffer.width, buffer.height);
+        } else
+          region = colorRegionMask(pixels.data, buffer.width, buffer.height, local.x, local.y, {
+            tolerance: colorTolerance,
+            contiguous: colorRegion.contiguous,
+          });
+        const rgb = /^#([a-f\d]{6})$/i.exec(color)?.[1];
+        if (!region || !rgb || !fillMaskedPixels(pixels.data, region, [
+          parseInt(rgb.slice(0, 2), 16), parseInt(rgb.slice(2, 4), 16), parseInt(rgb.slice(4, 6), 16),
+        ])) {
+          setNotice(colorRegion.contiguous ? 'No contiguous pixels matched at that point' : 'No pixels matched that colour');
           return;
         }
+        context.putImageData(pixels, 0, 0);
         if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
@@ -13623,10 +13742,10 @@ export default function Home() {
         sourceAssets = assets.current;
       try {
         const source = await renderFrame(
-            { ...f, layers: [layer] },
+            colorRegion.sampleAllLayers ? f : { ...f, layers: [layer] },
             sourceAssets,
           ),
-          mask = colorSelectMask(source, p.x, p.y);
+          mask = colorSelectMask(source, p.x, p.y, colorTolerance, colorRegion.contiguous);
         if (!isCurrentSelectionOperation(f, frameIndex, workToken)) return;
         const next: Selection = {
           shape: 'rectangle',
@@ -13649,7 +13768,7 @@ export default function Home() {
           frameIndex,
           workToken,
           candidate,
-          'Color selection created from contiguous pixels',
+          `Magic Wand selection created (tolerance ${colorTolerance}${colorRegion.contiguous ? ', contiguous' : ''}${colorRegion.sampleAllLayers ? ', all layers' : ''})`,
         );
       } catch {
         if (isCurrentSelectionOperation(f, frameIndex, workToken))
@@ -14631,10 +14750,7 @@ export default function Home() {
         x.strokeStyle = '#fff';
         x.lineWidth = 2;
         x.setLineDash([8, 5]);
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          width = Math.abs(p.x - g.start.x),
-          height = Math.abs(p.y - g.start.y);
+        const { left, top, width, height } = marqueeRect(g.start, p, marqueeOptions);
         if (g.tool === 'ellipse-select') {
           x.beginPath();
           x.ellipse(
@@ -15296,12 +15412,11 @@ export default function Home() {
       );
     } else if (
       (g.tool === 'select' || g.tool === 'ellipse-select') &&
-      g.moved
+      (g.moved || marqueeOptions.style === 'fixed-size')
     ) {
-      const left = Math.min(g.start.x, p.x),
-        top = Math.min(g.start.y, p.y),
-        width = Math.abs(p.x - g.start.x),
-        height = Math.abs(p.y - g.start.y),
+      // Marquee Style (docs/selection-feather-contract.md): Fixed Size also
+      // places its box on a plain click.
+      const { left, top, width, height } = marqueeRect(g.start, p, marqueeOptions),
         x = Math.max(0, left),
         y = Math.max(0, top),
         w = Math.min(f.w, left + width) - x,
@@ -16058,6 +16173,16 @@ export default function Home() {
         e.preventDefault();
         if (e.key.toLowerCase() === 's' && e.shiftKey) void exportProject();
         else setNotice('Exit Quick Mask mode before changing the document');
+        return;
+      }
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        !command && !e.altKey && !e.defaultPrevented &&
+        !quickMasking && !gesture.current && current().selection &&
+        !(e.target instanceof Element && e.target.closest('[role="menu"], [role="dialog"], dialog'))
+      ) {
+        e.preventDefault();
+        void clearSelectedLayerPixels();
         return;
       }
       const customTool = Object.entries(toolShortcutBindings).find(([, binding]) =>
@@ -18874,6 +18999,23 @@ export default function Home() {
                   );
                 })()
               : null}
+            {frame?.selection &&
+              selectionOutlineState?.selection === frame.selection &&
+              !selectionOutlineState.outline.empty &&
+              !quickMasking && (
+              <svg
+                className="selection-outline"
+                data-testid="selection-outline"
+                data-segments={selectionOutlineState.outline.segments}
+                data-step={selectionOutlineState.outline.step}
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path className="selection-outline-base" d={selectionOutlineState.outline.path} />
+                <path className="selection-outline-ants" d={selectionOutlineState.outline.path} />
+              </svg>
+            )}
             {frame?.reference?.visible && isPngAsset(assets.current[frame.reference.asset]) && (
               <img
                 className="reference-overlay"
@@ -19780,8 +19922,40 @@ export default function Home() {
                   suffix="%"
                 />
               )}
-              {tool !== 'magic-eraser' && (
+              {tool !== 'magic-eraser' && tool !== 'fill' && tool !== 'magic-wand' && (
                 <BrushSizeControl value={size} set={setSize} />
+              )}
+              {(tool === 'magic-wand' || tool === 'fill') && (
+                <>
+                <Slider
+                  label="Color tolerance"
+                  value={colorTolerance}
+                  min={0}
+                  max={255}
+                  set={setColorTolerance}
+                  suffix=""
+                />
+                <div className="select-row color-region-options" data-testid="color-region-options">
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Contiguous"
+                      checked={colorRegion.contiguous}
+                      onChange={(event) => setColorRegion((value) => ({ ...value, contiguous: event.target.checked }))}
+                    />
+                    <span>Contiguous</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Sample All Layers"
+                      checked={colorRegion.sampleAllLayers}
+                      onChange={(event) => setColorRegion((value) => ({ ...value, sampleAllLayers: event.target.checked }))}
+                    />
+                    <span>Sample All Layers</span>
+                  </label>
+                </div>
+                </>
               )}
               {(tool === 'brush' ||
                 tool === 'pencil' ||
@@ -20616,6 +20790,57 @@ export default function Home() {
           )}
           {section === 'selection-options' && frame && (
             <section className="panel layers-part-panel" aria-label="Selection options">
+              {(MARQUEE_TOOLS.includes(tool) || tool === 'lasso' || tool === 'polygonal-lasso' || tool === 'magnetic-lasso') && (
+                <div className="layer-actions marquee-options" data-testid="marquee-options">
+                  {tool !== 'row-select' && tool !== 'column-select' && (
+                    <Slider
+                      label="Feather (new selections)"
+                      value={marqueeOptions.feather}
+                      min={0}
+                      max={MARQUEE_FEATHER_MAX}
+                      set={(feather) => setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, feather }))}
+                      suffix="px"
+                    />
+                  )}
+                  {(tool === 'select' || tool === 'ellipse-select') && (
+                    <>
+                      <label className="select-row">
+                        <span>Style</span>
+                        <select
+                          aria-label="Marquee style"
+                          value={marqueeOptions.style}
+                          onChange={(event) =>
+                            setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, style: event.target.value as MarqueeStyle }))
+                          }
+                        >
+                          <option value="normal">Normal</option>
+                          <option value="fixed-ratio">Fixed Ratio</option>
+                          <option value="fixed-size">Fixed Size</option>
+                        </select>
+                      </label>
+                      {marqueeOptions.style !== 'normal' && (
+                        <div className="select-row marquee-size">
+                          {(['width', 'height'] as const).map((side) => (
+                            <label key={side}>
+                              <span>{side === 'width' ? 'W' : 'H'}</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={30000}
+                                aria-label={`Marquee ${marqueeOptions.style === 'fixed-size' ? 'size' : 'ratio'} ${side}`}
+                                value={marqueeOptions[side]}
+                                onChange={(event) =>
+                                  setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, [side]: Number(event.target.value) }))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               {renderLayersPanel(frame, 'selection')}
             </section>
           )}
@@ -22462,7 +22687,7 @@ export default function Home() {
           <i />
           {notice}
         </span>
-        <span>{tool[0].toUpperCase() + tool.slice(1)} tool</span>
+        <span>{activeToolLabel} tool</span>
         <output
           aria-label="Render status"
           data-testid="render-status"

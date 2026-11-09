@@ -811,25 +811,25 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   await page.keyboard.press('b');
   await expect(active('Color Replace')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('u');
-  await expect(active('Shape')).toHaveAttribute('aria-pressed', 'true');
+  await expect(active('Rectangle')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('u');
   await expect(active('Rounded Rectangle')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('u');
   await expect(active('Ellipse')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('m');
-  await expect(active('Select')).toHaveAttribute('aria-pressed', 'true');
+  await expect(active('Rectangular Marquee')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('m');
-  await expect(active('Elliptical marquee')).toHaveAttribute(
+  await expect(active('Elliptical Marquee')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
   await page.keyboard.press('m');
-  await expect(active('Single Row marquee')).toHaveAttribute(
+  await expect(active('Single Row Marquee')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
   await page.keyboard.press('m');
-  await expect(active('Single Column marquee')).toHaveAttribute(
+  await expect(active('Single Column Marquee')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
