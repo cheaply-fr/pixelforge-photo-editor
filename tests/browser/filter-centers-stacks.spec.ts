@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -78,6 +79,7 @@ test('several filters stack on one raster layer with toggle, reorder, remove, un
   await expect(add).toHaveText('Add filter to stack (0/8)');
   await add.click();
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() => stackNames(page)).toEqual(['1. Mosaic']);
 

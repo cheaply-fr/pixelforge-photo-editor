@@ -26,8 +26,14 @@ import {
   WandSparkles,
   ZoomIn,
   ZoomOut,
+  Blend,
+  Cloud as CloudIcon,
+  History as HistoryIcon,
+  Image as ImageIcon,
+  Info,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { SidebarSection } from '../src/SidebarSection';
 import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
 import type { TriggerOrigin, TriggerSource } from '../src/sidebarAutoScroll';
@@ -44,10 +50,23 @@ import {
   sectionForStyle,
   sectionForTool,
   serializeCollapsedSections,
-  toolShowsSection,
   type SidebarCommandId,
   type SidebarSectionId,
 } from '../src/sidebarSections';
+import {
+  OPEN_PANELS_STORAGE_KEY,
+  SIDEBAR_PANELS,
+  SIDEBAR_PANEL_IDS,
+  openPanelForTool,
+  panelForSection,
+  parseOpenPanels,
+  serializeOpenPanels,
+  togglePanel,
+  toolSidebar,
+  withOpenPanel,
+  type OpenPanels,
+  type SidebarPanelId,
+} from '../src/sidebarPanels';
 
 import {
   LOCAL_CONFLICT,
@@ -189,7 +208,7 @@ import {
   beginPerformanceSpan,
   type PerformanceSpan,
 } from '../src/performanceMarks';
-import LayersPanel from '../src/LayersPanel';
+import LayersPanel, { type LayersPanelPart } from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import GenerativeUpscaleDialog from '../src/GenerativeUpscaleDialog';
 import {
@@ -1201,6 +1220,20 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'quick-selection', label: 'Quick Selection', icon: toolIcon('quick-selection'), key: 'W' },
   { id: 'magic-wand', label: 'Magic Wand', icon: toolIcon('magic-wand'), key: 'W' },
 ];
+/** Icons of the "More panels" strip (docs/contextual-sidebar-contract.md). */
+const SIDEBAR_PANEL_ICONS: Record<SidebarPanelId, typeof Brush> = {
+  'layer-details': Info,
+  adjustments: WandSparkles,
+  filters: Sparkles,
+  'layer-styles': Blend,
+  history: HistoryIcon,
+  'saved-selections': Bookmark,
+  transform: Crop,
+  reference: ImageIcon,
+  projects: CloudIcon,
+};
+/** Panels whose controls work before a document is open. */
+const PANELS_WITHOUT_DOCUMENT: ReadonlySet<SidebarPanelId> = new Set(['adjustments', 'filters', 'transform', 'projects']);
 /** Fitted view zoom for an image inside the stage, excluding its padding. */
 function fittedZoom(element: HTMLElement | null, width: number, height: number) {
   if (!element) return 100;
@@ -3035,6 +3068,63 @@ export default function Home() {
     (section: SidebarSectionId) => updateSidebarSectionCollapsed(section, () => false),
     [updateSidebarSectionCollapsed],
   );
+  // Contextual sidebar (docs/contextual-sidebar-contract.md): the tool
+  // options area shows only the active tool's sections; large panels open one
+  // at a time from the "More panels" strip, remembered per tool per device.
+  const toolOptionsAreaRef = useRef<HTMLElement | null>(null);
+  const [openPanels, setOpenPanels] = useState<OpenPanels>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      return parseOpenPanels(window.localStorage.getItem(OPEN_PANELS_STORAGE_KEY));
+    } catch {
+      return {};
+    }
+  });
+  // The panel the user last chose; it stays open across tool switches until
+  // a tool has its own remembered choice.
+  const [carriedPanel, setCarriedPanel] = useState<SidebarPanelId | null>(null);
+  const [propertiesSheetOpen, setPropertiesSheetOpen] = useState(true);
+  const openSidebarPanel = openPanelForTool(openPanels, tool, carriedPanel);
+  const activeToolSidebar = toolSidebar(tool);
+  const activeToolLabel = TOOLS.find((item) => item.id === tool)?.label ?? tool;
+  /** Open `panel` (or close every panel with null) for the active tool. */
+  const chooseSidebarPanel = (panel: SidebarPanelId | null) => {
+    const forTool = tool;
+    setCarriedPanel(panel);
+    setOpenPanels((current) => {
+      const next = withOpenPanel(current, forTool, panel);
+      if (next === current) return current;
+      try {
+        window.localStorage.setItem(OPEN_PANELS_STORAGE_KEY, serializeOpenPanels(next));
+      } catch { /* private mode */ }
+      return next;
+    });
+  };
+  /** Open the panel that renders `section` (and the phone sheet) before a reveal. */
+  const openSidebarFor = (section: SidebarSectionId, sync = false) => {
+    const panel = panelForSection(section);
+    const run = () => {
+      if (panel && openSidebarPanel !== panel) chooseSidebarPanel(panel);
+      if (!propertiesSheetOpen && (panel || sync)) setPropertiesSheetOpen(true);
+    };
+    if (sync && ((panel && openSidebarPanel !== panel) || !propertiesSheetOpen)) flushSync(run);
+    else run();
+  };
+  /** F6 / Ctrl+.: move focus into the active tool's options. */
+  const focusToolOptions = () => {
+    if (!propertiesSheetOpen) flushSync(() => setPropertiesSheetOpen(true));
+    const area = toolOptionsAreaRef.current;
+    if (!area) return;
+    const target = Array.from(
+      area.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+    ).find((element) => !element.matches(':disabled') && element.getClientRects().length > 0);
+    (target ?? area).focus();
+    setNotice(`${activeToolLabel} tool options focused`);
+  };
+  const focusToolOptionsRef = useRef(focusToolOptions);
+  useLayoutEffect(() => {
+    focusToolOptionsRef.current = focusToolOptions;
+  });
   const { reveal: requestSidebarReveal, clear: clearSidebarReveal } = useSidebarAutoScroll({
     container: inspectorRef,
     announcer: sidebarAnnouncerRef,
@@ -3063,6 +3153,9 @@ export default function Home() {
       clearSidebarReveal();
       return false;
     }
+    // A section behind the "More panels" strip is opened first; the reveal
+    // then lands on it once the panel has committed.
+    openSidebarFor(section);
     requestSidebarReveal({
       section,
       source: trigger.source,
@@ -14768,6 +14861,15 @@ export default function Home() {
         return;
       }
       if (gesture.current) return;
+      // F6 or Ctrl/Cmd+. jumps into the active tool's sidebar options.
+      if (
+        (e.key === 'F6' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) ||
+        ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === '.')
+      ) {
+        e.preventDefault();
+        focusToolOptionsRef.current();
+        return;
+      }
       if (e.key === 'Escape' && screenMode !== 'standard') {
         e.preventDefault();
         setWorkspaceScreenMode('standard');
@@ -15214,6 +15316,7 @@ export default function Home() {
     else if (command === 'select-all-layers') selectAllLayers();
     else if (command === 'deselect-layers') deselectLayers();
     else if (command === 'find-layers') {
+      openSidebarFor('layers', true);
       const input = document.getElementById('find-layers');
       if (input instanceof HTMLInputElement) {
         // The reveal scrolls; focusing without scrolling avoids a second jump.
@@ -15223,6 +15326,7 @@ export default function Home() {
       }
     }
     else if (command === 'rename-layer') {
+      openSidebarFor('layer-properties', true);
       const input = document.getElementById('layer-name');
       if (input instanceof HTMLInputElement) {
         input.focus(revealCommandSection('rename-layer', input) ? { preventScroll: true } : undefined);
@@ -15231,6 +15335,7 @@ export default function Home() {
       }
     }
     else if (command === 'layer-style') {
+      openSidebarFor('layer-styles', true);
       const input = document.querySelector<HTMLInputElement>(
         'input[aria-label="Enable outline"]',
       );
@@ -16122,6 +16227,51 @@ export default function Home() {
     hints: findSpellingHints(layer.text),
   }));
   const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
+  const openLayerImageFile = () => layerFile.current?.click();
+  /** One Layers panel slice (docs/contextual-sidebar-contract.md). */
+  const renderLayersPanel = (current: Frame, part: LayersPanelPart, pixelUsage?: number) => (
+    <LayersPanel
+      frame={current}
+      part={part}
+      pixelUsage={pixelUsage}
+      select={selectLayerFromPanel}
+      selectAll={selectAllLayers}
+      deselectLayers={deselectLayers}
+      isolateLayers={isolateLayers}
+      edit={editLayerFromPanel}
+      add={addPaint}
+      addAdjustment={addAdjustmentLayer}
+      addSmartObject={() => chooseSmartObjectFile(false)}
+      nestSelectedAsSmartObject={() => void nestSelectedAsSmartObject()}
+      replaceSmartObject={() => chooseSmartObjectFile(true)}
+      duplicate={duplicate}
+      remove={remove}
+      reorder={reorder}
+      arrange={arrangeLayers}
+      groupActive={groupActiveLayer}
+      ungroupActive={ungroupActiveLayer}
+      editGroup={editGroup}
+      align={alignActiveLayer}
+      distribute={distributeGroupLayers}
+      rasterize={() => void rasterize()}
+      importImage={openLayerImageFile}
+      createMask={createMaskFromSelection}
+      invertMask={invertLayerMask}
+      toggleMask={toggleLayerMask}
+      clearMask={clearMask}
+      createVectorMask={createVectorMask}
+      invertVectorMask={invertVectorMask}
+      toggleVectorMask={toggleVectorMask}
+      clearVectorMask={clearVectorMask}
+      createClipping={createClippingMask}
+      releaseClipping={releaseClippingMask}
+      clearSelection={() => setSelection(undefined)}
+      invertSelection={invertSelection}
+      selectionOperation={selectionOperation}
+      setSelectionOperation={setSelectionOperation}
+      setSelectionFeather={setSelectionFeather}
+    />
+  );
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -17743,124 +17893,30 @@ export default function Home() {
             </button>
           </div>
         </section>
-        <aside className="inspector" ref={inspectorRef} aria-label="Properties">
-          {frame && (
-            <LayersPanel
-              frame={frame}
-              pixelUsage={layerPixelUsage(frame, assets.current)}
-              select={selectLayerFromPanel}
-              selectAll={selectAllLayers}
-              deselectLayers={deselectLayers}
-              isolateLayers={isolateLayers}
-              edit={editLayerFromPanel}
-              add={addPaint}
-              addAdjustment={addAdjustmentLayer}
-              addSmartObject={() => chooseSmartObjectFile(false)}
-              nestSelectedAsSmartObject={() => void nestSelectedAsSmartObject()}
-              replaceSmartObject={() => chooseSmartObjectFile(true)}
-              duplicate={duplicate}
-              remove={remove}
-              reorder={reorder}
-              arrange={arrangeLayers}
-              groupActive={groupActiveLayer}
-              ungroupActive={ungroupActiveLayer}
-              editGroup={editGroup}
-              align={alignActiveLayer}
-              distribute={distributeGroupLayers}
-              rasterize={() => void rasterize()}
-              importImage={() => layerFile.current?.click()}
-              createMask={createMaskFromSelection}
-              invertMask={invertLayerMask}
-              toggleMask={toggleLayerMask}
-              clearMask={clearMask}
-              createVectorMask={createVectorMask}
-              invertVectorMask={invertVectorMask}
-              toggleVectorMask={toggleVectorMask}
-              clearVectorMask={clearVectorMask}
-              createClipping={createClippingMask}
-              releaseClipping={releaseClippingMask}
-              clearSelection={() => setSelection(undefined)}
-              invertSelection={invertSelection}
-              selectionOperation={selectionOperation}
-              setSelectionOperation={setSelectionOperation}
-              setSelectionFeather={setSelectionFeather}
-            />
-          )}
-          {frame && (
-            <HistoryPanel
-              history={history.current}
-              currentIndex={index.current}
-              persisted={persistedHistory}
-              budget={historyBudget}
-              restore={(targetIndex) => {
-                const distance = targetIndex - index.current;
-                if (!distance) return;
-                travel(distance);
-                setNotice(`History step ${targetIndex + 1} restored`);
-              }}
-            />
-          )}
-          {frame && (
-            <SidebarSection
-              id="saved-selections"
-              className="saved-selections-panel"
-              icon={Bookmark}
-              title="Saved selections"
-              collapsed={collapsedSections.has('saved-selections')}
-              onToggle={toggleSidebarSection}
+        <aside
+          className="inspector"
+          ref={inspectorRef}
+          aria-label="Properties"
+          data-sheet-open={propertiesSheetOpen ? 'true' : 'false'}
+          data-sidebar-tool={tool}
+          data-sidebar-panel={openSidebarPanel ?? ''}
+        >
+          {/* Contextual sidebar: docs/contextual-sidebar-contract.md. On phones
+              the sidebar is a bottom sheet whose handle collapses it. */}
+          <div className="inspector-sheet-bar" data-sidebar-sticky="top">
+            <button
+              type="button"
+              className="inspector-sheet-handle"
+              aria-expanded={propertiesSheetOpen}
+              aria-controls="inspector-sheet-body"
+              onClick={() => setPropertiesSheetOpen((open) => !open)}
             >
-              <label className="layer-field">
-                Selection name
-                <input
-                  aria-label="Saved selection name"
-                  maxLength={160}
-                  value={savedSelectionName}
-                  onChange={(event) =>
-                    setSavedSelectionName(event.target.value)
-                  }
-                />
-              </label>
-              <div className="layer-actions">
-                <button
-                  onClick={() => saveCurrentSelection()}
-                  disabled={!frame.selection}
-                >
-                  Save selection
-                </button>
-                <button onClick={exportSelection} disabled={!frame.selection}>
-                  Download selection file
-                </button>
-              </div>
-              <div className="saved-selection-list">
-                {(frame.savedSelections?.selections || []).map((entry) => (
-                  <div className="saved-selection-row" key={entry.id}>
-                    <span>{entry.name}</span>
-                    <button
-                      aria-label={`Load selection ${entry.name}`}
-                      onClick={() => loadSavedSelection(entry.id)}
-                    >
-                      Load
-                    </button>
-                    <button
-                      aria-label={`Rename selection ${entry.name}`}
-                      onClick={() => renameSavedSelection(entry.id)}
-                    >
-                      Rename
-                    </button>
-                    <button
-                      aria-label={`Delete selection ${entry.name}`}
-                      onClick={() => deleteSavedSelection(entry.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))}
-                {!frame.savedSelections?.selections.length && (
-                  <small>No saved selections yet.</small>
-                )}
-              </div>
-            </SidebarSection>
-          )}
+              <span className="inspector-sheet-grip" aria-hidden="true" />
+              <span>Properties</span>
+              <small>{activeToolLabel}</small>
+            </button>
+          </div>
+          <div id="inspector-sheet-body" className="inspector-body" hidden={!propertiesSheetOpen}>
           {quickMasking && quickMask && (
             <section
               className="panel quick-mask-panel"
@@ -17887,299 +17943,16 @@ export default function Home() {
               </p>
             </section>
           )}
-          <SidebarSection
-            id="adjustments"
-            icon={WandSparkles}
-            title="Adjust selected layer"
-            action="Reset"
-            onAction={() => {
-              resetAdjustments();
-              setNotice('Adjustments reset');
-            }}
-            collapsed={collapsedSections.has('adjustments')}
-            onToggle={toggleSidebarSection}
+          <section
+            ref={toolOptionsAreaRef}
+            className="sidebar-tool-area"
+            aria-label={`${activeToolLabel} tool options`}
+            data-testid="tool-options-area"
+            tabIndex={-1}
           >
-            <Slider
-              label="Brightness"
-              value={brightness}
-              min={20}
-              max={180}
-              set={setBrightness}
-            />
-            <Slider
-              label="Contrast"
-              value={contrast}
-              min={20}
-              max={180}
-              set={setContrast}
-            />
-            <Slider
-              label="Saturation"
-              value={saturation}
-              min={0}
-              max={200}
-              set={setSaturation}
-            />
-            <Slider
-              label="Hue"
-              value={hue}
-              min={-180}
-              max={180}
-              set={setHue}
-              suffix="°"
-            />
-            <Slider
-              label="Blur"
-              value={blur}
-              min={0}
-              max={12}
-              set={setBlur}
-              suffix="px"
-            />
-            {tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && (
-              <>
-                <div className="adjustment-subtitle">Photo finishing</div>
-                <Slider
-                  label="Exposure"
-                  value={photoAdjustments.exposure}
-                  min={-5}
-                  max={5}
-                  step={0.1}
-                  set={(value) => setPhotoAdjustments({ exposure: value })}
-                  suffix=" EV"
-                />
-                <Slider
-                  label="Vibrance"
-                  value={photoAdjustments.vibrance}
-                  min={-100}
-                  max={100}
-                  set={(value) => setPhotoAdjustments({ vibrance: value })}
-                  suffix=""
-                />
-                <label className="check-row">
-                  <input
-                    aria-label="Black and White"
-                    type="checkbox"
-                    checked={photoAdjustments.blackAndWhite}
-                    onChange={(event) =>
-                      setPhotoAdjustments({ blackAndWhite: event.target.checked })
-                    }
-                  />
-                  Black and White
-                </label>
-              </>
-            )}
-            <div className="adjustment-subtitle">Levels (nondestructive)</div>
-            <Slider
-              label="Levels black point"
-              value={levelsBlack}
-              min={0}
-              max={254}
-              set={(value) => setLevelsBlack(Math.min(value, levelsWhite - 1))}
-              suffix=""
-            />
-            <Slider
-              label="Levels white point"
-              value={levelsWhite}
-              min={1}
-              max={255}
-              set={(value) => setLevelsWhite(Math.max(value, levelsBlack + 1))}
-              suffix=""
-            />
-            <Slider
-              label="Levels gamma"
-              value={levelsGamma}
-              min={0.1}
-              max={3}
-              step={0.1}
-              set={setLevelsGamma}
-              suffix=""
-            />
-            <Slider
-              label="Levels output black"
-              value={levelsOutputBlack}
-              min={0}
-              max={255}
-              // Output black above output white inverts the tones.
-              set={setLevelsOutputBlack}
-              suffix=""
-            />
-            <Slider
-              label="Levels output white"
-              value={levelsOutputWhite}
-              min={0}
-              max={255}
-              set={setLevelsOutputWhite}
-              suffix=""
-            />
-            <div className="adjustment-subtitle">Curves (nondestructive)</div>
-            <CurveEditor
-              label="RGB"
-              points={curves.rgb}
-              onChange={(points) => setCurve('rgb', points)}
-            />
-            <CurveEditor
-              label="Red"
-              points={curves.red}
-              onChange={(points) => setCurve('red', points)}
-            />
-            <CurveEditor
-              label="Green"
-              points={curves.green}
-              onChange={(points) => setCurve('green', points)}
-            />
-            <CurveEditor
-              label="Blue"
-              points={curves.blue}
-              onChange={(points) => setCurve('blue', points)}
-            />
-            <div className="adjustment-subtitle">Color Balance</div>
-            <Slider
-              label="Shadows cyan/red"
-              value={colorBalance.shadowsCyanRed}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ shadowsCyanRed: value })}
-              suffix=""
-            />
-            <Slider
-              label="Shadows magenta/green"
-              value={colorBalance.shadowsMagentaGreen}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ shadowsMagentaGreen: value })}
-              suffix=""
-            />
-            <Slider
-              label="Shadows yellow/blue"
-              value={colorBalance.shadowsYellowBlue}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ shadowsYellowBlue: value })}
-              suffix=""
-            />
-            <Slider
-              label="Midtones cyan/red"
-              value={colorBalance.midtonesCyanRed}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ midtonesCyanRed: value })}
-              suffix=""
-            />
-            <Slider
-              label="Midtones magenta/green"
-              value={colorBalance.midtonesMagentaGreen}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ midtonesMagentaGreen: value })}
-              suffix=""
-            />
-            <Slider
-              label="Midtones yellow/blue"
-              value={colorBalance.midtonesYellowBlue}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ midtonesYellowBlue: value })}
-              suffix=""
-            />
-            <Slider
-              label="Highlights cyan/red"
-              value={colorBalance.highlightsCyanRed}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ highlightsCyanRed: value })}
-              suffix=""
-            />
-            <Slider
-              label="Highlights magenta/green"
-              value={colorBalance.highlightsMagentaGreen}
-              min={-100}
-              max={100}
-              set={(value) =>
-                setColorBalance({ highlightsMagentaGreen: value })
-              }
-              suffix=""
-            />
-            <Slider
-              label="Highlights yellow/blue"
-              value={colorBalance.highlightsYellowBlue}
-              min={-100}
-              max={100}
-              set={(value) => setColorBalance({ highlightsYellowBlue: value })}
-              suffix=""
-            />
-            <label className="check-row">
-              <input
-                aria-label="Preserve luminosity"
-                type="checkbox"
-                checked={colorBalance.preserveLuminosity}
-                onChange={(event) =>
-                  setColorBalance({ preserveLuminosity: event.target.checked })
-                }
-              />
-              Preserve luminosity
-            </label>
-            <div className="adjustment-subtitle">Sharpen and Noise</div>
-            <Slider
-              label="Sharpen amount"
-              value={sharpenNoise.sharpen}
-              min={0}
-              max={100}
-              set={(value) => setSharpenNoise({ sharpen: value })}
-              suffix=""
-            />
-            <Slider
-              label="Sharpen radius"
-              value={sharpenNoise.radius}
-              min={0}
-              max={8}
-              set={(value) => setSharpenNoise({ radius: value })}
-              suffix=" px"
-            />
-            <Slider
-              label="Sharpen threshold"
-              value={sharpenNoise.threshold}
-              min={0}
-              max={255}
-              set={(value) => setSharpenNoise({ threshold: value })}
-              suffix=""
-            />
-            <Slider
-              label="Noise amount"
-              value={sharpenNoise.noise}
-              min={0}
-              max={100}
-              set={(value) => setSharpenNoise({ noise: value })}
-              suffix=""
-            />
-            <Slider
-              label="Noise seed"
-              value={sharpenNoise.seed % 10001}
-              min={0}
-              max={10000}
-              set={(value) => setSharpenNoise({ seed: value })}
-              suffix=""
-            />
-            <label className="check-row">
-              <input
-                aria-label="Monochromatic noise"
-                type="checkbox"
-                checked={sharpenNoise.monochromatic}
-                onChange={(event) =>
-                  setSharpenNoise({ monochromatic: event.target.checked })
-                }
-              />
-              Monochromatic noise
-            </label>
-            <p className="adjust-note">
-              Adjustments stay editable on the selected layer. Hue rotates
-              colours, Levels remaps input black, white and midtone gamma, and
-              Color Balance targets shadows, midtones and highlights. Sharpen
-              uses a bounded unsharp mask and Noise is deterministic, all
-              without changing source pixels.
-            </p>
-          </SidebarSection>
-          {toolShowsSection(tool, 'rotate-view') && (
+            {activeToolSidebar.sections.map((section) => (
+              <Fragment key={section}>
+          {section === 'rotate-view' && (
             <SidebarSection
               id="rotate-view"
               testId="view-rotation-controls"
@@ -18205,38 +17978,12 @@ export default function Home() {
               <p className="adjust-note">Rotate View changes only the canvas viewport. Document pixels, layers and exports stay unchanged.</p>
             </SidebarSection>
           )}
-          <SidebarSection
-            id="transform"
-            icon={Crop}
-            title="Transform"
-            collapsed={collapsedSections.has('transform')}
-            onToggle={toggleSidebarSection}
-          >
-            <div className="transform">
-              <button
-                aria-label="Rotate left"
-                onClick={() => transform('left')}
-              >
-                <RotateCcw />
-              </button>
-              <button
-                aria-label="Rotate right"
-                onClick={() => transform('right')}
-              >
-                <RotateCw />
-              </button>
-              <button
-                aria-label="Flip horizontal"
-                onClick={() => transform('h')}
-              >
-                <FlipHorizontal2 />
-              </button>
-              <button aria-label="Flip vertical" onClick={() => transform('v')}>
-                <FlipVertical2 />
-              </button>
-            </div>
-          </SidebarSection>
-          {toolShowsSection(tool, 'tool-options') && (
+          {section === 'layer-alignment' && frame && (
+            <section className="panel layers-part-panel" aria-label="Align to canvas">
+              {renderLayersPanel(frame, 'alignment')}
+            </section>
+          )}
+          {section === 'tool-options' && (
             <SidebarSection
               id="tool-options"
               icon={Brush}
@@ -19119,8 +18866,8 @@ export default function Home() {
                   )}
                   {tool === 'selection-brush' && (
                     <p className="adjust-note">
-                      Paint an editable alpha selection. Use Selection mode in
-                      the Layers panel for replace, add, subtract or intersect;
+                      Paint an editable alpha selection. Use Selection mode below
+                      for replace, add, subtract or intersect;
                       the source pixels remain unchanged.
                     </p>
                   )}
@@ -19158,7 +18905,7 @@ export default function Home() {
               )}
             </SidebarSection>
           )}
-          {toolShowsSection(tool, 'text') && (
+          {section === 'text' && (
             <SidebarSection
               id="text"
               icon={Type}
@@ -19189,6 +18936,354 @@ export default function Home() {
               />
             </SidebarSection>
           )}
+          {section === 'selection-options' && frame && (
+            <section className="panel layers-part-panel" aria-label="Selection options">
+              {renderLayersPanel(frame, 'selection')}
+            </section>
+          )}
+              </Fragment>
+            ))}
+            {activeToolSidebar.sections.length === 0 && (
+              <p className="panel sidebar-tool-empty" data-testid="tool-options-empty">
+                <b>{activeToolLabel}</b> has no sidebar options; its controls are on the canvas or in the toolbar.
+              </p>
+            )}
+          </section>
+          {frame && renderLayersPanel(frame, 'layers', layerPixelUsage(frame, assets.current))}
+          <fieldset className="sidebar-panel-strip" data-testid="sidebar-panel-strip">
+            <legend className="sr-only">More panels</legend>
+            {SIDEBAR_PANEL_IDS.map((panel) => {
+              const Icon = SIDEBAR_PANEL_ICONS[panel];
+              const expanded = openSidebarPanel === panel;
+              return (
+                <button
+                  key={panel}
+                  type="button"
+                  className="sidebar-panel-tab"
+                  data-sidebar-panel-toggle={panel}
+                  aria-label={`${SIDEBAR_PANELS[panel].label} panel`}
+                  title={SIDEBAR_PANELS[panel].label}
+                  aria-expanded={expanded}
+                  aria-controls={expanded ? 'sidebar-open-panel' : undefined}
+                  onClick={() => chooseSidebarPanel(togglePanel(openSidebarPanel, panel))}
+                >
+                  <Icon aria-hidden="true" />
+                  <span>{SIDEBAR_PANELS[panel].short}</span>
+                </button>
+              );
+            })}
+          </fieldset>
+          {openSidebarPanel && (
+          // Not a landmark of its own: the sections inside are the named
+          // regions, so their names stay unique (docs/contextual-sidebar-contract.md).
+          <div
+            id="sidebar-open-panel"
+            className="sidebar-open-panel"
+            data-sidebar-open-panel={openSidebarPanel}
+          >
+          {!frame && !PANELS_WITHOUT_DOCUMENT.has(openSidebarPanel) && (
+            <p className="panel sidebar-tool-empty">Open an image to use this panel.</p>
+          )}
+          {openSidebarPanel === 'layer-details' && frame && (
+            <section className="panel layers-part-panel" aria-label="Layer details">
+              {renderLayersPanel(frame, 'details')}
+            </section>
+          )}
+          {openSidebarPanel === 'adjustments' && (
+          <SidebarSection
+            id="adjustments"
+            icon={WandSparkles}
+            title="Adjust selected layer"
+            action="Reset"
+            onAction={() => {
+              resetAdjustments();
+              setNotice('Adjustments reset');
+            }}
+            collapsed={collapsedSections.has('adjustments')}
+            onToggle={toggleSidebarSection}
+          >
+            <Slider
+              label="Brightness"
+              value={brightness}
+              min={20}
+              max={180}
+              set={setBrightness}
+            />
+            <Slider
+              label="Contrast"
+              value={contrast}
+              min={20}
+              max={180}
+              set={setContrast}
+            />
+            <Slider
+              label="Saturation"
+              value={saturation}
+              min={0}
+              max={200}
+              set={setSaturation}
+            />
+            <Slider
+              label="Hue"
+              value={hue}
+              min={-180}
+              max={180}
+              set={setHue}
+              suffix="°"
+            />
+            <Slider
+              label="Blur"
+              value={blur}
+              min={0}
+              max={12}
+              set={setBlur}
+              suffix="px"
+            />
+            {tool !== 'dodge' && tool !== 'burn' && tool !== 'sponge' && (
+              <>
+                <div className="adjustment-subtitle">Photo finishing</div>
+                <Slider
+                  label="Exposure"
+                  value={photoAdjustments.exposure}
+                  min={-5}
+                  max={5}
+                  step={0.1}
+                  set={(value) => setPhotoAdjustments({ exposure: value })}
+                  suffix=" EV"
+                />
+                <Slider
+                  label="Vibrance"
+                  value={photoAdjustments.vibrance}
+                  min={-100}
+                  max={100}
+                  set={(value) => setPhotoAdjustments({ vibrance: value })}
+                  suffix=""
+                />
+                <label className="check-row">
+                  <input
+                    aria-label="Black and White"
+                    type="checkbox"
+                    checked={photoAdjustments.blackAndWhite}
+                    onChange={(event) =>
+                      setPhotoAdjustments({ blackAndWhite: event.target.checked })
+                    }
+                  />
+                  Black and White
+                </label>
+              </>
+            )}
+            <div className="adjustment-subtitle">Levels (nondestructive)</div>
+            <Slider
+              label="Levels black point"
+              value={levelsBlack}
+              min={0}
+              max={254}
+              set={(value) => setLevelsBlack(Math.min(value, levelsWhite - 1))}
+              suffix=""
+            />
+            <Slider
+              label="Levels white point"
+              value={levelsWhite}
+              min={1}
+              max={255}
+              set={(value) => setLevelsWhite(Math.max(value, levelsBlack + 1))}
+              suffix=""
+            />
+            <Slider
+              label="Levels gamma"
+              value={levelsGamma}
+              min={0.1}
+              max={3}
+              step={0.1}
+              set={setLevelsGamma}
+              suffix=""
+            />
+            <Slider
+              label="Levels output black"
+              value={levelsOutputBlack}
+              min={0}
+              max={255}
+              // Output black above output white inverts the tones.
+              set={setLevelsOutputBlack}
+              suffix=""
+            />
+            <Slider
+              label="Levels output white"
+              value={levelsOutputWhite}
+              min={0}
+              max={255}
+              set={setLevelsOutputWhite}
+              suffix=""
+            />
+            <div className="adjustment-subtitle">Curves (nondestructive)</div>
+            <CurveEditor
+              label="RGB"
+              points={curves.rgb}
+              onChange={(points) => setCurve('rgb', points)}
+            />
+            <CurveEditor
+              label="Red"
+              points={curves.red}
+              onChange={(points) => setCurve('red', points)}
+            />
+            <CurveEditor
+              label="Green"
+              points={curves.green}
+              onChange={(points) => setCurve('green', points)}
+            />
+            <CurveEditor
+              label="Blue"
+              points={curves.blue}
+              onChange={(points) => setCurve('blue', points)}
+            />
+            <div className="adjustment-subtitle">Color Balance</div>
+            <Slider
+              label="Shadows cyan/red"
+              value={colorBalance.shadowsCyanRed}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ shadowsCyanRed: value })}
+              suffix=""
+            />
+            <Slider
+              label="Shadows magenta/green"
+              value={colorBalance.shadowsMagentaGreen}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ shadowsMagentaGreen: value })}
+              suffix=""
+            />
+            <Slider
+              label="Shadows yellow/blue"
+              value={colorBalance.shadowsYellowBlue}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ shadowsYellowBlue: value })}
+              suffix=""
+            />
+            <Slider
+              label="Midtones cyan/red"
+              value={colorBalance.midtonesCyanRed}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ midtonesCyanRed: value })}
+              suffix=""
+            />
+            <Slider
+              label="Midtones magenta/green"
+              value={colorBalance.midtonesMagentaGreen}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ midtonesMagentaGreen: value })}
+              suffix=""
+            />
+            <Slider
+              label="Midtones yellow/blue"
+              value={colorBalance.midtonesYellowBlue}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ midtonesYellowBlue: value })}
+              suffix=""
+            />
+            <Slider
+              label="Highlights cyan/red"
+              value={colorBalance.highlightsCyanRed}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ highlightsCyanRed: value })}
+              suffix=""
+            />
+            <Slider
+              label="Highlights magenta/green"
+              value={colorBalance.highlightsMagentaGreen}
+              min={-100}
+              max={100}
+              set={(value) =>
+                setColorBalance({ highlightsMagentaGreen: value })
+              }
+              suffix=""
+            />
+            <Slider
+              label="Highlights yellow/blue"
+              value={colorBalance.highlightsYellowBlue}
+              min={-100}
+              max={100}
+              set={(value) => setColorBalance({ highlightsYellowBlue: value })}
+              suffix=""
+            />
+            <label className="check-row">
+              <input
+                aria-label="Preserve luminosity"
+                type="checkbox"
+                checked={colorBalance.preserveLuminosity}
+                onChange={(event) =>
+                  setColorBalance({ preserveLuminosity: event.target.checked })
+                }
+              />
+              Preserve luminosity
+            </label>
+            <div className="adjustment-subtitle">Sharpen and Noise</div>
+            <Slider
+              label="Sharpen amount"
+              value={sharpenNoise.sharpen}
+              min={0}
+              max={100}
+              set={(value) => setSharpenNoise({ sharpen: value })}
+              suffix=""
+            />
+            <Slider
+              label="Sharpen radius"
+              value={sharpenNoise.radius}
+              min={0}
+              max={8}
+              set={(value) => setSharpenNoise({ radius: value })}
+              suffix=" px"
+            />
+            <Slider
+              label="Sharpen threshold"
+              value={sharpenNoise.threshold}
+              min={0}
+              max={255}
+              set={(value) => setSharpenNoise({ threshold: value })}
+              suffix=""
+            />
+            <Slider
+              label="Noise amount"
+              value={sharpenNoise.noise}
+              min={0}
+              max={100}
+              set={(value) => setSharpenNoise({ noise: value })}
+              suffix=""
+            />
+            <Slider
+              label="Noise seed"
+              value={sharpenNoise.seed % 10001}
+              min={0}
+              max={10000}
+              set={(value) => setSharpenNoise({ seed: value })}
+              suffix=""
+            />
+            <label className="check-row">
+              <input
+                aria-label="Monochromatic noise"
+                type="checkbox"
+                checked={sharpenNoise.monochromatic}
+                onChange={(event) =>
+                  setSharpenNoise({ monochromatic: event.target.checked })
+                }
+              />
+              Monochromatic noise
+            </label>
+            <p className="adjust-note">
+              Adjustments stay editable on the selected layer. Hue rotates
+              colours, Levels remaps input black, white and midtone gamma, and
+              Color Balance targets shadows, midtones and highlights. Sharpen
+              uses a bounded unsharp mask and Noise is deterministic, all
+              without changing source pixels.
+            </p>
+          </SidebarSection>
+          )}
+          {openSidebarPanel === 'filters' && (<>
           <SidebarSection
             id="quick-filters"
             icon={Sparkles}
@@ -20479,7 +20574,143 @@ export default function Home() {
               );
             })()}
           </SidebarSection>
-          <section className="panel cloud-panel">
+          </>)}
+          {openSidebarPanel === 'layer-styles' && frame && (
+            <section className="panel layers-part-panel" aria-label="Layer styles">
+              {renderLayersPanel(frame, 'styles')}
+            </section>
+          )}
+          {openSidebarPanel === 'history' && frame && (
+            <div data-sidebar-section="history">
+            <HistoryPanel
+              history={history.current}
+              currentIndex={index.current}
+              persisted={persistedHistory}
+              budget={historyBudget}
+              restore={(targetIndex) => {
+                const distance = targetIndex - index.current;
+                if (!distance) return;
+                travel(distance);
+                setNotice(`History step ${targetIndex + 1} restored`);
+              }}
+            />
+            </div>
+          )}
+          {openSidebarPanel === 'saved-selections' && frame && (
+            <SidebarSection
+              id="saved-selections"
+              className="saved-selections-panel"
+              icon={Bookmark}
+              title="Saved selections"
+              collapsed={collapsedSections.has('saved-selections')}
+              onToggle={toggleSidebarSection}
+            >
+              <label className="layer-field">
+                Selection name
+                <input
+                  aria-label="Saved selection name"
+                  maxLength={160}
+                  value={savedSelectionName}
+                  onChange={(event) =>
+                    setSavedSelectionName(event.target.value)
+                  }
+                />
+              </label>
+              <div className="layer-actions">
+                <button
+                  onClick={() => saveCurrentSelection()}
+                  disabled={!frame.selection}
+                >
+                  Save selection
+                </button>
+                <button onClick={exportSelection} disabled={!frame.selection}>
+                  Download selection file
+                </button>
+              </div>
+              <div className="saved-selection-list">
+                {(frame.savedSelections?.selections || []).map((entry) => (
+                  <div className="saved-selection-row" key={entry.id}>
+                    <span>{entry.name}</span>
+                    <button
+                      aria-label={`Load selection ${entry.name}`}
+                      onClick={() => loadSavedSelection(entry.id)}
+                    >
+                      Load
+                    </button>
+                    <button
+                      aria-label={`Rename selection ${entry.name}`}
+                      onClick={() => renameSavedSelection(entry.id)}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      aria-label={`Delete selection ${entry.name}`}
+                      onClick={() => deleteSavedSelection(entry.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+                {!frame.savedSelections?.selections.length && (
+                  <small>No saved selections yet.</small>
+                )}
+              </div>
+            </SidebarSection>
+          )}
+          {openSidebarPanel === 'transform' && (
+          <SidebarSection
+            id="transform"
+            icon={Crop}
+            title="Transform"
+            collapsed={collapsedSections.has('transform')}
+            onToggle={toggleSidebarSection}
+          >
+            <div className="transform">
+              <button
+                aria-label="Rotate left"
+                onClick={() => transform('left')}
+              >
+                <RotateCcw />
+              </button>
+              <button
+                aria-label="Rotate right"
+                onClick={() => transform('right')}
+              >
+                <RotateCw />
+              </button>
+              <button
+                aria-label="Flip horizontal"
+                onClick={() => transform('h')}
+              >
+                <FlipHorizontal2 />
+              </button>
+              <button aria-label="Flip vertical" onClick={() => transform('v')}>
+                <FlipVertical2 />
+              </button>
+            </div>
+          </SidebarSection>
+          )}
+          {openSidebarPanel === 'reference' && frame && (
+            <div data-sidebar-section="reference">
+            <ReferencePanel
+              reference={frame.reference}
+              size={
+                frame.reference && assets.current[frame.reference.asset]
+                  ? {
+                      w: assets.current[frame.reference.asset].w,
+                      h: assets.current[frame.reference.asset].h,
+                    }
+                  : undefined
+              }
+              disabled={quickMasking}
+              choose={chooseReferenceFile}
+              update={updateReference}
+              remove={removeReference}
+            />
+            </div>
+          )}
+          {openSidebarPanel === 'projects' && (
+          <section className="panel cloud-panel" aria-label="My projects" data-sidebar-section="cloud-projects">
             <h3>My projects</h3>
             {member ? (
               <>
@@ -20528,23 +20759,10 @@ export default function Home() {
             )}
             <p aria-live="polite">{cloudMessage}</p>
           </section>
-          {frame && (
-            <ReferencePanel
-              reference={frame.reference}
-              size={
-                frame.reference && assets.current[frame.reference.asset]
-                  ? {
-                      w: assets.current[frame.reference.asset].w,
-                      h: assets.current[frame.reference.asset].h,
-                    }
-                  : undefined
-              }
-              disabled={quickMasking}
-              choose={chooseReferenceFile}
-              update={updateReference}
-              remove={removeReference}
-            />
           )}
+          </div>
+          )}
+          </div>
         </aside>
         <div
           ref={sidebarAnnouncerRef}

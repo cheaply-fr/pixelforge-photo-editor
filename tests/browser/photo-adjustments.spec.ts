@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 type RGBA = [number, number, number, number];
 type Asset = { url: string; w: number; h: number };
@@ -148,6 +149,7 @@ test('photo finishing controls are nondestructive, persisted and undoable', asyn
   const sourceAsset = before.history[before.index].layers.at(-1)?.asset;
   await page.getByLabel('Exposure', { exact: true }).fill('1.5');
   await page.getByLabel('Vibrance', { exact: true }).fill('35');
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Black and White', { exact: true }).check();
 
   let adjusted = await project(page);
@@ -250,6 +252,7 @@ test('Vibrance increases muted chroma conservatively and desaturates without cha
 test('Black and White converts imported colors to perceptual gray while preserving transparency and source data', async ({ page }) => {
   const source = await importFixture(page, [[64, 96, 128, 255], [40, 100, 160, 128], [255, 80, 10, 0]], 'black-white-rgba');
   const before = await pixels(page);
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Black and White', { exact: true }).check();
   await expect.poll(async () => (await pixels(page))[0]).toEqual([92, 92, 92, 255]);
   const gray = await pixels(page);
@@ -304,6 +307,7 @@ test('photo finishing composes with Hue on editable translucent vector shapes wi
   await page.getByLabel('Filled shape', { exact: true }).check();
   await page.getByLabel('Shape color', { exact: true }).fill('#403020');
   await page.getByLabel('Layer opacity', { exact: true }).fill('65');
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Hue', { exact: true }).fill('60');
   const points = [[0.4, 0.5], [0.95, 0.5]];
   const before = await pixels(page, points);

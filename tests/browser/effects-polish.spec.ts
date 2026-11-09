@@ -3,6 +3,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { writePortableBundle } from '../../src/portableBundle';
+import { openPanel } from './sidebar-panels';
 
 type Styles = Record<string, Record<string, unknown>>;
 type Layer = { name: string; blend: string; styles?: Styles; smartFilters?: Array<Record<string, unknown>>; adjustments: { filterEffects?: Record<string, unknown> } };
@@ -102,6 +103,7 @@ test('Screen Outer Glow and Drop Shadow blend with the layers beneath, export id
   const dark: [number, number] = [0.343, 0.5], bright: [number, number] = [0.657, 0.5];
   const before = await samples(page, [dark, bright]);
 
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable outer glow', { exact: true }).check();
   await expect(page.getByLabel('Outer glow blend mode', { exact: true })).toHaveValue('screen');
   await page.getByLabel('Outer glow color', { exact: true }).fill('#ff8000');
@@ -163,6 +165,7 @@ test('Screen Outer Glow and Drop Shadow blend with the layers beneath, export id
   });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Drop shadow blend mode', { exact: true })).toHaveValue('screen');
   await expect.poll(() => samples(page, [dark, bright])).toEqual([screenShadowDark, screenShadowBright]);
   expect(await exportedSamples(page, [dark, bright])).toEqual([screenShadowDark, screenShadowBright]);
@@ -191,6 +194,7 @@ test('Gaussian shadow falloff is the default for new layers; legacy shadows keep
   // Shape spans x 0.3..0.5 and y 0.3..0.6.
   await drawShape(page, 0.3, 0.3, 0.2, 0.3, '#2040a0');
   const blur = 60, row = 0.45;
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Drop shadow falloff', { exact: true })).toHaveValue('gaussian');
   await expect(page.getByLabel('Inner shadow falloff', { exact: true })).toHaveValue('gaussian');
   await page.getByLabel('Enable drop shadow', { exact: true }).check();
@@ -299,6 +303,7 @@ test('a stacked filter is edited in place with the Filter effects controls, one 
   await page.getByRole('button', { name: /^Add filter to stack/ }).click();
   await settled(page);
   await filter(page, 'Emboss…');
+  await openPanel(page, 'Filters');
   const filterType = page.getByLabel('Filter effect', { exact: true });
   await expect(filterType).toHaveValue('emboss');
   const both = await digest(page);

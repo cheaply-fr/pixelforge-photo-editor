@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 type Asset = { url: string; w: number; h: number };
 type ProjectLayer = { id: string; kind: string; asset?: string; matrix: number[] };
@@ -254,6 +255,7 @@ test('a blurred paint layer grows for the filter and Rasterize stores the baked 
   const painted = await storedWithin(page, 60 + 128, 60 + 128);
   // Choosing a live filter grows the layer to the canvas so the blur is not clipped.
   await menu(page, 'Filter', 'Gaussian Blur…');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
   await page.getByLabel('Effect amount', { exact: true }).fill('100');
   await settled(page);

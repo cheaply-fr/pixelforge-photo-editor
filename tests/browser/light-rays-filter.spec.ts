@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 type Layer = { smartFilters?: Array<Record<string, unknown>>; adjustments: { filterEffects?: Record<string, unknown> } };
 type Project = { history: Array<{ layers: Layer[] }>; index: number };
@@ -100,6 +101,7 @@ test('Light Rays renders editable rays with a movable centre, undo/redo and relo
   const before = await brightness(page, 0.5, 0.2);
 
   await filter(page, 'Light Rays…');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('light-rays');
   await expect(page.getByTestId('light-rays-controls')).toBeVisible();
   const applied = await digest(page);
@@ -182,6 +184,7 @@ test('Light Rays renders editable rays with a movable centre, undo/redo and relo
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await expect.poll(() => digest(page)).toBe(reseeded);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('light-rays');
   await expect(page.getByLabel('Light source', { exact: true })).toHaveValue('source');
   await expect(page.getByLabel('Light rays seed', { exact: true })).toHaveValue('77');
@@ -196,6 +199,7 @@ test('a stacked Light Rays entry stays editable, including its centre', async ({
   await settled(page);
   await page.getByRole('button', { name: /^Add filter to stack/ }).click();
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
   await expect.poll(() =>
     page.getByRole('list', { name: 'Stacked filters' }).getByRole('listitem').locator('span').allTextContents(),

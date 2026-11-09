@@ -39,6 +39,7 @@ import {
   isClippingSourceLayer,
 } from './layerClipping';
 
+export type LayersPanelProps = Props;
 type Props = {
   frame: Frame;
   /** Raster pixels stored by top-level layers (see layerPixelUsage). */
@@ -82,7 +83,15 @@ type Props = {
   selectionOperation: SelectionOperation;
   setSelectionOperation: (operation: SelectionOperation) => void;
   setSelectionFeather: (feather: number) => void;
+  /**
+   * Which slice of the panel to render (docs/contextual-sidebar-contract.md):
+   * `layers` (default) is the always-visible list plus the active layer's
+   * essentials; `alignment` and `selection` are Move / selection tool
+   * options; `details` and `styles` are on-demand panels.
+   */
+  part?: LayersPanelPart;
 };
+export type LayersPanelPart = 'layers' | 'alignment' | 'selection' | 'details' | 'styles';
 export default function LayersPanel({
   frame,
   pixelUsage,
@@ -122,8 +131,10 @@ export default function LayersPanel({
   selectionOperation,
   setSelectionOperation,
   setSelectionFeather,
+  part = 'layers',
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
+  const main = part === 'layers';
   const layer = frame.layers.find((item) => item.id === frame.active)!;
   const groups = frame.groups || [];
   const groupById = new Map(groups.map((group) => [group.id, group]));
@@ -285,8 +296,10 @@ export default function LayersPanel({
       />,
     );
   }
+  const Root = main ? LayersRoot : PartRoot;
   return (
-    <section className="panel layers-panel" aria-label="Layers" data-sidebar-section="layers">
+    <Root>
+      {main && (<>
       <h3>
         Layers <small>{frame.layers.length} / {MAX_DOCUMENT_LAYERS}</small>
       </h3>
@@ -381,22 +394,8 @@ export default function LayersPanel({
       {searchQuery.trim() && filteredLayers.length === 0 && (
         <p className="layer-search-empty">No layers match this search.</p>
       )}
-      <label className="layer-field">
-        Layer folder
-        <select
-          aria-label="Layer folder"
-          value={layer.groupId || ''}
-          disabled={layerLocked}
-          onChange={(event) => edit({ groupId: event.target.value || undefined })}
-        >
-          <option value="">No folder</option>
-          {groups.map((group) => (
-            <option key={group.id} value={group.id} disabled={group.locked}>
-              {group.name || 'Untitled group'}
-            </option>
-          ))}
-        </select>
-      </label>
+      </>)}
+      {part === 'alignment' && (<>
       <fieldset className="layer-alignment" disabled={layerLocked} data-sidebar-section="layer-alignment">
         <legend>Align to canvas</legend>
         <div className="layer-actions">
@@ -419,6 +418,8 @@ export default function LayersPanel({
         </div>
         <p>Evenly space the centers of visible unlocked layers; outer layers stay fixed.</p>
       </fieldset>
+      </>)}
+      {main && (<>
       <div className="layer-toggles">
         <label>
           <input
@@ -429,19 +430,6 @@ export default function LayersPanel({
           />
           Visible
         </label>
-        {frame.selection && (
-          <label className="layer-field">
-            Feather {Math.round(frame.selection.feather)} px
-            <input
-              aria-label="Selection feather"
-              type="range"
-              min="0"
-              max="100"
-              value={frame.selection.feather}
-              onChange={(e) => setSelectionFeather(Number(e.target.value))}
-            />
-          </label>
-        )}
         <label>
           <input
             type="checkbox"
@@ -452,22 +440,7 @@ export default function LayersPanel({
           Lock layer
         </label>
       </div>
-      <div className="layer-actions" data-sidebar-section="selection-options">
-        <label className="layer-field">
-          Selection mode
-          <select
-            aria-label="Selection mode"
-            value={selectionOperation}
-            onChange={(e) =>
-              setSelectionOperation(e.target.value as SelectionOperation)
-            }
-          >
-            <option value="replace">Replace</option>
-            <option value="add">Add</option>
-            <option value="subtract">Subtract</option>
-            <option value="intersect">Intersect</option>
-          </select>
-        </label>
+      <div className="layer-actions layer-mask-actions">
         <button
           onClick={createMask}
           disabled={
@@ -580,12 +553,6 @@ export default function LayersPanel({
         >
           Release clipping mask
         </button>
-        <button onClick={invertSelection} disabled={!frame.selection}>
-          Invert selection
-        </button>
-        <button onClick={clearSelection} disabled={!frame.selection}>
-          Clear selection
-        </button>
       </div>
       {isMaskableLayer(layer) && layer.mask && (
         <p className="mask-status">Nondestructive mask active</p>
@@ -655,6 +622,46 @@ export default function LayersPanel({
         </select>
       </label>
       </div>
+      </>)}
+      {part === 'selection' && (
+      <div className="layer-actions" data-sidebar-section="selection-options">
+        <label className="layer-field">
+          Selection mode
+          <select
+            aria-label="Selection mode"
+            value={selectionOperation}
+            onChange={(e) =>
+              setSelectionOperation(e.target.value as SelectionOperation)
+            }
+          >
+            <option value="replace">Replace</option>
+            <option value="add">Add</option>
+            <option value="subtract">Subtract</option>
+            <option value="intersect">Intersect</option>
+          </select>
+        </label>
+        {frame.selection && (
+          <label className="layer-field">
+            Feather {Math.round(frame.selection.feather)} px
+            <input
+              aria-label="Selection feather"
+              type="range"
+              min="0"
+              max="100"
+              value={frame.selection.feather}
+              onChange={(e) => setSelectionFeather(Number(e.target.value))}
+            />
+          </label>
+        )}
+        <button onClick={invertSelection} disabled={!frame.selection}>
+          Invert selection
+        </button>
+        <button onClick={clearSelection} disabled={!frame.selection}>
+          Clear selection
+        </button>
+      </div>
+      )}
+      {part === 'styles' && (
       <fieldset className="layer-alignment" disabled={layerLocked} data-sidebar-section="layer-styles">
         <legend>Layer styles</legend>
         <div className="layer-style-block" data-sidebar-section="layer-style-drop-shadow">
@@ -1203,6 +1210,63 @@ export default function LayersPanel({
         </label>
         </div>
       </fieldset>
+      )}
+      {part === 'details' && (
+      <div className="layer-details" data-sidebar-section="layer-details">
+      <label className="layer-field">
+        Layer folder
+        <select
+          aria-label="Layer folder"
+          value={layer.groupId || ''}
+          disabled={layerLocked}
+          onChange={(event) => edit({ groupId: event.target.value || undefined })}
+        >
+          <option value="">No folder</option>
+          {groups.map((group) => (
+            <option key={group.id} value={group.id} disabled={group.locked}>
+              {group.name || 'Untitled group'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="layer-actions layer-arrange-actions">
+        <button
+          onClick={() => reorder(1)}
+          disabled={layerLocked || frame.layers.at(-1)?.id === layer.id}
+        >
+          Raise layer
+        </button>
+        <button
+          onClick={() => reorder(-1)}
+          disabled={layerLocked || frame.layers[0].id === layer.id}
+        >
+          Lower layer
+        </button>
+        <button
+          onClick={() => arrange('front')}
+          disabled={arrangeDisabled('front')}
+        >
+          Bring to front
+        </button>
+        <button
+          onClick={() => arrange('forward')}
+          disabled={arrangeDisabled('forward')}
+        >
+          Bring forward
+        </button>
+        <button
+          onClick={() => arrange('backward')}
+          disabled={arrangeDisabled('backward')}
+        >
+          Send backward
+        </button>
+        <button
+          onClick={() => arrange('back')}
+          disabled={arrangeDisabled('back')}
+        >
+          Send to back
+        </button>
+      </div>
       <div className="layer-position">
         <NumberField
           key={layer.id + 'x' + layer.matrix[4]}
@@ -1235,6 +1299,9 @@ export default function LayersPanel({
           }
         />
       </div>
+      </div>
+      )}
+      {main && (<>
       {layer.kind === 'text' && (
         <div className="layer-typography">
           <label className="layer-field">
@@ -1634,43 +1701,9 @@ export default function LayersPanel({
           </small>
         </div>
       )}
+      </>)}
+      {main && (<>
       <div className="layer-actions">
-        <button
-          onClick={() => reorder(1)}
-          disabled={layerLocked || frame.layers.at(-1)?.id === layer.id}
-        >
-          Raise layer
-        </button>
-        <button
-          onClick={() => reorder(-1)}
-          disabled={layerLocked || frame.layers[0].id === layer.id}
-        >
-          Lower layer
-        </button>
-        <button
-          onClick={() => arrange('front')}
-          disabled={arrangeDisabled('front')}
-        >
-          Bring to front
-        </button>
-        <button
-          onClick={() => arrange('forward')}
-          disabled={arrangeDisabled('forward')}
-        >
-          Bring forward
-        </button>
-        <button
-          onClick={() => arrange('backward')}
-          disabled={arrangeDisabled('backward')}
-        >
-          Send backward
-        </button>
-        <button
-          onClick={() => arrange('back')}
-          disabled={arrangeDisabled('back')}
-        >
-          Send to back
-        </button>
         <button onClick={duplicate} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Duplicate layer
         </button>
@@ -1686,11 +1719,19 @@ export default function LayersPanel({
           </button>
         )}
       </div>
-      <p>
-        Edits affect the selected layer. Deleting and rasterizing can be undone.
-      </p>
+      </>)}
+    </Root>
+  );
+}
+function LayersRoot({ children }: { children: ReactNode }) {
+  return (
+    <section className="panel layers-panel" aria-label="Layers" data-sidebar-section="layers">
+      {children}
     </section>
   );
+}
+function PartRoot({ children }: { children: ReactNode }) {
+  return <div className="layers-panel layers-panel-part">{children}</div>;
 }
 function GroupRow({
   group,

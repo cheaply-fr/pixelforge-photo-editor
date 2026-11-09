@@ -334,3 +334,43 @@
    its top part is on screen below the canvas, so a tail spacer lets sections
    near the end still scroll their header up into that on-screen band. */
 @media(max-width:680px){.inspector{max-height:100svh;overflow-y:auto}.inspector::after{content:"";grid-column:1/-1;height:60svh;pointer-events:none}}
+/* Contextual properties sidebar (docs/contextual-sidebar-contract.md): the
+   active tool's options, Layers, a compact "More panels" strip and at most one
+   open panel. On phones the sidebar is a bottom sheet with a collapsible handle. */
+.inspector-sheet-bar{display:none}
+.inspector-body{display:contents}
+.inspector-body[hidden]{display:none}
+.sidebar-tool-area{min-width:0}
+.sidebar-tool-area:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.sidebar-tool-empty{margin:0;color:#8f929b;font-size:10px;line-height:1.45}
+.sidebar-tool-empty b{color:#d4d5d8;font-weight:650}
+.sidebar-panel-strip{min-width:0;margin:0;padding:10px 15px;border:0;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:5px}
+.sidebar-panel-tab{min-height:26px;padding:0 8px;display:inline-flex;align-items:center;gap:5px;border:1px solid #30333a;border-radius:7px;background:#202228;color:#8f929a;font-size:9px;font-weight:600;cursor:pointer}
+.sidebar-panel-tab svg{width:12px;height:12px}
+.sidebar-panel-tab:hover{border-color:#564037;color:#ff967b}
+.sidebar-panel-tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.sidebar-panel-tab[aria-expanded="true"]{border-color:#704134;background:#2a211f;color:#ff9d84}
+.sidebar-open-panel{min-width:0}
+/* The always-visible Layers panel uses compact wrapping chips so the list and
+   the active layer's essentials fit beside the tool options. */
+section.layers-panel .layer-actions{display:flex;flex-wrap:wrap;gap:4px;margin:7px 0}
+section.layers-panel .layer-actions button{flex:0 1 auto;padding:4px 7px;font-size:9.5px;line-height:1.25}
+section.layers-panel .layer-selection-toolbar{padding:3px 0;gap:4px}
+section.layers-panel .layer-field{margin:6px 0;gap:4px}
+section.layers-panel .layer-selection-toolbar{display:flex;flex-wrap:wrap;align-items:center}
+section.layers-panel .layer-selection-toolbar .layer-actions{margin:0}
+section.layers-panel .layer-properties{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:8px}
+section.layers-panel .layer-properties>.layer-field:first-child{grid-column:1/-1}
+.sidebar-panel-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(74px,1fr))}
+.sidebar-panel-tab{justify-content:flex-start;min-width:0;overflow:hidden;white-space:nowrap}
+@media(max-width:680px){
+  .inspector{grid-template-columns:minmax(0,1fr);border-top:1px solid var(--line);border-radius:14px 14px 0 0}
+  .inspector-body>*,.inspector-sheet-bar{grid-column:1/-1}
+  .inspector-sheet-bar{display:block;position:sticky;top:0;z-index:3;background:#17181d;border-bottom:1px solid var(--line)}
+  .inspector-sheet-handle{width:100%;min-height:44px;padding:6px 16px 8px;display:grid;grid-template-columns:auto 1fr;column-gap:10px;align-items:center;border:0;background:transparent;color:#d4d5d8;font-size:11px;font-weight:700;text-align:left}
+  .inspector-sheet-grip{grid-column:1/-1;justify-self:center;width:36px;height:4px;margin-bottom:6px;border-radius:2px;background:#4a4d55}
+  .inspector-sheet-handle small{justify-self:end;color:#8f929b;font-size:10px;font-weight:550}
+  .inspector-sheet-handle:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .inspector[data-sheet-open="false"]::after{display:none}
+  .sidebar-panel-tab{min-height:36px}
+}

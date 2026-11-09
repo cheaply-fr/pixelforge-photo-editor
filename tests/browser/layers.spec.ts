@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4j8AAAAASUVORK5CYII=';
@@ -66,6 +67,7 @@ test('editable text, layer properties, history and assets survive project export
     .fill('Editable title');
   await page.getByLabel('Layer name', { exact: true }).fill('Headline');
   await page.getByLabel('Layer font', { exact: true }).selectOption('Georgia');
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('100');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await page.getByLabel('Blend mode', { exact: true }).selectOption('screen');
@@ -120,6 +122,7 @@ test('visibility, locking, duplicate, order and deletion change actual layers wi
     .getByRole('button', { name: 'Duplicate layer', exact: true })
     .click();
   await page.getByLabel('Layer name', { exact: true }).fill('Copy');
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('400');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await page.getByLabel('Lock layer', { exact: true }).check();
@@ -333,6 +336,7 @@ test('paint stays on its own raster layer and nondestructive filters retain sour
   await page
     .getByRole('button', { name: 'Select layer Background', exact: true })
     .click();
+  await openPanel(page, 'Filters');
   await page.getByRole('button', { name: 'Mono filter', exact: true }).click();
   const out = await project(page),
     f = out.value.history[out.value.index];
@@ -436,6 +440,7 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
     buffer: Buffer.from(fixture, 'base64'),
   });
   await expect(page.getByLabel('Document name')).toHaveValue('color-replace-fixture');
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('4');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
@@ -521,6 +526,7 @@ test('layer position, blending and visibility produce exact composite pixels', a
   await expect(page.getByLabel('Layer name', { exact: true })).toHaveValue(
     'red.png',
   );
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('1');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   const read = () =>
@@ -563,6 +569,7 @@ test('vector shapes remain editable through property edits, rotation and undo', 
   expect(original.kind).toBe('rectangle');
   expect(original.width).toBe(300);
   expect(original.fill).toBe(true);
+  await openPanel(page, 'Transform');
   await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
   await expect(canvas).toHaveAttribute('width', '960');
   const rotated = await project(page);
@@ -791,6 +798,7 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   expect(resizedLayer.mask).toEqual(expect.any(String));
   expect(resized.value.assets[resizedLayer.mask].w).toBe(720);
   expect(resized.value.assets[resizedLayer.mask].h).toBe(480);
+  await openPanel(page, 'Transform');
   await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '480');
   const rotated = await project(page),

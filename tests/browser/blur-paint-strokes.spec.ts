@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 // Regression for "Gaussian Blur has no visible effect on a paint layer made
 // only of brush strokes". Thin plain-brush strokes on a transparent paint
@@ -142,6 +143,7 @@ async function gaussian(page: Page, radius: number) {
   const radiusInput = page.getByLabel('Blur radius', { exact: true });
   if (!(await radiusInput.count())) {
     await menu(page, 'Filter', 'Gaussian Blur…');
+    await openPanel(page, 'Filters');
     await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
     await expect(footer(page)).toContainText(/Gaussian Blur applied; remains editable/i);
     await settled(page);
@@ -232,6 +234,7 @@ test('an unclipped stroke layer blurs, survives reload, and Box/Motion/Lens blur
     ['Motion Blur…', 'motion-blur'],
     ['Lens Blur…', 'lens-blur'],
   ] as const) {
+    await openPanel(page, 'Filters');
     await page.getByLabel('Filter effect', { exact: true }).selectOption(type);
     await settled(page);
     await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue(type);
@@ -299,6 +302,7 @@ test('a tightly trimmed stroke layer grows so the blur spreads past its stored b
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
   await settled(page);
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('gaussian-blur');
   const undone = await activeLayer(page);
   expect(undone.layer.adjustments.filterEffects?.radius).not.toBe(24);

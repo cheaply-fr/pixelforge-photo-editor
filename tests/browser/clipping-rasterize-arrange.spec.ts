@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 type ProjectLayer = {
   id: string;
@@ -238,6 +239,7 @@ test('Send Backward / Bring Forward move an outside layer past the whole clippin
   expect(await clipped()).toBe(true);
 
   // Panel Lower / Raise buttons step past the whole group too.
+  await openPanel(page, 'Layer details');
   await page.getByRole('button', { name: 'Lower layer', exact: true }).click();
   await expect.poll(async () => (await names()).slice(-3)).toEqual(['X', 'Figure', 'Figure shade']);
   expect(await clipped()).toBe(true);

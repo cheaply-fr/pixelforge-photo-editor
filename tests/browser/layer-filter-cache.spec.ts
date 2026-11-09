@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -66,6 +67,7 @@ test('an unrelated layer edit reuses the cached Clouds layer with identical pixe
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await settled(page);
   await menu(page, 'Filter', 'Clouds');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('clouds');
   await settled(page);
 
@@ -123,6 +125,7 @@ test('undo returns to a cached filter state without recomputing it', async ({ pa
   await expect(page.getByTestId('editor-canvas')).toHaveJSProperty('height', 1500);
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await menu(page, 'Filter', 'Clouds');
+  await openPanel(page, 'Filters');
   await page.getByLabel('Effect amount', { exact: true }).fill('70');
   await settled(page);
   const before = await digest(page);

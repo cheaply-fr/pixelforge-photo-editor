@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import zlib from 'node:zlib';
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 // Large layers are stored as content-addressed 256 × 256 PNG tiles
 // (docs/tiled-layer-assets-contract.md): a stroke stores only the tiles it
@@ -177,6 +178,7 @@ async function importPhoto(page: Page) {
 
 /** A short horizontal brush stroke at document row y (from x0 to x1). */
 async function stroke(page: Page, pointerId: number, x0: number, x1: number, y: number) {
+  await openPanel(page, 'History');
   const before = await historyPosition(page).innerText();
   await canvas(page).scrollIntoViewIfNeeded();
   await canvas(page).evaluate(

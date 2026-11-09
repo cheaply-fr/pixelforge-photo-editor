@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 const additiveModifier: 'Meta' | 'Control' =
   process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -66,6 +67,7 @@ test('embeds, transforms, replaces and rasterizes a source-retaining smart objec
   const sourceAsset = initialLayer.asset;
   await expect.poll(() => sample(page, 0, 0)).toEqual([255, 0, 0, 255]);
 
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('24');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await expect(page.getByText('Layer updated', { exact: true })).toBeVisible();

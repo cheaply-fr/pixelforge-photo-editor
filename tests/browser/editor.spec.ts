@@ -1,6 +1,7 @@
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 const additiveModifier: 'Meta' | 'Control' =
   process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -529,6 +530,7 @@ test('signed-in users save, revisit and continue cloud projects without automati
   await expect(
     page.getByRole('status', { name: 'Draft save status' }),
   ).toHaveText('Saved on this device');
+  await openPanel(page, 'My projects');
   await page.getByRole('link', { name: 'View my projects' }).click();
   await expect(
     page.getByRole('heading', { name: 'My projects' }),
@@ -705,6 +707,7 @@ test('flipping transparent artwork does not leave duplicate opaque pixels', asyn
     buffer: Buffer.from(fixture, 'base64'),
   });
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await openPanel(page, 'Transform');
   await page
     .getByRole('button', { name: 'Flip horizontal', exact: true })
     .click();
@@ -1030,6 +1033,7 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
     levelsGamma: 1,
   });
 
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('128');
   await expect.poll(sample).toEqual([0, 0, 0, 255]);
   let adjusted = await project();
@@ -1059,6 +1063,7 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Adjust selected layer');
   await expect(page.getByLabel('Levels white point', { exact: true })).toHaveValue('200');
   await expect(page.getByLabel('Levels gamma', { exact: true })).toHaveValue('2');
   await expect.poll(() => sample().then((pixel) => pixel[0])).toBeGreaterThanOrEqual(203);
@@ -1919,6 +1924,7 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
     );
   await expect.poll(sample).toEqual([112, 112, 112, 255]);
   const source = await sample();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Midtones cyan/red', { exact: true }).fill('80');
   await expect.poll(sample).not.toEqual(source);
   const adjusted = await sample();
@@ -1938,6 +1944,7 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
   expect(project.history[project.index].layers.at(-1)!.adjustments.colorBalance.midtonesCyanRed).toBe(80);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Adjust selected layer');
   await expect(page.getByLabel('Midtones cyan/red', { exact: true })).toHaveValue('80');
   await expect.poll(sample).toEqual(adjusted);
 });
@@ -1964,6 +1971,7 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
       Array.from(item.getContext('2d')!.getImageData(600, 400, 1, 1).data),
     );
   const before = await sample();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Noise amount', { exact: true }).fill('35');
   await page.getByLabel('Noise seed', { exact: true }).fill('42');
   await page.getByLabel('Monochromatic noise', { exact: true }).check();
@@ -1994,6 +2002,7 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
   });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
   await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('35');
   await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).toBeChecked();

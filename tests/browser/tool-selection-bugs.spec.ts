@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 // Regressions found while painting a large artwork on the live editor:
 // strokes and gradients lost while a trimmed paint layer grows, strokes joined
@@ -274,6 +275,7 @@ test('Save Selection… names a selection stored in the document; downloading is
   const dialog = page.getByRole('dialog', { name: 'Save Selection' });
   await expect(dialog).toBeVisible();
   await dialog.getByLabel('Name for the saved selection').fill('almond');
+  await openPanel(page, 'Saved selections');
   await dialog.getByRole('button', { name: 'Save selection', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(footer(page)).toContainText('Selection “almond” saved');

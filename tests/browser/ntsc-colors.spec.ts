@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 async function fixture(page: Page) {
   const encoded = await page.evaluate(() => {
@@ -55,6 +56,7 @@ for (const worker of [false, true]) {
     const before = await project(page), original = await pixels(page);
     const source = before.value.history[before.value.index].layers.at(-1)!;
     await (await ntscMenu(page)).click();
+    await openPanel(page, 'Filters');
     await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ntsc-colors');
     await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('100');
     await expect(page.getByText(/Local television-color approximation/)).toBeVisible();
@@ -81,6 +83,7 @@ for (const worker of [false, true]) {
     await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device');
     await page.reload();
     await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+    await openPanel(page, 'Filters');
     await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('ntsc-colors');
     await expect.poll(() => pixels(page)).toEqual(changed);
     await page.getByTestId('project-input').setInputFiles(saved.path);

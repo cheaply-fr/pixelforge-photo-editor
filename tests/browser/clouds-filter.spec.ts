@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -111,6 +112,7 @@ test('Clouds is source-safe, editable and round-trips on desktop and mobile', as
     'aria-busy',
     'false',
   );
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue(
     'clouds',
   );

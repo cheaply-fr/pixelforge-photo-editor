@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 async function project(page: import('@playwright/test').Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -29,6 +30,7 @@ test('links ordinary layers, propagates transforms, and survives reload/project 
   expect(links[0]).toBeTruthy();
   expect(links[1]).toBe(links[0]);
 
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('32');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await expect(page.getByText('Layer updated', { exact: true })).toBeVisible();
