@@ -17,6 +17,18 @@ focus (they stay in the tab order); on touch layouts (`hover: none` or
 desktop). Rows never overflow horizontally at 375 px; clipped rows keep the
 `↳` indent from the clipping contract.
 
+Raster rows show a small thumbnail of the layer's own pixels placed in the
+document (`src/layerThumbnails.ts`, `src/LayerThumbnail.tsx`) in the 28 px
+slot that other kinds use for their type glyph. It is decorative (empty
+`alt`): the row's accessible name stays "Select layer <name>". Thumbnails are
+drawn straight from the stored asset (a tiled layer decodes each non-empty
+tile at its reduced size), never through the full renderer, so they ignore
+styles, filters, masks and blend modes. A row draws one only while it is on
+screen and its layer has not changed for 300 ms, one layer at a time, and
+keeps the previous image meanwhile; results are keyed by asset content,
+transform and fill colour and kept in a 256-entry memory cache. Nothing is
+stored in drafts or projects.
+
 Every row's accessible description gives its stack position counted from the
 top, e.g. "layer 4 of 9, above Paint 2" ("bottom of the stack" for the lowest
 layer). Clipped rows prefix it with "Clipped to <base>; ".
