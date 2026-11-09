@@ -63,7 +63,7 @@ const withOperands = async (page: Page, second: Path = square(260, 180, 280)) =>
   const value = await project(page);
   const frame = value.history[value.index];
   const source = frame.layers[0];
-  const { kind: _kind, asset: _asset, ...common } = source;
+  const { kind: _kind, asset: _asset, background: _background, ...common } = source;
   const first = { ...common, id: crypto.randomUUID(), name: 'Shape A', kind: 'path', path: square(120, 180, 280) };
   const other = { ...common, id: crypto.randomUUID(), name: 'Shape B', kind: 'path', path: second };
   frame.layers = [source, first, other];
