@@ -305,6 +305,17 @@ import {
   validClippingRelationship,
 } from '../src/layerClipping';
 import { insertCopiesAboveSources, insertLayerAboveActive } from '../src/layerInsertion';
+import {
+  classifyDroppedFile,
+  layerDeleteNotice,
+  layerDeleteReason,
+  layerDropNotice,
+  placementMatrixAt,
+  planLayerDelete,
+  planLayerDrop,
+  type LayerDragSource,
+  type LayerDropTarget,
+} from '../src/layerDragReorder';
 import CurveEditor from '../src/CurveEditor';
 import { type CurveChannel, type CurvePoints } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
@@ -3211,7 +3222,7 @@ export default function Home() {
     [generativeFillOpen, setGenerativeFillOpen] = useState(false),
     [promptToEditOpen, setPromptToEditOpen] = useState(false),
     [generateImageOpen, setGenerateImageOpen] = useState(false),
-    [drag, setDrag] = useState(false),
+    [drag, setDrag] = useState<false | 'layer' | 'open'>(false),
     [resizing, setResizing] = useState<{
       width: number;
       height: number;
@@ -9538,51 +9549,40 @@ export default function Home() {
     }
   };
   const remove = () => {
-    const f = current(),
-      selected = selectedLayersForFrame(f),
-      ids = new Set(selected.map((layer) => layer.id));
-    if (!selected.length) {
-      setNotice('Select at least one layer before deleting');
+    const f = current();
+    // Shared by the Layer menu, the inspector button and the Layers panel
+    // (row trash button, Delete key, context menu): see layerDragReorder.ts
+    // for the clipping and selection-follow rules.
+    const plan = planLayerDelete(f, selectedIdsForFrame(f));
+    if (!plan.ok) {
+      setNotice(layerDeleteReason(plan.reason));
       return false;
     }
-    if (selected.some((layer) => layerIsLocked(f, layer))) {
-      setNotice('Unlock all selected layers before deleting');
-      return false;
-    }
-    if (selected.length >= f.layers.length) {
-      setNotice('Keep at least one layer in the document');
-      return false;
-    }
-    const layers = f.layers.filter((layer) => !ids.has(layer.id)),
-      active = layers.find((layer) => layer.id === f.active)?.id || layers.at(-1)!.id,
-      selectedLayerIds = selectedIdsForFrame(f).filter((id) => !ids.has(id));
-    const usedGroups = new Set(
-      layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
-    );
-    if (
-      !commit({
-        ...f,
-        layers,
-        groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
-        ...(f.artboards
-          ? {
-              artboards: sanitizeArtboardLayerMembership(
-                f.artboards,
-                layers.map((layer) => layer.id),
-              ),
-            }
-          : {}),
-        active,
-        selectedLayerIds,
-      })
-    )
-      return false;
-    setNotice(
-      selected.length === 1
-        ? 'Layer deleted. Undo restores it.'
-        : `${selected.length} layers deleted. Undo restores them.`,
-    );
+    if (!commit(plan.frame)) return false;
+    setNotice(layerDeleteNotice(plan));
     return true;
+  };
+  /**
+   * Layers panel drag-and-drop: one history step per drop. Returns the moved
+   * layer IDs (for the panel's live announcement) or false when refused.
+   */
+  const moveLayersFromPanel = (source: LayerDragSource, target: LayerDropTarget): string[] | false => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return false;
+    }
+    const f = current();
+    const plan = planLayerDrop(f, source, target);
+    if (!plan.ok) {
+      if (plan.reason === 'locked') setNotice('Unlock the layers before moving them');
+      else if (plan.reason === 'locked-folder') setNotice('Unlock the folder before changing its layers');
+      else if (plan.reason !== 'no-change' && plan.reason !== 'onto-self')
+        setNotice('Those layers could not be moved there');
+      return false;
+    }
+    if (!commit(plan.frame)) return false;
+    setNotice(layerDropNotice(plan));
+    return plan.movedIds;
   };
   const reorder = (direction: number) => {
     const f = current(),
@@ -10099,6 +10099,99 @@ export default function Home() {
       if (file.current) file.current.value = '';
       if (layerFile.current) layerFile.current.value = '';
     }
+  };
+  /**
+   * Files dropped on the editor while a document is open. Browser-decodable
+   * images are placed as new raster layers in one undo step, each centred at
+   * the drop point (or the document centre), directly above the selected
+   * layer (canvas drops) or at the Layers panel's drop line (`target`).
+   * Projects open as projects; PSD/PSB and Shift-drops open as a document,
+   * as before. Unsupported files get a status message.
+   */
+  const dropFiles = async (
+    files: readonly File[],
+    options: { point?: { x: number; y: number }; target?: LayerDropTarget; open?: boolean } = {},
+  ) => {
+    if (!files.length) return;
+    const first = files[0];
+    const firstInfo = describeImportFormat(first.name, first.type);
+    const firstKind = classifyDroppedFile(first.name, first.type, firstInfo.tryDecode, firstInfo.format);
+    if (firstKind === 'project') {
+      await importProject(first);
+      return;
+    }
+    if (options.open || !frame || firstKind === 'document') {
+      await load(first);
+      return;
+    }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before adding image layers');
+      return;
+    }
+    const images: Array<{ file: File; info: ReturnType<typeof describeImportFormat> }> = [];
+    let skipped = 0;
+    for (const item of files) {
+      const info = describeImportFormat(item.name, item.type);
+      if (classifyDroppedFile(item.name, item.type, info.tryDecode, info.format) === 'image')
+        images.push({ file: item, info });
+      else skipped += 1;
+    }
+    if (!images.length) {
+      setNotice(
+        files.length === 1
+          ? `${first.name.slice(0, 80)} cannot be added as a layer. ${firstInfo.disclosure || ''}`.trim()
+          : 'None of the dropped files can be added as layers',
+      );
+      return;
+    }
+    const original = current();
+    if (original.layers.length + images.length > MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
+      return;
+    }
+    let next: Frame = original;
+    const added: string[] = [];
+    const nextAssets = { ...assets.current };
+    try {
+      for (const { file: item, info } of images) {
+        if (item.size > 64 * 1024 * 1024) throw new Error(`${item.name} exceeds 64 MB`);
+        const decoded = await decodeImportedRaster(item, info);
+        if (current() !== original)
+          throw new Error('Document changed during import. Please try again.');
+        const layer: Layer = {
+          ...commonLayer(item.name.slice(0, 160)),
+          kind: 'raster',
+          asset: addAsset(nextAssets, decoded),
+          matrix: placementMatrixAt(options.point, decoded.width, decoded.height, original.w, original.h),
+        };
+        // Each file goes above the previous one, so they stack in drop order.
+        next = insertLayerAboveActive(next, layer).frame;
+        added.push(layer.id);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The dropped image could not be opened');
+      return;
+    }
+    if (options.target) {
+      const plan = planLayerDrop(next, { kind: 'layers', ids: added }, options.target);
+      if (plan.ok) next = plan.frame;
+      else if (plan.reason !== 'no-change' && plan.reason !== 'onto-self') {
+        setNotice(
+          plan.reason === 'locked-folder'
+            ? 'Unlock the folder before adding layers to it'
+            : 'The images could not be added at that position',
+        );
+        return;
+      }
+      next = { ...next, active: added.at(-1)!, selectedLayerIds: added };
+    }
+    if (!commit(next, false, nextAssets)) return;
+    const count = added.length === 1 ? 'Image layer added' : `${added.length} image layers added`;
+    setNotice(
+      skipped
+        ? `${count}; ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped`
+        : `${count}. Undo removes ${added.length === 1 ? 'it' : 'them'}`,
+    );
   };
   /**
    * Paste an image from the operating-system clipboard as a new raster layer
@@ -14767,6 +14860,14 @@ export default function Home() {
       }
       if (command) {
         const k = e.key.toLowerCase();
+        // Photoshop-style Arrange: Ctrl+] / Ctrl+[ step the selected layers,
+        // Ctrl+Shift+] / Ctrl+Shift+[ send them to the front / back.
+        if (!e.altKey && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+          e.preventDefault();
+          const forward = e.code === 'BracketRight';
+          arrangeLayers(forward ? (e.shiftKey ? 'front' : 'forward') : e.shiftKey ? 'back' : 'backward');
+          return;
+        }
         if (k === 'l' && e.shiftKey && command) {
           e.preventDefault();
           void autoCorrect('tone');
@@ -16082,14 +16183,31 @@ export default function Home() {
       inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
       onDragOver={(e) => {
+        if (!Array.from(e.dataTransfer.types).includes('Files')) return;
         e.preventDefault();
-        setDrag(true);
+        // Shift (or no open document) opens the file as a new document, as
+        // before; otherwise images are placed as layers.
+        const mode = !frame || e.shiftKey ? 'open' : 'layer';
+        e.dataTransfer.dropEffect = 'copy';
+        if (drag !== mode) setDrag(mode);
       }}
-      onDragLeave={() => setDrag(false)}
+      onDragLeave={(e) => {
+        // Only clear when the pointer leaves the editor, not a child element.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(false);
+      }}
       onDrop={(e) => {
         e.preventDefault();
         setDrag(false);
-        void load(e.dataTransfer.files[0]);
+        const files = Array.from(e.dataTransfer.files);
+        if (!files.length) return;
+        // The Layers panel handles drops at its own drop line.
+        if ((e.target as Element).closest?.('[data-file-drop-zone="layers"]') && frame && !e.shiftKey) return;
+        const target = e.target as Node;
+        const onCanvas = Boolean(canvas.current && (canvas.current === target || canvas.current.contains(target)));
+        void dropFiles(files, {
+          open: e.shiftKey,
+          point: onCanvas && frame ? point(e) : undefined,
+        });
       }}
     >
       <input
@@ -16907,10 +17025,14 @@ export default function Home() {
             </div>
           )}
           {drag && (
-            <div className="drop">
+            <div className="drop" data-testid="drop-overlay" data-mode={drag}>
               <ImagePlus />
-              <b>Drop your photo here</b>
-              <span>JPG, PNG, WEBP and more</span>
+              <b>{drag === 'layer' ? 'Drop to add as layer' : 'Drop to open'}</b>
+              <span>
+                {drag === 'layer'
+                  ? 'Images are placed above the selected layer · hold Shift to open instead'
+                  : 'JPG, PNG, WEBP and more'}
+              </span>
             </div>
           )}
           {cropPreview && (
@@ -17705,6 +17827,9 @@ export default function Home() {
               remove={remove}
               reorder={reorder}
               arrange={arrangeLayers}
+              moveLayers={moveLayersFromPanel}
+              setLayerSelection={setLayerSelection}
+              dropFiles={(files, target) => void dropFiles(files, { target })}
               groupActive={groupActiveLayer}
               ungroupActive={ungroupActiveLayer}
               editGroup={editGroup}
