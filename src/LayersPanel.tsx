@@ -805,46 +805,6 @@ export default function LayersPanel({
           Pixel budget {formatMegapixels(pixelUsage)} / {formatMegapixels(detectProjectLimits().layerPixelBudget)} MP
         </p>
       )}
-      <div className="layer-actions">
-        <button onClick={addSmartObject} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
-          Add smart object
-        </button>
-        <button
-          onClick={nestSelectedAsSmartObject}
-          disabled={selectedIds.size === 0 || frame.layers.some((item) => selectedIds.has(item.id) && item.groupId !== undefined)}
-        >
-          Nest selected layers
-        </button>
-        <button
-          onClick={replaceSmartObject}
-          disabled={layer.kind !== 'smart-object' || layerLocked}
-        >
-          Replace contents
-        </button>
-        <button onClick={importImage} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
-          Add image layer
-        </button>
-        <button
-          onClick={ungroupActive}
-          disabled={!layer.groupId || Boolean(activeGroup?.locked)}
-        >
-          Ungroup active layer
-        </button>
-      </div>
-      <div className="layer-selection-toolbar" aria-label="Layer selection">
-        <span aria-live="polite">
-          {selectedIds.size} layer{selectedIds.size === 1 ? '' : 's'} selected
-        </span>
-        <div className="layer-actions">
-          <button onClick={selectAll}>Select all layers</button>
-          <button onClick={deselectLayers} disabled={selectedIds.size === 0}>
-            Deselect layers
-          </button>
-          <button onClick={isolateLayers} disabled={selectedIds.size === 0}>
-            Isolate layers
-          </button>
-        </div>
-      </div>
       <label className="layer-field layer-search-field">
         Find layers
         <input
@@ -988,6 +948,46 @@ export default function LayersPanel({
         >
           <Trash2 aria-hidden="true" />
         </button>
+      </div>
+      <div className="layer-actions">
+        <button onClick={addSmartObject} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
+          Add smart object
+        </button>
+        <button
+          onClick={nestSelectedAsSmartObject}
+          disabled={selectedIds.size === 0 || frame.layers.some((item) => selectedIds.has(item.id) && item.groupId !== undefined)}
+        >
+          Nest selected layers
+        </button>
+        <button
+          onClick={replaceSmartObject}
+          disabled={layer.kind !== 'smart-object' || layerLocked}
+        >
+          Replace contents
+        </button>
+        <button onClick={importImage} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
+          Add image layer
+        </button>
+        <button
+          onClick={ungroupActive}
+          disabled={!layer.groupId || Boolean(activeGroup?.locked)}
+        >
+          Ungroup active layer
+        </button>
+      </div>
+      <div className="layer-selection-toolbar" aria-label="Layer selection">
+        <span aria-live="polite">
+          {selectedIds.size} layer{selectedIds.size === 1 ? '' : 's'} selected
+        </span>
+        <div className="layer-actions">
+          <button onClick={selectAll}>Select all layers</button>
+          <button onClick={deselectLayers} disabled={selectedIds.size === 0}>
+            Deselect layers
+          </button>
+          <button onClick={isolateLayers} disabled={selectedIds.size === 0}>
+            Isolate layers
+          </button>
+        </div>
       </div>
       <p className="sr-only" aria-live="polite" data-testid="layers-live">
         {liveMessage}

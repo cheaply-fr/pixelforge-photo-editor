@@ -397,8 +397,9 @@
 @media(max-width:680px){.layer-footer{flex-wrap:wrap;gap:2px;padding:2px}.layer-footer button{flex:1 1 32px;min-width:32px;height:36px}}
 /* The always-visible Layers panel uses compact wrapping chips so the list and
    the active layer's essentials fit beside the tool options. */
-section.layers-panel .layer-actions{display:flex;flex-wrap:wrap;gap:4px;margin:7px 0}
-section.layers-panel .layer-actions button{flex:0 1 auto;padding:4px 7px;font-size:9.5px;line-height:1.25}
+section.layers-panel .layer-actions,.layers-panel-part .layer-actions{display:flex;flex-wrap:wrap;gap:4px;margin:7px 0}
+section.layers-panel .layer-actions button,.layers-panel-part .layer-actions button{flex:0 1 auto;padding:4px 7px;font-size:9.5px;line-height:1.25}
+.layers-panel-part .layer-alignment p{margin:4px 0 0;font-size:9px}
 section.layers-panel .layer-selection-toolbar{padding:3px 0;gap:4px}
 section.layers-panel .layer-field{margin:6px 0;gap:4px}
 section.layers-panel .layer-selection-toolbar{display:flex;flex-wrap:wrap;align-items:center}
