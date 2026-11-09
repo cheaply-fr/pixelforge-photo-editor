@@ -29,7 +29,7 @@ test('the bundle bakes the same version and commit as /release.json', async () =
   const scripts = (await readdir('dist/assets')).filter((name) => name.endsWith('.js'));
   const sources = await Promise.all(scripts.map((name) => readFile('dist/assets/' + name, 'utf8')));
   // A quoted string literal, whichever quote style the minifier picks.
-  const literal = (value) => new RegExp(`["'\`]${value.replace(/[.+]/g, '\\$&')}["'\`]`);
+  const literal = (value) => new RegExp(`["'\`]${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["'\`]`);
   assert.ok(sources.some((source) => literal(release.version).test(source)), 'baked version');
   assert.ok(sources.some((source) => literal(release.commit).test(source)), 'baked commit');
 });
