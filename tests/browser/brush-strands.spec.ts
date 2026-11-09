@@ -47,12 +47,13 @@ async function setSlider(page: Page, label: string, value: string) {
 async function setupSilk(page: Page, values: { count: string; width: string; twists: string; seed: string }) {
   await selectTool(page, 'Brush');
   await setColor(page, '#ffffff');
-  await page.getByLabel('Size', { exact: true }).fill('2');
+  // Size is the ribbon width; each strand keeps its own 2 px thickness.
+  await page.getByLabel('Size', { exact: true }).fill(values.width);
   await page.getByLabel('Size', { exact: true }).press('Enter');
   await setSlider(page, 'Opacity', '100');
   await page.getByLabel('Silk strands', { exact: true }).check();
   await setSlider(page, 'Strands', values.count);
-  await setSlider(page, 'Ribbon width', values.width);
+  await setSlider(page, 'Strand thickness', '2');
   await setSlider(page, 'Twists', values.twists);
   await setSlider(page, 'Wobble', '0');
   await setSlider(page, 'Strand opacity jitter', '0');
@@ -145,7 +146,7 @@ test('Silk strands controls are accessible, Brush-only, persisted and fit the vi
   await toggle.focus();
   await page.keyboard.press('Space');
   await expect(toggle).toBeChecked();
-  for (const label of ['Strands', 'Ribbon width', 'Twists', 'Wobble', 'Strand opacity jitter', 'Strand seed'])
+  for (const label of ['Strands', 'Strand thickness', 'Twists', 'Wobble', 'Strand opacity jitter', 'Strand seed'])
     await expect(page.getByLabel(label, { exact: true })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Silk strands options' })).toBeVisible();
   await expect(page.getByTestId('strand-note')).toContainText('bounded local approximation');

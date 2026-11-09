@@ -147,7 +147,7 @@ Controls (all persisted, all deterministic):
 | Control | Range | Default | Meaning |
 | --- | --- | --- | --- |
 | Strands | 1–48 | 16 | Number of strands across the ribbon |
-| Ribbon width | 1–2,000 px | 120 | Full width of the ribbon at its widest |
+| Strand thickness | 0.5–100 px (0.5 steps) | 2 | Line width of every strand (`thickness`) |
 | Twists | 0–20 per stroke (0.5 steps) | 2 | Full turns of the ribbon over the whole stroke |
 | Wobble | 0–100% | 35 | Per-strand low-frequency drift (turbulence) |
 | Strand opacity jitter | 0–100% | 50 | Random reduction of each strand's peak opacity (up to 90%) |
@@ -173,7 +173,11 @@ Geometry (`src/brushStrands.ts`, pure):
   an opacity envelope `sin(π·t′)^0.8` and a thickness taper `sin(π·t′)^0.5`
   inside its own window; strands on the far side of the twist are dimmed by
   up to 25%.
-- Strand thickness is the brush **Size**, scaled by pen pressure when
+- The brush **Size** is the full ribbon width (the strands are spread
+  across it); the stored `width` is kept only so older drafts and presets stay
+  valid. Before the 2026-11 audit (I-21) Size was each strand's line width,
+  so Size 80 painted solid blobs.
+- Strand thickness is the **Strand thickness** option, scaled by pen pressure when
   pressure-to-size is on (and opacity by pressure when pressure-to-opacity is
   on), using the selected pressure curve. Brush **Opacity** × **Flow** scales
   every strand. Hardness, spacing, scatter, Count, texture, dual brush,

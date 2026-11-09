@@ -50,7 +50,8 @@ const stroke = async (page: Page, pointerType = 'mouse', cancel = false) => {
 test.beforeEach(async ({ page }) => openEditor(page));
 
 test('Mixer Brush exposes bounded wet/load/mix controls, commits one undo step and reloads settings', async ({ page }) => {
-  await newPaintLayer(page);
+  // Mix on the painted sample image: an empty paint layer has nothing to mix,
+  // and a no-op stroke adds no history step.
   await selectTool(page, 'Mixer Brush');
   await expect(page.getByLabel('Wet', { exact: true })).toBeVisible();
   await page.getByLabel('Wet', { exact: true }).fill('72');

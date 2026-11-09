@@ -22,7 +22,10 @@
 export const BRUSH_STRANDS_COUNT_MIN = 1;
 export const BRUSH_STRANDS_COUNT_MAX = 48;
 export const BRUSH_STRANDS_WIDTH_MIN = 1;
-export const BRUSH_STRANDS_WIDTH_MAX = 2000;
+export const BRUSH_STRANDS_WIDTH_MAX = 10000;
+/** Line width of each strand in layer pixels (0.5 px steps). */
+export const BRUSH_STRANDS_THICKNESS_MIN = 0.5;
+export const BRUSH_STRANDS_THICKNESS_MAX = 100;
 export const BRUSH_STRANDS_TWISTS_MIN = 0;
 export const BRUSH_STRANDS_TWISTS_MAX = 20;
 export const BRUSH_STRANDS_SEED_MAX = 99999;
@@ -36,8 +39,14 @@ export type BrushStrandSettings = {
   enabled: boolean;
   /** Number of strands, 1–48. */
   count: number;
-  /** Full ribbon width in layer pixels, 1–2000. */
+  /**
+   * Full ribbon width in layer pixels, 1–10,000. The editor sets it from the
+   * brush Size for every stroke; the stored value only keeps older drafts and
+   * presets valid and feeds the pure geometry API.
+   */
   width: number;
+  /** Line width of each strand in layer pixels, 0.5–100. */
+  thickness: number;
   /** Full turns of the ribbon over the whole stroke, 0–20 (halves allowed). */
   twists: number;
   /** Per-strand low-frequency wobble, 0–100%. */
@@ -52,6 +61,7 @@ export const DEFAULT_BRUSH_STRANDS: Readonly<BrushStrandSettings> = Object.freez
   enabled: false,
   count: 16,
   width: 120,
+  thickness: 2,
   twists: 2,
   wobble: 35,
   opacityJitter: 50,
@@ -71,6 +81,8 @@ export function validBrushStrands(value: unknown): value is Partial<BrushStrandS
     (candidate.count === undefined ||
       (Number.isInteger(candidate.count) && inRange(candidate.count, BRUSH_STRANDS_COUNT_MIN, BRUSH_STRANDS_COUNT_MAX))) &&
     (candidate.width === undefined || inRange(candidate.width, BRUSH_STRANDS_WIDTH_MIN, BRUSH_STRANDS_WIDTH_MAX)) &&
+    (candidate.thickness === undefined ||
+      inRange(candidate.thickness, BRUSH_STRANDS_THICKNESS_MIN, BRUSH_STRANDS_THICKNESS_MAX)) &&
     (candidate.twists === undefined || inRange(candidate.twists, BRUSH_STRANDS_TWISTS_MIN, BRUSH_STRANDS_TWISTS_MAX)) &&
     (candidate.wobble === undefined || inRange(candidate.wobble, 0, 100)) &&
     (candidate.opacityJitter === undefined || inRange(candidate.opacityJitter, 0, 100)) &&
@@ -91,6 +103,7 @@ export function normalizeBrushStrands(value: unknown): BrushStrandSettings {
     enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : DEFAULT_BRUSH_STRANDS.enabled,
     count: number('count', BRUSH_STRANDS_COUNT_MIN, BRUSH_STRANDS_COUNT_MAX, Math.round),
     width: number('width', BRUSH_STRANDS_WIDTH_MIN, BRUSH_STRANDS_WIDTH_MAX, Math.round),
+    thickness: number('thickness', BRUSH_STRANDS_THICKNESS_MIN, BRUSH_STRANDS_THICKNESS_MAX, (value) => Math.round(value * 2) / 2),
     twists: number('twists', BRUSH_STRANDS_TWISTS_MIN, BRUSH_STRANDS_TWISTS_MAX, (value) => Math.round(value * 2) / 2),
     wobble: number('wobble', 0, 100, Math.round),
     opacityJitter: number('opacityJitter', 0, 100, Math.round),
@@ -372,8 +385,8 @@ export type StrandVertex = { x: number; y: number; width: number; alpha: number 
 export type Strand = { index: number; u: number; vertices: StrandVertex[] };
 
 export type StrandBuildOptions = {
-  /** Strand line width in pixels at full pressure (the brush Size). */
-  strandWidth: number;
+  /** Strand line width in pixels at full pressure; defaults to the settings' thickness. */
+  strandWidth?: number;
   /** Multiplier on thickness for a normalized pressure (pressure → size). */
   sizeAt?: (pressure: number) => number;
   /** Multiplier on opacity for a normalized pressure (pressure → opacity). */
@@ -388,7 +401,7 @@ export function buildStrands(path: StrandPath, settings: BrushStrandSettings, op
   const normalized = normalizeBrushStrands(settings),
     { samples, length } = path,
     phase = strandPhase(normalized),
-    baseWidth = Math.max(0.1, finite(options.strandWidth) ? options.strandWidth : 1),
+    baseWidth = Math.max(0.1, finite(options.strandWidth) ? options.strandWidth : normalized.thickness),
     strands: Strand[] = [];
   if (samples.length < 2 || !(length > 0)) return strands;
   for (let index = 0; index < normalized.count; index += 1) {
