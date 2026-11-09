@@ -397,24 +397,26 @@ versions are bounded local implementations; none claims Photoshop parity.
 | Gradient, Paint Bucket | Implemented | Implemented | — |
 | Blur, Sharpen, Smudge | Implemented | Implemented | — |
 | Dodge, Burn, Sponge | Implemented | Implemented | — |
-| Path Selection | Missing | **Implemented in PR** | #232, `docs/path-edit-tools-contract.md` |
+| Path Selection | Missing | **Merged to main** | #232, `docs/path-edit-tools-contract.md` |
 | Direct Selection | Implemented | Implemented (A now cycles Path → Direct) | #232 |
 | Horizontal Type | Implemented | Implemented | — |
 | Vertical Type | Partial (menu command only) | **Implemented in PR** | #244 (fixes session; #234 closed as duplicate), `docs/type-tool-contract.md` |
 | Horizontal / Vertical Type Mask | Partial (menu commands only) | **Implemented in PR** (on-canvas entry) | #244 |
 | Pen, Freeform Pen | Implemented | Implemented | — |
-| Add Anchor Point, Delete Anchor Point, Convert Point | Partial (Pen modifier clicks only) | **Implemented in PR** (primary contour only) | #232 |
+| Add Anchor Point, Delete Anchor Point, Convert Point | Partial (Pen modifier clicks only) | **Merged to main** (primary contour only) | #232 |
 | Rectangle, Ellipse, Polygon, Line | Implemented | Implemented | — |
-| Rounded Rectangle | Missing | **Implemented in PR** (editable corner radius) | #231, `docs/shape-tools-contract.md` |
-| Custom Shape | Partial (user presets of basic kinds) | **Implemented in PR** (15-shape built-in library) | #231 |
+| Rounded Rectangle | Missing | **Merged to main** (editable corner radius) | #231, `docs/shape-tools-contract.md` |
+| Custom Shape | Partial (user presets of basic kinds) | **Merged to main** (15-shape built-in library) | #231 |
 | Notes | Implemented | Implemented | — |
-| Audio Annotation | Missing | **Implemented in PR** (local only, never cloud-saved or exported) | #241, `docs/audio-annotation-contract.md` |
+| Audio Annotation | Missing | **Merged to main** (local only, never cloud-saved or exported) | #241, `docs/audio-annotation-contract.md` |
 | Eyedropper, Color Sampler, Measure | Implemented | Implemented | — |
 | Hand, Zoom | Implemented | Implemented | — |
 | Foreground/background swatches, swap (X), default (D) | Implemented | Implemented | — |
 | Standard / Quick Mask mode | Implemented | Implemented | — |
 | Screen modes | Implemented | Implemented | — |
 | Jump to ImageReady | Not applicable (separate Adobe application) | Not applicable | — |
+
+Merge commits: #232 `cd8d0a6`, #231 `43e5e17`, #241 `4987e74`; #244 (Type family) is owned by the fixes session.
 
 Known limits: no `.csh` shape-library import; anchor tools edit only the
 primary contour of compound paths; Path Selection acts on the active layer
