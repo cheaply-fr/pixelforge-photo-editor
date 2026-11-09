@@ -508,3 +508,33 @@ test('the Text sidebar Font and Size edit the selected text layer and the live e
   expect(saved[0].fontFamily === 'Courier New' || (runs.length > 0 && runs.every((run) => run.style?.fontFamily === 'Courier New'))).toBe(true);
   expect(families.has('Courier New')).toBe(true);
 });
+
+// The live pane animates the reveal (no reduced motion) and the Text section
+// is taller than the sidebar: its header must still land at the top, whatever
+// tool is active (the Type tool's own section changes height on selection).
+test('selecting a text layer lands the tall Text section header at the top of the sidebar', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 1280) <= 680, 'desktop sidebar column');
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await startType(page, '');
+  await clickCanvas(page, 0.2, 0.3);
+  await page.keyboard.type('Reveal me');
+  await page.keyboard.press(`${mod}+Enter`);
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await settle(page);
+  const inspector = page.locator('aside.inspector');
+  const textSection = () => inspector.evaluate((container) => {
+    const section = container.querySelector('[data-sidebar-section="text"]');
+    if (!section) return null;
+    const box = section.getBoundingClientRect();
+    return { top: Math.round(box.top - container.getBoundingClientRect().top), height: box.height, client: container.clientHeight };
+  });
+  for (const tool of ['Horizontal Type', 'Move', 'Brush']) {
+    await selectTool(page, tool);
+    await page.getByRole('button', { name: /^Select layer (?!Reveal me$)/ }).first().click();
+    await page.getByRole('button', { name: 'Select layer Reveal me', exact: true }).click();
+    await expect.poll(async () => Math.abs((await textSection())?.top ?? 999), { message: tool }).toBeLessThanOrEqual(1);
+    const geometry = await textSection();
+    expect(geometry!.height).toBeGreaterThan(geometry!.client * 0.5);
+  }
+});

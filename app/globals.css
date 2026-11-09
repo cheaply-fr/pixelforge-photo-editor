@@ -588,3 +588,16 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .toolbar,.tool-flyout{-webkit-user-select:none;user-select:none}
 /* Contain visually hidden text (sr-only, curve hints) inside its scroll panel, so it cannot stretch the page and let the editor shift. */
 .inspector,.curve-editor{position:relative}
+/* Tool options rows: a label on the left and a compact control on the right.
+   Dropdowns, number fields and buttons match the Text panel's controls. */
+.select-row{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;margin:8px 0;color:#93969e;font-size:10px}
+.select-row>span:first-child{flex:none}
+.select-row>label{display:inline-flex;align-items:center;gap:6px;min-width:0}
+.select-row>select:not(.text-input),.select-row>input[type=number]:not(.text-input){flex:1 1 auto;min-width:0;max-width:65%;height:28px;padding:0 6px;border:1px solid #34363e;border-radius:6px;background:#202228;color:#ddd;font-size:10px}
+.select-row>input[type=number]:not(.text-input){max-width:72px}
+.select-row>select:not(.text-input):focus,.select-row>input[type=number]:not(.text-input):focus{border-color:var(--accent)}
+.select-row>button,.brush-preset-actions button,.panel-body>button.secondary{min-height:28px;padding:4px 10px;border:1px solid #34363e;border-radius:6px;background:#202228;color:#c9ccd3;font-size:10px;font-weight:600;cursor:pointer}
+.select-row>button:hover:not(:disabled),.brush-preset-actions button:hover:not(:disabled),.panel-body>button.secondary:hover:not(:disabled){border-color:#564037;color:#ff967b}
+.select-row>button:disabled,.brush-preset-actions button:disabled,.panel-body>button.secondary:disabled{opacity:.45;cursor:not-allowed}
+.panel-body>button.secondary{width:100%;margin:6px 0}
+@media(max-width:680px){.select-row>select:not(.text-input),.select-row>input[type=number]:not(.text-input){height:36px}.select-row>button,.brush-preset-actions button,.panel-body>button.secondary{min-height:36px}}
