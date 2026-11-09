@@ -12,8 +12,9 @@ import { validBrushPresetId, type BrushPresetId } from './brushPresets.ts';
 import { validBrushPressureCurve, type BrushPressureCurve } from './brushPressure.ts';
 import { normalizeSecondaryBrushPreset, type SecondaryBrushPreset } from './brushSecondary.ts';
 import { validBrushSize } from './brushSize.ts';
-import { FONTS, type SelectionOperation } from './document.ts';
+import { type SelectionOperation } from './document.ts';
 import { FONT_PREVIEW_SIZES, type FontPreviewSize } from './fontPreview.ts';
+import { isSelectableFontFamily } from './fontLibrary.ts';
 import { GRADIENT_BLEND_DEFAULT, validGradientBlendMode, type GradientBlendMode } from './gradientBlend.ts';
 import { isGradientStops, normalizeGradientStops, type GradientStop } from './gradientStops.ts';
 import {
@@ -108,7 +109,7 @@ export type ToolSettingValues = {
   polygonSides: number;
   polygonInnerRadius: number;
   text: string;
-  fontFamily: (typeof FONTS)[number];
+  fontFamily: string;
   fontSize: number;
   fontPreviewSize: FontPreviewSize;
   selectionOperation: SelectionOperation;
@@ -222,7 +223,7 @@ export const TOOL_SETTING_FIELDS: { readonly [K in ToolSettingKey]: ToolSettingF
   text: option('Text content', 'Your text', (value) =>
     typeof value === 'string' && value.length <= TOOL_PRESET_TEXT_MAX ? value : undefined,
   ),
-  fontFamily: option<(typeof FONTS)[number]>('Font', 'Arial', oneOf(FONTS)),
+  fontFamily: option<string>('Font', 'Arial', (value) => (isSelectableFontFamily(value) ? value : undefined)),
   fontSize: { label: 'Font size', category: 'size', default: 56, parse: num(16, 160) },
   fontPreviewSize: option<FontPreviewSize>('Font preview size', 'medium', oneOf(FONT_PREVIEW_SIZES)),
   selectionOperation: option<SelectionOperation>('Selection mode', 'replace', oneOf(['replace', 'add', 'subtract', 'intersect'] as const)),

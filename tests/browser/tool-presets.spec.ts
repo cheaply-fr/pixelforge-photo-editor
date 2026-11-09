@@ -272,5 +272,5 @@ test('tools without options show no presets control', async ({ page }) => {
   await selectTool(page, 'Text');
   await expect(status(page)).toContainText('Text · No preset applied');
   await selectTool(page, 'Select');
-  await expect(status(page)).toContainText('Select: No preset applied');
+  await expect(status(page)).toContainText('Select · No preset applied');
 });
