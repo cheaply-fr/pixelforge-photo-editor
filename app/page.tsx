@@ -11861,6 +11861,16 @@ export default function Home() {
       try { localStorage.setItem(TYPE_PRESETS_STORAGE_KEY, serializeTypePresets(next)); } catch { /* storage unavailable */ }
     },
   };
+  /**
+   * The Text section's Font picker works like Photoshop's options bar: it
+   * styles the active type layer (or the selected characters while editing)
+   * and also becomes the default for new type.
+   */
+  const chooseTextToolFont = (family: string) => {
+    typeActions.character({ fontFamily: family });
+    if (typeView.editing)
+      window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.type-editor-input')?.focus({ preventScroll: true }), 0);
+  };
   const toggleTypePanel = (panel: 'character' | 'paragraph') => {
     const open = !typePanelsOpen[panel];
     setTypePanelsOpen((value) => ({ ...value, [panel]: open }));
@@ -20582,7 +20592,7 @@ export default function Home() {
                   onChange={(e) => setText(e.target.value)}
                 />
               </label>
-              <div className="select-row font-select-row" data-type-keep=""><span>Font</span><FontFamilySelect label="Text tool font" value={textFields.fontFamily} disabled={typeView.locked} onChange={(family) => (textFields.target === 'type' ? typeActions.character({ fontFamily: family }) : setFontFamily(family))} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <div className="select-row font-select-row" data-type-keep=""><span>Font</span><FontFamilySelect label="Text tool font" value={textFields.fontFamily} disabled={typeView.locked} onChange={chooseTextToolFont} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
               <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
               {/* The check covers the new-type font, so it shows only while the picker shows that font. */}
               {fontAvailability === 'fallback' && textFields.fontFamily === fontFamily && (

@@ -4,6 +4,7 @@ import { downloadedProject } from './project-file';
 
 type Run = { length: number; style?: Record<string, unknown> };
 type TextLayer = {
+  fontFamily?: string;
   id: string;
   kind: 'text';
   name: string;
@@ -507,6 +508,50 @@ test('the Text sidebar Font and Size edit the selected text layer and the live e
   const families = new Set([saved[0].fontFamily, ...runs.map((run) => run.style?.fontFamily).filter(Boolean)]);
   expect(saved[0].fontFamily === 'Courier New' || (runs.length > 0 && runs.every((run) => run.style?.fontFamily === 'Courier New'))).toBe(true);
   expect(families.has('Courier New')).toBe(true);
+});
+
+test('the Text section Font picker changes the font of existing type as one undo step', async ({ page }) => {
+  await startType(page, 'iiiiii');
+  await clickCanvas(page, 0.2, 0.3);
+  await page.keyboard.press(`${mod}+Enter`);
+  await expect(page.getByRole('button', { name: 'Move tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await settle(page);
+  const before = await ink(page);
+  expect(before.count).toBeGreaterThan(0);
+
+  // The committed layer stays selected; its Font picker shows the layer font.
+  const font = page.getByLabel('Text tool font', { exact: true });
+  await expect(font).toHaveValue('Arial');
+  // A monospace library font makes the narrow "i" glyphs much wider.
+  await font.selectOption('JetBrains Mono');
+  await expect(font).toHaveValue('JetBrains Mono');
+  await expect.poll(async () => textLayers(await project(page))[0].fontFamily).toBe('JetBrains Mono');
+  await expect.poll(async () => {
+    await settle(page);
+    const after = await ink(page);
+    return after.right - after.left;
+  }, { timeout: 15_000 }).toBeGreaterThan((before.right - before.left) * 1.5);
+
+  // One undo restores the previous font.
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Undo/ }).click();
+  await settle(page);
+  expect(textLayers(await project(page))[0].fontFamily).toBe('Arial');
+  await expect(font).toHaveValue('Arial');
+
+  // While editing, the picker styles the selected characters and keeps typing in the type.
+  await selectTool(page, 'Horizontal Type');
+  await clickCanvas(page, 0.2, 0.29);
+  await expect(overlay(page)).toHaveAttribute('data-editing', 'true');
+  await page.keyboard.press(`${mod}+A`);
+  await font.selectOption('Georgia');
+  await expect(editor(page)).toBeFocused();
+  await expect(overlay(page)).toHaveAttribute('data-editing', 'true');
+  await page.keyboard.press(`${mod}+Enter`);
+  const [edited] = textLayers(await project(page));
+  expect(edited.text).toBe('iiiiii');
+  const runFamilies = (edited.rich?.runs ?? []).map((run) => run.style?.fontFamily ?? edited.fontFamily);
+  expect(runFamilies.length ? runFamilies.every((family) => family === 'Georgia') : edited.fontFamily === 'Georgia').toBe(true);
 });
 
 // The live pane animates the reveal (no reduced motion) and the Text section
