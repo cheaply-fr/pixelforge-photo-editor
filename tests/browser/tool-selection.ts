@@ -9,7 +9,7 @@ const TOOL_FAMILIES = [
   ['Crop', 'Perspective Crop', 'Slice', 'Slice Select', 'Frame'],
   ['Gradient', 'Fill'],
   ['Brush', 'Pencil', 'Color Replace', 'Mixer Brush'],
-  ['Shape', 'Ellipse', 'Line', 'Polygon'],
+  ['Shape', 'Rounded Rectangle', 'Ellipse', 'Line', 'Polygon', 'Custom Shape'],
   ['Eyedropper', 'Color Sampler', 'Ruler', 'Note', 'Count'],
   ['Eraser', 'Background Eraser', 'Magic Eraser'],
   ['Dodge', 'Burn', 'Sponge'],
@@ -18,7 +18,8 @@ const TOOL_FAMILIES = [
   ['History Brush', 'Art History Brush'],
   ['Smudge', 'Blur', 'Sharpen'],
   ['Mask Brush', 'Mask Eraser', 'Adjustment Brush'],
-  ['Pen', 'Freeform Pen', 'Curvature Pen'],
+  ['Pen', 'Freeform Pen', 'Curvature Pen', 'Add Anchor Point', 'Delete Anchor Point', 'Convert Point'],
+  ['Path Selection', 'Direct Selection'],
 ] as const;
 
 const FLYOUT_LABELS: Readonly<Record<string, string>> = {

@@ -37,6 +37,10 @@ three implemented selection tools, while `L` retains the legacy lasso family.
 The Pen, Freeform Pen and Curvature Pen variants likewise occupy one `P`
 family slot with a visible arrow and icon-bearing flyout; the active variant
 replaces that representative slot and the remembered choice survives reload.
+The Pen flyout also lists Add Anchor Point, Delete Anchor Point and Convert
+Point (no shortcut badge; `P` does not cycle them), and Path Selection and
+Direct Selection share one `A` family slot with Path Selection as its
+representative (see `docs/path-edit-tools-contract.md`).
 Measurement tools remain independent slots so Eyedropper, Color Sampler, Ruler,
 Note and Count are visible without being incorrectly collapsed into one family.
 

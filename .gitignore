@@ -44,3 +44,6 @@ playwright-report/
 test-results/
 *.tsbuildinfo
 gha-creds-*.json
+
+# generated font library (scripts/copy-fonts.mjs)
+/public/fonts/

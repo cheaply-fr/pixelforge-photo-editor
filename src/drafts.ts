@@ -4,6 +4,8 @@ import {
   assetBytes,
   formatMebibytes,
 } from './projectLimits.ts';
+import { validCornerRadius } from './vectorShapes.ts';
+import { validCustomShapeChoice } from './customShapeLibrary.ts';
 import type { CloudLink } from './cloud';
 import {
   EXPORT_FORMATS,
@@ -20,7 +22,6 @@ import {
   effectiveAdjustments,
   effectiveTextLayer,
   neutral,
-  FONTS,
   validId,
   type Assets,
   type Frame,
@@ -97,12 +98,15 @@ import {
 } from './metadata.ts';
 import { normalizeTypeStyle, type TypeStyle } from './typeStyles.ts';
 import { normalizeFontPreviewSize, type FontPreviewSize } from './fontPreview.ts';
+import { isSelectableFontFamily } from './fontLibrary.ts';
 import { BRUSH_SIZE_MAX, BRUSH_SIZE_MIN } from './brushSize.ts';
 import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from './brush.ts';
 import { BRUSH_SCATTER_MAX, validBrushDynamics, type BrushDynamics } from './brushDynamics.ts';
 import { validPaintSymmetry, type PaintSymmetrySettings } from './paintSymmetry.ts';
+import { validSmudgeSettings, type SmudgeSettings } from './smudge.ts';
 import { validGradientBlendMode, validGradientOpacity, type GradientBlendMode } from './gradientBlend.ts';
 import { validBrushBlendMode, type BrushBlendMode } from './brushBlend.ts';
+import { validBrushStrands, type BrushStrandSettings } from './brushStrands.ts';
 export type Tool =
   | 'move'
   | 'hand'
@@ -148,11 +152,17 @@ export type Tool =
   | 'pen'
   | 'freeform-pen'
   | 'curvature-pen'
+  | 'add-anchor'
+  | 'delete-anchor'
+  | 'convert-point'
+  | 'path-select'
   | 'direct-select'
   | 'rectangle'
+  | 'rounded-rectangle'
   | 'ellipse'
   | 'line'
   | 'polygon'
+  | 'custom-shape'
   | 'select'
   | 'ellipse-select'
   | 'row-select'
@@ -179,6 +189,8 @@ export type Settings = {
   brushOpacity?: number;
   /** Brush/Pencil blend mode (Canvas-native modes); older drafts omit it and paint Normal. */
   brushBlendMode?: BrushBlendMode;
+  /** Brush Silk strands mode; older drafts omit it and paint ordinary dabs. */
+  brushStrands?: BrushStrandSettings;
   hardness?: number;
   /** Opt-in pen/touch pressure mapping for configured brush diameter. */
   pressureSize?: boolean;
@@ -202,6 +214,10 @@ export type Settings = {
   polygonSides?: number;
   /** Parametric star inner radius (0.1–0.9 of the outer radius). */
   polygonInnerRadius?: number;
+  /** Rounded Rectangle tool corner radius in px (0–8,000); clamped per drawn box. */
+  shapeCornerRadius?: number;
+  /** Custom Shape tool choice: a built-in library id or `path-preset:<id>`. */
+  customShapeId?: string;
   /** Spacing between brush dabs as a percent of diameter (1–1,000). */
   spacing?: number;
   /** Pointer stabilization amount for brush-family tools, from 0 to 100. */
@@ -268,6 +284,11 @@ export type Settings = {
   spongeVibrance?: number;
   /** Bounded wet/load/mix controls persisted for the Mixer Brush. */
   mixerBrush?: MixerBrushSettings;
+  /**
+   * Smudge Strength, Mode, Finger Painting, Sample All Layers and pressure
+   * strength. Older drafts omit it; their Smudge "Flow" was `brushOpacity`.
+   */
+  smudge?: Partial<SmudgeSettings>;
   /** Bounded restore controls persisted for the History Brush. */
   historyBrush?: HistoryBrushSettings;
   /** Bounded painterly source-safe controls persisted for Art History Brush. */
@@ -281,7 +302,7 @@ export type Settings = {
   text: string;
   fontSize: number;
   /** Local/system font used when the Text tool creates a new editable layer. */
-  fontFamily?: (typeof FONTS)[number];
+  fontFamily?: string;
   /** Preview scale used by the Text tool's bounded local font picker. */
   fontPreviewSize?: FontPreviewSize;
   /** Optional local default for new or existing editable text layers. */
@@ -410,11 +431,17 @@ function validSettings(settings: unknown): settings is Settings {
       'pen',
       'freeform-pen',
       'curvature-pen',
+      'add-anchor',
+      'delete-anchor',
+      'convert-point',
+      'path-select',
       'direct-select',
       'rectangle',
+      'rounded-rectangle',
       'ellipse',
       'line',
       'polygon',
+      'custom-shape',
       'select',
       'ellipse-select',
       'row-select',
@@ -428,7 +455,7 @@ function validSettings(settings: unknown): settings is Settings {
     ].includes(candidate.tool as Tool) ||
     typeof candidate.text !== 'string' ||
     candidate.text.length > 10000 ||
-    (candidate.fontFamily !== undefined && !FONTS.includes(candidate.fontFamily as (typeof FONTS)[number])) ||
+    (candidate.fontFamily !== undefined && !isSelectableFontFamily(candidate.fontFamily)) ||
     (candidate.fontPreviewSize !== undefined && normalizeFontPreviewSize(candidate.fontPreviewSize) !== candidate.fontPreviewSize) ||
     (candidate.exportFormat !== undefined &&
       !EXPORT_FORMATS.includes(candidate.exportFormat)) ||
@@ -510,6 +537,8 @@ function validSettings(settings: unknown): settings is Settings {
       return false;
     }
   }
+  if (!validCornerRadius(candidate.shapeCornerRadius)) return false;
+  if (candidate.customShapeId !== undefined && !validCustomShapeChoice(candidate.customShapeId)) return false;
   if (candidate.gradientEnd !== undefined && !['transparent', 'background'].includes(candidate.gradientEnd)) return false;
   if (candidate.gradientMidpoint !== undefined && candidate.gradientMidpoint !== 'none' &&
     (typeof candidate.gradientMidpoint !== 'string' || !/^#[a-f\d]{6}$/i.test(candidate.gradientMidpoint))) return false;
@@ -519,9 +548,11 @@ function validSettings(settings: unknown): settings is Settings {
   if (candidate.gradientOpacity !== undefined && !validGradientOpacity(candidate.gradientOpacity)) return false;
   if (candidate.brushBlendMode !== undefined && !validBrushBlendMode(candidate.brushBlendMode)) return false;
   if (candidate.brushDynamics !== undefined && !validBrushDynamics(candidate.brushDynamics)) return false;
+  if (candidate.brushStrands !== undefined && !validBrushStrands(candidate.brushStrands)) return false;
   if (candidate.paintSymmetry !== undefined && !validPaintSymmetry(candidate.paintSymmetry)) return false;
   if (candidate.secondaryBrushPreset !== undefined && normalizeSecondaryBrushPreset(candidate.secondaryBrushPreset) !== candidate.secondaryBrushPreset) return false;
   if (candidate.mixerBrush !== undefined && !validMixerBrushSettings(candidate.mixerBrush)) return false;
+  if (candidate.smudge !== undefined && !validSmudgeSettings(candidate.smudge)) return false;
   if (candidate.historyBrush !== undefined && !validHistoryBrushSettings(candidate.historyBrush)) return false;
   if (candidate.artHistoryBrush !== undefined && !validArtHistoryBrushSettings(candidate.artHistoryBrush)) return false;
   if (candidate.historySourceIndex !== undefined &&

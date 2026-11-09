@@ -35,10 +35,23 @@ Arranging never releases another layer's clipping:
 - A clipped layer selected on its own keeps the single-step behaviour inside
   its group; stepping out of the group releases only that layer, and stepping
   up past a neighbouring clipping group jumps that whole group.
-- The Layers panel has no drag-and-drop reorder; Raise/Lower are its only
-  reorder controls, so an unclipped layer cannot be dropped into the middle
-  of a group. (Chosen behaviour: such a move skips the whole group rather than
-  joining it.)
+- Arrange steps (menu, Raise/Lower, Ctrl+[ / Ctrl+]) skip the whole group
+  rather than joining it.
+- Layers panel drag-and-drop follows the same unit rule: dragging a base
+  carries its clipped layers, and dragging a clipped layer out of its group
+  releases only that layer (named in the status). Dropping an unclipped
+  raster or smart-object layer between a base and its clipped layers
+  **joins** the group as clipped (like Photoshop's Alt-drop); the insertion
+  hint says "Drop into clipping group of <base>". Layers that cannot be
+  clipped (adjustment, text, shapes, a base carrying its own clipped layers,
+  a dragged folder) are redirected directly above the group instead, and the
+  hint says so. See layers-panel-interaction-contract.md.
+
+Deleting layers (Layer menu, inspector, row trash button, Delete key, row
+menu) keeps the remaining group intact: deleting a clipped member re-points
+the clipped layer above it to the next surviving member, so the group keeps
+its base; deleting a base releases its lowest clipped layer, which becomes the
+base of the clipped layers above it (the status names the released layer).
 
 Rasterize and Rasterize Type Layer keep the layer's ID, name, folder,
 visibility, lock, opacity, blend, live layer styles, transform link and
@@ -52,8 +65,9 @@ outside. Apply Image and Calculations composite the visible image and still
 release the target's clipping link.
 
 The Layers panel indents each clipped row under its base with an `↳` glyph
-(hidden from assistive technology) and exposes "Clipped to <group base>" as
-the row's accessible description; the row's accessible name stays
+(hidden from assistive technology) and exposes "Clipped to <group base>"
+(followed by the row's stack position, e.g. "Clipped to Figure; layer 2 of 5,
+above Figure") as the row's accessible description; the row's accessible name stays
 "Select layer <name>". The indent fits the compact mobile layout.
 
 New layers (Add paint layer, fill, adjustment, text, shape and path layers,

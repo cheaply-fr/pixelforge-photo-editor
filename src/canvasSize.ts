@@ -8,6 +8,7 @@
 import { isRasterContentLayer, type Assets, type Frame, type Layer, type Matrix } from './document.ts';
 import {
   alignedTextOffset,
+  measureTextLayerLayout,
   identity,
   trackedTextWidth,
   validMatrix,
@@ -100,6 +101,8 @@ export function estimatedTextLayerBounds(
   layer: Extract<Layer, { kind: 'text' }>,
 ): PixelBounds {
   if (layer.text.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  if (layer.textMode === 'paragraph' && (layer.orientation ?? 'horizontal') === 'horizontal')
+    return { x: 0, y: 0, width: Math.max(1, layer.boxWidth), height: Math.max(layer.fontSize * 1.3, layer.boxHeight ?? layer.fontSize * 1.3) };
   if ((layer.orientation ?? 'horizontal') === 'vertical') {
     const columnAdvance = Math.max(1, layer.fontSize * Math.max(0.5, layer.lineHeight ?? 1.2)),
       glyphAdvance = layer.fontSize + (layer.letterSpacing ?? 0);
@@ -155,6 +158,14 @@ export function measuredTextLayerBounds(
   context: CanvasRenderingContext2D,
   layer: Extract<Layer, { kind: 'text' }>,
 ): PixelBounds {
+  // Paragraph, point-mode and styled type use the rich layout (wrapping,
+  // per-run sizes, indents); legacy layers keep the measurement below.
+  if ((layer.textMode || layer.rich || layer.paragraph) && (layer.orientation ?? 'horizontal') === 'horizontal') {
+    const layout = measureTextLayerLayout(context, layer);
+    if (layer.textMode === 'paragraph')
+      return { x: 0, y: 0, width: layout.boxWidth, height: Math.max(1, Math.min(layer.boxHeight ?? layout.height, Math.max(layout.height, layer.fontSize * 1.3))) };
+    return { x: Math.min(0, layout.left), y: 0, width: Math.max(1, layout.width + Math.max(0, layout.left)), height: Math.max(layer.fontSize * 1.3, layout.height + layer.fontSize * 0.3) };
+  }
   const boxWidth = Math.max(1, layer.boxWidth ?? 640),
     lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
     spacing = layer.letterSpacing ?? 0,

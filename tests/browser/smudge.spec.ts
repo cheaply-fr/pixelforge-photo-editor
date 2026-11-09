@@ -111,7 +111,7 @@ const stroke = async (page: Page, startX: number, endX: number, pointerType = 'm
 
 test.beforeEach(async ({ page }) => openEditor(page));
 
-test('R cycles Rotate View and Smudge and its Flow setting survives a local draft round trip', async ({ page }) => {
+test('R cycles Rotate View and Smudge and its Strength setting survives a local draft round trip', async ({ page }) => {
   await importFixture(page);
   await selectTool(page, 'Smudge');
   await expect(page.getByRole('button', { name: 'Smudge tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -119,29 +119,31 @@ test('R cycles Rotate View and Smudge and its Flow setting survives a local draf
   await expect(page.getByRole('button', { name: 'Rotate View tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('Shift+r');
   await expect(page.getByRole('button', { name: 'Smudge tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByLabel('Flow', { exact: true }).fill('57');
+  await expect(page.getByLabel('Flow', { exact: true })).toHaveCount(0);
+  await page.getByLabel('Strength', { exact: true }).fill('57');
   const saved = await project(page);
-  expect(saved.settings).toMatchObject({ tool: 'smudge', brushOpacity: 57 });
+  expect(saved.settings).toMatchObject({ tool: 'smudge', smudge: { strength: 57 } });
   await page.reload();
   await expect(page.getByRole('button', { name: 'Smudge tool', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByLabel('Flow', { exact: true })).toHaveValue('57');
+  await expect(page.getByLabel('Strength', { exact: true })).toHaveValue('57');
 });
 
 test('Smudge moves representative colour while preserving alpha, undo/redo and reload', async ({ page }) => {
   await importFixture(page);
   const before = await project(page);
   const id = (value: Project) => value.history[value.index].layers.at(-1)!.asset!;
-  const beforePixels = await sample(page, before.assets[id(before)]!, [{ x: 0.52 }, { x: 0.76 }]);
+  const beforePixels = await sample(page, before.assets[id(before)]!, [{ x: 0.52 }, { x: 0.95 }]);
   await selectTool(page, 'Smudge');
   await page.getByLabel('Size', { exact: true }).fill('36');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
-  await page.getByLabel('Flow', { exact: true }).fill('100');
+  await page.getByLabel('Strength', { exact: true }).fill('100');
   await stroke(page, 0.35, 0.67);
   const after = await project(page);
-  const afterPixels = await sample(page, after.assets[id(after)]!, [{ x: 0.52 }, { x: 0.76 }]);
+  const afterPixels = await sample(page, after.assets[id(after)]!, [{ x: 0.52 }, { x: 0.95 }]);
   expect(after.index).toBe(before.index + 1);
   expect(afterPixels[0][0]).toBeGreaterThan(beforePixels[0][0]);
-  expect(afterPixels[0][3]).toBe(beforePixels[0][3]);
+  // Equal-alpha paint is dragged without changing alpha (±1 for premultiplied rounding).
+  expect(Math.abs(afterPixels[0][3] - beforePixels[0][3])).toBeLessThanOrEqual(1);
   expect(afterPixels[1]).toEqual(beforePixels[1]);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
@@ -156,7 +158,7 @@ test('Smudge moves representative colour while preserving alpha, undo/redo and r
   const reloaded = await project(page);
   expect(reloaded.assets[id(reloaded)]!.w).toBe(after.assets[id(after)]!.w);
   expect(reloaded.assets[id(reloaded)]!.h).toBe(after.assets[id(after)]!.h);
-  expect(await sample(page, reloaded.assets[id(reloaded)]!, [{ x: 0.52 }, { x: 0.76 }]))
+  expect(await sample(page, reloaded.assets[id(reloaded)]!, [{ x: 0.52 }, { x: 0.95 }]))
     .toEqual(afterPixels);
 });
 
@@ -178,7 +180,7 @@ test('Smudge selection alpha protects unselected pixels and a stationary tap is 
   await selectTool(page, 'Smudge');
   await page.getByLabel('Size', { exact: true }).fill('32');
   await page.getByLabel('Hardness', { exact: true }).fill('100');
-  await page.getByLabel('Flow', { exact: true }).fill('100');
+  await page.getByLabel('Strength', { exact: true }).fill('100');
   // Cross the colour edge and the selection's right boundary. The brush
   // would smear the blue pixel at .62 without UI selection-mask sampling.
   await stroke(page, 0.35, 0.67);
@@ -186,7 +188,7 @@ test('Smudge selection alpha protects unselected pixels and a stationary tap is 
   const changedPixels = await sample(page, activeAsset(changed), samplePoints);
   expect(changed.history.length).toBe(selected.history.length + 1);
   expect(changedPixels[0][0]).toBeGreaterThan(selectedPixels[0][0]);
-  expect(changedPixels[0][3]).toBe(selectedPixels[0][3]);
+  expect(Math.abs(changedPixels[0][3] - selectedPixels[0][3])).toBeLessThanOrEqual(1);
   expect(changedPixels[1]).toEqual(selectedPixels[1]);
   expect(changedPixels[2]).toEqual(selectedPixels[2]);
   await selectTool(page, 'Smudge');

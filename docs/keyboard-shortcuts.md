@@ -32,12 +32,14 @@ Use `Cmd` on macOS and `Ctrl` on Windows/Linux.
 | `Q` | Toggle Quick Mask mode |
 | `D` | Reset foreground/background to black/white |
 | `X` | Swap foreground/background colors |
-| `[` / `]` | Decrease/increase brush size (1–5,000 px; proportional steps: 1 px below 10, 5 px below 100, 10/25/50/100/200/500 px for larger brushes) |
+| `[` / `]` | Decrease/increase brush size (1–5,000 px; proportional steps: 1 px below 10, 5 px below 100, 10/25/50/100/200/500 px for larger brushes) for every painting tool, including Smudge. `Ctrl+[` / `Ctrl+]` stay unbound (reserved for Photoshop's Send Backward / Bring Forward) |
 
-`P` activates the straight-segment Pen and `A` activates Direct Selection. Pen
+`P` activates the straight-segment Pen and `A` cycles Path Selection then
+Direct Selection (Shift+A reverses). Add/Delete Anchor Point and Convert Point
+have no shortcut, as in Photoshop, and are chosen from the Pen flyout. Pen
 clicks place path nodes; click the first node after three or more points to
 close and commit the editable path layer. Escape cancels an open Pen gesture or
-a Direct Selection drag. Photoshop tools that PixelForge has not implemented
+a Path Selection, Convert Point or Direct Selection drag. Photoshop tools that PixelForge has not implemented
 yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View and Smudge, with Shift reversing the family; the menu and toolbar controls persist only the viewport angle. Escape cancels an in-progress Rotate View gesture.**
 
 ## Commands and view
@@ -56,6 +58,10 @@ yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View 
 | `Cmd/Ctrl+G` | Put the active layer in a new group |
 | `Cmd/Ctrl+Shift+G` | Remove the active layer from its group |
 | `Cmd/Ctrl+J` | Duplicate the active layer |
+| `Cmd/Ctrl+]` / `Cmd/Ctrl+[` | Bring Forward / Send Backward the selected layers |
+| `Cmd/Ctrl+Shift+]` / `Cmd/Ctrl+Shift+[` | Bring to Front / Send to Back the selected layers |
+| `Alt+↑` / `Alt+↓` (Layers panel row focused) | Bring Forward / Send Backward that row; add `Shift` for front/back |
+| `Delete` / `Backspace` (Layers panel row focused) | Delete that row (or the selection it belongs to) |
 | `Cmd/Ctrl+Alt+I` | Open image resize |
 | `0` | Fit to screen |
 | `1` | Actual size |

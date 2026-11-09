@@ -129,10 +129,8 @@ test('RGB Curves changes representative pixels, keeps source editable, and survi
 test('Curve graph supports pointer editing and a deterministic channel reset', async ({
   page,
 }) => {
-  const graph = page.getByRole('button', {
-    name: 'RGB curve; drag to add or move points',
-  });
   await openPanel(page, 'Adjust selected layer');
+  const graph = page.getByTestId('rgb-curve-graph');
   const midpoint = page.getByLabel('RGB midpoint', { exact: true });
   await midpoint.fill('210');
   await expect(midpoint).toHaveValue('210');

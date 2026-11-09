@@ -813,6 +813,8 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   await page.keyboard.press('u');
   await expect(active('Shape')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('u');
+  await expect(active('Rounded Rectangle')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('u');
   await expect(active('Ellipse')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('m');
   await expect(active('Select')).toHaveAttribute('aria-pressed', 'true');
