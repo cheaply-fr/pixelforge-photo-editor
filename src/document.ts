@@ -188,6 +188,30 @@ import {
 } from './layerClipping.ts';
 import { isTextWarp, normalizeTextWarp, textWarpTransform, type TextWarp } from './textWarp.ts';
 import {
+  MAX_TEXT_LENGTH,
+  TEXT_ANTI_ALIAS,
+  TEXT_FIT,
+  TEXT_MODES,
+  baselineOffset,
+  clearTextMeasureCache,
+  fitTextScale,
+  fontCss,
+  layoutRichText,
+  normalizeParagraph,
+  renderedFontSize,
+  textAntiAliasAlpha,
+  validParagraphSettings,
+  validRichText,
+  type CharacterStyle,
+  type MeasureFn,
+  type ParagraphSettings,
+  type RichText,
+  type TextAntiAlias,
+  type TextFit,
+  type TextLayout,
+  type TextMode,
+} from './richText.ts';
+import {
   TILED_ASSET_MIN_PIXELS,
   dataUrlBytes,
   drawTiledAsset,
@@ -353,6 +377,22 @@ export type Layer = Common &
         openType?: OpenTypeSettings;
         /** Optional portable language and paragraph-direction metadata. */
         languageOptions?: TextLanguageSettings;
+        /**
+         * Point type (no wrapping) or paragraph type (wraps in boxWidth ×
+         * boxHeight). Omitted on legacy layers, which keep box-relative
+         * alignment without wrapping.
+         */
+        textMode?: TextMode;
+        /** Paragraph box height; text past it is hidden and flagged as overflow. */
+        boxHeight?: number;
+        /** Versioned character-style runs; omitted means one unstyled run. */
+        rich?: RichText;
+        /** Layer-wide paragraph settings (justify, indents, spacing, lists). */
+        paragraph?: ParagraphSettings;
+        /** Type anti-aliasing approximation; omitted means smooth. */
+        antiAlias?: TextAntiAlias;
+        /** Bounded dynamic text: scale type to fit the paragraph box. */
+        fit?: TextFit;
       }
     | {
         kind: 'rectangle';
@@ -1195,6 +1235,108 @@ export function alignedTextOffset(
   return 0;
 }
 
+/** Apply a text layer's base font and OpenType presentation to a context. */
+export function prepareTextContext(
+  context: CanvasRenderingContext2D,
+  layer: Extract<Layer, { kind: 'text' }>,
+): void {
+  context.fillStyle = layer.color;
+  context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
+  const openType = normalizeOpenType(layer.openType),
+    typography = context as CanvasRenderingContext2D & {
+      fontKerning?: string;
+      fontVariantLigatures?: string;
+      fontFeatureSettings?: string;
+      fontVariantCaps?: string;
+      fontVariationSettings?: string;
+    };
+  typography.fontKerning = openType.kerning;
+  typography.fontVariantLigatures = openType.ligatures
+    ? openType.discretionaryLigatures
+      ? 'common-ligatures discretionary-ligatures'
+      : 'common-ligatures'
+    : 'none';
+  typography.fontFeatureSettings = `${openType.contextualAlternates ? '"calt"' : '"calt" 0'}, ${openType.discretionaryLigatures ? '"dlig"' : '"dlig" 0'}`;
+  typography.fontVariantCaps = openType.smallCaps ? 'small-caps' : 'normal';
+  typography.fontVariationSettings = openTypeCanvasValues(openType).fontVariationSettings;
+  context.textBaseline = 'top';
+}
+
+/** Reshape text coverage in place for a non-smooth anti-aliasing mode. */
+export function applyTextAntiAlias(data: Uint8ClampedArray, mode: TextAntiAlias): void {
+  if (mode === 'smooth') return;
+  const table = new Uint8ClampedArray(256);
+  for (let alpha = 0; alpha < 256; alpha++) table[alpha] = textAntiAliasAlpha(mode, alpha);
+  for (let index = 3; index < data.length; index += 4) data[index] = table[data[index]];
+}
+
+const fontLoadTimeoutMs = 1500;
+/**
+ * Wait (bounded) for every font family a text layer uses so Canvas measures
+ * and draws the real face rather than a fallback. Unknown or blocked fonts
+ * resolve after the timeout and render with browser fallback.
+ */
+export async function ensureTextLayerFonts(
+  layer: Pick<Extract<Layer, { kind: 'text' }>, 'fontFamily' | 'fontSize' | 'bold' | 'rich' | 'text'>,
+): Promise<boolean> {
+  const fonts = (globalThis as { document?: { fonts?: FontFaceSet } }).document?.fonts;
+  if (!fonts || typeof fonts.check !== 'function') return true;
+  const requests = new Set<string>([`${layer.bold ? '700' : '400'} 16px "${layer.fontFamily}"`]);
+  for (const run of layer.rich?.runs ?? []) {
+    const family = run.style?.fontFamily ?? layer.fontFamily;
+    const weight = run.style?.fontWeight ?? (layer.bold ? 700 : 400);
+    requests.add(`${run.style?.italic ? 'italic ' : ''}${weight} 16px "${family}"`);
+  }
+  const missing = [...requests].filter((font) => {
+    try {
+      return !fonts.check(font);
+    } catch {
+      return false;
+    }
+  });
+  if (!missing.length) return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const loaded = await Promise.race([
+    Promise.all(missing.map((font) => fonts.load(font, layer.text.slice(0, 64) || undefined).catch(() => []))).then(() => true),
+    new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), fontLoadTimeoutMs); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (loaded) clearTextMeasureCache();
+  return loaded;
+}
+
+/** Canvas measure function for rich-text layout that preserves `context.font`. */
+export function canvasTextMeasure(context: CanvasRenderingContext2D): MeasureFn {
+  const features = context as CanvasRenderingContext2D & { fontVariantCaps?: string; fontKerning?: string; fontVariantLigatures?: string; fontFeatureSettings?: string; fontVariationSettings?: string };
+  const measure: MeasureFn = (font, text) => {
+    // Minimal 2D contexts (tests, some workers) may not measure; estimate.
+    if (typeof context.measureText !== 'function')
+      return Array.from(text).length * Number(/([\d.]+)px/.exec(font)?.[1] ?? 16) * 0.6;
+    const previous = context.font,
+      caps = (context as CanvasRenderingContext2D & { fontVariantCaps?: string }).fontVariantCaps;
+    const typography = context as CanvasRenderingContext2D & { fontVariantCaps?: string };
+    context.font = font;
+    if (caps !== undefined) typography.fontVariantCaps = caps;
+    const width = context.measureText(text).width;
+    context.font = previous;
+    if (caps !== undefined) typography.fontVariantCaps = caps;
+    return width;
+  };
+  measure.cacheKey = [features.fontVariantCaps, features.fontKerning, features.fontVariantLigatures, features.fontFeatureSettings, features.fontVariationSettings].join('|');
+  return measure;
+}
+
+/** Lay out a text layer with Canvas metrics, including dynamic-text fitting. */
+export function measureTextLayerLayout(
+  context: CanvasRenderingContext2D,
+  layer: Extract<Layer, { kind: 'text' }>,
+): TextLayout {
+  const measure = canvasTextMeasure(context),
+    direction = resolvedTextDirection(layer.languageOptions),
+    scale = fitTextScale(layer, { measure, direction });
+  return layoutRichText(layer, { measure, direction, scale });
+}
+
 /** Draw an editable text layer while retaining alignment and tracking metadata. */
 export function drawTextLayer(
   context: CanvasRenderingContext2D,
@@ -1202,14 +1344,12 @@ export function drawTextLayer(
   path?: { points: readonly { x: number; y: number }[]; offset: number; reverse: boolean },
 ): void {
   const previousDirection = context.direction;
-  const boxWidth = Math.max(1, layer.boxWidth ?? 640),
-    align = layer.textAlign ?? 'left',
-    lineHeight = Math.max(0.5, layer.lineHeight ?? 1.2),
-    spacing = layer.letterSpacing ?? 0,
+  const spacing = layer.letterSpacing ?? 0,
     orientation = layer.orientation ?? 'horizontal',
     warp = normalizeTextWarp(layer.warp);
   context.direction = resolvedTextDirection(layer.languageOptions);
   if (path && orientation === 'horizontal') {
+    // Type on a path keeps the layer's base character style (bounded).
     const placements = layoutTextOnPath(context, layer.text, path.points, {
       offset: path.offset,
       reverse: path.reverse,
@@ -1225,46 +1365,79 @@ export function drawTextLayer(
     context.direction = previousDirection;
     return;
   }
-  if (orientation === 'vertical') {
-    const columnAdvance = Math.max(1, layer.fontSize * lineHeight);
-    for (const [columnIndex, line] of layer.text.split('\n').entries()) {
-      let y = 0;
-      const x = columnIndex * columnAdvance;
-      for (const glyph of Array.from(line)) {
-        context.fillText(glyph, x, y);
-        y += layer.fontSize + spacing;
+  const layout = measureTextLayerLayout(context, layer);
+  const previousFont = context.font,
+    previousFill = context.fillStyle,
+    previousAlign = context.textAlign,
+    typography = context as CanvasRenderingContext2D & { fontKerning?: string; fontVariantCaps?: string },
+    previousKerning = typography.fontKerning,
+    previousCaps = typography.fontVariantCaps;
+  // Layout already resolved visual positions; draw every run from its left edge.
+  context.textAlign = 'left';
+  const kerningFor = (style: CharacterStyle) =>
+    style.kerning === 'none' ? 'none' : style.kerning === 'metrics' ? 'normal' : previousKerning ?? 'auto';
+  const applyStyle = (style: CharacterStyle, size?: number) => {
+    context.font = fontCss(style, size);
+    // Assigning `font` resets OpenType caps; keep the layer's small-caps flag.
+    if (previousCaps !== undefined) typography.fontVariantCaps = previousCaps;
+    context.fillStyle = style.color;
+    if (previousKerning !== undefined) typography.fontKerning = kerningFor(style);
+  };
+  const decorations = (style: CharacterStyle, x: number, y: number, width: number) => {
+    if (!style.underline && !style.strikethrough) return;
+    const size = renderedFontSize(style),
+      thickness = Math.max(1, size / 15);
+    if (style.underline) context.fillRect(x, y + size * 0.92, width, thickness);
+    if (style.strikethrough) context.fillRect(x, y + size * 0.52, width, thickness);
+  };
+  for (const line of layout.lines) {
+    if (layout.boxHeight !== undefined && line.y + line.height > layout.boxHeight + 0.5 && line.end > line.start) break;
+    if (line.marker) {
+      applyStyle(line.marker.style);
+      context.fillText(line.marker.text, line.marker.x, line.y + (line.size - renderedFontSize(line.marker.style)) * 0.8);
+    }
+    for (const segment of line.segments) {
+      const style = segment.style,
+        size = renderedFontSize(style),
+        top = layout.vertical ? 0 : line.y + (line.size - size) * 0.8 + baselineOffset(style);
+      applyStyle(style);
+      const simple = !segment.perGlyph && warp.style === 'none' && !layout.vertical;
+      if (simple) {
+        context.fillText(segment.text, segment.x, top);
+        decorations(style, segment.x, top, segment.width);
+        continue;
       }
-    }
-    context.direction = previousDirection;
-    return;
-  }
-  for (const [lineIndex, line] of layer.text.split('\n').entries()) {
-    const width = trackedTextWidth(context, line, spacing),
-      start = alignedTextOffset(width, boxWidth, align),
-      y = lineIndex * layer.fontSize * lineHeight;
-    if (spacing === 0 && warp.style === 'none') {
-      context.fillText(line, start, y);
-      continue;
-    }
-    let x = start;
-    const glyphs = Array.from(line);
-    const total = Math.max(1, width);
-    for (const glyph of glyphs) {
-      const glyphWidth = context.measureText(glyph).width;
-      const center = x + glyphWidth / 2;
-      const transform = warp.style === 'none'
-        ? { x: 0, y: 0, rotation: 0 }
-        : textWarpTransform(warp.style, warp.bend, center / total, layer.fontSize);
-      if (transform.rotation || transform.y) {
-        context.save();
-        context.translate(center + transform.x, y + transform.y);
-        context.rotate(transform.rotation);
-        context.fillText(glyph, -glyphWidth / 2, 0);
-        context.restore();
-      } else context.fillText(glyph, x, y);
-      x += glyphWidth + spacing;
+      for (const glyph of segment.glyphs) {
+        const caret = layout.vertical ? line.carets.find((item) => item.offset === glyph.offset) : undefined;
+        const gx = glyph.x,
+          gy = layout.vertical ? (caret?.x ?? 0) : top;
+        const lower = style.caps === 'small-caps' && glyph.text !== glyph.text.toUpperCase();
+        const shown = lower ? glyph.text.toUpperCase() : glyph.text;
+        const glyphSize = lower ? size * 0.75 : size;
+        if (lower) applyStyle(style, glyphSize);
+        const sx = style.scaleX / 100,
+          sy = style.scaleY / 100,
+          dy = lower ? size * 0.8 * 0.25 : 0;
+        const transform = warp.style === 'none' || layout.vertical
+          ? { x: 0, y: 0, rotation: 0 }
+          : textWarpTransform(warp.style, warp.bend, (gx + glyph.width / 2) / Math.max(1, line.width + line.x), style.fontSize);
+        if (transform.rotation || transform.y || sx !== 1 || sy !== 1) {
+          context.save();
+          context.translate(gx + glyph.width / 2 + transform.x, gy + dy + transform.y + glyphSize * 0.8 * (1 - sy));
+          context.rotate(transform.rotation);
+          context.scale(sx, sy);
+          context.fillText(shown, -glyph.width / 2 / sx, 0);
+          context.restore();
+        } else context.fillText(shown, gx, gy + dy);
+        if (lower) applyStyle(style);
+      }
+      if (!layout.vertical) decorations(style, segment.x, top, segment.width);
     }
   }
+  context.font = previousFont;
+  context.fillStyle = previousFill;
+  context.textAlign = previousAlign;
+  if (previousKerning !== undefined) typography.fontKerning = previousKerning;
   context.direction = previousDirection;
 }
 
@@ -1361,6 +1534,7 @@ export function effectiveTextLayer<T extends Layer>(
     warp: normalizeTextWarp(value.warp),
     openType: normalizeOpenType(value.openType),
     languageOptions: normalizeTextLanguage(value.languageOptions),
+    ...(value.paragraph !== undefined ? { paragraph: normalizeParagraph(value.paragraph) } : {}),
     ...(normalizeTextPathBinding(value.textPath)
       ? { textPath: normalizeTextPathBinding(value.textPath) }
       : {}),
@@ -1678,7 +1852,13 @@ export function validateFrame(
       continue;
     } else if (layer.kind === 'text') {
       if (
-        !short(layer.text, 10000) ||
+        !short(layer.text, MAX_TEXT_LENGTH) ||
+        (layer.textMode !== undefined && !TEXT_MODES.includes(layer.textMode as TextMode)) ||
+        (layer.boxHeight !== undefined && !number(layer.boxHeight, 1, 16000)) ||
+        (layer.rich !== undefined && !validRichText(layer.rich, String(layer.text).length)) ||
+        (layer.paragraph !== undefined && !validParagraphSettings(layer.paragraph)) ||
+        (layer.antiAlias !== undefined && !TEXT_ANTI_ALIAS.includes(layer.antiAlias as TextAntiAlias)) ||
+        (layer.fit !== undefined && !TEXT_FIT.includes(layer.fit as TextFit)) ||
         !/^#[a-f\d]{6}$/i.test(String(layer.color)) ||
         !number(layer.fontSize, 1, 1000) ||
         !FONTS.includes(layer.fontFamily as (typeof FONTS)[number]) ||
@@ -3709,35 +3889,39 @@ export async function renderFrame(
     if (isRasterContentLayer(layer) && rasterSource)
       context.drawImage(rasterSource, 0, 0);
     if (layer.kind === 'text') {
-      context.fillStyle = layer.color;
-      context.font = `${layer.bold ? '700' : '400'} ${layer.fontSize}px "${layer.fontFamily}"`;
-      const openType = normalizeOpenType(layer.openType),
-        typography = context as CanvasRenderingContext2D & {
-          fontKerning?: string;
-          fontVariantLigatures?: string;
-          fontFeatureSettings?: string;
-          fontVariantCaps?: string;
-        };
-      typography.fontKerning = openType.kerning;
-      typography.fontVariantLigatures = openType.ligatures
-        ? openType.discretionaryLigatures
-          ? 'common-ligatures discretionary-ligatures'
-          : 'common-ligatures'
-        : 'none';
-      typography.fontFeatureSettings = `${openType.contextualAlternates ? '"calt"' : '"calt" 0'}, ${openType.discretionaryLigatures ? '"dlig"' : '"dlig" 0'}`;
-      typography.fontVariantCaps = openType.smallCaps ? 'small-caps' : 'normal';
-      (typography as CanvasRenderingContext2D & { fontVariationSettings?: string }).fontVariationSettings = openTypeCanvasValues(openType).fontVariationSettings;
-      context.textBaseline = 'top';
+      await ensureTextLayerFonts(layer);
       const binding = normalizeTextPathBinding(layer.textPath),
         pathLayer = binding
           ? frame.layers.find((candidate): candidate is Extract<Layer, { kind: 'path' }> => candidate.id === binding.pathLayerId && candidate.kind === 'path')
           : undefined,
         pathPoints = pathLayer && binding
           ? mapTextPathPoints(flattenTextPath(pathLayer.path), pathLayer.matrix, layer.matrix)
+          : undefined,
+        pathOption = pathPoints && binding
+          ? { points: pathPoints, offset: binding.offset, reverse: binding.reverse }
           : undefined;
-      drawTextLayer(context, layer, pathPoints && binding
-        ? { points: pathPoints, offset: binding.offset, reverse: binding.reverse }
-        : undefined);
+      const antiAlias = layer.antiAlias ?? 'smooth';
+      if (antiAlias === 'smooth') {
+        prepareTextContext(context, layer);
+        drawTextLayer(context, layer, pathOption);
+      } else {
+        // Anti-aliasing modes reshape the coverage of the text alone, so draw
+        // it on a scratch surface with the same transform and composite the
+        // result with the layer's opacity, blend and filter state.
+        const target = context.canvas,
+          scratch = surface(target.width, target.height),
+          scratchContext = scratch.getContext('2d')!;
+        scratchContext.setTransform(context.getTransform());
+        prepareTextContext(scratchContext, layer);
+        drawTextLayer(scratchContext, layer, pathOption);
+        const pixels = scratchContext.getImageData(0, 0, scratch.width, scratch.height);
+        applyTextAntiAlias(pixels.data, antiAlias);
+        scratchContext.putImageData(pixels, 0, 0);
+        context.save();
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.drawImage(scratch, 0, 0);
+        context.restore();
+      }
     }
     if (layer.kind === 'rectangle') {
       context.fillStyle = layer.color;
