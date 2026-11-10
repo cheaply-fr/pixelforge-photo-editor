@@ -161,8 +161,9 @@ the least recently used. Snapshots are released when another document is
 installed. The `pixelforge.composite-cache` mark reports `reusedLayers`, the
 number of bottom layers taken from a snapshot.
 
-While a layer is painted, the layers above it do not change, so the same
-context also keeps one canvas-sized composite of the layers above the edited
+While a layer is painted, the layers above it do not change, so on canvases
+of at least 4 MP (`COMPOSITE_SUFFIX_MIN_PIXELS`) the same context also keeps
+one canvas-sized composite of the layers above the edited
 one, drawn onto a transparent surface (`compositeSuffixStart`). The edited
 layer is the first live override (a stroke preview), else the active layer;
 an edited folder member makes the whole folder the edited unit. A render that
@@ -183,9 +184,11 @@ leave half-drawn pixels behind a valid key. The range needs a budget of at
 least two canvas-sized surfaces and takes one of the prefix snapshot slots
 while it is kept (so 2–3 prefix snapshots on desktops and 1 on phones at
 2646 × 4096; none at 2 GB or less). The mark reports `suffixLayers`, the
-number of top layers drawn from it. On-screen results can differ from an
-uncached render by Canvas rounding (at most a couple of levels per channel);
-exports never use these caches.
+number of top layers drawn from it. Flattening the range first changes the
+order of Canvas's 8-bit rounding, so on those large canvases the screen can
+differ from a sequential render by a level or two per channel (which layer
+is edited decides the split); smaller canvases always render sequentially and
+stay bit-identical. Exports never use these caches.
 
 The same context also keeps the finished composite of the last committed
 render (no live stroke overrides), keyed by `compositeEquivalenceKey`: the

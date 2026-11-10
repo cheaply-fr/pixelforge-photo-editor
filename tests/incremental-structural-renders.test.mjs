@@ -161,10 +161,6 @@ test('composite reuse diagnostics accept the reused layer count', () => {
 
 // --------------------------------------------------- renderFrame resumes
 
-// Fills on every surface, in drawing order (layers above the edited one draw
-// into the cached "above" surface while it is rebuilt).
-let recordedFills = [];
-
 async function withRecordingSurface(run) {
   const original = globalThis.OffscreenCanvas;
   class RecordingSurface {
@@ -182,10 +178,7 @@ async function withRecordingSurface(run) {
           Object.assign(state, prior);
         },
         setTransform: (...matrix) => { state.matrix = matrix; },
-        fillRect: () => {
-          this.operations.push({ kind: 'fill', color: state.fillStyle });
-          recordedFills.push(state.fillStyle);
-        },
+        fillRect: () => this.operations.push({ kind: 'fill', color: state.fillStyle }),
         clearRect: () => this.operations.push({ kind: 'clear' }),
         drawImage: (source) => this.operations.push({ kind: 'draw', source }),
       };
@@ -225,11 +218,9 @@ const rectangle = (n) => ({
 
 /** Render and report which layers were composited (by colour) and how many came from a snapshot. */
 async function renderWith(cache, frame) {
-  recordedFills = [];
-  await renderFrame(frame, {}, undefined, { compositeCache: cache });
+  const out = await renderFrame(frame, {}, undefined, { compositeCache: cache });
   return {
-    drawn: recordedFills.map((color) => Number.parseInt(color.slice(5), 10)),
-    above: cache.lastSuffixLayers,
+    drawn: out.operations.filter((op) => op.kind === 'fill').map((op) => Number.parseInt(op.color.slice(5), 10)),
     reused: cache.lastReusedLayers,
     final: cache.finalHits,
   };
@@ -239,14 +230,12 @@ test('delete after selecting, its undo, reorder and hide resume below the change
   await withRecordingSurface(async () => {
     const layers = Array.from({ length: 16 }, (_, n) => rectangle(n));
     const top = { w: 64, h: 64, layers, groups: [], active: id(15), selectedLayerIds: [id(15)] };
-    // Five surfaces: four prefix snapshots plus the cached layers above an
-    // edited one (which takes a slot while it is kept).
-    const cache = new CompositeCache(budget(5));
+    const cache = new CompositeCache(budget(4));
     const cold = await renderWith(cache, top);
     assert.equal(cold.drawn.length, 16, 'cold render composites every layer');
     assert.equal(cold.reused, 0);
     // Snapshots: below the active layer and anchors spread below it.
-    assert.deepEqual(cache.snapshotIndexes, [2, 4, 6, 10, 14]);
+    assert.deepEqual(cache.snapshotIndexes, [2, 6, 10, 14]);
 
     // Selecting layer 9 changes no pixel: the finished composite is reused.
     const selected = { ...top, active: id(9), selectedLayerIds: [id(9)] };
@@ -267,10 +256,8 @@ test('delete after selecting, its undo, reorder and hide resume below the change
     assert.deepEqual(undone.drawn, [9, 10, 11, 12, 13, 14, 15]);
     const opacity = { ...selected, layers: layers.map((layer) => (layer.id === id(9) ? { ...layer, opacity: 0.5 } : layer)) };
     const edited = await renderWith(cache, opacity);
-    // Editing it again: layers 10-15 come from the cached composite above it.
     assert.equal(edited.reused, 9);
-    assert.equal(edited.above, 6);
-    assert.deepEqual(edited.drawn, [9]);
+    assert.deepEqual(edited.drawn, [9, 10, 11, 12, 13, 14, 15]);
 
     // Send layer 9 backward (below 8): the change starts at index 8, so the
     // render resumes from the next snapshot below it.
@@ -282,13 +269,9 @@ test('delete after selecting, its undo, reorder and hide resume below the change
     // Hide layer 12: resumes right below it.
     const hidden = { ...reordered, layers: reordered.layers.map((layer) => (layer.id === id(12) ? { ...layer, visible: false } : layer)) };
     const hide = await renderWith(cache, hidden);
-    // While the edited layer's "above" composite is used, no snapshot is
-    // refreshed above it, so the edit above resumes below the active layer
-    // (index 8), still well above layer 0, and renders the range normally.
-    assert.equal(hide.reused, 8);
-    assert.equal(hide.above, 0);
-    assert.deepEqual(hide.drawn, [9, 8, 10, 11, 13, 14, 15]);
-    assert.ok(cache.snapshotIndexes.length <= 5, 'the snapshot count stays bounded');
+    assert.equal(hide.reused, 12);
+    assert.deepEqual(hide.drawn, [13, 14, 15]);
+    assert.ok(cache.snapshotIndexes.length <= 4, 'the snapshot count stays bounded');
   });
 });
 

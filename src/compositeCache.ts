@@ -371,6 +371,13 @@ export function compositeCheckpointTargets(
 
 /** Fewest layers above the edited one worth a cached "above" composite. */
 export const COMPOSITE_SUFFIX_MIN_LAYERS = 2;
+/**
+ * Smallest canvas (pixels) that keeps an "above" composite. Flattening the
+ * layers above first changes Canvas's 8-bit rounding order, so the screen can
+ * differ from a sequential render by a level or two per channel. Below this
+ * size a full recomposite is fast and renders stay bit-identical.
+ */
+export const COMPOSITE_SUFFIX_MIN_PIXELS = 4_000_000;
 
 /**
  * Where the cached composite of the layers *above* the edited layer starts,
@@ -523,12 +530,17 @@ export class CompositeCache<S = unknown> {
   }
 
   /**
-   * Whether an "above" composite fits at this frame size: the budget must
-   * hold at least two frame-sized surfaces, so one prefix snapshot remains.
+   * Whether an "above" composite is kept at this frame size: a canvas of at
+   * least COMPOSITE_SUFFIX_MIN_PIXELS and a budget holding at least two
+   * frame-sized surfaces, so one prefix snapshot remains.
    */
   suffixAllowed(w: number, h: number): boolean {
-    const bytes = Math.max(1, Math.trunc(w)) * Math.max(1, Math.trunc(h)) * 4;
-    return this.budget.bytes >= 2 * bytes && compositeSnapshotCapacity(w, h, this.budget) >= 2;
+    const pixels = Math.max(1, Math.trunc(w)) * Math.max(1, Math.trunc(h));
+    return (
+      pixels >= COMPOSITE_SUFFIX_MIN_PIXELS &&
+      this.budget.bytes >= 2 * pixels * 4 &&
+      compositeSnapshotCapacity(w, h, this.budget) >= 2
+    );
   }
 
   /**

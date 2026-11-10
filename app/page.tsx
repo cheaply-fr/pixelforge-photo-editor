@@ -19509,20 +19509,23 @@ export default function Home() {
           {section === 'layer-alignment' && frame && (
             <section className="panel layers-part-panel" aria-label="Align to canvas">
               {tool === 'move' && (
-                <div className="move-pick-options" data-testid="move-pick-options">
-                  <label className="check-row">
-                    <input
-                      aria-label="Auto-select layer"
-                      type="checkbox"
-                      checked={moveAutoSelect}
-                      onChange={(event) => setMoveAutoSelect(event.target.checked)}
-                    />
-                    Auto-select layer
-                  </label>
-                  <p className="adjust-note">
-                    Picks the top visible layer with pixels under the pointer. Right-click (or long-press) the canvas to select a layer without moving it.
-                  </p>
-                </div>
+                <label
+                  className="check-row move-pick-option"
+                  data-testid="move-pick-options"
+                  title="Picks the top visible layer with pixels under the pointer. Right-click or long-press the canvas to select a layer without moving it."
+                >
+                  <input
+                    aria-label="Auto-select layer"
+                    aria-describedby="move-pick-hint"
+                    type="checkbox"
+                    checked={moveAutoSelect}
+                    onChange={(event) => setMoveAutoSelect(event.target.checked)}
+                  />
+                  Auto-select layer
+                  <span id="move-pick-hint" className="sr-only">
+                    Picks the top visible layer with pixels under the pointer. Right-click or long-press the canvas to select a layer without moving it.
+                  </span>
+                </label>
               )}
               {renderLayersPanel(frame, 'alignment')}
             </section>

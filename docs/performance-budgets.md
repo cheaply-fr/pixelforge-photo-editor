@@ -352,7 +352,11 @@ stroke. Trade-off: while a low layer is painted, prefix snapshots above it are
 no longer refreshed, so the first stroke after switching to a much higher
 layer recomposites the stack once (the last row's first stroke). Retained
 memory is unchanged: the cached range uses one of the prefix snapshot
-slots. The live 71-layer case and live builds were not measured.
+slots. The range is kept only on canvases of at least 4 MP: it changes the
+order of Canvas's 8-bit rounding (the screen can differ from a sequential
+render by a level or two per channel), and smaller canvases recomposite fast
+enough to stay bit-identical. The live 71-layer case and live builds were not
+measured.
 
 ### Structural layer edits (`perf/incremental-structural-renders`)
 

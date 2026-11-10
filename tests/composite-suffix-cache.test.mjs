@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  COMPOSITE_SUFFIX_MIN_PIXELS,
   CompositeCache,
   compositeSuffixStart,
   validCompositeReuse,
 } from '../src/compositeCache.ts';
-import { layerIgnoresBackdrop, neutral } from '../src/document.ts';
+import { layerIgnoresBackdrop, neutral, renderFrame } from '../src/document.ts';
 
 // While a low layer is painted, the layers above it are drawn from one cached
 // composite ("suffix"). These tests pin where that range starts and when the
@@ -93,7 +94,7 @@ test('layers that draw nothing or use Normal without backdrop styles qualify', (
   assert.equal(layerIgnoresBackdrop({ ...base, styles: shadow('source-over') }), true, 'Normal shadow');
 });
 
-const FRAME = { w: 100, h: 100 };
+const FRAME = { w: 2000, h: 2000 };
 const BYTES = FRAME.w * FRAME.h * 4;
 
 test('the cache keeps an above composite only when the budget holds two surfaces', () => {
@@ -104,6 +105,13 @@ test('the cache keeps an above composite only when the budget holds two surfaces
     'one surface',
   );
   assert.equal(new CompositeCache({ bytes: 2 * BYTES, maxSnapshots: 4 }).suffixAllowed(FRAME.w, FRAME.h), true);
+  // Small canvases always render sequentially (bit-identical results).
+  assert.ok(FRAME.w * FRAME.h >= COMPOSITE_SUFFIX_MIN_PIXELS);
+  assert.equal(
+    new CompositeCache({ bytes: Number.MAX_SAFE_INTEGER, maxSnapshots: 4 }).suffixAllowed(1999, 2000),
+    false,
+    'under the size floor',
+  );
   assert.equal(
     new CompositeCache({ bytes: 8 * BYTES, maxSnapshots: 1 }).suffixAllowed(FRAME.w, FRAME.h),
     false,
@@ -122,7 +130,7 @@ test('an above composite matches only the exact layer keys it holds', () => {
   assert.equal(cache.matchSuffix(FRAME.w, FRAME.h, 2, ['a', 'b', 'c', 'D*', 'e']), undefined, 'layer changed');
   assert.equal(cache.matchSuffix(FRAME.w, FRAME.h, 3, keys), undefined, 'other start');
   assert.equal(cache.matchSuffix(FRAME.w, FRAME.h, 2, [...keys, 'f']), undefined, 'layer added');
-  assert.equal(cache.matchSuffix(50, 50, 2, keys), undefined, 'other size');
+  assert.equal(cache.matchSuffix(2000, 2001, 2, keys), undefined, 'other size');
   assert.equal(cache.suffixHits, 2);
   assert.equal(cache.suffixMisses, 4);
 });
@@ -131,7 +139,7 @@ test('taking the surface to redraw drops the entry, so a cancelled render cannot
   const cache = new CompositeCache({ bytes: 4 * BYTES, maxSnapshots: 4 });
   const keys = ['a', 'b', 'c', 'd'];
   cache.storeSuffix({ ...FRAME, start: 1, keys: keys.slice(1), surface: 'S' });
-  assert.equal(cache.takeSuffixSurface(50, 50), undefined, 'other size: no reuse');
+  assert.equal(cache.takeSuffixSurface(2000, 2001), undefined, 'other size: no reuse');
   assert.equal(cache.retainedSuffix, undefined, 'entry dropped anyway');
   cache.storeSuffix({ ...FRAME, start: 1, keys: keys.slice(1), surface: 'S' });
   assert.equal(cache.takeSuffixSurface(FRAME.w, FRAME.h), 'S');
@@ -159,4 +167,129 @@ test('render reuse telemetry accepts the above-composite layer count', () => {
   assert.equal(validCompositeReuse({ final: false, reusedLayers: 2, suffixLayers: 60 }), true);
   assert.equal(validCompositeReuse({ final: false, suffixLayers: -1 }), false);
   assert.equal(validCompositeReuse({ final: false, suffixLayers: 1.5 }), false);
+});
+
+// ------------------------------------------------ renderFrame integration
+
+const uuid = (n) => `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+
+/** Record fills (one per rectangle layer, by colour) on every surface, in order. */
+async function recording(run) {
+  const original = globalThis.OffscreenCanvas;
+  const log = { fills: [], composites: [] };
+  class RecordingSurface {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+      const state = {};
+      const saved = [];
+      this.context = {
+        canvas: this,
+        save: () => saved.push({ ...state }),
+        restore: () => {
+          const prior = saved.pop();
+          Object.keys(state).forEach((key) => delete state[key]);
+          Object.assign(state, prior);
+        },
+        setTransform: () => {},
+        fillRect: () => log.fills.push(Number.parseInt(state.fillStyle.slice(5), 10)),
+        clearRect: () => {},
+        drawImage: (source) => log.composites.push({ into: this, source }),
+      };
+      for (const name of ['globalAlpha', 'globalCompositeOperation', 'filter', 'fillStyle', 'strokeStyle', 'lineWidth'])
+        Object.defineProperty(this.context, name, {
+          get: () => state[name],
+          set: (value) => { state[name] = value; },
+        });
+    }
+    getContext() { return this.context; }
+  }
+  globalThis.OffscreenCanvas = RecordingSurface;
+  try {
+    await run(log);
+  } finally {
+    if (original === undefined) delete globalThis.OffscreenCanvas;
+    else globalThis.OffscreenCanvas = original;
+  }
+}
+
+const rectangle = (n, extra = {}) => ({
+  id: uuid(n),
+  name: `R${n}`,
+  visible: true,
+  locked: false,
+  opacity: 1,
+  blend: 'source-over',
+  matrix: [1, 0, 0, 1, n, n],
+  adjustments: structuredClone(neutral),
+  kind: 'rectangle',
+  width: 2,
+  height: 2,
+  color: `#0000${String(n).padStart(2, '0')}`,
+  stroke: 1,
+  fill: true,
+  ...extra,
+});
+
+async function render(log, cache, frame) {
+  log.fills.length = 0;
+  await renderFrame(frame, {}, undefined, { compositeCache: cache });
+  return { drawn: [...log.fills], above: cache.lastSuffixLayers, below: cache.lastReusedLayers };
+}
+
+test('repeated edits to a low layer render only that layer on a large canvas', async () => {
+  await recording(async (log) => {
+    const layers = Array.from({ length: 12 }, (_, n) => rectangle(n));
+    const frame = { w: 2000, h: 2000, layers, groups: [], active: uuid(2), selectedLayerIds: [uuid(2)] };
+    const cache = new CompositeCache({ bytes: Number.MAX_SAFE_INTEGER, maxSnapshots: 4 });
+    const cold = await render(log, cache, frame);
+    assert.deepEqual(cold.drawn, layers.map((_, n) => n), 'cold: every layer, in order');
+    assert.deepEqual(cache.retainedSuffix, { start: 3, layers: 9, w: 2000, h: 2000 });
+    const edit = (opacity) => ({ ...frame, layers: layers.map((layer, n) => (n === 2 ? { ...layer, opacity } : layer)) });
+    for (const opacity of [0.5, 0.25]) {
+      const result = await render(log, cache, edit(opacity));
+      assert.deepEqual(result.drawn, [2], `opacity ${opacity}: only the edited layer`);
+      assert.equal(result.below, 2);
+      assert.equal(result.above, 9);
+    }
+    // A live stroke preview of layer 2 reuses it too.
+    const preview = await (async () => {
+      log.fills.length = 0;
+      const override = new globalThis.OffscreenCanvas(2, 2);
+      await renderFrame(edit(0.25), {}, { [uuid(2)]: override }, { compositeCache: cache });
+      return cache.lastSuffixLayers;
+    })();
+    assert.equal(preview, 9);
+    // Editing a layer inside the range renders the stack normally.
+    const inside = await render(log, cache, { ...edit(0.25), layers: edit(0.25).layers.map((layer, n) => (n === 7 ? { ...layer, opacity: 0.3 } : layer)) });
+    assert.equal(inside.above, 0);
+    assert.ok(inside.drawn.includes(7) && inside.drawn.includes(11));
+  });
+});
+
+test('a layer that reads the backdrop stays outside the cached range', async () => {
+  await recording(async (log) => {
+    const layers = Array.from({ length: 12 }, (_, n) => rectangle(n, n === 6 ? { blend: 'multiply' } : {}));
+    const frame = { w: 2000, h: 2000, layers, groups: [], active: uuid(2), selectedLayerIds: [uuid(2)] };
+    const cache = new CompositeCache({ bytes: Number.MAX_SAFE_INTEGER, maxSnapshots: 4 });
+    await render(log, cache, frame);
+    const edited = await render(log, cache, { ...frame, layers: layers.map((layer, n) => (n === 2 ? { ...layer, opacity: 0.5 } : layer)) });
+    assert.equal(edited.above, 5, 'layers 7..11');
+    // Layers 2..6 are drawn every time, Multiply included, in stack order.
+    assert.deepEqual(edited.drawn.filter((n) => n !== 6), [2, 3, 4, 5]);
+    assert.ok(edited.drawn.length >= 5);
+  });
+});
+
+test('small canvases never use the cached range (bit-identical sequential renders)', async () => {
+  await recording(async (log) => {
+    const layers = Array.from({ length: 12 }, (_, n) => rectangle(n));
+    const frame = { w: 64, h: 64, layers, groups: [], active: uuid(2), selectedLayerIds: [uuid(2)] };
+    const cache = new CompositeCache({ bytes: Number.MAX_SAFE_INTEGER, maxSnapshots: 4 });
+    await render(log, cache, frame);
+    const edited = await render(log, cache, { ...frame, layers: layers.map((layer, n) => (n === 2 ? { ...layer, opacity: 0.5 } : layer)) });
+    assert.equal(edited.above, 0);
+    assert.deepEqual(edited.drawn, [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.equal(cache.retainedSuffix, undefined);
+  });
 });

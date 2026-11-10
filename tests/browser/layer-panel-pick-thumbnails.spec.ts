@@ -233,9 +233,17 @@ test('right-click or long-press with the Move tool selects the layer at that poi
 });
 
 test('painting a low layer reuses the composite of the layers above and matches a full render', async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(300_000);
+  // The cache applies from 4 MP and 8 layers.
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Canvas Size…', exact: true }).click();
+  await page.getByLabel('Width (px)').fill('2048');
+  await page.getByLabel('Height (px)').fill('2048');
+  await page.getByRole('button', { name: 'Apply canvas size', exact: true }).click();
+  await expect(canvas(page)).toHaveJSProperty('width', 2048);
+  await settled(page);
   await openPropertiesSheet(page);
-  // Background + 8 paint layers (the cache applies from 8 layers).
+  // Background + 8 paint layers.
   for (let index = 0; index < 8; index += 1) {
     await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
     await settled(page);
