@@ -9,6 +9,26 @@
 
 import { deinterlacePixels, effectiveDeinterlaceSettings, validDeinterlaceSettings, type DeinterlaceSettings } from './deinterlace.ts';
 import { isGradientStops, normalizeGradientStops, type GradientStop } from './gradientStops.ts';
+import {
+  fastEllipseSpinBlur,
+  fastLegacyPathBlur,
+  fastLensBlur,
+  fastPathBlur,
+  fastReduceNoise,
+  fastShapeBlur,
+  fastSmartBlur,
+  fastSpinRadialBlur,
+  fastSurfaceBlur,
+  fastZoomRadialBlur,
+  type RowRange,
+} from './fastNeighborhoodFilters.ts';
+import { boxCoverage, spreadAlphaByte, spreadChannel, writeSpreadPixel } from './alphaSpread.ts';
+import {
+  normalizeLightRaysSettings,
+  renderLightRays,
+  validLightRaysSettings,
+  type LightRaysSettings,
+} from './lightRays.ts';
 
 export const FILTER_EFFECT_TYPES = [
   'none',
@@ -59,6 +79,7 @@ export const FILTER_EFFECT_TYPES = [
   'shear',
   'zigzag',
   'lens-flare',
+  'light-rays',
   'flame',
   'find-edges',
   'emboss',
@@ -217,6 +238,8 @@ export const DEFAULT_NEURAL_ENHANCE_SETTINGS: NeuralEnhanceSettings = {
 
 export type FilterEffects = {
   type: FilterEffectType;
+  /** Bounded local Liquify brush mode; full mesh semantics remain staged. */
+  liquifyMode?: 'twist' | 'push' | 'bloat';
   /** Radial Blur sampling direction; legacy records default to spin. */
   radialMode?: 'spin' | 'zoom';
   /** Legacy lens corrections default to inward source sampling. */
@@ -263,7 +286,57 @@ export type FilterEffects = {
   /** Threshold for the local Dust & Scratches outlier detector. */
   threshold?: number;
   deinterlace?: DeinterlaceSettings;
+  /**
+   * Photoshop-style Render Clouds: mix the two colours with seeded noise.
+   * Omitted on legacy records, which keep the grayscale overlay.
+   */
+  cloudRender?: CloudRenderSettings;
+  /**
+   * Difference Clouds cloud size: largest feature in source pixels, 2–2048
+   * (difference-clouds only). Legacy records omit it and use `radius` (2–64).
+   */
+  cloudScale?: number;
+  /** Render → Light Rays geometry, colour and blend (light-rays only). */
+  lightRays?: LightRaysSettings;
 };
+
+export type CloudRenderSettings = {
+  /** Colour at noise value 1 (the drawing colour when created from the menu). */
+  foreground: string;
+  /** Colour at noise value 0 (the background colour when created from the menu). */
+  background: string;
+  /** Largest noise feature size in source pixels, 2–2048. */
+  scale: number;
+  /** Render into transparent pixels too, making them opaque. */
+  fill: boolean;
+};
+
+export const MIN_CLOUD_RENDER_SCALE = 2;
+export const MAX_CLOUD_RENDER_SCALE = 2048;
+/** Legacy Difference Clouds records used `radius` (capped at 64) as the cloud scale. */
+export const LEGACY_DIFFERENCE_CLOUD_SCALE_MAX = 64;
+
+export function validCloudRenderSettings(value: unknown): value is CloudRenderSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const settings = value as Partial<CloudRenderSettings>;
+  return (
+    typeof settings.foreground === 'string' && /^#[0-9a-f]{6}$/i.test(settings.foreground) &&
+    typeof settings.background === 'string' && /^#[0-9a-f]{6}$/i.test(settings.background) &&
+    typeof settings.scale === 'number' && Number.isInteger(settings.scale) &&
+    settings.scale >= MIN_CLOUD_RENDER_SCALE && settings.scale <= MAX_CLOUD_RENDER_SCALE &&
+    typeof settings.fill === 'boolean'
+  );
+}
+
+/**
+ * Default cloud size for a layer: about a quarter of its shorter side, so a
+ * 4096 px canvas gets ~1000 px billows instead of fine static.
+ */
+export function defaultCloudScale(width: number, height: number): number {
+  const shorter = Math.min(width, height);
+  if (!(shorter > 0)) return 256;
+  return Math.min(MAX_CLOUD_RENDER_SCALE, Math.max(MIN_CLOUD_RENDER_SCALE, Math.round(shorter / 4)));
+}
 
 export const neutralFilterEffects: FilterEffects = {
   type: 'none',
@@ -315,6 +388,11 @@ export function effectiveFilterEffects(
     ? Math.trunc(source.seed) >>> 0
     : neutralFilterEffects.seed;
   const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
+  if (type === 'liquify') {
+    normalized.liquifyMode = source.liquifyMode === 'push' || source.liquifyMode === 'bloat'
+      ? source.liquifyMode
+      : 'twist';
+  }
   if (type === 'add-noise') {
     normalized.noiseMonochromatic = source.noiseMonochromatic === true;
     normalized.noiseDistribution = source.noiseDistribution === 'gaussian' ? 'gaussian' : 'uniform';
@@ -324,6 +402,13 @@ export function effectiveFilterEffects(
   }
   if (type === 'lens-correction') {
     normalized.lensDirection = source.lensDirection === 'outward' ? 'outward' : 'inward';
+  }
+  if (type === 'light-rays') normalized.lightRays = normalizeLightRaysSettings(source.lightRays);
+  if (type === 'clouds' && validCloudRenderSettings(source.cloudRender)) {
+    normalized.cloudRender = { ...source.cloudRender };
+  }
+  if (type === 'difference-clouds' && finite(source.cloudScale)) {
+    normalized.cloudScale = clamp(Math.round(source.cloudScale), MIN_CLOUD_RENDER_SCALE, MAX_CLOUD_RENDER_SCALE);
   }
   if (type === 'path-blur' && Array.isArray(source.path)) {
     const path = source.path.slice(0, 8).filter(
@@ -443,6 +528,20 @@ export function effectiveFilterEffects(
   return normalized;
 }
 
+/**
+ * Start a new live filter from the previous one plus the chosen filter's
+ * defaults. Type-bound settings of the previous filter (Clouds colours, Light
+ * Rays geometry, a blur path…) are dropped by re-normalizing for the new type,
+ * so a record such as `{ type: 'motion-blur', cloudRender }` can never reach
+ * document validation (it used to fail with "Invalid layer document").
+ */
+export function retypeFilterEffects(
+  previous: Partial<FilterEffects> | undefined,
+  next: Partial<FilterEffects> & { type: FilterEffectType },
+): FilterEffects {
+  return effectiveFilterEffects({ ...effectiveFilterEffects(previous), ...next });
+}
+
 function validBlurPath(value: unknown): value is BlurPathPoint[] {
   return Array.isArray(value) && value.length >= 2 && value.length <= 8 && value.every((point) =>
     point && typeof point === 'object' && !Array.isArray(point) &&
@@ -527,6 +626,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     FILTER_EFFECT_TYPES.includes(effect.type as FilterEffectType) &&
     (effect.radialMode === undefined || effect.radialMode === 'spin' || effect.radialMode === 'zoom') &&
     (effect.lensDirection === undefined || effect.lensDirection === 'inward' || effect.lensDirection === 'outward') &&
+    (effect.liquifyMode === undefined || effect.liquifyMode === 'twist' || effect.liquifyMode === 'push' || effect.liquifyMode === 'bloat') &&
     (effect.path === undefined || validBlurPath(effect.path)) &&
     (effect.spinEllipse === undefined || validSpinEllipse(effect.spinEllipse)) &&
     (effect.pathCentered === undefined || typeof effect.pathCentered === 'boolean') &&
@@ -544,6 +644,12 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.noiseDistribution === undefined || effect.noiseDistribution === 'uniform' || effect.noiseDistribution === 'gaussian') &&
     (effect.threshold === undefined || (finite(effect.threshold) && Number.isInteger(effect.threshold) && effect.threshold >= 0 && effect.threshold <= 255)) &&
     (effect.deinterlace === undefined || validDeinterlaceSettings(effect.deinterlace)) &&
+    (effect.cloudRender === undefined || (effect.type === 'clouds' && validCloudRenderSettings(effect.cloudRender))) &&
+    (effect.cloudScale === undefined || (
+      effect.type === 'difference-clouds' && finite(effect.cloudScale) && Number.isInteger(effect.cloudScale) &&
+      effect.cloudScale >= MIN_CLOUD_RENDER_SCALE && effect.cloudScale <= MAX_CLOUD_RENDER_SCALE
+    )) &&
+    (effect.lightRays === undefined || (effect.type === 'light-rays' && validLightRaysSettings(effect.lightRays))) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -579,7 +685,7 @@ export function isNeutralFilterEffects(
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
     (effect.type === 'deinterlace' && effect.radius === 0) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.type !== 'add-noise' && effect.radius === 0) ||
+    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.type !== 'add-noise' && effect.type !== 'light-rays' && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -691,7 +797,7 @@ function blendPixel(
 }
 
 /** Circular aperture integration with a fixed 49-sample area budget.
- * Samples exclude hidden RGB and destination alpha remains source-owned.
+ * Samples are weighted by alpha; with `spread` (the Lens Blur filter) alpha is blurred too.
  * This simulates uniform circular bokeh; depth-map occlusion is not inferred.
  */
 function applyLensBlur(
@@ -701,6 +807,7 @@ function applyLensBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
   const offsets: Array<[number, number]> = [[0, 0]];
   const goldenAngle = Math.PI * (3 - Math.sqrt(5));
@@ -711,27 +818,7 @@ function applyLensBlur(
       Math.round(Math.sin(sample * goldenAngle) * distance),
     ]);
   }
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (const [dx, dy] of offsets) {
-        const sx = clamp(x + dx, 0, width - 1);
-        const sy = clamp(y + dy, 0, height - 1);
-        const offset = (sy * width + sx) * 4;
-        const alpha = source[offset + 3];
-        red += source[offset] * alpha;
-        green += source[offset + 1] * alpha;
-        blue += source[offset + 2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + red / weight * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + green / weight * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + blue / weight * strength);
-    }
-  }
+  fastLensBlur(source, width, height, offsets, output, strength, rows, true);
 }
 
 /**
@@ -774,45 +861,9 @@ function applySmartBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  const bounded = Math.max(1, Math.min(8, Math.round(radius)));
-  const similarityScale = 18 + bounded * 2;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      const destinationAlpha = source[destination + 3];
-      if (destinationAlpha === 0) continue;
-      const targetLuma =
-        source[destination] * 0.2126 +
-        source[destination + 1] * 0.7152 +
-        source[destination + 2] * 0.0722;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (let dy = -bounded; dy <= bounded; dy += 1) {
-        for (let dx = -bounded; dx <= bounded; dx += 1) {
-          const sx = x + dx, sy = y + dy;
-          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-          const sampleOffset = (sy * width + sx) * 4;
-          const alpha = source[sampleOffset + 3] / 255;
-          if (!alpha) continue;
-          const spatial = Math.exp(-(dx * dx + dy * dy) / (2 * bounded * bounded));
-          const sampleLuma =
-            source[sampleOffset] * 0.2126 +
-            source[sampleOffset + 1] * 0.7152 +
-            source[sampleOffset + 2] * 0.0722;
-          const similarity = Math.exp(-Math.abs(sampleLuma - targetLuma) / similarityScale);
-          const sampleWeight = spatial * similarity * alpha;
-          red += source[sampleOffset] * sampleWeight;
-          green += source[sampleOffset + 1] * sampleWeight;
-          blue += source[sampleOffset + 2] * sampleWeight;
-          weight += sampleWeight;
-        }
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
-    }
-  }
+  fastSmartBlur(source, width, height, radius, output, strength, rows);
 }
 
 /**
@@ -828,44 +879,9 @@ function applySurfaceBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  const bounded = Math.max(1, Math.min(8, Math.round(radius)));
-  const threshold = 12 + bounded * 3;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (!source[destination + 3]) continue;
-      const targetLuma =
-        source[destination] * 0.2126 +
-        source[destination + 1] * 0.7152 +
-        source[destination + 2] * 0.0722;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (let dy = -bounded; dy <= bounded; dy += 1) {
-        for (let dx = -bounded; dx <= bounded; dx += 1) {
-          const sx = x + dx, sy = y + dy;
-          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-          const sampleOffset = (sy * width + sx) * 4;
-          const alpha = source[sampleOffset + 3] / 255;
-          if (!alpha) continue;
-          const sampleLuma =
-            source[sampleOffset] * 0.2126 +
-            source[sampleOffset + 1] * 0.7152 +
-            source[sampleOffset + 2] * 0.0722;
-          if (Math.abs(sampleLuma - targetLuma) > threshold) continue;
-          const spatialWeight = 1 / (1 + dx * dx + dy * dy);
-          const sampleWeight = spatialWeight * alpha;
-          red += source[sampleOffset] * sampleWeight;
-          green += source[sampleOffset + 1] * sampleWeight;
-          blue += source[sampleOffset + 2] * sampleWeight;
-          weight += sampleWeight;
-        }
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
-    }
-  }
+  fastSurfaceBlur(source, width, height, radius, output, strength, rows);
 }
 
 /**
@@ -918,35 +934,9 @@ function applyShapeBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  const bounded = Math.max(1, Math.min(12, Math.round(radius)));
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (!source[destination + 3]) continue;
-      let red = 0, green = 0, blue = 0, weight = 0;
-      for (let dy = -bounded; dy <= bounded; dy += 1) {
-        for (let dx = -bounded; dx <= bounded; dx += 1) {
-          const distance = Math.abs(dx) + Math.abs(dy);
-          if (distance > bounded) continue;
-          const sx = x + dx, sy = y + dy;
-          if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
-          const sampleOffset = (sy * width + sx) * 4;
-          const alpha = source[sampleOffset + 3] / 255;
-          if (!alpha) continue;
-          const sampleWeight = (bounded + 1 - distance) * alpha;
-          red += source[sampleOffset] * sampleWeight;
-          green += source[sampleOffset + 1] * sampleWeight;
-          blue += source[sampleOffset + 2] * sampleWeight;
-          weight += sampleWeight;
-        }
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - strength) + (red / weight) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + (green / weight) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + (blue / weight) * strength);
-    }
-  }
+  fastShapeBlur(source, width, height, radius, output, strength, rows);
 }
 
 function applyAverageBlur(
@@ -989,6 +979,8 @@ function applyBoxBlur(
   output: Uint8ClampedArray,
   strength: number,
   selector?: (x: number, y: number) => number,
+  /** Blur alpha too (premultiplied) so strokes on transparent layers soften; see alphaSpread.ts. */
+  spread = false,
 ): void {
   // Separable weighted running sums are linear in pixel count, independent
   // of radius. Alpha weighting avoids invisible padding causing dark halos.
@@ -1042,7 +1034,13 @@ function applyBoxBlur(
       for (let y = 0; y < height; y += 1) {
         const offset = (y * width + x) * 4,
           mix = clamp(strength * (selector?.(x, y) ?? 1), 0, 1);
-        if (source[offset + 3] && weight > 0) {
+        if (spread) {
+          const coverage = boxCoverage(x, width, bounded) * boxCoverage(y, height, bounded),
+            value = spreadChannel(source[offset + channel], source[offset + 3], sum, weight, coverage, mix);
+          if (value >= 0) output[offset + channel] = value;
+          if (channel === 0)
+            output[offset + 3] = spreadAlphaByte(source[offset + 3], weight, coverage, mix);
+        } else if (source[offset + 3] && weight > 0) {
           output[offset + channel] = clampByte(
             source[offset + channel] * (1 - mix) + (sum / weight) * mix,
           );
@@ -1129,12 +1127,124 @@ function applyFieldBlur(
 }
 
 /**
- * Apply a separable Gaussian kernel while weighting colour by alpha.
+ * Radii up to this bound use the exact truncated Gaussian kernel (bit-identical
+ * to the historical renderer). Larger radii use a cascade of box filters whose
+ * running sums cost O(1) per pixel regardless of radius.
+ */
+const GAUSSIAN_EXACT_MAX_RADIUS = 8;
+/** Number of cascaded box passes used to approximate a large Gaussian. */
+const GAUSSIAN_BOX_PASSES = 3;
+/** Columns gathered together so the vertical pass reads whole cache lines. */
+const GAUSSIAN_COLUMN_BLOCK = 16;
+
+/**
+ * Integer half-widths for `passes` cascaded centred box filters whose combined
+ * variance best matches the truncated Gaussian kernel used for `radius`, while
+ * the cascade support (sum of half-widths) never exceeds the radius. The tiled
+ * renderer depends on that support bound: its tile overlap is the radius.
+ * `maxRadius` defaults to the Gaussian Blur filter's 64 px bound; layer-style
+ * shadows reuse the same cascade up to their own 250 px bound.
+ */
+export function gaussianBoxHalfWidths(radius: number, passes = GAUSSIAN_BOX_PASSES, maxRadius = 64): number[] {
+  const bounded = Math.max(1, Math.min(maxRadius, Math.round(radius))),
+    sigma = Math.max(0.5, bounded / 3);
+  let total = 0,
+    variance = 0;
+  for (let offset = -bounded; offset <= bounded; offset += 1) {
+    const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
+    total += weight;
+    variance += weight * offset * offset;
+  }
+  variance /= total;
+  // A centred box of half-width k has variance k(k + 1) / 3; variances add.
+  let best: number[] = [],
+    bestError = Infinity;
+  const base = Math.max(0, Math.floor((Math.sqrt(1 + (12 * variance) / passes) - 1) / 2));
+  for (let low = Math.max(0, base - 1); low <= base + 1; low += 1) {
+    for (let wide = 0; wide <= passes; wide += 1) {
+      const widths = Array.from({ length: passes }, (_, index) => (index < wide ? low + 1 : low));
+      const support = widths.reduce((sum, value) => sum + value, 0);
+      if (support > bounded) continue;
+      const error = Math.abs(widths.reduce((sum, value) => sum + (value * (value + 1)) / 3, 0) - variance);
+      if (error < bestError - 1e-12) {
+        best = widths;
+        bestError = error;
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Zero-padded centred box sum using a running window, so the cost is
+ * independent of the half-width. The sum is deliberately unnormalised: fed
+ * integer samples it stays an exact integer (well below 2^53 for every
+ * supported radius), so a value never depends on where its line started.
+ * That keeps tiled renders pixel-identical to a full-frame render.
+ */
+function boxLine(input: Float64Array, output: Float64Array, length: number, half: number): void {
+  let sum = 0;
+  const firstRight = Math.min(length - 1, half);
+  for (let index = 0; index <= firstRight; index += 1) sum += input[index];
+  for (let index = 0; index < length; index += 1) {
+    output[index] = sum;
+    const entering = index + half + 1,
+      leaving = index - half;
+    if (entering < length) sum += input[entering];
+    if (leaving >= 0) sum -= input[leaving];
+  }
+}
+
+/**
+ * Zero-padded truncated kernel convolution. Taps are accumulated in the same
+ * ascending order as the historical per-pixel loop so results stay identical.
+ */
+function kernelLine(
+  input: Float64Array,
+  output: Float64Array,
+  length: number,
+  kernel: Float32Array,
+  bounded: number,
+): void {
+  for (let index = 0; index < length; index += 1) {
+    const low = Math.max(-bounded, -index),
+      high = Math.min(bounded, length - 1 - index);
+    let sum = 0;
+    for (let offset = low; offset <= high; offset += 1)
+      sum += input[index + offset] * kernel[offset + bounded];
+    output[index] = sum;
+  }
+}
+
+/**
+ * Apply a separable Gaussian blur while weighting colour by alpha.
  *
- * The source alpha channel is never sampled into the output. Fully
- * transparent pixels therefore retain their hidden RGB padding and partially
- * transparent edges cannot introduce dark halos. The kernel is normalized at
- * the image edge so a tiny image remains stable for every valid radius.
+ * Without `spread` the source alpha channel is never sampled into the
+ * output: fully transparent pixels retain their hidden RGB padding. With
+ * `spread` (the Gaussian Blur filter) alpha is blurred too, see
+ * alphaSpread.ts. Either way partially transparent edges cannot introduce
+ * dark halos. Samples outside the image
+ * are absent (zero weight) and the result is renormalised by the accumulated
+ * alpha weight, so the image edge stays stable for every valid radius.
+ *
+ * Radius ≤ GAUSSIAN_EXACT_MAX_RADIUS uses the exact truncated kernel
+ * (sigma = radius / 3, support ±radius). Larger radii use
+ * GAUSSIAN_BOX_PASSES cascaded box filters with matched variance and support
+ * ≤ radius; each pass is a running sum, so a radius-64 blur costs the same as
+ * radius 9. Numerator and alpha weight pass through the same linear operator,
+ * so edge renormalisation and alpha weighting are preserved exactly. The box
+ * path works on integer samples (colour × alpha byte, alpha byte) so its
+ * running sums are exact and every value is a pure function of its window:
+ * tiled and full-frame renders match bit for bit. The documented tolerance
+ * against the exact kernel is in docs/performance-budgets.md and enforced by
+ * tests/gaussian-blur.test.mjs.
+ *
+ * Working memory is at most two Float32 planes (one for a fully opaque
+ * source) plus O(width + 16 × height) line buffers; nothing is allocated per
+ * pixel. The vertical pass gathers 16-column blocks so reads stay
+ * cache-friendly on tall images. A fully opaque source shares one alpha
+ * weight row and column profile instead of filtering a weight plane, which
+ * is bit-identical because every row then carries the same weights.
  */
 function applyGaussianBlur(
   source: Uint8ClampedArray,
@@ -1143,74 +1253,220 @@ function applyGaussianBlur(
   radius: number,
   output: Uint8ClampedArray,
   strength: number,
+  /** Blur alpha too (premultiplied) so strokes on transparent layers soften; see alphaSpread.ts. */
+  spread = false,
 ): void {
   const bounded = Math.max(1, Math.min(64, Math.round(radius))),
     sigma = Math.max(0.5, bounded / 3),
-    kernel = new Float32Array(bounded * 2 + 1),
-    count = width * height;
-  let kernelTotal = 0;
-  for (let offset = -bounded; offset <= bounded; offset += 1) {
-    const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
-    kernel[offset + bounded] = weight;
-    kernelTotal += weight;
+    count = width * height,
+    mix = clamp(strength, 0, 1),
+    exact = bounded <= GAUSSIAN_EXACT_MAX_RADIUS;
+  let filter: (input: Float64Array, result: Float64Array, length: number) => void;
+  if (exact) {
+    const kernel = new Float32Array(bounded * 2 + 1);
+    let kernelTotal = 0;
+    for (let offset = -bounded; offset <= bounded; offset += 1) {
+      const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
+      kernel[offset + bounded] = weight;
+      kernelTotal += weight;
+    }
+    for (let index = 0; index < kernel.length; index += 1) kernel[index] /= kernelTotal;
+    filter = (input, result, length) => kernelLine(input, result, length, kernel, bounded);
+  } else {
+    // Run the cascade on a zero-padded line so intermediate passes keep the
+    // energy that spills past the edge. The cascade is then exactly one
+    // convolution with a fixed kernel, edges included, like the exact path.
+    const halves = gaussianBoxHalfWidths(bounded),
+      pad = halves.reduce((sum, value) => sum + value, 0),
+      padded = Math.max(width, height) + pad * 2,
+      first = new Float64Array(padded),
+      second = new Float64Array(padded);
+    filter = (input, result, length) => {
+      const total = length + pad * 2;
+      first.fill(0, 0, pad);
+      first.fill(0, pad + length, total);
+      for (let index = 0; index < length; index += 1) first[pad + index] = input[index];
+      let from = first,
+        to = second;
+      for (let pass = 0; pass < halves.length; pass += 1) {
+        boxLine(from, to, total, halves[pass]);
+        const swap = from;
+        from = to;
+        to = swap;
+      }
+      for (let index = 0; index < length; index += 1) result[index] = from[pad + index];
+    };
   }
-  for (let index = 0; index < kernel.length; index += 1)
-    kernel[index] /= kernelTotal;
 
-  const horizontal = new Float32Array(count),
+  let opaque = true;
+  for (let offset = 3; offset < source.length; offset += 4)
+    if (source[offset] !== 255) {
+      opaque = false;
+      break;
+    }
+  const line = new Float64Array(width),
+    lineResult = new Float64Array(width),
+    block = GAUSSIAN_COLUMN_BLOCK,
+    columnValues = new Float64Array(block * height),
+    columnWeights = new Float64Array(block * height),
+    verticalValue = new Float64Array(height),
+    verticalWeight = new Float64Array(height);
+
+  // Spread mode needs the in-image kernel mass in the weight's units. The
+  // operator is separable, so it is the product of one row and one column
+  // profile of an all-ones line (times 255 on the integer box path).
+  let spreadCoverageX: Float64Array | undefined,
+    spreadCoverageY: Float64Array | undefined;
+  if (spread) {
+    line.fill(1);
+    filter(line, lineResult, width);
+    spreadCoverageX = Float64Array.from(lineResult, (value) => (exact ? value : value * 255));
+    const ones = new Float64Array(height).fill(1);
+    spreadCoverageY = new Float64Array(height);
+    filter(ones, spreadCoverageY, height);
+  }
+  // The exact path keeps the historical normalised alpha (byte / 255); the
+  // box path uses integer bytes so its running sums are exact.
+  // Horizontal alpha weight is shared by all three colour channels. An opaque
+  // source has the same weight row everywhere, so one row stands in for it.
+  let rowWeight: Float32Array | undefined,
+    horizontalWeight: Float32Array | undefined;
+  if (opaque) {
+    line.fill(exact ? 1 : 255);
+    filter(line, lineResult, width);
+    rowWeight = Float32Array.from(lineResult);
+  } else {
     horizontalWeight = new Float32Array(count);
-  for (let channel = 0; channel < 3; channel += 1) {
-    // Horizontal pass. At an edge the available kernel weights are
-    // renormalized through the accumulated alpha-weight, avoiding a dark
-    // border without inventing samples outside the source image.
     for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        let sum = 0;
-        let weight = 0;
-        for (let offset = -bounded; offset <= bounded; offset += 1) {
-          const sx = x + offset;
-          if (sx < 0 || sx >= width) continue;
-          const sourceOffset = (y * width + sx) * 4,
-            alpha = source[sourceOffset + 3] / 255,
-            kernelWeight = kernel[offset + bounded];
-          sum += source[sourceOffset + channel] * alpha * kernelWeight;
-          weight += alpha * kernelWeight;
-        }
-        const index = y * width + x;
-        horizontal[index] = sum;
-        horizontalWeight[index] = weight;
+      const row = y * width;
+      if (exact)
+        for (let x = 0; x < width; x += 1) line[x] = source[(row + x) * 4 + 3] / 255;
+      else for (let x = 0; x < width; x += 1) line[x] = source[(row + x) * 4 + 3];
+      filter(line, lineResult, width);
+      for (let x = 0; x < width; x += 1) horizontalWeight[row + x] = lineResult[x];
+    }
+  }
+  // The approximate path filters the weight plane vertically once, in place.
+  // The exact path refilters weights per channel so it stays bit-identical
+  // to the historical double-precision vertical accumulation.
+  const sharedWeights = !opaque && !exact;
+  if (sharedWeights && horizontalWeight) {
+    for (let x0 = 0; x0 < width; x0 += block) {
+      const columns = Math.min(block, width - x0);
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1)
+          columnWeights[column * height + y] = horizontalWeight[row + column];
+      }
+      for (let column = 0; column < columns; column += 1) {
+        const start = column * height;
+        filter(columnWeights.subarray(start, start + height), verticalWeight, height);
+        columnWeights.set(verticalWeight, start);
+      }
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1)
+          horizontalWeight[row + column] = columnWeights[column * height + y];
       }
     }
+  }
 
-    // Vertical pass. Keep the original alpha and only replace RGB on source
-    // pixels that contain coverage; transparent pixels remain byte-for-byte.
-    for (let x = 0; x < width; x += 1) {
-      for (let y = 0; y < height; y += 1) {
-        let sum = 0;
-        let weight = 0;
-        for (let offset = -bounded; offset <= bounded; offset += 1) {
-          const sy = y + offset;
-          if (sy < 0 || sy >= height) continue;
-          const index = sy * width + x,
-            kernelWeight = kernel[offset + bounded];
-          sum += horizontal[index] * kernelWeight;
-          weight += horizontalWeight[index] * kernelWeight;
+  const horizontal = new Float32Array(count);
+  let profileWeight = Number.NaN;
+  for (let channel = 0; channel < 3; channel += 1) {
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      if (exact)
+        for (let x = 0; x < width; x += 1) {
+          const offset = (row + x) * 4;
+          line[x] = source[offset + channel] * (source[offset + 3] / 255);
         }
-        const index = y * width + x,
-          outputOffset = index * 4,
-          mix = clamp(strength, 0, 1);
-        if (source[outputOffset + 3] && weight > 0)
-          output[outputOffset + channel] = clampByte(
-            source[outputOffset + channel] * (1 - mix) + (sum / weight) * mix,
-          );
+      else
+        for (let x = 0; x < width; x += 1) {
+          const offset = (row + x) * 4;
+          line[x] = source[offset + channel] * source[offset + 3];
+        }
+      filter(line, lineResult, width);
+      for (let x = 0; x < width; x += 1) horizontal[row + x] = lineResult[x];
+    }
+
+    for (let x0 = 0; x0 < width; x0 += block) {
+      const columns = Math.min(block, width - x0);
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1)
+          columnValues[column * height + y] = horizontal[row + column];
+        if (horizontalWeight && !sharedWeights)
+          for (let column = 0; column < columns; column += 1)
+            columnWeights[column * height + y] = horizontalWeight[row + column];
+      }
+      for (let column = 0; column < columns; column += 1) {
+        const start = column * height;
+        filter(columnValues.subarray(start, start + height), verticalValue, height);
+        columnValues.set(verticalValue, start);
+        if (rowWeight) {
+          // Opaque: the weight column is constant, so reuse its profile while
+          // the constant repeats (every column away from the side edges).
+          const constant = rowWeight[x0 + column];
+          if (constant !== profileWeight) {
+            columnWeights.fill(constant, start, start + height);
+            filter(columnWeights.subarray(start, start + height), verticalWeight, height);
+            // The box path stores shared weights as Float32 when the source
+            // is not opaque; round the same way so a tile that happens to be
+            // opaque matches the full-frame render bit for bit.
+            if (!exact)
+              for (let y = 0; y < height; y += 1) verticalWeight[y] = Math.fround(verticalWeight[y]);
+            profileWeight = constant;
+          }
+          columnWeights.set(verticalWeight, start);
+        } else if (!sharedWeights) {
+          filter(columnWeights.subarray(start, start + height), verticalWeight, height);
+          columnWeights.set(verticalWeight, start);
+        }
+      }
+      // Write row-major. Keep the original alpha and only replace RGB on
+      // covered pixels; transparent pixels remain byte-for-byte.
+      for (let y = 0; y < height; y += 1) {
+        const row = y * width + x0;
+        for (let column = 0; column < columns; column += 1) {
+          const outputOffset = (row + column) * 4;
+          if (spreadCoverageX && spreadCoverageY) {
+            const weight = sharedWeights && horizontalWeight
+                ? horizontalWeight[row + column]
+                : columnWeights[column * height + y],
+              coverage = spreadCoverageX[x0 + column] * spreadCoverageY[y],
+              value = spreadChannel(
+                source[outputOffset + channel],
+                source[outputOffset + 3],
+                columnValues[column * height + y],
+                weight,
+                coverage,
+                mix,
+              );
+            if (value >= 0) output[outputOffset + channel] = value;
+            if (channel === 0)
+              output[outputOffset + 3] = spreadAlphaByte(source[outputOffset + 3], weight, coverage, mix);
+            continue;
+          }
+          if (!source[outputOffset + 3]) continue;
+          const weight = sharedWeights && horizontalWeight
+            ? horizontalWeight[row + column]
+            : columnWeights[column * height + y];
+          if (weight > 0)
+            output[outputOffset + channel] = clampByte(
+              source[outputOffset + channel] * (1 - mix) +
+                (columnValues[column * height + y] / weight) * mix,
+            );
+        }
       }
     }
   }
 }
 
 /**
- * Apply a bounded directional blur while preserving source alpha and
- * transparent RGB padding. Samples are nearest-neighbour and symmetric
+ * Apply a bounded directional blur. With `spread` (the Motion Blur filter)
+ * alpha is blurred along the direction; otherwise source alpha and
+ * transparent RGB padding are preserved. Samples are nearest-neighbour and symmetric
  * around each destination pixel, which keeps the result deterministic across
  * browsers and makes the effect safe for small images.
  */
@@ -1222,35 +1478,87 @@ function applyMotionBlur(
   angle: number,
   output: Uint8ClampedArray,
   strength: number,
+  /** Blur alpha too (premultiplied); see alphaSpread.ts. */
+  spread = false,
 ): void {
   const bounded = Math.max(1, Math.min(64, Math.round(radius)));
   const radians = (angle * Math.PI) / 180;
   const dx = Math.cos(radians);
   const dy = Math.sin(radians);
+  const mix = clamp(strength, 0, 1);
+  // Each tap samples the nearest pixel `step` pixels along the direction:
+  // (x + round(dx * step), y + round(dy * step)), clamped to the layer. The
+  // rounded offsets are the same for every pixel (so tiles and bands render
+  // exactly like the whole image) and are precomputed once.
+  const taps = bounded * 2 + 1,
+    tapX = new Int32Array(taps),
+    tapY = new Int32Array(taps),
+    tapOffsets = new Int32Array(taps);
+  let reachX = 0,
+    reachY = 0;
+  for (let step = -bounded; step <= bounded; step += 1) {
+    const index = step + bounded;
+    tapX[index] = Math.round(dx * step);
+    tapY[index] = Math.round(dy * step);
+    reachX = Math.max(reachX, Math.abs(tapX[index]));
+    reachY = Math.max(reachY, Math.abs(tapY[index]));
+    tapOffsets[index] = tapY[index] * width + tapX[index];
+  }
+  // One 32-bit read per tap (RGBA bytes in memory order) on little-endian
+  // engines; the alpha/255 table holds exactly the quotients the division
+  // would produce, so the sums are bit-identical to the per-tap division.
+  const packed = LITTLE_ENDIAN && source.byteOffset % 4 === 0
+    ? new Uint32Array(source.buffer, source.byteOffset, width * height)
+    : undefined;
+  const alphaUnit = UNIT_ALPHA;
   for (let y = 0; y < height; y += 1) {
+    const rowInside = y - reachY >= 0 && y + reachY < height;
     for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let step = -bounded; step <= bounded; step += 1) {
-        const sample = sourcePixel(source, width, height, x + dx * step, y + dy * step);
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
+      const pixel = y * width + x,
+        destination = pixel * 4;
+      if (source[destination + 3] === 0 && !spread) continue;
+      let red = 0,
+        green = 0,
+        blue = 0,
+        weight = 0;
+      if (packed && rowInside && x - reachX >= 0 && x + reachX < width) {
+        // Interior fast path: every tap is in bounds.
+        for (let index = 0; index < taps; index += 1) {
+          const value = packed[pixel + tapOffsets[index]], alpha = alphaUnit[value >>> 24];
+          if (!alpha) continue;
+          red += (value & 255) * alpha;
+          green += ((value >>> 8) & 255) * alpha;
+          blue += ((value >>> 16) & 255) * alpha;
+          weight += alpha;
+        }
+      } else
+        for (let index = 0; index < taps; index += 1) {
+          const offset =
+              (clamp(y + tapY[index], 0, height - 1) * width + clamp(x + tapX[index], 0, width - 1)) * 4,
+            alpha = alphaUnit[source[offset + 3]];
+          if (!alpha) continue;
+          red += source[offset] * alpha;
+          green += source[offset + 1] * alpha;
+          blue += source[offset + 2] * alpha;
+          weight += alpha;
+        }
+      if (spread) {
+        // Every tap is counted (edge taps repeat the clamped edge pixel).
+        writeSpreadPixel(source, output, destination, red, green, blue, weight, taps, mix);
+        continue;
       }
       if (!weight) continue;
-      const mix = clamp(strength, 0, 1);
-      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
+      output[destination] = clampByte(source[destination] * (1 - mix) + (red / weight) * mix);
+      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (green / weight) * mix);
+      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (blue / weight) * mix);
       output[destination + 3] = source[destination + 3];
     }
   }
 }
+
+/** a / 255 for every byte value, computed with the same division. */
+const UNIT_ALPHA = Float64Array.from({ length: 256 }, (_, alpha) => alpha / 255);
+const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([0x01020304]).buffer)[0] === 0x04;
 
 /**
  * Apply a bounded spin-style radial blur around an editable centre point.
@@ -1270,52 +1578,7 @@ function applyRadialBlur(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
-  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
-  const sampleCount = 8;
-  const sweep = (bounded * Math.PI) / 180;
-  const mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const dx = x - centerPixelX;
-      const dy = y - centerPixelY;
-      const distance = Math.hypot(dx, dy);
-      if (distance < 0.5) continue;
-      const baseAngle = Math.atan2(dy, dx);
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
-        const angle = baseAngle + (sweep * sampleIndex) / sampleCount;
-        const sample = sourcePixel(
-          source,
-          width,
-          height,
-          centerPixelX + Math.cos(angle) * distance,
-          centerPixelY + Math.sin(angle) * distance,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(
-        source[destination] * (1 - mix) + (sums[0] / weight) * mix,
-      );
-      output[destination + 1] = clampByte(
-        source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix,
-      );
-      output[destination + 2] = clampByte(
-        source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix,
-      );
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastSpinRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
 }
 
 /**
@@ -1333,45 +1596,7 @@ function applyZoomRadialBlur(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
-  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
-  const sampleCount = 8;
-  const spread = bounded / 64 * 0.65;
-  const mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const dx = x - centerPixelX;
-      const dy = y - centerPixelY;
-      const distance = Math.hypot(dx, dy);
-      if (distance < 0.5) continue;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
-        const scale = 1 + (spread * sampleIndex) / sampleCount;
-        const sample = sourcePixel(
-          source,
-          width,
-          height,
-          centerPixelX + dx * scale,
-          centerPixelY + dy * scale,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastZoomRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
 }
 
 /**
@@ -1393,62 +1618,10 @@ function applySpinBlur(
   ellipse?: SpinBlurEllipse,
 ): void {
   if (!ellipse) {
-    applyRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
+    fastSpinRadialBlur(source, width, height, radius, centerX, centerY, output, strength);
     return;
   }
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const centerPixelX = clamp(centerX, 0, 1) * (width - 1);
-  const centerPixelY = clamp(centerY, 0, 1) * (height - 1);
-  const rotation = (ellipse.rotation * Math.PI) / 180;
-  const cosine = Math.cos(rotation), sine = Math.sin(rotation);
-  const sampleCount = 8;
-  const sweep = (bounded * Math.PI) / 180;
-  const mix = clamp(strength, 0, 1);
-  const feather = clamp(ellipse.feather, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      const dx = x - centerPixelX, dy = y - centerPixelY;
-      const rotatedX = dx * cosine + dy * sine;
-      const rotatedY = -dx * sine + dy * cosine;
-      const ellipseDistance = Math.hypot(
-        rotatedX / Math.max(1, ellipse.radiusX * width),
-        rotatedY / Math.max(1, ellipse.radiusY * height),
-      );
-      if (ellipseDistance >= 1) continue;
-      const mask = feather <= 0 || ellipseDistance <= 1 - feather
-        ? 1
-        : clamp((1 - ellipseDistance) / feather, 0, 1);
-      const distance = Math.hypot(dx, dy);
-      if (distance < 0.5) continue;
-      const baseAngle = Math.atan2(dy, dx);
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let sampleIndex = -sampleCount; sampleIndex <= sampleCount; sampleIndex += 1) {
-        const angle = baseAngle + (sweep * sampleIndex) / sampleCount;
-        const sample = sourcePixel(
-          source,
-          width,
-          height,
-          centerPixelX + Math.cos(angle) * distance,
-          centerPixelY + Math.sin(angle) * distance,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      const blend = mix * mask;
-      output[destination] = clampByte(source[destination] * (1 - blend) + (sums[0] / weight) * blend);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - blend) + (sums[1] / weight) * blend);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - blend) + (sums[2] / weight) * blend);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastEllipseSpinBlur(source, width, height, radius, centerX, centerY, output, strength, ellipse);
 }
 
 /**
@@ -1473,129 +1646,12 @@ function applyPathBlur(
   pathTaper = 0,
 ): void {
   if (!path || path.length < 2) {
-    applyLegacyPathBlur(source, width, height, radius, angle, centerX, centerY, output, strength);
+    fastLegacyPathBlur(source, width, height, radius, angle, centerX, centerY, output, strength);
     return;
   }
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const points = path.map((point) => ({ x: point.x * (width - 1), y: point.y * (height - 1), speed: point.speed }));
-  const segments = points.slice(0, -1).map((start, index) => {
-    const end = points[index + 1];
-    const dx = end.x - start.x, dy = end.y - start.y;
-    return { start, end, dx, dy, lengthSquared: Math.max(1e-6, dx * dx + dy * dy), length: Math.hypot(dx, dy) };
-  });
-  const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0);
-  const mix = clamp(strength, 0, 1);
-  const sampleCount = 8;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      let bestDistance = Infinity, bestT = 0, bestSegment = segments[0], distanceAlong = 0, bestDistanceAlong = 0;
-      for (const segment of segments) {
-        const projection = clamp(((x - segment.start.x) * segment.dx + (y - segment.start.y) * segment.dy) / segment.lengthSquared, 0, 1);
-        const nearestX = segment.start.x + segment.dx * projection;
-        const nearestY = segment.start.y + segment.dy * projection;
-        const distance = Math.hypot(x - nearestX, y - nearestY);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestT = projection;
-          bestSegment = segment;
-          bestDistanceAlong = distanceAlong + segment.length * projection;
-        }
-        distanceAlong += segment.length;
-      }
-      const influence = clamp(1 - bestDistance / Math.max(1, bounded * 2), 0, 1);
-      if (influence <= 0) continue;
-      const speedStart = bestSegment.start.speed, speedEnd = bestSegment.end.speed;
-      const speed = (speedStart + (speedEnd - speedStart) * bestT) / 100;
-      const taperDistance = totalLength > 0 ? bestDistanceAlong / totalLength : 0;
-      const taper = 1 - clamp(pathTaper, 0, 1) * Math.max(taperDistance, 1 - taperDistance);
-      const length = bounded * Math.max(0, speed) * taper;
-      if (length < 0.5) continue;
-      const direction = Math.atan2(bestSegment.dy, bestSegment.dx) + (angle * Math.PI) / 180;
-      const tangentX = Math.cos(direction), tangentY = Math.sin(direction);
-      const start = pathCentered ? -sampleCount : 0;
-      const end = pathCentered ? sampleCount : sampleCount;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let index = start; index <= end; index += 1) {
-        const t = index / sampleCount;
-        const sample = sourcePixelBilinear(source, width, height, x + tangentX * length * t, y + tangentY * length * t);
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      const blend = mix * influence;
-      output[destination] = clampByte(source[destination] * (1 - blend) + (sums[0] / weight) * blend);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - blend) + (sums[1] / weight) * blend);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - blend) + (sums[2] / weight) * blend);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
+  fastPathBlur(source, width, height, radius, angle, output, strength, path, pathCentered, pathTaper);
 }
 
-function applyLegacyPathBlur(
-  source: Uint8ClampedArray,
-  width: number,
-  height: number,
-  radius: number,
-  angle: number,
-  centerX: number,
-  centerY: number,
-  output: Uint8ClampedArray,
-  strength: number,
-): void {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius)));
-  const radians = (angle * Math.PI) / 180;
-  const tangentX = Math.cos(radians),
-    tangentY = Math.sin(radians),
-    normalX = -tangentY,
-    normalY = tangentX,
-    centrePixelX = clamp(centerX, 0, 1) * (width - 1),
-    centrePixelY = clamp(centerY, 0, 1) * (height - 1),
-    maxDimension = Math.max(1, Math.max(width, height)),
-    sampleCount = 8,
-    mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      if (source[destination + 3] === 0) continue;
-      // Points farther from the centre bend more strongly, while the centre
-      // remains a straight directional path and therefore predictable.
-      const centreOffset =
-        ((x - centrePixelX) * normalX + (y - centrePixelY) * normalY) /
-        maxDimension;
-      const curve = clamp(centreOffset, -1, 1) * bounded * 0.85;
-      const sums = [0, 0, 0];
-      let weight = 0;
-      for (let index = -sampleCount; index <= sampleCount; index += 1) {
-        const t = index / sampleCount;
-        const sample = sourcePixelBilinear(
-          source,
-          width,
-          height,
-          x + tangentX * bounded * t + normalX * curve * t * t,
-          y + tangentY * bounded * t + normalY * curve * t * t,
-        );
-        const alpha = sample[3] / 255;
-        if (!alpha) continue;
-        sums[0] += sample[0] * alpha;
-        sums[1] += sample[1] * alpha;
-        sums[2] += sample[2] * alpha;
-        weight += alpha;
-      }
-      if (!weight) continue;
-      output[destination] = clampByte(source[destination] * (1 - mix) + (sums[0] / weight) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - mix) + (sums[1] / weight) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - mix) + (sums[2] / weight) * mix);
-      output[destination + 3] = source[destination + 3];
-    }
-  }
-}
 
 function applyMosaic(
   source: Uint8ClampedArray,
@@ -1958,6 +2014,116 @@ function applyMezzotint(
   }
 }
 
+/** Octaves of the smooth cloud generator for a feature size: down to ~2 px. */
+export function cloudOctaves(scale: number): number {
+  return Math.max(4, Math.min(11, Math.ceil(Math.log2(scale))));
+}
+
+/**
+ * Shared smooth multi-octave value noise for Render → Clouds and Difference
+ * Clouds. Octave `k` samples a seeded lattice with cells of `scale / 2^k`
+ * pixels, interpolates it with smoothstep and contributes with amplitude
+ * `2^-k`. `row(y, sums)` receives the un-normalised octave sum for every
+ * pixel of row `y`; the caller owns normalisation.
+ *
+ * With `offsetOctaves` each octave's lattice is shifted by a seeded
+ * sub-cell offset. Without it every octave has a lattice line on the
+ * multiples of `scale`, where smoothstep flattens all of them at once and a
+ * faint grid shows; Difference Clouds uses the offsets. Clouds keeps the
+ * aligned lattice so its output stays bit-identical to earlier releases.
+ *
+ * Lattice values only change once per noise cell, so each octave caches its
+ * per-column cell index/weight and the two lattice rows around the current
+ * row. The coordinate expressions match the per-pixel form exactly, so the
+ * output is bit-identical while hashing drops from 4 per pixel per octave
+ * to about 2 per lattice cell.
+ */
+export function forEachCloudRow(
+  width: number,
+  height: number,
+  scale: number,
+  seedValue: number,
+  octaves: number,
+  row: (y: number, sums: Float64Array) => void,
+  offsetOctaves = false,
+): void {
+  const seed = seedValue >>> 0;
+  const hash = (x: number, y: number, salt: number): number => {
+    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(salt | 0, 1442695041) + seed) | 0;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
+  };
+  const smooth = (value: number) => value * value * (3 - 2 * value);
+  const columns = Array.from({ length: octaves }, (_, octave) => {
+    const frequency = 2 ** octave;
+    // Seeded sub-cell shift (0.15–0.85 of a cell) so octave lattices never coincide.
+    const shiftX = offsetOctaves ? 0.15 + hash(octave, 7919, 104729) * 0.7 : 0;
+    const shiftY = offsetOctaves ? 0.15 + hash(7907, octave, 104723) * 0.7 : 0;
+    const left = new Int32Array(width);
+    const weight = new Float64Array(width);
+    for (let x = 0; x < width; x += 1) {
+      const fx = offsetOctaves ? (x / scale) * frequency + shiftX : (x / scale) * frequency;
+      left[x] = Math.floor(fx);
+      weight[x] = smooth(fx - left[x]);
+    }
+    const first = left[0];
+    const span = left[width - 1] - first + 2;
+    return { frequency, shiftY, left, weight, first, span, top: new Float64Array(span), bottom: new Float64Array(span), row: Number.NaN };
+  });
+  const sums = new Float64Array(width);
+  for (let y = 0; y < height; y += 1) {
+    sums.fill(0);
+    let amplitude = 1;
+    for (let octave = 0; octave < octaves; octave += 1) {
+      const column = columns[octave];
+      const fy = offsetOctaves ? (y / scale) * column.frequency + column.shiftY : (y / scale) * column.frequency;
+      const top = Math.floor(fy);
+      const ty = smooth(fy - top);
+      if (column.row !== top) {
+        for (let i = 0; i < column.span; i += 1) {
+          column.top[i] = hash(column.first + i, top, octave + 1);
+          column.bottom[i] = hash(column.first + i, top + 1, octave + 1);
+        }
+        column.row = top;
+      }
+      const { left, weight, first, top: upper, bottom: lower } = column;
+      for (let x = 0; x < width; x += 1) {
+        const i = left[x] - first;
+        const tx = weight[x];
+        const topMix = upper[i] + (upper[i + 1] - upper[i]) * tx;
+        const bottomMix = lower[i] + (lower[i + 1] - lower[i]) * tx;
+        sums[x] += (topMix + (bottomMix - topMix) * ty) * amplitude;
+      }
+      amplitude *= 0.5;
+    }
+    row(y, sums);
+  }
+}
+
+/**
+ * The shared cloud field for a layer, stretched to 0..1 over its own range
+ * (as colour Clouds does), so the result always spans black to white even
+ * when the cloud size approaches the layer size.
+ */
+export function cloudField(
+  width: number,
+  height: number,
+  scale: number,
+  seed: number,
+  offsetOctaves = false,
+): Float32Array {
+  const field = new Float32Array(width * height);
+  forEachCloudRow(width, height, scale, seed, cloudOctaves(scale), (y, sums) => field.set(sums, y * width), offsetOctaves);
+  let low = Infinity, high = -Infinity;
+  for (let i = 0; i < field.length; i += 1) {
+    if (field[i] < low) low = field[i];
+    if (field[i] > high) high = field[i];
+  }
+  const range = high - low > 1e-9 ? high - low : 1;
+  for (let i = 0; i < field.length; i += 1) field[i] = (field[i] - low) / range;
+  return field;
+}
+
 /**
  * Apply a bounded deterministic approximation of Photoshop Render → Clouds.
  *
@@ -1977,56 +2143,86 @@ function applyClouds(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const scale = Math.max(2, Math.min(128, Math.round(effect.radius * 2)));
-  const seed = effect.seed >>> 0;
-  const hash = (x: number, y: number, salt: number): number => {
-    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(salt | 0, 1442695041) + seed) | 0;
-    value = Math.imul(value ^ (value >>> 13), 1274126177);
-    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
-  };
-  const smooth = (value: number) => value * value * (3 - 2 * value);
-  const valueNoise = (x: number, y: number, salt: number): number => {
-    const left = Math.floor(x);
-    const top = Math.floor(y);
-    const tx = smooth(x - left);
-    const ty = smooth(y - top);
-    const topLeft = hash(left, top, salt);
-    const topRight = hash(left + 1, top, salt);
-    const bottomLeft = hash(left, top + 1, salt);
-    const bottomRight = hash(left + 1, top + 1, salt);
-    const topMix = topLeft + (topRight - topLeft) * tx;
-    const bottomMix = bottomLeft + (bottomRight - bottomLeft) * tx;
-    return topMix + (bottomMix - topMix) * ty;
-  };
+  const render = effect.cloudRender;
+  const scale = render
+    ? render.scale
+    : Math.max(2, Math.min(128, Math.round(effect.radius * 2)));
+  // Legacy records keep four octaves. Colour clouds add octaves down to ~2 px
+  // so large billows still carry fine detail.
+  const octaves = render ? cloudOctaves(scale) : 4;
+  const foreground = render ? hexRgb(render.foreground) : undefined;
+  const background = render ? hexRgb(render.background) : undefined;
+  // Colour clouds are stretched to their own range so they always span the
+  // background to foreground colours, even when the cloud size approaches
+  // the image size and the raw noise sits in a narrow band.
+  const field = foreground && background ? new Float32Array(width * height) : undefined;
+  let amplitudeTotal = 0;
+  for (let octave = 0, amplitude = 1; octave < octaves; octave += 1, amplitude *= 0.5)
+    amplitudeTotal += amplitude;
+  forEachCloudRow(width, height, scale, effect.seed, octaves, (y, sums) => {
+    if (field) {
+      field.set(sums, y * width);
+      return;
+    }
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (!source[offset + 3] && !render?.fill) continue;
+      const value = sums[x];
+      const cloud = (value / amplitudeTotal) * 255;
+      blendPixel(output, offset, [cloud, cloud, cloud, source[offset + 3]], strength);
+    }
+  });
+  if (!field || !foreground || !background) return;
+  let low = Infinity, high = -Infinity;
+  for (let i = 0; i < field.length; i += 1) {
+    if (field[i] < low) low = field[i];
+    if (field[i] > high) high = field[i];
+  }
+  const range = high - low > 1e-9 ? high - low : 1;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
-      if (!source[offset + 3]) continue;
-      let value = 0;
-      let amplitude = 1;
-      let amplitudeTotal = 0;
-      for (let octave = 0; octave < 4; octave += 1) {
-        const frequency = 2 ** octave;
-        value += valueNoise((x / scale) * frequency, (y / scale) * frequency, octave + 1) * amplitude;
-        amplitudeTotal += amplitude;
-        amplitude *= 0.5;
+      if (!source[offset + 3] && !render?.fill) continue;
+      {
+        const t = (field[y * width + x] - low) / range;
+        const red = background[0] + (foreground[0] - background[0]) * t;
+        const green = background[1] + (foreground[1] - background[1]) * t;
+        const blue = background[2] + (foreground[2] - background[2]) * t;
+        const alpha = source[offset + 3];
+        if (alpha === 0) {
+          // Filling a transparent pixel: its RGB is hidden, so take the cloud
+          // colour outright and let strength set the new coverage.
+          output[offset] = clampByte(red);
+          output[offset + 1] = clampByte(green);
+          output[offset + 2] = clampByte(blue);
+          output[offset + 3] = clampByte(255 * strength);
+        } else {
+          blendPixel(output, offset, [red, green, blue, alpha], strength);
+          if (render?.fill) output[offset + 3] = clampByte(alpha + (255 - alpha) * strength);
+        }
       }
-      const cloud = (value / amplitudeTotal) * 255;
-      blendPixel(output, offset, [cloud, cloud, cloud, source[offset + 3]], strength);
     }
   }
 }
 
+/** Cloud size used by a Difference Clouds record: `cloudScale`, or the legacy `radius`. */
+export function differenceCloudScale(effect: Pick<FilterEffects, 'cloudScale' | 'radius'>): number {
+  if (effect.cloudScale !== undefined) return clamp(Math.round(effect.cloudScale), MIN_CLOUD_RENDER_SCALE, MAX_CLOUD_RENDER_SCALE);
+  return clamp(Math.round(effect.radius), MIN_CLOUD_RENDER_SCALE, LEGACY_DIFFERENCE_CLOUD_SCALE_MAX);
+}
+
 /**
- * Apply a bounded seeded Difference Clouds approximation.
+ * Apply Render → Difference Clouds.
  *
- * Photoshop's Difference Clouds starts from the current foreground/background
- * colours and repeatedly difference-blends a procedural cloud field. PixelForge
- * keeps this first local slice deterministic and source-safe: a monochrome,
- * multi-octave value-noise field is difference-blended against the immutable
- * source, while amount, cloud scale and seed remain editable metadata. It does
- * not claim Photoshop's colour-pair controls, wrap-around or exact noise
- * implementation.
+ * Photoshop's Difference Clouds difference-blends a cloud field with the
+ * layer. PixelForge uses the same smooth multi-octave value noise as Clouds
+ * (with per-octave lattice offsets so no grid shows), stretched to the full
+ * black-to-white range, and difference-blends it with the layer composited
+ * over black: a transparent pixel counts as black, so an empty layer becomes
+ * the clouds themselves. The clouds are opaque, so output alpha grows to
+ * `alpha + (255 - alpha) × amount`; an opaque layer keeps alpha 255 and gets
+ * `c·(1 - amount) + |c - cloud|·amount`. It is a local approximation with no
+ * colour-pair controls or wrap-around.
  */
 function applyDifferenceClouds(
   source: Uint8ClampedArray,
@@ -2036,53 +2232,20 @@ function applyDifferenceClouds(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
-  const scale = Math.max(2, Math.min(64, Math.round(effect.radius)));
-  const seed = effect.seed >>> 0;
-  const hash = (x: number, y: number): number => {
-    let value = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + seed) | 0;
-    value = Math.imul(value ^ (value >>> 13), 1274126177);
-    return ((value ^ (value >>> 16)) >>> 0) / 0xffffffff;
-  };
-  const smooth = (value: number) => value * value * (3 - 2 * value);
-  const lattice = (x: number, y: number): number => {
-    const left = Math.floor(x);
-    const top = Math.floor(y);
-    const tx = smooth(x - left);
-    const ty = smooth(y - top);
-    const topLeft = hash(left, top);
-    const topRight = hash(left + 1, top);
-    const bottomLeft = hash(left, top + 1);
-    const bottomRight = hash(left + 1, top + 1);
-    const upper = topLeft + (topRight - topLeft) * tx;
-    const lower = bottomLeft + (bottomRight - bottomLeft) * tx;
-    return upper + (lower - upper) * ty;
-  };
-  const cloud = (x: number, y: number): number => {
-    let sampleX = x / scale;
-    let sampleY = y / scale;
-    let amplitude = 0.5;
-    let total = 0;
-    let value = 0;
-    for (let octave = 0; octave < 4; octave += 1) {
-      value += lattice(sampleX, sampleY) * amplitude;
-      total += amplitude;
-      sampleX *= 2;
-      sampleY *= 2;
-      amplitude *= 0.5;
+  const mix = clamp(strength, 0, 1);
+  if (!mix) return;
+  const field = cloudField(width, height, differenceCloudScale(effect), effect.seed, true);
+  for (let index = 0; index < field.length; index += 1) {
+    const offset = index * 4,
+      coverage = source[offset + 3] / 255,
+      alpha = coverage * (1 - mix) + mix,
+      cloud = field[index] * 255;
+    for (let channel = 0; channel < 3; channel += 1) {
+      // Premultiplied: the layer over black, difference-blended with the cloud.
+      const base = source[offset + channel] * coverage;
+      output[offset + channel] = clampByte((base * (1 - mix) + Math.abs(base - cloud) * mix) / alpha);
     }
-    return total ? value / total : 0.5;
-  };
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      const alpha = source[destination + 3];
-      if (!alpha) continue;
-      const generated = cloud(x, y) * 255;
-      output[destination] = clampByte(source[destination] * (1 - strength) + Math.abs(source[destination] - generated) * strength);
-      output[destination + 1] = clampByte(source[destination + 1] * (1 - strength) + Math.abs(source[destination + 1] - generated) * strength);
-      output[destination + 2] = clampByte(source[destination + 2] * (1 - strength) + Math.abs(source[destination + 2] - generated) * strength);
-      output[destination + 3] = alpha;
-    }
+    output[offset + 3] = clampByte(alpha * 255);
   }
 }
 
@@ -2518,12 +2681,18 @@ function applyDistort(
         // only the immutable source and fades to identity at the influence
         // boundary; it intentionally does not claim Photoshop mesh semantics.
         const falloff = 1 - normalized;
-        const scale = 1 - amount * 0.35 * falloff * falloff;
-        const turn = angle * amount * falloff * falloff;
-        const cosine = Math.cos(turn);
-        const sine = Math.sin(turn);
-        sampleX = centerX + (dx * cosine - dy * sine) * scale;
-        sampleY = centerY + (dx * sine + dy * cosine) * scale;
+        const influence = amount * 0.35 * falloff * falloff;
+        if (effect.liquifyMode === 'push') {
+          sampleX = x - Math.cos(angle) * influence * radius;
+          sampleY = y - Math.sin(angle) * influence * radius;
+        } else {
+          const scale = effect.liquifyMode === 'bloat' ? 1 + influence : 1 - influence;
+          const turn = effect.liquifyMode === 'bloat' ? 0 : angle * amount * falloff * falloff;
+          const cosine = Math.cos(turn);
+          const sine = Math.sin(turn);
+          sampleX = centerX + (dx * cosine - dy * sine) * scale;
+          sampleY = centerY + (dx * sine + dy * cosine) * scale;
+        }
       } else if (effect.type === 'spherize' && distance < radius) {
         // Inverse-map a bounded spherical bulge with a smooth edge falloff.
         // The exact centre and influence boundary remain stable.
@@ -3124,11 +3293,14 @@ function applySmartSharpen(
   radius: number,
   output: Uint8ClampedArray,
   amount: number,
+  rows?: RowRange,
 ): void {
   const reference = new Uint8ClampedArray(source.length);
-  applySmartBlur(source, width, height, radius, reference, 1);
+  applySmartBlur(source, width, height, radius, reference, 1, rows);
   const strength = clamp(amount, 0, 100) / 100;
-  for (let offset = 0; offset < source.length; offset += 4) {
+  const first = rows ? Math.max(0, rows.start) * width * 4 : 0;
+  const last = rows ? Math.min(height, rows.end) * width * 4 : source.length;
+  for (let offset = first; offset < last; offset += 4) {
     const alpha = source[offset + 3];
     output[offset + 3] = alpha;
     if (!alpha) continue;
@@ -3237,6 +3409,78 @@ function applyGradientMap(
   }
 }
 
+/**
+ * Visit every covered (alpha > 0) pixel with the per-channel median of the
+ * visible samples in its image-clipped (2·span + 1)² window, i.e. exactly
+ * `sorted[floor(count / 2)]` of those samples. Sliding 256-bin histograms
+ * replace the per-pixel sort: moving one column costs O(span), and each
+ * channel's median cursor only steps by the change in rank. With
+ * `excludeCenter`, the destination pixel itself is left out of its window;
+ * `count` is then 0 when it has no visible neighbours (medians are 0).
+ */
+function visitWindowMedians(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  span: number,
+  excludeCenter: boolean,
+  visit: (offset: number, red: number, green: number, blue: number, count: number) => void,
+): void {
+  // histogram[channel * 256 + value]; state = [median r/g/b, below r/g/b],
+  // where "below" counts window samples strictly less than that median.
+  const histogram = new Int32Array(768),
+    state = new Int32Array(6);
+  let count = 0;
+  const update = (offset: number, sign: number) => {
+    if (!source[offset + 3]) return;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const value = source[offset + channel];
+      histogram[channel * 256 + value] += sign;
+      if (value < state[channel]) state[channel + 3] += sign;
+    }
+    count += sign;
+  };
+  const column = (x: number, top: number, bottom: number, sign: number) => {
+    for (let sy = top; sy <= bottom; sy += 1) update((sy * width + x) * 4, sign);
+  };
+  const median = (channel: number, rank: number) => {
+    const base = channel * 256;
+    let value = state[channel],
+      below = state[channel + 3];
+    while (below > rank) {
+      value -= 1;
+      below -= histogram[base + value];
+    }
+    while (below + histogram[base + value] <= rank) {
+      below += histogram[base + value];
+      value += 1;
+    }
+    state[channel] = value;
+    state[channel + 3] = below;
+    return value;
+  };
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - span),
+      bottom = Math.min(height - 1, y + span);
+    histogram.fill(0);
+    state.fill(0);
+    count = 0;
+    for (let x = 0; x <= Math.min(width - 1, span); x += 1) column(x, top, bottom, 1);
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (source[offset + 3]) {
+        if (excludeCenter) update(offset, -1);
+        const rank = count >> 1;
+        if (count > 0) visit(offset, median(0, rank), median(1, rank), median(2, rank), count);
+        else visit(offset, 0, 0, 0, 0);
+        if (excludeCenter) update(offset, 1);
+      }
+      if (x - span >= 0) column(x - span, top, bottom, -1);
+      if (x + span + 1 < width) column(x + span + 1, top, bottom, 1);
+    }
+  }
+}
+
 /** Apply a bounded median neighbourhood filter while retaining source alpha. */
 function applyMedian(
   source: Uint8ClampedArray,
@@ -3247,31 +3491,12 @@ function applyMedian(
   strength: number,
 ): void {
   const span = Math.min(8, Math.max(1, Math.round(radius)));
-  const values: [number[], number[], number[]] = [[], [], []];
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const offset = (y * width + x) * 4;
-      if (!source[offset + 3]) continue;
-      values[0].length = 0;
-      values[1].length = 0;
-      values[2].length = 0;
-      for (let sy = Math.max(0, y - span); sy <= Math.min(height - 1, y + span); sy += 1) {
-        for (let sx = Math.max(0, x - span); sx <= Math.min(width - 1, x + span); sx += 1) {
-          const sample = (sy * width + sx) * 4;
-          if (!source[sample + 3]) continue;
-          values[0].push(source[sample]);
-          values[1].push(source[sample + 1]);
-          values[2].push(source[sample + 2]);
-        }
-      }
-      for (const channel of values) channel.sort((a, b) => a - b);
-      const median = values.map((channel) => channel[Math.floor(channel.length / 2)] ?? source[offset]);
-      output[offset] = clampByte(source[offset] + (median[0] - source[offset]) * strength);
-      output[offset + 1] = clampByte(source[offset + 1] + (median[1] - source[offset + 1]) * strength);
-      output[offset + 2] = clampByte(source[offset + 2] + (median[2] - source[offset + 2]) * strength);
-      output[offset + 3] = source[offset + 3];
-    }
-  }
+  visitWindowMedians(source, width, height, span, false, (offset, red, green, blue) => {
+    output[offset] = clampByte(source[offset] + (red - source[offset]) * strength);
+    output[offset + 1] = clampByte(source[offset + 1] + (green - source[offset + 1]) * strength);
+    output[offset + 2] = clampByte(source[offset + 2] + (blue - source[offset + 2]) * strength);
+    output[offset + 3] = source[offset + 3];
+  });
 }
 
 /** Bounded Dust & Scratches approximation: replace only local tonal outliers. */
@@ -3285,30 +3510,14 @@ function applyDustScratches(
 ): void {
   const radius = clamp(Math.round(effect.radius), 1, 8);
   const threshold = clamp(Math.round(effect.threshold ?? 12), 0, 255);
-  const samples: number[][] = [[], [], []];
-  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    const offset = (y * width + x) * 4;
-    const alpha = source[offset + 3];
-    if (alpha === 0) continue;
-    samples[0].length = 0; samples[1].length = 0; samples[2].length = 0;
-    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
-      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
-        const sample = (sy * width + sx) * 4;
-        if (source[sample + 3] === 0) continue;
-        samples[0].push(source[sample]); samples[1].push(source[sample + 1]); samples[2].push(source[sample + 2]);
-      }
-    const medians = samples.map((channel) => {
-      if (!channel.length) return 0;
-      channel.sort((a, b) => a - b);
-      return channel[Math.floor(channel.length / 2)];
-    });
-    const distance = Math.max(Math.abs(source[offset] - medians[0]), Math.abs(source[offset + 1] - medians[1]), Math.abs(source[offset + 2] - medians[2]));
-    if (distance <= threshold) continue;
-    const mix = clamp(strength, 0, 1);
-    output[offset] = clampByte(source[offset] + (medians[0] - source[offset]) * mix);
-    output[offset + 1] = clampByte(source[offset + 1] + (medians[1] - source[offset + 1]) * mix);
-    output[offset + 2] = clampByte(source[offset + 2] + (medians[2] - source[offset + 2]) * mix);
-  }
+  const mix = clamp(strength, 0, 1);
+  visitWindowMedians(source, width, height, radius, false, (offset, red, green, blue) => {
+    const distance = Math.max(Math.abs(source[offset] - red), Math.abs(source[offset + 1] - green), Math.abs(source[offset + 2] - blue));
+    if (distance <= threshold) return;
+    output[offset] = clampByte(source[offset] + (red - source[offset]) * mix);
+    output[offset + 1] = clampByte(source[offset + 1] + (green - source[offset + 1]) * mix);
+    output[offset + 2] = clampByte(source[offset + 2] + (blue - source[offset + 2]) * mix);
+  });
 }
 
 /**
@@ -3331,44 +3540,24 @@ function applyReflectionRemoval(
   const radius = clamp(Math.round(effect.radius), 1, 8);
   const threshold = clamp(Math.round(effect.threshold ?? 28), 0, 255);
   const luma = (r: number, g: number, b: number) => r * 0.2126 + g * 0.7152 + b * 0.0722;
-  const channels: number[][] = [[], [], []];
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const destination = (y * width + x) * 4;
-      const alpha = source[destination + 3];
-      if (!alpha) continue;
-      channels[0].length = 0;
-      channels[1].length = 0;
-      channels[2].length = 0;
-      for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1) {
-        for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
-          const sample = (sy * width + sx) * 4;
-          if (!source[sample + 3] || (sx === x && sy === y)) continue;
-          channels[0].push(source[sample]);
-          channels[1].push(source[sample + 1]);
-          channels[2].push(source[sample + 2]);
-        }
-      }
-      if (!channels[0].length) continue;
-      const medians = channels.map((channel) => {
-        channel.sort((a, b) => a - b);
-        return channel[Math.floor(channel.length / 2)] ?? 0;
-      });
-      const currentLuma = luma(source[destination], source[destination + 1], source[destination + 2]);
-      const medianLuma = luma(medians[0], medians[1], medians[2]);
-      const highlight = clamp((currentLuma - 160) / 95, 0, 1);
-      const saturation = Math.max(source[destination], source[destination + 1], source[destination + 2]) -
-        Math.min(source[destination], source[destination + 1], source[destination + 2]);
-      const neutrality = 1 - clamp(saturation / 96, 0, 1);
-      const outlier = clamp((currentLuma - medianLuma - threshold) / 80, 0, 1);
-      const mix = clamp(strength, 0, 1) * highlight * neutrality * outlier;
-      if (mix <= 0) continue;
-      output[destination] = clampByte(source[destination] + (medians[0] - source[destination]) * mix);
-      output[destination + 1] = clampByte(source[destination + 1] + (medians[1] - source[destination + 1]) * mix);
-      output[destination + 2] = clampByte(source[destination + 2] + (medians[2] - source[destination + 2]) * mix);
-      output[destination + 3] = alpha;
-    }
-  }
+  // The destination is excluded from its own neighbour median.
+  visitWindowMedians(source, width, height, radius, true, (destination, red, green, blue, count) => {
+    if (!count) return;
+    const alpha = source[destination + 3];
+    const currentLuma = luma(source[destination], source[destination + 1], source[destination + 2]);
+    const medianLuma = luma(red, green, blue);
+    const highlight = clamp((currentLuma - 160) / 95, 0, 1);
+    const saturation = Math.max(source[destination], source[destination + 1], source[destination + 2]) -
+      Math.min(source[destination], source[destination + 1], source[destination + 2]);
+    const neutrality = 1 - clamp(saturation / 96, 0, 1);
+    const outlier = clamp((currentLuma - medianLuma - threshold) / 80, 0, 1);
+    const mix = clamp(strength, 0, 1) * highlight * neutrality * outlier;
+    if (mix <= 0) return;
+    output[destination] = clampByte(source[destination] + (red - source[destination]) * mix);
+    output[destination + 1] = clampByte(source[destination + 1] + (green - source[destination + 1]) * mix);
+    output[destination + 2] = clampByte(source[destination + 2] + (blue - source[destination + 2]) * mix);
+    output[destination + 3] = alpha;
+  });
 }
 
 /** Bounded edge-aware Reduce Noise approximation using a colour-weighted kernel. */
@@ -3379,33 +3568,9 @@ function applyReduceNoise(
   effect: FilterEffects,
   output: Uint8ClampedArray,
   strength: number,
+  rows?: RowRange,
 ): void {
-  const radius = clamp(Math.round(effect.radius), 1, 8);
-  const preserve = clamp(Math.round(effect.threshold ?? 25), 1, 255);
-  const mix = clamp(strength, 0, 1);
-  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-    const destination = (y * width + x) * 4;
-    if (!source[destination + 3]) continue;
-    const baseR = source[destination], baseG = source[destination + 1], baseB = source[destination + 2];
-    let sumR = 0, sumG = 0, sumB = 0, weight = 0;
-    for (let sy = Math.max(0, y - radius); sy <= Math.min(height - 1, y + radius); sy += 1)
-      for (let sx = Math.max(0, x - radius); sx <= Math.min(width - 1, x + radius); sx += 1) {
-        const sample = (sy * width + sx) * 4;
-        if (!source[sample + 3]) continue;
-        const distance = Math.abs(source[sample] - baseR) + Math.abs(source[sample + 1] - baseG) + Math.abs(source[sample + 2] - baseB);
-        const similarity = Math.max(0, 1 - distance / (preserve * 3));
-        const spatial = 1 / (1 + Math.hypot(sx - x, sy - y));
-        const sampleWeight = similarity * spatial;
-        sumR += source[sample] * sampleWeight;
-        sumG += source[sample + 1] * sampleWeight;
-        sumB += source[sample + 2] * sampleWeight;
-        weight += sampleWeight;
-      }
-    if (!weight) continue;
-    output[destination] = clampByte(baseR + (sumR / weight - baseR) * mix);
-    output[destination + 1] = clampByte(baseG + (sumG / weight - baseG) * mix);
-    output[destination + 2] = clampByte(baseB + (sumB / weight - baseB) * mix);
-  }
+  fastReduceNoise(source, width, height, effect.radius, effect.threshold ?? 25, output, strength, rows);
 }
 
 /**
@@ -3615,13 +3780,15 @@ function applyAddNoise(
       let value = (Math.imul((effect.seed >>> 0) ^ 0x9e3779b9, index + 1) ^ Math.imul(channelKey + 1, 0x85ebca6b)) >>> 0;
       value ^= value >>> 16;
       value = Math.imul(value, 0x7feb352d) >>> 0;
-      value ^= value >>> 15;
+      // `^` yields a signed int32; keep the hash unsigned so samples cover
+      // the whole -1..1 range instead of only the negative half.
+      value = (value ^ (value >>> 15)) >>> 0;
       const first = value / 0xffffffff;
       if (effect.noiseDistribution !== 'gaussian') return first * 2 - 1;
       let second = (value ^ 0xa5a5a5a5) >>> 0;
       second ^= second >>> 16;
       second = Math.imul(second, 0x7feb352d) >>> 0;
-      second ^= second >>> 15;
+      second = (second ^ (second >>> 15)) >>> 0;
       const u = Math.max(1e-6, first);
       const v = Math.max(1e-6, second / 0xffffffff);
       return Math.max(-1, Math.min(1, Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v) / 2.5));
@@ -3667,6 +3834,12 @@ export function applyFilterEffectsPixels(
   height: number,
   value: Partial<FilterEffects> | undefined,
   renderCenter?: { x: number; y: number },
+  /**
+   * Render only these output rows of band-safe heavy filters (Smart Blur /
+   * Sharpen, Surface, Shape, Lens, Reduce Noise); other rows keep the source
+   * bytes. Other effects ignore it. Used by the parallel band renderer.
+   */
+  rows?: RowRange,
 ): Uint8ClampedArray {
   validateDimensions(data, width, height);
   const effect = effectiveFilterEffects(value);
@@ -3680,17 +3853,17 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'blur') {
     // Photoshop's one-click Blur is a light, bounded box blur. Keep it
     // distinct from Average (whole-image average) and Blur More (stronger).
-    applyBoxBlur(data, width, height, 1, output, strength);
+    applyBoxBlur(data, width, height, 1, output, strength, undefined, true);
   } else if (effect.type === 'blur-more') {
     // Photoshop's one-click Blur More is a stronger, bounded box blur. Keep
     // the source-safe renderer and metadata contract while doubling radius.
-    applyBoxBlur(data, width, height, Math.min(64, effect.radius * 2), output, strength);
+    applyBoxBlur(data, width, height, Math.min(64, effect.radius * 2), output, strength, undefined, true);
   } else if (effect.type === 'field-blur') {
     applyFieldBlur(data, width, height, effect, output);
   } else if (effect.type === 'box-blur') {
-    applyBoxBlur(data, width, height, effect.radius, output, strength);
+    applyBoxBlur(data, width, height, effect.radius, output, strength, undefined, true);
   } else if (effect.type === 'gaussian-blur') {
-    applyGaussianBlur(data, width, height, effect.radius, output, strength);
+    applyGaussianBlur(data, width, height, effect.radius, output, strength, true);
   } else if (effect.type === 'sharpen') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'high-pass') {
@@ -3702,15 +3875,15 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'sharpen-edges') {
     applySharpenEdges(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'smart-sharpen') {
-    applySmartSharpen(data, width, height, effect.radius, output, effect.amount);
+    applySmartSharpen(data, width, height, effect.radius, output, effect.amount, rows);
   } else if (effect.type === 'smart-blur') {
-    applySmartBlur(data, width, height, effect.radius, output, strength);
+    applySmartBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'surface-blur') {
-    applySurfaceBlur(data, width, height, effect.radius, output, strength);
+    applySurfaceBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'shape-blur') {
-    applyShapeBlur(data, width, height, effect.radius, output, strength);
+    applyShapeBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'lens-blur') {
-    applyLensBlur(data, width, height, effect.radius, output, strength);
+    applyLensBlur(data, width, height, effect.radius, output, strength, rows);
   } else if (effect.type === 'iris-blur') {
     applyIrisBlur(
       data,
@@ -3723,7 +3896,7 @@ export function applyFilterEffectsPixels(
       strength,
     );
   } else if (effect.type === 'motion-blur') {
-    applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength);
+    applyMotionBlur(data, width, height, effect.radius, effect.angle, output, strength, true);
   } else if (effect.type === 'radial-blur') {
     (effect.radialMode === 'zoom' ? applyZoomRadialBlur : applyRadialBlur)(
       data, width, height, effect.radius, effect.centerX, effect.centerY, output, strength,
@@ -3776,7 +3949,7 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'despeckle') {
     applyDustScratches(data, width, height, { ...effect, radius: 1, threshold: 18 }, output, strength);
   } else if (effect.type === 'reduce-noise') {
-    applyReduceNoise(data, width, height, effect, output, strength);
+    applyReduceNoise(data, width, height, effect, output, strength, rows);
   } else if (effect.type === 'ai-denoise') {
     applyAiDenoise(data, width, height, effect, output, strength);
   } else if (effect.type === 'ai-sharpen') {
@@ -3845,6 +4018,14 @@ export function applyFilterEffectsPixels(
     );
   } else if (effect.type === 'lens-flare') {
     applyLensFlare(data, width, height, effect, output, strength);
+  } else if (effect.type === 'light-rays') {
+    renderLightRays(data, output, width, height, {
+      settings: effect.lightRays,
+      centerX: effect.centerX,
+      centerY: effect.centerY,
+      seed: effect.seed,
+      strength,
+    });
 
   } else {
     applyDistort(data, width, height, effect, output);

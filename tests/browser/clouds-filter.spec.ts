@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -86,12 +87,11 @@ test('Clouds is source-safe, editable and round-trips on desktop and mobile', as
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue(
     'clouds',
   );
-  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue(
-    '16',
-  );
+  await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('2');
+  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveCount(0);
   await expect.poll(() => pixel(page, 4, 2)).not.toEqual(original);
 
-  await page.getByLabel('Cloud scale', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Cloud size', { exact: true }).press('ArrowRight');
   await page.getByLabel('Cloud seed', { exact: true }).fill('4294967295');
   const changed = await pixel(page, 4, 2);
   const adjusted = await downloadProject(page);
@@ -101,22 +101,22 @@ test('Clouds is source-safe, editable and round-trips on desktop and mobile', as
   expect(layer.adjustments.filterEffects).toMatchObject({
     type: 'clouds',
     amount: 85,
-    radius: 17,
     seed: 4294967295,
+    cloudRender: { scale: 3, fill: true },
   });
-  expect(await pixel(page, 0, 0)).toEqual([0, 0, 0, 0]);
+  // The fixture's one transparent pixel is filled at 85% coverage.
+  expect((await pixel(page, 0, 0))[3]).toBe(217);
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute(
     'aria-busy',
     'false',
   );
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue(
     'clouds',
   );
-  await expect(page.getByLabel('Cloud scale', { exact: true })).toHaveValue(
-    '17',
-  );
+  await expect(page.getByLabel('Cloud size', { exact: true })).toHaveValue('3');
   await expect(page.getByLabel('Cloud seed', { exact: true })).toHaveValue(
     '4294967295',
   );

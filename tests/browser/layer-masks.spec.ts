@@ -207,7 +207,7 @@ test('mask controls are guarded for locked, hidden and non-raster layers and rem
   expect(removedLayer.maskEnabled).toBeUndefined();
   expect(removedLayer.maskInverted).toBeUndefined();
 
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click({ position: { x: 50, y: 50 } });
   await expect(
     page.getByRole('button', { name: 'Mask from selection', exact: true }),

@@ -6,8 +6,11 @@ import {
   safeBatchStem,
   type ExportFormat,
   type ZipEntry,
-} from './export';
-import { renderFrame, type Assets, type Frame } from './document';
+} from './export.ts';
+import { renderFrame, type Assets, type Frame } from './document.ts';
+import { convertCanvasProfile } from './export.ts';
+import type { ColorProfile } from './colorProfile.ts';
+import { normalizeDocumentMetadata, type DocumentMetadata } from './metadata.ts';
 
 export type BatchManifestEntry = {
   file: string;
@@ -21,10 +24,12 @@ export type BatchManifest = {
   application: 'pixelforge-photo-editor';
   format: ExportFormat;
   quality: number;
+  colorProfile: ColorProfile;
+  documentMetadata: DocumentMetadata;
   snapshotCount: number;
   documentName: string;
   generatedAt: string;
-  metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted';
+  metadata: string;
   entries: BatchManifestEntry[];
 };
 
@@ -32,6 +37,11 @@ export type BatchExportResult = {
   blob: Blob;
   manifest: BatchManifest;
 };
+
+/** Validate and trim the local metadata copied into a batch manifest. */
+export function normalizeBatchDocumentMetadata(value: unknown): DocumentMetadata {
+  return normalizeDocumentMetadata(value);
+}
 
 /**
  * Render each editable history state and package the flattened images locally.
@@ -44,6 +54,8 @@ export async function buildBatchExport(
   name: string,
   format: ExportFormat,
   quality: number,
+  colorProfile: ColorProfile = 'srgb',
+  documentMetadata: DocumentMetadata = { title: '', description: '', author: '' },
   onProgress?: (completed: number, total: number) => void,
   signal?: AbortSignal,
 ): Promise<BatchExportResult> {
@@ -52,6 +64,7 @@ export async function buildBatchExport(
   if (!validExportQuality(quality))
     throw new Error('Choose a valid export quality.');
   const stem = safeBatchStem(name);
+  const normalizedDocumentMetadata = normalizeBatchDocumentMetadata(documentMetadata);
   const extension = format === 'jpeg' ? 'jpg' : format;
   const entries: ZipEntry[] = [];
   const manifestEntries: BatchManifestEntry[] = [];
@@ -59,7 +72,11 @@ export async function buildBatchExport(
   for (let index = 0; index < frames.length; index += 1) {
     signal?.throwIfAborted();
     const frame = frames[index];
-    const image = await renderFrame(frame, assets);
+    const image = convertCanvasProfile(
+      await renderFrame(frame, assets),
+      frame.colorProfile ?? 'srgb',
+      colorProfile,
+    );
     signal?.throwIfAborted();
     const encoded = await encodeImage(image, format, quality);
     signal?.throwIfAborted();
@@ -81,10 +98,12 @@ export async function buildBatchExport(
     application: 'pixelforge-photo-editor',
     format,
     quality,
+    colorProfile,
+    documentMetadata: normalizedDocumentMetadata,
     snapshotCount: frames.length,
     documentName: name,
     generatedAt: new Date().toISOString(),
-    metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted',
+    metadata: 'rendered pixels only; source EXIF and GPS omitted; target color profile recorded',
     entries: manifestEntries,
   };
   entries.push({

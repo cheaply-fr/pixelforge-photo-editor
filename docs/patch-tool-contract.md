@@ -38,16 +38,40 @@ and edit metadata therefore remain available to Undo, local reload and
 The user workflow is intentionally explicit: select Patch (or cycle the J
 tools), click once to set a source, then drag over the destination. A locked,
 hidden or non-raster active layer rejects the gesture. Escape or touch
-cancellation restores the prior frame without a history entry. When the active
-selection already has a layer-sized alpha asset, the stroke captures that
-asset id at pointer-down; replay resolves the immutable mask and clips writes
-to the same selection after reload. A selection with a different canvas or
-transformed geometry remains unbound rather than being silently misaligned.
+cancellation restores the prior frame without a history entry. With an active
+selection of any shape the stroke captures a layer-space snapshot of it at
+pointer-down (see "Any selection shape" below); replay resolves the immutable
+mask and clips writes to the same selection after reload.
 
 This contract is local and deterministic. Patch is not Photoshop-compatible
 content-aware fill and does not claim broad perspective reconstruction. Future
 work may add a reviewed content-aware model behind explicit privacy, quota,
 offline and cancellation gates.
+
+## Selection workflow: Source / Destination / Brush (toolbar audit I-19, 2026-11)
+
+The Patch menu (`retouchOptions.patchMode`) offers **Source** (default),
+**Destination** and **Brush**. In Source or Destination mode, a press inside
+an active selection drags the selection as the patch region; the stroke is
+stored with `region: 'source' | 'destination'`, the layer-space selection
+snapshot as `selectionMask` (required for region strokes) and the drag as
+`sourceOffset` (source minus destination):
+
+- **Source**: on release the selection is replaced by the pixels under the
+  dragged-to position, shifted by the per-channel median difference between
+  a 2 px ring just outside the selection and the same ring at the drop
+  position. This tone match is a bounded local approximation, not
+  Photoshop's healing blend.
+- **Destination**: the selected pixels are copied unchanged to where the
+  selection was dropped (the mask moved by the drag); the original stays.
+
+A press outside the selection, any press without a selection, and every press
+in **Brush** mode use the original click-source-then-paint workflow described
+above (kept so existing projects, tests and selection-confined brush patches
+keep working). A drag of zero pixels commits nothing. Region strokes count
+against the same 64-stroke limit and replay through undo, reload and project
+files. Evidence: `tests/audit-retouch.test.mjs` and
+`tests/browser/audit-retouch-healing.spec.ts` on desktop and mobile.
 
 ## Required evidence
 
@@ -58,3 +82,19 @@ and mobile browser acceptance covers source selection, destination drag,
 source-asset retention, undo, Escape/touch cancellation, locked-layer
 rejection and local reload/project round trips. The protected CI build and live
 revision verification remain required before release claims.
+
+## Any selection shape (fix wave 2 polish, 2026-11-07)
+
+Patch no longer binds only a pixel-mask selection of matching size. Any
+active selection — rectangle, ellipse, lasso, polygon or pixel mask, on a
+moved or scaled layer too — is captured at pointer-down in layer space as a
+white alpha asset and stored in `selectionMask`, exactly as Spot Healing does.
+Writes are scaled by the coverage, so feathered selections blend
+proportionally (masks with only 0/255 coverage, including every earlier
+binding, render as before). Snapshot ids are retained by history, drafts and
+project files after Deselect and are part of the layer-filter cache key.
+Snapshots are reused instead of re-encoded through the cache shared with Spot
+Healing (by selection value and placement, then by mask digest; see
+`spot-healing-contract.md`). Evidence: `tests/retouch-selection-snapshot.test.mjs` and
+`tests/browser/retouch-brush-polish.spec.ts` (an elliptical selection keeps a
+patch drag inside the ellipse; undo/redo) on desktop and mobile.

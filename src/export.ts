@@ -1,5 +1,30 @@
 import { encodePsdComposite } from './psdExport.ts';
 import { encodePdfComposite } from './pdfExport.ts';
+import { convertRgbaProfile, type ColorProfile } from './colorProfile.ts';
+
+/**
+ * Create an export-only canvas in a requested profile. The editable document
+ * stays untouched; conversion is explicit and bounded at the export boundary.
+ */
+export function convertCanvasProfile(
+  image: HTMLCanvasElement,
+  from: ColorProfile,
+  to: ColorProfile,
+): HTMLCanvasElement {
+  if (from === to) return image;
+  const source = image.getContext('2d')?.getImageData(0, 0, image.width, image.height);
+  if (!source) throw new Error('Color profile conversion is unavailable in this browser.');
+  const output = image.ownerDocument.createElement('canvas');
+  output.width = image.width;
+  output.height = image.height;
+  const context = output.getContext('2d');
+  if (!context) throw new Error('Color profile conversion is unavailable in this browser.');
+  const converted = convertRgbaProfile(source.data, image.width, image.height, from, to);
+  const pixels = context.createImageData(image.width, image.height);
+  pixels.data.set(converted);
+  context.putImageData(pixels, 0, 0);
+  return output;
+}
 
 export const EXPORT_FORMATS = ['png', 'jpeg', 'webp', 'psd', 'pdf'] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];

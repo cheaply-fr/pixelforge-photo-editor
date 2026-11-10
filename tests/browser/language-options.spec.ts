@@ -16,7 +16,7 @@ test.beforeEach(async ({ page }) => {
 test('Language Options persist direction and hyphenation intent on editable text', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await page.getByTestId('editor-canvas').click({ position: { x: 96, y: 96 } });
   await expect(page.getByText('Editable text layer added', { exact: true })).toBeVisible();
 
@@ -57,7 +57,7 @@ test('Language Options is guarded for non-text and locked layers', async ({ page
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Language Options', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Type', exact: true }).click();
-  await page.getByLabel('Text tool', { exact: true }).click();
+  await page.getByLabel('Horizontal Type tool', { exact: true }).click();
   await page.getByTestId('editor-canvas').click({ position: { x: 90, y: 90 } });
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Lock Layers…', exact: true }).click();

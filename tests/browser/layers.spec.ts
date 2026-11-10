@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 const png =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4j8AAAAASUVORK5CYII=';
@@ -59,13 +60,14 @@ test.beforeEach(async ({ page }) => {
 test('editable text, layer properties, history and assets survive project export and reload', async ({
   page,
 }) => {
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click();
   await page
     .getByLabel('Edit layer text', { exact: true })
     .fill('Editable title');
   await page.getByLabel('Layer name', { exact: true }).fill('Headline');
   await page.getByLabel('Layer font', { exact: true }).selectOption('Georgia');
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('100');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await page.getByLabel('Blend mode', { exact: true }).selectOption('screen');
@@ -120,6 +122,7 @@ test('visibility, locking, duplicate, order and deletion change actual layers wi
     .getByRole('button', { name: 'Duplicate layer', exact: true })
     .click();
   await page.getByLabel('Layer name', { exact: true }).fill('Copy');
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('400');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await page.getByLabel('Lock layer', { exact: true }).check();
@@ -242,7 +245,7 @@ test('legacy projects migrate with history while the original pointer stays reco
     async ({ oldId, newId }) =>
       await new Promise<{
         oldPointer?: { kind?: string; version?: number; name?: string };
-        newPointer?: { kind?: string; version?: number; name?: string };
+        newPointer?: { kind?: string; version?: number; format?: number; name?: string };
       }>((resolve) => {
         const request = indexedDB.open('pixelforge-documents', 2);
         request.onsuccess = () => {
@@ -252,7 +255,7 @@ test('legacy projects migrate with history while the original pointer stays reco
           const oldRead = store.get(oldId);
           const newRead = store.get(newId);
           let oldPointer: { kind?: string; version?: number; name?: string } | undefined;
-          let newPointer: { kind?: string; version?: number; name?: string } | undefined;
+          let newPointer: { kind?: string; version?: number; format?: number; name?: string } | undefined;
           oldRead.onsuccess = () => { oldPointer = oldRead.result; };
           newRead.onsuccess = () => { newPointer = newRead.result; };
           transaction.oncomplete = () => {
@@ -269,8 +272,11 @@ test('legacy projects migrate with history while the original pointer stays reco
   expect(pointers.oldPointer?.kind).toBeUndefined();
   expect(pointers.oldPointer?.version).toBe(1);
   expect(pointers.oldPointer?.name).toBe('Legacy safe');
-  expect(pointers.newPointer?.kind).toBe('pixelforge-draft-bundle');
-  expect(pointers.newPointer?.version).toBe(1);
+  // The converted document is stored as a format 3 manifest whose assets
+  // live in content-addressed records (see docs/draft-storage-contract.md).
+  expect(pointers.newPointer?.kind).toBe('pixelforge-draft-manifest');
+  expect(pointers.newPointer?.format).toBe(3);
+  expect(pointers.newPointer?.version).toBe(2);
   expect(pointers.newPointer?.name).toBe('Legacy safe');
   const out = await project(page);
   expect(out.value.version).toBe(2);
@@ -330,6 +336,7 @@ test('paint stays on its own raster layer and nondestructive filters retain sour
   await page
     .getByRole('button', { name: 'Select layer Background', exact: true })
     .click();
+  await openPanel(page, 'Filters');
   await page.getByRole('button', { name: 'Mono filter', exact: true }).click();
   const out = await project(page),
     f = out.value.history[out.value.index];
@@ -433,6 +440,7 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
     buffer: Buffer.from(fixture, 'base64'),
   });
   await expect(page.getByLabel('Document name')).toHaveValue('color-replace-fixture');
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('4');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
@@ -441,6 +449,8 @@ test('color replacement changes sampled pixels and persists tolerance', async ({
   await page.getByLabel('Size', { exact: true }).fill('10');
   await page.getByLabel('Opacity', { exact: true }).fill('100');
   await page.getByLabel('Color tolerance', { exact: true }).fill('5');
+  // Normal paints the flat colour; the default Color mode keeps luminosity.
+  await page.getByLabel('Color Replace mode', { exact: true }).selectOption('normal');
   const canvas = page.getByTestId('editor-canvas');
   await canvas.scrollIntoViewIfNeeded();
   const box = (await canvas.boundingBox())!;
@@ -518,6 +528,7 @@ test('layer position, blending and visibility produce exact composite pixels', a
   await expect(page.getByLabel('Layer name', { exact: true })).toHaveValue(
     'red.png',
   );
+  await openPanel(page, 'Layer details');
   await page.getByLabel('Layer X', { exact: true }).fill('1');
   await page.getByLabel('Layer X', { exact: true }).press('Enter');
   const read = () =>
@@ -560,6 +571,7 @@ test('vector shapes remain editable through property edits, rotation and undo', 
   expect(original.kind).toBe('rectangle');
   expect(original.width).toBe(300);
   expect(original.fill).toBe(true);
+  await openPanel(page, 'Transform');
   await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
   await expect(canvas).toHaveAttribute('width', '960');
   const rotated = await project(page);
@@ -587,15 +599,16 @@ test('ellipse layers stay vector-editable through export and reload', async ({
   await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
   const exported = await project(page),
     ellipse = exported.value.history[exported.value.index].layers[1];
-  expect(ellipse).toMatchObject({ kind: 'ellipse', fill: false });
+  // Shape tools draw filled with the foreground colour by default.
+  expect(ellipse).toMatchObject({ kind: 'ellipse', fill: true });
   expect(ellipse.width).toBeGreaterThan(1);
-  await page.getByLabel('Filled shape', { exact: true }).check();
+  await page.getByLabel('Filled shape', { exact: true }).uncheck();
   await page.reload();
   await expect(page.getByLabel('Shape width', { exact: true })).toBeVisible();
   const reloaded = await project(page);
   expect(reloaded.value.history[reloaded.value.index].layers[1]).toMatchObject({
     kind: 'ellipse',
-    fill: true,
+    fill: false,
   });
 });
 
@@ -692,9 +705,19 @@ test('zoom tool increases the document view without changing pixels', async ({
   page,
 }) => {
   const before = await pixels(page);
+  const zoom = page.getByLabel('Zoom', { exact: true });
+  const fitted = Number(await zoom.inputValue());
+  const width = (await page.getByTestId('editor-canvas').boundingBox())!.width;
   await selectTool(page, 'Zoom');
   await page.getByTestId('editor-canvas').click();
-  await expect(page.getByLabel('Zoom', { exact: true })).toHaveValue('82');
+  await expect(zoom).toHaveValue(String(fitted + 1));
+  await expect
+    .poll(async () => (await page.getByTestId('editor-canvas').boundingBox())!.width)
+    .toBeGreaterThan(width);
+  expect(await pixels(page)).toBe(before);
+  // Alt-click zooms back out to the previous step.
+  await page.getByTestId('editor-canvas').click({ modifiers: ['Alt'] });
+  await expect(zoom).toHaveValue(String(fitted));
   expect(await pixels(page)).toBe(before);
 });
 
@@ -761,7 +784,8 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   const exported = await project(page),
     frame = exported.value.history[exported.value.index],
     layer = frame.layers[0];
-  expect(frame.selection).toMatchObject({ inverted: false });
+  expect(frame.selection).toBeUndefined();
+  expect(frame.previousSelection).toMatchObject({ inverted: false });
   expect(layer.mask).toEqual(expect.any(String));
   expect(exported.value.assets[layer.mask].w).toBe(frame.w);
   expect(exported.value.assets[layer.mask].h).toBe(frame.h);
@@ -777,6 +801,7 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   expect(resizedLayer.mask).toEqual(expect.any(String));
   expect(resized.value.assets[resizedLayer.mask].w).toBe(720);
   expect(resized.value.assets[resizedLayer.mask].h).toBe(480);
+  await openPanel(page, 'Transform');
   await page.getByRole('button', { name: 'Rotate right', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '480');
   const rotated = await project(page),
@@ -837,7 +862,7 @@ test('single row and column marquees select one pixel across the frame and persi
     box = (await canvas.boundingBox())!;
   await selectTool(page, 'Single Row marquee');
   const rowTool = page.getByRole('button', {
-    name: 'Single Row marquee tool',
+    name: 'Single Row Marquee tool',
     exact: true,
   });
   await canvas.click({ position: { x: box.width * 0.37, y: box.height * 0.45 } });
@@ -1039,13 +1064,13 @@ test('polygonal lasso closes by vertex, masks representative pixels and survives
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
   const reloaded = await project(page),
     reloadedFrame = reloaded.value.history[reloaded.value.index];
-  expect(reloadedFrame.selection.points).toHaveLength(3);
+  expect(reloadedFrame.previousSelection.points).toHaveLength(3);
   expect(reloadedFrame.layers[0].mask).toEqual(expect.any(String));
   await page.getByTestId('project-input').setInputFiles(roundTrip.path);
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
   const imported = await project(page),
     importedFrame = imported.value.history[imported.value.index];
-  expect(importedFrame.selection.points).toEqual(reloadedFrame.selection.points);
+  expect(importedFrame.previousSelection.points).toEqual(reloadedFrame.previousSelection.points);
   expect(importedFrame.layers[0].mask).toEqual(expect.any(String));
 });
 
@@ -1123,7 +1148,7 @@ test('selection add mode composes geometry and masks pixels nondestructively', a
   const exported = await project(page),
     frame = exported.value.history[exported.value.index],
     layer = frame.layers[0];
-  expect(frame.selection.parts.map((part: { operation: string }) => part.operation)).toEqual(['replace', 'add']);
+  expect(frame.previousSelection.parts.map((part: { operation: string }) => part.operation)).toEqual(['replace', 'add']);
   expect(layer.mask).toEqual(expect.any(String));
   await expect.poll(() => canvas.evaluate((item: HTMLCanvasElement) => {
     const data = item.getContext('2d')!.getImageData(0, 0, item.width, item.height).data;

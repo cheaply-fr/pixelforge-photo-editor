@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 const beforeEachEditor = async (page: Page) => {
   await page.route(
@@ -90,6 +91,8 @@ test('RGB Curves changes representative pixels, keeps source editable, and survi
   await setColor(page, '#808080');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const pixel = () =>
     canvas.evaluate((node: HTMLCanvasElement) =>
@@ -100,6 +103,7 @@ test('RGB Curves changes representative pixels, keeps source editable, and survi
   const sourceLayer = source.history[source.index].layers.at(-1)!;
   const beforeAsset = sourceLayer.asset;
 
+  await openPanel(page, 'Adjust selected layer');
   const midpoint = page.getByLabel('RGB midpoint', { exact: true });
   await midpoint.fill('220');
   await expect.poll(pixel).toEqual([220, 220, 220, 255]);
@@ -125,9 +129,8 @@ test('RGB Curves changes representative pixels, keeps source editable, and survi
 test('Curve graph supports pointer editing and a deterministic channel reset', async ({
   page,
 }) => {
-  const graph = page.getByRole('button', {
-    name: 'RGB curve; drag to add or move points',
-  });
+  await openPanel(page, 'Adjust selected layer');
+  const graph = page.getByTestId('rgb-curve-graph');
   const midpoint = page.getByLabel('RGB midpoint', { exact: true });
   await midpoint.fill('210');
   await expect(midpoint).toHaveValue('210');

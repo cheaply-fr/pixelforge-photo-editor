@@ -2,16 +2,49 @@ import {
   referencedAssets,
   renderFrame,
   validateFrame,
+  type Asset,
   type Assets,
   type Frame,
 } from './document.ts';
+import { isAssetShape, markDecodedTileCacheStats, validDecodedTileCacheStats } from './tiledAssets.ts';
 import type { TileCache } from './tilePlan.ts';
+import { CompositeCache, detectCompositeSnapshotBudget, markCompositeReuse, validCompositeReuse } from './compositeCache.ts';
+import { assetsToSend } from './workerAssets.ts';
+
+/** Main-thread prefix composite (used by stroke previews and the fallback). */
+const mainThreadCompositeCache = new CompositeCache<HTMLCanvasElement>(detectCompositeSnapshotBudget());
+import {
+  assetFingerprint,
+  assetFingerprints,
+  clearLayerFilterCache,
+  layerFilterCacheDelta,
+  markLayerFilterCacheStats,
+  sharedClippedLayerCache,
+  sharedLayerFilterCache,
+  validLayerFilterCacheStats,
+} from './layerFilterCache.ts';
 import {
   validTiledNeighborhoodProgress,
   validTiledRenderTelemetry,
   type TiledNeighborhoodProgress,
   type TiledRenderTelemetry,
 } from './tiledDocument.ts';
+import { validFilterBandProgress, type FilterBandProgress } from './filterBands.ts';
+import {
+  FILTER_PARALLEL_MIN_PIXELS,
+  PREWARM_FILTER_TYPES,
+  prewarmFilterPool,
+} from './filterWorkerPool.ts';
+
+/**
+ * Test/diagnostic override for the filter worker pool size, forwarded to the
+ * render worker (whose globals are separate from the page's).
+ */
+function filterWorkerOverride(): number | undefined {
+  const value = (globalThis as typeof globalThis & { __PIXELFORGE_FILTER_WORKERS__?: unknown })
+    .__PIXELFORGE_FILTER_WORKERS__;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
 
 export type WorkerRenderOptions = {
   signal?: AbortSignal;
@@ -30,10 +63,185 @@ export type WorkerRenderOptions = {
   onTiledTelemetry?: (telemetry: TiledRenderTelemetry) => void;
   /** Monotonic progress for the latest eligible tiled effect. */
   onTiledProgress?: (progress: TiledNeighborhoodProgress) => void;
+  /** Completed row bands of a parallel full-frame filter. */
+  onFilterProgress?: (progress: FilterBandProgress) => void;
+  /**
+   * Diagnostics: where the render runs ('worker' once it is posted to the
+   * persistent worker, 'main' when the main-thread renderer starts). A
+   * worker request that falls back reports both, in that order.
+   */
+  onRenderPath?: (path: 'worker' | 'main') => void;
 };
 
+/** Minimum watchdog window, kept for small frames and as the stall floor. */
 const RENDER_TIMEOUT_MS = 30_000;
+/** Extra no-progress allowance per frame megapixel (one heavy layer pass). */
+const RENDER_STALL_MS_PER_MEGAPIXEL = 6_000;
+/** Ceiling for the no-progress window, even for the largest frames. */
+const RENDER_MAX_STALL_MS = 120_000;
+/** Extra total allowance per megapixel × layer of work. */
+const RENDER_TOTAL_MS_PER_MEGAPIXEL_LAYER = 15_000;
+/** Absolute ceiling: a render is never allowed to run longer than this. */
+const RENDER_MAX_TOTAL_MS = 600_000;
+
+export type RenderWatchdogBudget = {
+  /** Longest gap allowed between worker progress messages. */
+  stallMs: number;
+  /** Hard ceiling for the whole request, whatever progress arrives. */
+  totalMs: number;
+};
+
+/**
+ * Size the worker watchdog to the work. A fixed 30-second limit killed
+ * legitimate renders of large documents (e.g. a 10.8 MP layer with a
+ * radius-24 Gaussian), so the budget now scales with frame pixels and
+ * layer count, and the no-progress window resets on every layer or tile
+ * progress message. A worker that stops reporting is still stopped after
+ * the stall window, and nothing runs beyond the absolute ceiling.
+ *
+ * `globalThis.__PIXELFORGE_RENDER_TIMEOUT_MS__` (a positive number, or a
+ * `{ stallMs, totalMs }` pair) replaces the computed limits; tests use it to
+ * prove a heavy render now finishes well inside a deliberately short budget.
+ */
+export function renderWatchdogBudget(frame: Pick<Frame, 'w' | 'h' | 'layers'>): RenderWatchdogBudget {
+  const override = (globalThis as typeof globalThis & {
+    __PIXELFORGE_RENDER_TIMEOUT_MS__?: unknown;
+  }).__PIXELFORGE_RENDER_TIMEOUT_MS__;
+  const positive = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0;
+  if (positive(override)) return { stallMs: override, totalMs: override };
+  if (override && typeof override === 'object') {
+    const { stallMs, totalMs } = override as Partial<RenderWatchdogBudget>;
+    if (positive(stallMs) && positive(totalMs)) return { stallMs, totalMs };
+  }
+  const megapixels = Math.max(0, (frame.w * frame.h) / 1_000_000) || 0;
+  const layers = Math.max(1, frame.layers.length);
+  const stallMs = Math.round(Math.min(
+    RENDER_MAX_STALL_MS,
+    RENDER_TIMEOUT_MS + RENDER_STALL_MS_PER_MEGAPIXEL * megapixels,
+  ));
+  const totalMs = Math.round(Math.min(
+    RENDER_MAX_TOTAL_MS,
+    Math.max(stallMs, RENDER_TIMEOUT_MS + RENDER_TOTAL_MS_PER_MEGAPIXEL_LAYER * megapixels * layers),
+  ));
+  return { stallMs, totalMs };
+}
+
+/** A render stopped by its watchdog; the previous canvas stays published. */
+export class RenderTimeoutError extends Error {
+  readonly code = 'PIXELFORGE_RENDER_TIMEOUT';
+  readonly elapsedMs: number;
+  readonly stalled: boolean;
+
+  constructor(elapsedMs: number, stalled: boolean) {
+    const seconds = Math.max(1, Math.round(elapsedMs / 1000));
+    super(
+      stalled
+        ? `Rendering stopped: no progress for ${seconds} s. The canvas shows the last finished render and editing still works; undo, lower the filter radius or hide heavy layers, then try again.`
+        : `Rendering stopped after ${seconds} s. The canvas shows the last finished render and editing still works; undo, lower the filter radius or hide heavy layers, then try again.`,
+    );
+    this.name = 'RenderTimeoutError';
+    this.elapsedMs = elapsedMs;
+    this.stalled = stalled;
+  }
+}
+
+type RenderWatchdog = { touch: () => void; clear: () => void };
+
+/** Start stall and total timers; `touch` restarts only the stall timer. */
+function startRenderWatchdog(
+  budget: RenderWatchdogBudget,
+  onExpire: (error: RenderTimeoutError) => void,
+): RenderWatchdog {
+  const started = Date.now();
+  let stall: ReturnType<typeof setTimeout> | undefined;
+  let done = false;
+  const expire = (stalled: boolean) => {
+    if (done) return;
+    done = true;
+    clear();
+    onExpire(new RenderTimeoutError(Date.now() - started, stalled));
+  };
+  const total = setTimeout(() => expire(false), budget.totalMs);
+  const arm = () => {
+    if (stall) clearTimeout(stall);
+    stall = budget.stallMs < budget.totalMs ? setTimeout(() => expire(true), budget.stallMs) : undefined;
+  };
+  const clear = () => {
+    done = true;
+    clearTimeout(total);
+    if (stall) clearTimeout(stall);
+    stall = undefined;
+  };
+  arm();
+  return {
+    touch: () => {
+      if (!done) arm();
+    },
+    clear,
+  };
+}
+/**
+ * Keep an idle persistent worker (and its bounded layer-filter cache) long
+ * enough that a pause between edits does not force every filtered layer to be
+ * recomputed. The cache is byte-bounded, so this only extends retention.
+ */
+const PERSISTENT_WORKER_IDLE_MS = 5 * 60_000;
 const WORKER_MIN_PIXELS = 2_000_000;
+
+/**
+ * Decoded pixels for a freshly committed asset, handed to the next worker
+ * render that references it so the worker does not decode the PNG data URL
+ * it was just encoded from. At most one entry is retained (the latest stroke)
+ * and an entry is transferred, not copied, so memory stays bounded.
+ */
+type WorkerPrime = { key: string; width: number; height: number; pixels: ArrayBuffer };
+let workerPrime: WorkerPrime | null = null;
+
+/** Offer a committed raster's pixels to the render worker (large frames only). */
+export function primeWorkerDecodedAsset(
+  asset: Asset | undefined,
+  source: HTMLCanvasElement,
+): boolean {
+  if (!isAssetShape(asset)) return false;
+  if (source.width !== asset.w || source.height !== asset.h) return false;
+  if (asset.w * asset.h < WORKER_MIN_PIXELS || !canRenderInWorker()) return false;
+  try {
+    const data = source.getContext('2d')!.getImageData(0, 0, asset.w, asset.h).data;
+    workerPrime = {
+      key: assetFingerprint(asset),
+      width: asset.w,
+      height: asset.h,
+      pixels: data.buffer as ArrayBuffer,
+    };
+    return true;
+  } catch {
+    workerPrime = null;
+    return false;
+  }
+}
+
+
+/** Primes for this request's assets, plus the buffers to transfer. */
+function takeWorkerPrimes(keys: Record<string, string>): {
+  decodedPixels?: Array<{ id: string; key: string; pixels: ArrayBuffer }>;
+  transfer: Transferable[];
+} {
+  const prime = workerPrime;
+  if (!prime) return { transfer: [] };
+  const id = Object.keys(keys).find((assetId) => keys[assetId] === prime.key);
+  if (!id) return { transfer: [] };
+  workerPrime = null;
+  return {
+    decodedPixels: [{ id, key: prime.key, pixels: prime.pixels }],
+    transfer: [prime.pixels],
+  };
+}
+
+/** Diagnostics for tests: whether a committed raster is waiting for the worker. */
+export function workerPrimePending(): boolean {
+  return workerPrime !== null;
+}
 let requestId = 0;
 
 function abortError(): Error {
@@ -79,7 +287,12 @@ export async function renderFrameWithWorker(
   const isCancelled = () => Boolean(options.signal?.aborted || options.isCancelled?.());
   if (isCancelled()) throw abortError();
   const fallback = async () => {
+    options.onRenderPath?.('main');
+    const cacheBefore = sharedLayerFilterCache().stats();
+    const finalHitsBefore = mainThreadCompositeCache.finalHits;
+    const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
     const image = await renderFrame(frame, assets, overrides, {
+      compositeCache: mainThreadCompositeCache,
       signal: options.signal,
       isCancelled,
       onProgress: options.onProgress,
@@ -97,8 +310,20 @@ export async function renderFrameWithWorker(
           throw new Error('Invalid tiled progress from the fallback renderer.');
         options.onTiledProgress?.(progress);
       },
+      onFilterProgress: (progress) => {
+        if (!validFilterBandProgress(progress))
+          throw new Error('Invalid filter band progress from the fallback renderer.');
+        options.onFilterProgress?.(progress);
+      },
     });
     if (isCancelled()) throw abortError();
+    markLayerFilterCacheStats(layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()));
+    if (!overrides || !Object.keys(overrides).length)
+      markCompositeReuse({
+        final: mainThreadCompositeCache.finalHits > finalHitsBefore,
+        clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
+        reusedLayers: mainThreadCompositeCache.lastReusedLayers,
+      });
     return image;
   };
   const globalScope = globalThis as typeof globalThis & {
@@ -108,7 +333,21 @@ export async function renderFrameWithWorker(
     options.forceWorker === true ||
     globalScope.__PIXELFORGE_FORCE_WORKER__ === true ||
     frame.w * frame.h >= WORKER_MIN_PIXELS;
-  if (overrides || !useWorker || !canRenderInWorker()) return fallback();
+  if (!useWorker || !canRenderInWorker()) return fallback();
+  if (overrides) {
+    // Gesture previews of large documents go to the persistent worker too:
+    // it holds the composite below the stroke and the filtered layers above
+    // it, which a main-thread render would recompute for every preview.
+    if (!options.reuseWorker) return fallback();
+    validateFrame(frame, assets);
+    const bitmaps = await overrideBitmaps(overrides);
+    if (!bitmaps) return fallback();
+    if (isCancelled()) {
+      closeOverrideBitmaps(bitmaps);
+      throw abortError();
+    }
+    return persistentWorkerRender(frame, assets, options, fallback, bitmaps);
+  }
   validateFrame(frame, assets);
   if (options.signal?.aborted) throw abortError();
   if (options.reuseWorker)
@@ -127,21 +366,13 @@ export async function renderFrameWithWorker(
   return new Promise<CanvasImageSource>((resolve, reject) => {
     let settled = false;
     let lastCompleted = 0;
-    const timeout = setTimeout(
-      () =>
-        finish(() =>
-          reject(
-            new Error(
-              'Worker rendering timed out. Try a smaller image or fewer layers.',
-            ),
-          ),
-        ),
-      RENDER_TIMEOUT_MS,
+    const watchdog = startRenderWatchdog(renderWatchdogBudget(frame), (error) =>
+      finish(() => reject(error)),
     );
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      watchdog.clear();
       options.signal?.removeEventListener('abort', cancel);
       worker.onmessage = null;
       worker.onerror = null;
@@ -200,6 +431,7 @@ export async function renderFrameWithWorker(
           return;
         }
         lastCompleted = completed;
+        watchdog.touch();
         try {
           options.onProgress?.(completed, total);
         } catch (error) {
@@ -220,8 +452,21 @@ export async function renderFrameWithWorker(
           finish(() => reject(new Error('Worker returned invalid tiled progress.')));
           return;
         }
+        watchdog.touch();
         try {
           options.onTiledProgress?.(value.progress);
+        } catch (error) {
+          finish(() => reject(error));
+        }
+      } else if (value.kind === 'filter-progress') {
+        // Each completed filter band restarts the no-progress window.
+        if (!validFilterBandProgress(value.progress)) {
+          finish(() => reject(new Error('Worker returned invalid filter progress.')));
+          return;
+        }
+        watchdog.touch();
+        try {
+          options.onFilterProgress?.(value.progress);
         } catch (error) {
           finish(() => reject(error));
         }
@@ -234,6 +479,9 @@ export async function renderFrameWithWorker(
         (value.image as ImageBitmap).width === frame.w &&
         (value.image as ImageBitmap).height === frame.h
       ) {
+        if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+        if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+        if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         finish(() => resolve(value.image as ImageBitmap));
       } else if (
         value.kind === 'result-bytes' &&
@@ -243,6 +491,9 @@ export async function renderFrameWithWorker(
         value.bytes.byteLength > 0 &&
         value.bytes.byteLength <= 64 * 1024 * 1024
       ) {
+        if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+        if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+        if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
         void createImageBitmap(
           new Blob([value.bytes], { type: 'image/png' }),
         ).then(
@@ -287,13 +538,19 @@ export async function renderFrameWithWorker(
     try {
       // Do not clone every asset retained by undo history. A render only needs
       // the current frame's raster and mask references.
+      const used = referencedAssets([frame], assets);
+      const assetKeys = assetFingerprints(used);
+      const primes = takeWorkerPrimes(assetKeys);
       worker.postMessage({
         kind: 'render',
         id,
         frame,
-        assets: referencedAssets([frame], assets),
+        assets: used,
+        assetKeys,
+        decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: options.tiledMaxWorkingBytes,
-      });
+        filterWorkers: filterWorkerOverride(),
+      }, primes.transfer);
     } catch (error) {
       finish(() => reject(error));
     }
@@ -302,6 +559,8 @@ export async function renderFrameWithWorker(
 
 type PersistentFallback = () => Promise<CanvasImageSource>;
 type PersistentTask = {
+  /** Set after one resend because the worker was missing an asset. */
+  assetRetry?: boolean;
   id: number;
   frame: Frame;
   assets: Assets;
@@ -312,9 +571,24 @@ type PersistentTask = {
   settled: boolean;
   cancelRequested: boolean;
   lastCompleted: number;
-  timeout?: ReturnType<typeof setTimeout>;
+  watchdog?: RenderWatchdog;
   abortHandler?: () => void;
+  /**
+   * In-progress stroke surfaces as bitmaps, transferred with the request so
+   * gesture previews render in the worker, against its warm layer and
+   * composite caches, instead of recomputing every filtered layer on the
+   * main thread. Detached once posted.
+   */
+  overrides?: Record<string, ImageBitmap>;
+  overridesPosted?: boolean;
 };
+
+function closeOverrideBitmaps(bitmaps: Record<string, ImageBitmap> | undefined): void {
+  if (!bitmaps) return;
+  for (const bitmap of Object.values(bitmaps)) {
+    try { bitmap.close(); } catch { /* already detached */ }
+  }
+}
 
 /**
  * One-worker latest-wins session used by the editor's committed render path.
@@ -324,6 +598,11 @@ type PersistentTask = {
  */
 class PersistentWorkerSession {
   private worker?: Worker;
+  /**
+   * Fingerprints of the assets the live worker holds: exactly those of the
+   * last request it received (it keeps that set and drops the rest).
+   */
+  private workerAssetKeys = new Set<string>();
   private active?: PersistentTask;
   private queued?: PersistentTask;
   private idleTimer?: ReturnType<typeof setTimeout>;
@@ -333,6 +612,7 @@ class PersistentWorkerSession {
     assets: Assets,
     options: WorkerRenderOptions,
     fallback: PersistentFallback,
+    overrides?: Record<string, ImageBitmap>,
   ): Promise<CanvasImageSource> {
     const id = ++requestId;
     return new Promise<CanvasImageSource>((resolve, reject) => {
@@ -342,6 +622,7 @@ class PersistentWorkerSession {
         assets,
         options,
         fallback,
+        overrides,
         resolve,
         reject,
         settled: false,
@@ -354,6 +635,7 @@ class PersistentWorkerSession {
       });
       if (options.signal?.aborted || options.isCancelled?.()) {
         task.settled = true;
+        closeOverrideBitmaps(task.overrides);
         reject(abortError());
         return;
       }
@@ -367,6 +649,7 @@ class PersistentWorkerSession {
 
   private rejectQueued(task: PersistentTask): void {
     task.settled = true;
+    if (!task.overridesPosted) closeOverrideBitmaps(task.overrides);
     if (task.abortHandler) task.options.signal?.removeEventListener('abort', task.abortHandler);
     task.reject(abortError());
     if (this.queued === task) this.queued = undefined;
@@ -374,6 +657,7 @@ class PersistentWorkerSession {
 
   private ensureWorker(): Worker {
     if (this.worker) return this.worker;
+    this.workerAssetKeys = new Set();
     this.worker = new Worker(
       new URL('./document-render.worker.ts', import.meta.url),
       { type: 'module' },
@@ -390,20 +674,41 @@ class PersistentWorkerSession {
     // Mark the task active before constructing/posting so a constructor or
     // postMessage failure can settle it through the normal fallback path.
     this.active = task;
+    if (task.overridesPosted) {
+      // The stroke bitmaps went with the first attempt; a resend (missing
+      // asset) renders this preview on the main thread instead.
+      this.finish(task, () => {
+        void task.fallback().then(task.resolve, task.reject);
+      });
+      void this.startNext();
+      return;
+    }
     try {
       const worker = this.ensureWorker();
-      task.timeout = setTimeout(() => {
-        this.onWorkerFailure(
-          new Error('Worker rendering timed out. Try a smaller image or fewer layers.'),
-        );
-      }, RENDER_TIMEOUT_MS);
+      task.watchdog = startRenderWatchdog(renderWatchdogBudget(task.frame), (error) => {
+        // Retire the stuck worker; the next request gets a fresh one.
+        if (this.active === task) this.onWorkerFailure(error);
+      });
+      const used = referencedAssets([task.frame], task.assets);
+      const assetKeys = assetFingerprints(used);
+      const primes = takeWorkerPrimes(assetKeys);
+      // Send only assets the worker does not already hold (by content), so a
+      // large document is not structured-cloned again on every edit.
+      const send = assetsToSend(used, assetKeys, this.workerAssetKeys);
       worker.postMessage({
         kind: 'render',
         id: task.id,
         frame: task.frame,
-        assets: referencedAssets([task.frame], task.assets),
+        assets: send,
+        assetKeys,
+        decodedPixels: primes.decodedPixels,
         tiledMaxWorkingBytes: task.options.tiledMaxWorkingBytes,
-      });
+        filterWorkers: filterWorkerOverride(),
+        ...(task.overrides ? { overrides: task.overrides } : {}),
+      }, [...primes.transfer, ...Object.values(task.overrides ?? {})]);
+      if (task.overrides) task.overridesPosted = true;
+      this.workerAssetKeys = new Set(Object.values(assetKeys));
+      task.options.onRenderPath?.('worker');
     } catch {
       // A constructor or postMessage failure can leave the worker unusable or
       // still busy. Retire it before falling back and servicing a queued
@@ -461,6 +766,17 @@ class PersistentWorkerSession {
       }
       return;
     }
+    if (value.kind === 'error' && value.name === 'WorkerAssetMissing' && !task.assetRetry) {
+      // The worker no longer holds an asset this session assumed it had:
+      // resend the request once with every asset.
+      task.assetRetry = true;
+      task.watchdog?.clear();
+      task.watchdog = undefined;
+      this.workerAssetKeys = new Set();
+      this.active = undefined;
+      this.start(task);
+      return;
+    }
     if (value.kind === 'error' && typeof value.message === 'string') {
       const error = new Error(value.message);
       error.name = typeof value.name === 'string' ? value.name : 'Error';
@@ -485,6 +801,7 @@ class PersistentWorkerSession {
         return;
       }
       task.lastCompleted = completed;
+      task.watchdog?.touch();
       try {
         task.options.onProgress?.(completed, total);
       } catch (error) {
@@ -514,8 +831,22 @@ class PersistentWorkerSession {
         this.onWorkerFailure(new Error('Worker returned invalid tiled progress.'));
         return;
       }
+      task.watchdog?.touch();
       try {
         task.options.onTiledProgress?.(value.progress);
+      } catch (error) {
+        this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
+      }
+      return;
+    }
+    if (value.kind === 'filter-progress') {
+      if (!validFilterBandProgress(value.progress)) {
+        this.onWorkerFailure(new Error('Worker returned invalid filter progress.'));
+        return;
+      }
+      task.watchdog?.touch();
+      try {
+        task.options.onFilterProgress?.(value.progress);
       } catch (error) {
         this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
       }
@@ -530,6 +861,9 @@ class PersistentWorkerSession {
       (value.image as ImageBitmap).width === task.frame.w &&
       (value.image as ImageBitmap).height === task.frame.h
     ) {
+      if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+      if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+      if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
       this.finish(task, () => task.resolve(value.image as ImageBitmap));
       void this.startNext();
       return;
@@ -542,6 +876,9 @@ class PersistentWorkerSession {
       value.bytes.byteLength > 0 &&
       value.bytes.byteLength <= 64 * 1024 * 1024
     ) {
+      if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
+      if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
+      if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
       void createImageBitmap(new Blob([value.bytes], { type: 'image/png' })).then(
         (image) => {
           if (this.active !== task || task.cancelRequested || task.options.signal?.aborted || task.options.isCancelled?.()) {
@@ -597,8 +934,8 @@ class PersistentWorkerSession {
   }
 
   private clearTask(task: PersistentTask): void {
-    if (task.timeout) clearTimeout(task.timeout);
-    task.timeout = undefined;
+    task.watchdog?.clear();
+    task.watchdog = undefined;
     if (task.abortHandler) task.options.signal?.removeEventListener('abort', task.abortHandler);
     task.abortHandler = undefined;
     if (this.queued === task) this.queued = undefined;
@@ -627,7 +964,34 @@ class PersistentWorkerSession {
       const worker = this.worker;
       this.worker = undefined;
       try { worker?.terminate(); } catch { /* already unavailable */ }
-    }, RENDER_TIMEOUT_MS);
+    }, PERSISTENT_WORKER_IDLE_MS);
+  }
+
+  /**
+   * Ask the render worker (started now if needed, since a render follows) to
+   * warm its filter workers for these kernels.
+   */
+  prewarmFilters(types: readonly string[]): void {
+    try {
+      this.ensureWorker().postMessage({
+        kind: 'prewarm-filters',
+        types: [...types],
+        filterWorkers: filterWorkerOverride(),
+      });
+      if (!this.active) this.scheduleIdleTimer();
+    } catch {
+      /* Warm-up is best effort. */
+    }
+  }
+
+  /** Ask a live worker to drop its layer-filter surfaces; no-op otherwise. */
+  clearLayerCache(): void {
+    this.workerAssetKeys = new Set();
+    try {
+      this.worker?.postMessage({ kind: 'clear-layer-cache' });
+    } catch {
+      /* An unavailable worker has no cache left to clear. */
+    }
   }
 
   private clearIdleTimer(): void {
@@ -655,6 +1019,37 @@ class PersistentWorkerSession {
 
 const persistentSession = new PersistentWorkerSession();
 
+/**
+ * Release retained layer-filter surfaces on the main thread and in the
+ * persistent render worker, e.g. when a different document is installed.
+ * Entries are content-keyed, so this frees memory rather than fixing staleness.
+ */
+export function clearLayerFilterCaches(): void {
+  clearLayerFilterCache();
+  mainThreadCompositeCache.clear();
+  persistentSession.clearLayerCache();
+}
+
+/**
+ * Warm the filter worker pool that will render a heavy filter on a document
+ * of this size: the persistent render worker's nested pool for frames that
+ * render in the worker, otherwise the main thread's pool. Runs at idle time
+ * and is a no-op for light filters, small documents or missing workers.
+ */
+export function prewarmFilterWorkers(types: readonly string[], frame: { w: number; h: number }): void {
+  const heavy = types.filter((type) => (PREWARM_FILTER_TYPES as readonly string[]).includes(type));
+  if (!heavy.length || frame.w * frame.h < FILTER_PARALLEL_MIN_PIXELS) return;
+  const run = () => {
+    if (frame.w * frame.h >= WORKER_MIN_PIXELS && canRenderInWorker()) persistentSession.prewarmFilters(heavy);
+    else prewarmFilterPool(heavy);
+  };
+  const scope = globalThis as typeof globalThis & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+  };
+  if (typeof scope.requestIdleCallback === 'function') scope.requestIdleCallback(run, { timeout: 200 });
+  else setTimeout(run, 0);
+}
+
 /** Test/host teardown hook; production lifecycle is managed by the idle timer. */
 export function resetPersistentWorkerForTests(): void {
   persistentSession.dispose();
@@ -665,10 +1060,31 @@ function persistentWorkerRender(
   assets: Assets,
   options: WorkerRenderOptions,
   fallback: PersistentFallback,
+  overrides?: Record<string, ImageBitmap>,
 ): Promise<CanvasImageSource> {
   try {
-    return persistentSession.submit(frame, assets, options, fallback);
+    return persistentSession.submit(frame, assets, options, fallback, overrides);
   } catch {
+    closeOverrideBitmaps(overrides);
     return fallback();
+  }
+}
+
+/**
+ * Snapshot live stroke canvases as transferable bitmaps for the worker, or
+ * undefined when the browser cannot (the caller then renders on the main
+ * thread as before).
+ */
+async function overrideBitmaps(
+  overrides: Record<string, HTMLCanvasElement>,
+): Promise<Record<string, ImageBitmap> | undefined> {
+  if (typeof createImageBitmap !== 'function') return undefined;
+  const bitmaps: Record<string, ImageBitmap> = {};
+  try {
+    for (const [id, canvas] of Object.entries(overrides)) bitmaps[id] = await createImageBitmap(canvas);
+    return bitmaps;
+  } catch {
+    closeOverrideBitmaps(bitmaps);
+    return undefined;
   }
 }

@@ -189,7 +189,7 @@ test('gradient geometry and endpoint persist and reject unknown values', () => {
   ]);
   assert.equal(radial.settings.secondaryBrushPreset, 'round-soft');
   assert.throws(
-    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'diamond' } }),
+    () => validateDraft({ ...baseDraft(), settings: { ...settings, gradientMode: 'spiral' } }),
     /Saved document is not supported/,
   );
   assert.throws(
@@ -379,5 +379,23 @@ test('cloud generation conflicts retain project identity for explicit recovery',
     );
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('true pixel view zoom persists while legacy drafts without it stay valid', () => {
+  // Legacy drafts (stage-relative zoom only) still validate.
+  assert.equal(validateDraft(baseDraft()).settings.viewZoom, undefined);
+  for (const viewZoom of [1, 12.5, 100, 800, 3200]) {
+    const draft = validateDraft({ ...baseDraft(), settings: { ...settings, viewZoom } });
+    assert.equal(draft.settings.viewZoom, viewZoom);
+    // The legacy field stays inside the range older builds accept.
+    assert.ok(draft.settings.zoom >= 20 && draft.settings.zoom <= 140);
+  }
+  for (const viewZoom of [0, 0.5, 3201, Number.NaN, '100', null]) {
+    assert.throws(
+      () => validateDraft({ ...baseDraft(), settings: { ...settings, viewZoom } }),
+      Error,
+      `viewZoom ${String(viewZoom)} should be rejected`,
+    );
   }
 });

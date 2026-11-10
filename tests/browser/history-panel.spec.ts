@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 test.describe('history timeline', () => {
   test('shows committed states and restores a prior state locally', async ({ page }) => {
@@ -8,6 +9,7 @@ test.describe('history timeline', () => {
     );
     await page.goto('/editor?new=1');
     await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+    await openPanel(page, 'History');
     const history = page.getByRole('region', { name: 'History' });
     await expect(history).toBeVisible();
     await expect(history.getByLabel('History position')).toHaveText(/1 \/ 1/);

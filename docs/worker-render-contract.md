@@ -90,7 +90,7 @@ an exception cannot become an unbounded response.
 The preferred response transfers an `ImageBitmap`:
 
 ```ts
-{ kind: 'result', id, image: ImageBitmap, width: number, height: number }
+{ kind: 'result', id, image: ImageBitmap, width: number, height: number, layerCache?: LayerFilterCacheStats }
 ```
 
 If `transferToImageBitmap()` is unavailable, the worker encodes a PNG and
@@ -107,9 +107,19 @@ decode failure rejects the render. Unknown messages, stale ids, malformed
 responses and wrong dimensions are ignored or rejected without replacing the
 last published canvas.
 
-Each request has a 30-second watchdog. A timeout, worker error, message error,
-abort signal or invalid response terminates that worker and rejects the
-request. A newer render invalidates an older render in `useDocument`; only the
+Each request has a work-scaled watchdog (`renderWatchdogBudget` in
+`src/workerRender.ts`). The no-progress window is 30 s plus 6 s per frame
+megapixel (at most 120 s) and restarts on every valid layer or tile progress
+message; the total ceiling is 30 s plus 15 s per megapixel × layer, never below
+the no-progress window and never above 600 s. A 10.8 MP single-layer poster
+therefore gets ~95 s without progress and ~190 s in total instead of the
+former fixed 30 s, which had stopped a legitimate radius-24 Gaussian render. A timeout rejects with
+`RenderTimeoutError` (`code: 'PIXELFORGE_RENDER_TIMEOUT'`), whose message says
+the canvas keeps the last finished render and editing still works. A timeout,
+worker error, message error, abort signal or invalid response terminates that
+worker and rejects the request. Tests may set
+`globalThis.__PIXELFORGE_RENDER_TIMEOUT_MS__` (a number or
+`{ stallMs, totalMs }`) to shorten the budget. A newer render invalidates an older render in `useDocument`; only the
 newest completed result can be published. Published image sources are closed
 after they are drawn or discarded.
 
@@ -214,12 +224,101 @@ for local diagnostics and acceptance tests. A cancelled or failed render does
 not publish telemetry as a completed frame, and unsupported/global effects keep
 the full-frame fallback with `data-tiled-effect="none"`.
 
+## Filter worker pool (parallel bands and tiles)
+
+Heavy neighbourhood filters on layers of at least 0.5 MP run in a separate
+pool of filter workers (`src/filterWorkerPool.ts`, `src/filter-band.worker.ts`).
+The pool belongs to whichever context renders: inside the render worker it is
+a set of nested module workers, and on the main-thread fallback path it is a
+set of ordinary module workers. It is never the render worker itself and
+shares no asset-transfer protocol with it: a filter worker receives only the
+pixel rows it must filter, as a transferred `ArrayBuffer`, and returns its
+output rows the same way.
+
+* **Size:** `navigator.hardwareConcurrency − 1`, capped at 8 on desktop and
+  2 on phones or devices reporting `deviceMemory ≤ 4`. With fewer than two
+  workers, filters stay serial. `globalThis.__PIXELFORGE_FILTER_WORKERS__`
+  (forwarded by the page to the render worker as `filterWorkers`) overrides
+  the size for tests; 0 disables the pool.
+* **Full-frame path:** Smart Blur, Smart Sharpen, Surface Blur, Reduce
+  Noise, Shape Blur, Lens Blur and legacy Path Blur split into row bands of
+  about 0.5 MP (at least three per worker). Each band carries a halo of
+  rows equal to the kernel's vertical reach (≤ 8 for the bilateral family,
+  ≤ 12 for Shape, ≤ radius for Lens, ⌈1.85·radius⌉ + 2 for legacy Path
+  Blur, which renders in full-image coordinates). Assembled bands are
+  byte-identical to the serial kernel (`tests/parallel-filters.test.mjs`).
+* **Tiled path:** the tile runner keeps up to `pool.size` tiles in flight,
+  limited so in-flight tile bytes stay inside `maxWorkingBytes`. Completion
+  order never changes the result, because each tile writes only its own
+  inner rectangle.
+* **Memory:** only bands being rendered are copied (at most `pool.size`
+  inputs in flight) plus one full-size output buffer, the same as the
+  serial path.
+* **Progress:** each completed band posts
+  `{ kind: 'filter-progress', id, progress: { kind: 'filter-band-progress',
+  effect, layerId?, completed, total } }`. The client validates it
+  (`validFilterBandProgress`: known band-safe effect, 1 ≤ completed ≤ total
+  ≤ 4096, no other fields) and restarts the no-progress watchdog.
+* **Pre-warm:** `prewarmFilterWorkers(types, frame)` (called when the Filter
+  menu opens or a heavy filter is chosen) runs at idle time. For frames of at
+  least 2 MP it posts `{ kind: 'prewarm-filters', types, filterWorkers? }` to
+  the persistent render worker; for smaller frames it warms the main-thread
+  pool. Each kernel is warmed once per live pool; losing a worker clears that
+  record.
+* **Cancellation and failure:** cancellation stops dispatch and terminates
+  busy filter workers, in both the band and the tile paths; they are
+  recreated on demand. Busy jobs watch the abort signal and poll the
+  render's `isCancelled` predicate every 50 ms. A worker that fails to
+  load or crashes marks the pool broken, and the serial kernels produce the
+  same bytes. Idle filter workers are terminated after 20 s.
+
 ## Fallback and interactive edits
 
 The renderer uses the existing main-thread `renderFrame` path when worker
-capability probing fails, worker construction fails, an abort is already
-requested, or a caller supplies a live per-layer canvas override (for example,
-an in-progress brush gesture). The fallback keeps local editing functional on
+capability probing fails, worker construction fails, or an abort is already
+requested. A live per-layer canvas override (an in-progress brush or gradient
+gesture) on a document large enough for the worker is snapshotted with
+`createImageBitmap` and transferred to the persistent worker with the request,
+so stroke previews start from the worker's composite snapshot and cached
+filtered layers instead of recomputing every filtered layer on the main
+thread. The worker accepts bitmaps only for layers of the requested frame (at
+most 16,000 px per side) and closes them after the render; if bitmaps cannot be
+created, or a request has to be resent, the preview falls back to the main
+thread.
+
+Every pointer-driven paint and retouch tool (Brush, Pencil, Eraser, Clone,
+Healing, Pattern Stamp, Red Eye, Color Replacement, Background Eraser, Dodge,
+Burn, Sponge, Smudge, Blur, Sharpen, Mixer Brush, History and Art History
+Brush) previews through the same coalesced gesture preview: at most one render
+in flight and one started per animation frame, each sending the gesture buffer
+as a transferred bitmap. The per-move pixel work of those tools is bounded by
+the brush window of the segment (`src/strokeWindow.ts`); before this, Dodge,
+Burn, Sponge, Smudge, Blur, Sharpen, the Mixer/History brushes, Color
+Replacement and the Background Eraser read, validated, copied and wrote back
+the whole layer on every move (0.17–0.5 s per move on a 2646×4096 layer, measured locally),
+which blocked the main thread and looked like a full re-render per move.
+
+Each displayed gesture preview records a best-effort
+`pixelforge.gesture-preview` performance mark with `{ path, firstCompleted,
+layers }`: `path` is `worker` or `main` (from the `onRenderPath` render
+option), and `firstCompleted` is the first layer count the render reported,
+which equals the edited layer's index when it started from the cached
+composite below that layer. Each windowed retouch segment records a
+`pixelforge.stroke-window` mark with `{ tool, pixels, layerPixels }` (the
+timeline keeps at most the latest 512). `tests/browser/retouch-tool-worker-previews.spec.ts`
+asserts both on a 1500×1500, 10-layer document.
+
+Presenting a render never shows an intermediate frame: the finished image is
+drawn onto the visible canvas in one synchronous step
+(`presentCanvasImage` in `src/canvasPresentation.ts`), which resizes the
+backing store only when the document size changed and otherwise resets the
+context just before drawing. A render in flight keeps `aria-busy="true"` on
+the editor shell and `data-rendering="true"` on the canvas, but neither may
+change what is on screen; only the initial load dims the editor
+(`data-loading`). The status-bar text is debounced (shown after 250 ms of
+rendering, hidden after 150 ms idle) so stroke previews do not flicker it.
+
+The fallback keeps local editing functional on
 browsers without OffscreenCanvas and preserves the previous canvas on a failed
 or cancelled render. Main-thread rendering yields between layers and observes
 the same cancellation predicate, so fallback work is bounded even though it is
@@ -235,13 +334,20 @@ rendering:
   therefore remains bounded by the existing document limits, not by tiles.
 * The committed editor path reuses one module worker between sequential renders,
   queues only the newest request, posts cooperative cancellation for the active
-  request and tears the worker down after an idle timeout. The worker clears its
-  decoded-asset cache and output surface between requests. A multi-worker pool
-  and prioritisation remain future work.
+  request and tears the worker down after a five-minute idle timeout. The
+  worker releases its output surface between requests but keeps the bounded,
+  content-keyed decoded-source and layer-filter caches described below. A
+  multi-worker pool and prioritisation remain future work.
 * Progress currently counts full-frame layer passes. It is not a pixel or tile
   percentage and does not imply that the worker is streaming a partial canvas.
-* Interactive override canvases stay on the main-thread fallback. A full
-  worker-aware brush/adjustment command model is still planned.
+* Interactive overrides travel as whole-layer bitmaps per preview; there is
+  no dirty-rectangle protocol yet, and a full worker-aware brush/adjustment
+  command model is still planned. Each preview still composites every layer
+  from the edited one upward: filtered layers above come from the layer cache,
+  but their masks, styles, blend modes and the frame-space copies are redone
+  per preview (a suffix cache or dirty-rect recompositing, roadmap W3-8/W4-8).
+  The first preview after choosing a different layer rebuilds the composite
+  snapshot below it.
 * Canvas font availability, CSS filter implementations and browser colour
   management can differ between the worker and the visible document canvas.
   PixelForge must keep representative pixel/alpha fixtures and disclose any
@@ -257,6 +363,65 @@ Other effects, full-frame adjustments, device-specific cache policy and
 low-memory physical traces remain separate Phase 6 gates. Until those gates
 pass, large-image work remains opt-in and the 16 MP,
 16,000-pixel-edge and layer/history limits stay in force.
+
+## Layer-filter and decoded-source caches
+
+Each rendering context (the main thread and the persistent worker) keeps two
+bounded in-memory caches in [`layerFilterCache.ts`](../src/layerFilterCache.ts)
+and [`document.ts`](../src/document.ts). Neither is persisted, uploaded or
+shared between tabs.
+
+* **Layer-local filtered surfaces.** A raster or asset-backed Smart Object layer
+  is built in local coordinates in a fixed order: source (asset or solid fill),
+  Spot Healing, Patch, Content-Aware Fill/Move/Scale, Matting, Smart Filters,
+  Filter Effect, Layer Styles (on a masked layer, styles run in frame space after the mask). When that stage contains a non-neutral Filter
+  Effect or Smart Filters, its completed surface is cached under a canonical
+  key: key version, kind, local dimensions, the source's content fingerprint
+  (or the fill colour), every local-stage metadata field, the fingerprints of
+  referenced patch/content-aware masks, normalized Matting, normalized Smart
+  Filters (`effectiveSmartFilters`), Layer Styles and the normalized Filter
+  Effect (`effectiveFilterEffects`, so equivalent parameters share a key).
+  Matrix, CSS/tonal adjustments, layer masks, vector masks, clipping, opacity,
+  blend mode, visibility and grouping are applied afterwards in frame space and
+  are deliberately not part of the key. Layers with a live override canvas or
+  nested Smart Object contents bypass the cache. Results of the tiled
+  neighbourhood adapter (Motion Blur and the other tiled blurs) are cached
+  like any other filter; before, they were recomputed after every edit to any
+  layer. Styled layers are keyed even without a filter, with the styles
+  appended to the key; a masked layer's styles are cached in frame space
+  together with the mask. Separate filter-stack and pre-style entries are kept
+  only for the active layer (they make scrubbing its live filter cheap); other
+  layers keep only their final surface. The LRU is bounded by RGBA bytes:
+  512 MiB on desktops reporting `navigator.deviceMemory >= 8`, 256 MiB by
+  default, 96 MiB on mobile user agents or `deviceMemory <= 4`, 32 MiB when
+  `deviceMemory <= 2`. Each top-level render starts a cache pass; an entry
+  read or stored in the current pass is not evicted for another entry of the
+  same pass (that store is rejected instead). Plain LRU evicted exactly the
+  layers the next render reads first whenever a painting's cached layers
+  exceeded the budget, so every render missed every layer. A
+  surface larger than the budget is rendered but not retained. Only a completed
+  local stage is stored; cancellation and failures throw before the store.
+  Cached surfaces are read only with `drawImage`.
+* **Decoded sources.** `decodeAsset` keys decoded images by content
+  fingerprint (dimensions, encoded length and a 64-bit hash of the data URL)
+  instead of object identity, because the worker receives structured clones of
+  the same immutable assets on every request and an imported project may reuse
+  an asset id for different pixels. It is bounded by decoded pixels (64 MP,
+  32 MP on the mobile tier, 16 MP on the low-memory tier). Evicted or cleared
+  `ImageBitmap`s are closed only after the render that could still be reading
+  them finishes. Failed decodes are not retained.
+
+The main thread sends its memoized fingerprints with each request as
+`assetKeys`; the worker accepts a value only when its dimensions and encoded
+length match the cloned asset and otherwise hashes locally. Installing a draft
+or a replacing commit (a new document) posts `{ kind: 'clear-layer-cache' }` to
+the persistent worker and clears the main-thread filter cache. Because keys
+describe content, clearing bounds memory; it is not needed for correctness.
+Each worker result carries per-render counters (`layerCache: { hits, misses,
+stores, evictions, rejected, entries, bytes, maxBytes }`) which the client
+validates and publishes as a `pixelforge.layer-filter-cache` performance mark.
+The main-thread decode cache uses the same content keys, so repeated tool
+gestures on an unchanged layer reuse its decoded source.
 
 ## Cancellation and decoded bitmap ownership
 

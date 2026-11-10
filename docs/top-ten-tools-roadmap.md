@@ -1,4 +1,10 @@
 # Ten high-use Photoshop workflows
+
+> **Current evidence:** The complete eight-stage implementation audit, including
+> what is shipped locally and what remains staged, lives in
+> [`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#current-implementation-audit--2026-10-25).
+> This document describes workflow scope; it does not promote local source
+> changes to CI, deployment or live acceptance.
 PixelForge prioritizes the workflows people use to change an image predictably,
 then layers in creative and automation features. This is an evidence-based
 priority list, not a claim that Adobe publishes tool-click telemetry. A 2025
@@ -47,3 +53,16 @@ The ten workflows are aligned with Adobe's own [Photoshop certification
 objectives](https://certifiedprofessional.adobe.com/photoshop) and its
 [non-destructive editing guidance](https://helpx.adobe.com/photoshop/using/nondestructive-editing.html),
 while keeping implementation claims limited to features covered by tests.
+
+## Large-document painting findings (2026-11-07)
+
+A live 2646×4096 painting session exercised the layer, selection, painting, filter and export
+workflows (2, 4, 6, 8, 9) at 10.8 MP and
+produced #181–#207 (all merged; deploy runs per PR in the rubric), and a
+fix-wave-3 list of open items. Fix wave 3 then merged brush colour
+dynamics and presets, paint symmetry, Light Rays, Stroke Path with Brush and
+tiled layer assets (#209–#213; per-stroke full-layer PNG commits are gone).
+Very large project open/reload/export times and the fix-wave-4 follow-ups
+remain. The list is recorded in
+[`roadmap-progress-rubric.md`](./roadmap-progress-rubric.md#large-document-painting-findings-2026-11-07);
+it does not change the applied status of the core ten.

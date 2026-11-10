@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -18,5 +19,6 @@ test('Filter Gallery searches local presets and keeps the chosen effect editable
   await expect(dialog.getByRole('button', { name: 'Apply Vivid filter' })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Apply Mono filter' }).click();
   await expect(page.locator('footer')).toContainText('Mono applied to selected layer; remains editable');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('none');
 });

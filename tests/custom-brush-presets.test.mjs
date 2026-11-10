@@ -60,3 +60,11 @@ test('custom brush preset migration defaults newly added dynamics safely', () =>
   assert.equal(normalized?.brushWetEdges, 0);
   assert.equal(normalized?.brushBuildUp, 0);
 });
+
+test('custom brush presets keep the full 1–5000 px painting Size range', () => {
+  for (const size of [1, 800, 5000]) {
+    const preset = createCustomBrushPreset('00000000-0000-4000-8000-000000000009', 'Poster', { ...values, size });
+    assert.equal(validCustomBrushPreset(preset), true, String(size));
+  }
+  assert.equal(validCustomBrushPreset({ ...createCustomBrushPreset('00000000-0000-4000-8000-000000000009', 'Poster', values), size: 0.5 }), false);
+});

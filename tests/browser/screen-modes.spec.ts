@@ -79,6 +79,8 @@ test('F cycles screen modes, persists the preference, and wraps to Standard', as
   await expect(shell).toHaveAttribute('data-screen-mode', 'full');
   await page.reload();
   await expect(shell).toHaveAttribute('data-screen-mode', 'full');
+  // Shortcuts are ignored while the saved document is still opening.
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await page.keyboard.press('F');
   await expect(shell).toHaveAttribute('data-screen-mode', 'standard');
 });

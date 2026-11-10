@@ -8,6 +8,7 @@ import {
 } from './imageBatch.ts';
 import { actionParameterNames, type ActionParameterValues, type ActionSet } from './actions.ts';
 import { safeBatchStem, type ExportFormat } from './export.ts';
+import { downloadBlob } from './download.ts';
 
 type Props = {
   sources: BatchImageSource[];
@@ -87,12 +88,7 @@ export default function ImageBatchDialog({
 
   const download = () => {
     if (!result) return;
-    const url = URL.createObjectURL(result.blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${safeBatchStem(name || 'pixelforge-images')}-batch.zip`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadBlob(result.blob, `${safeBatchStem(name || 'pixelforge-images')}-batch.zip`);
     downloaded(
       `Batch export downloaded (${result.manifest.exportedCount} images, ${result.blob.size.toLocaleString()} bytes)`,
     );

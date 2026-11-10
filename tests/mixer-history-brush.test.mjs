@@ -7,6 +7,7 @@ import {
   applyHistoryBrushPixels,
   applyArtHistoryBrushPixels,
   interpolateArtHistoryPoints,
+  interpolateBrushStrokePoints,
   applyMixerBrushPixels,
   effectiveHistoryBrush,
   effectiveArtHistoryBrush,
@@ -85,6 +86,13 @@ test('Mixer Brush wet media deterministically picks up destination colour when l
     load: 50,
     mix: 100,
   }).slice(48, 52)));
+});
+
+test('wet brush stroke interpolation fills fast pointer gaps deterministically', () => {
+  const points = interpolateBrushStrokePoints({ x: 0, y: 4, pressure: 1 }, { x: 20, y: 4, pressure: 0.5 }, 5);
+  assert.deepEqual(points.map(({ x, y }) => [x, y]), [[5, 4], [10, 4], [15, 4], [20, 4]]);
+  assert.equal(points.at(-1)?.pressure, 0.5);
+  assert.throws(() => interpolateBrushStrokePoints({ x: 0, y: 0 }, { x: 1, y: 1 }, 0), /interpolation/);
 });
 
 test('History Brush restores a prior raster through a soft alpha mask', () => {
@@ -190,4 +198,26 @@ test('Art History Brush rejects a footprint that exceeds the explicit local work
     ...DEFAULT_ART_HISTORY_BRUSH,
     size: 10_000,
   }), /work limit/);
+});
+
+test('History Brush restores each pixel from the same position of the source, not its first pixel', () => {
+  // A two-tone source: left half red, right half blue. A full-strength dab on
+  // the right half must restore blue there (it used to paint source[0]).
+  const width = 8, height = 4, source = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1)
+    for (let x = 0; x < width; x += 1)
+      source.set(x < 4 ? [255, 0, 0, 255] : [0, 0, 255, 255], (y * width + x) * 4);
+  const destination = pixels(width, height, [0, 255, 0, 255]);
+  const next = applyHistoryBrushPixels(destination, source, width, height, [{ x: 6, y: 2 }], {
+    ...DEFAULT_HISTORY_BRUSH, size: 2, hardness: 100, opacity: 100, flow: 100,
+  });
+  assert.deepEqual(Array.from(next.slice((2 * width + 6) * 4, (2 * width + 6) * 4 + 4)), [0, 0, 255, 255]);
+  // Pixels outside the dab are untouched.
+  assert.deepEqual(Array.from(next.slice(0, 4)), [0, 255, 0, 255]);
+  // A transparent source pixel keeps the destination (source transparency is preserved).
+  source.set([0, 0, 0, 0], (2 * width + 6) * 4);
+  const kept = applyHistoryBrushPixels(destination, source, width, height, [{ x: 6, y: 2 }], {
+    ...DEFAULT_HISTORY_BRUSH, size: 1, hardness: 100, opacity: 100, flow: 100,
+  });
+  assert.deepEqual(Array.from(kept.slice((2 * width + 6) * 4, (2 * width + 6) * 4 + 4)), [0, 255, 0, 255]);
 });

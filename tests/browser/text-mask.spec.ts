@@ -68,7 +68,7 @@ const maskStats = async (page: Page, asset: { url: string; w: number; h: number 
 const addText = async (page: Page, content = 'ABCD') => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByLabel('Text content', { exact: true }).fill(content);
   const canvas = page.getByTestId('editor-canvas');
   const box = (await canvas.boundingBox())!;
@@ -112,6 +112,8 @@ test('type masks create alpha selections, compose modes and preserve editable te
   expect(horizontal.bounds.height).toBeGreaterThan(0);
   expect(frame.layers.find((layer) => layer.kind === 'text')).toEqual(before);
 
+  // Selection mode is a selection-tool option (contextual sidebar).
+  await selectTool(page, 'Select');
   await page.getByLabel('Selection mode', { exact: true }).selectOption('subtract');
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await typeMenu(page).getByRole('menuitem', { name: 'Horizontal Type Mask', exact: true }).click();

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 async function project(page: Page) {
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -95,6 +96,7 @@ test('create and release clipping masks persist through undo, reorder cleanup an
   await expect(
     page.getByRole('button', { name: 'Release clipping mask', exact: true }),
   ).toBeEnabled();
+  await openPanel(page, 'Layer details');
   await page.getByRole('button', { name: 'Lower layer', exact: true }).click();
   exported = await project(page);
   frame = exported.history[exported.index];

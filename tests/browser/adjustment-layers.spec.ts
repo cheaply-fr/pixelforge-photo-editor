@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { openPanel } from './sidebar-panels';
 
 type Project = {
   history: Array<{
@@ -11,6 +12,8 @@ type Project = {
       maskEnabled?: boolean;
       adjustments?: { levelsBlack?: number; levelsWhite?: number };
     }>;
+    selection?: unknown;
+    previousSelection?: unknown;
   }>;
   index: number;
   assets: Record<string, { url: string; w: number; h: number }>;
@@ -78,6 +81,7 @@ test('adjustment layer corrects composite below without copying source pixels', 
   const baseline = await pixels(page);
 
   await page.getByRole('button', { name: 'Add adjustment layer', exact: true }).click();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('120');
   await expect.poll(() => pixels(page)).not.toEqual(baseline);
   const adjusted = await project(page);
@@ -120,6 +124,7 @@ test('Adjustment Brush paints a nondestructive adjustment mask and survives relo
   const sourceAsset = sourceProject.history[sourceProject.index].layers.at(-1)!.asset!;
 
   await page.getByRole('button', { name: 'Add adjustment layer', exact: true }).click();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('120');
   await expect.poll(() => pixels(page)).not.toEqual(baseline);
   const fullyAdjusted = await pixels(page);
@@ -143,6 +148,10 @@ test('Adjustment Brush paints a nondestructive adjustment mask and survives relo
   expect(masked.history[masked.index].layers.at(-2)?.asset).toBe(sourceAsset);
   expect(masked.assets[sourceAsset]).toEqual(sourceProject.assets[sourceAsset]);
 
+  // Mask from selection consumes the selection (as in Photoshop), so the
+  // Adjustment Brush can reveal the unselected half without a manual Deselect.
+  expect(masked.history[masked.index].selection).toBeUndefined();
+  expect(masked.history[masked.index].previousSelection).toBeDefined();
   await selectTool(page, 'Adjustment Brush');
   await page.getByLabel('Size', { exact: true }).fill('16');
   await canvas.click({ position: { x: box.width * 0.86, y: box.height * 0.5 } });

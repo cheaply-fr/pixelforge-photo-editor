@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FONTS } from './document.ts';
+import FontFamilySelect from './FontFamilySelect';
 
 export default function UpdateTextLayersDialog({
   initialFont,
@@ -8,14 +8,14 @@ export default function UpdateTextLayersDialog({
   close,
   apply,
 }: {
-  initialFont: (typeof FONTS)[number];
+  initialFont: string;
   initialSize: number;
   count: number;
   close: () => void;
-  apply: (font: (typeof FONTS)[number], size: number) => void;
+  apply: (font: string, size: number) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const [font, setFont] = useState<(typeof FONTS)[number]>(initialFont);
+  const [font, setFont] = useState<string>(initialFont);
   const [size, setSize] = useState(String(initialSize));
   useEffect(() => { dialog.current?.showModal(); }, []);
   return (
@@ -27,7 +27,7 @@ export default function UpdateTextLayersDialog({
       }}>
         <h2 id="update-text-layers-title">Update All Text Layers</h2>
         <p>Apply the selected font and size to {count} editable text layer{count === 1 ? '' : 's'}. Raster and vector layers are unchanged.</p>
-        <label className="select-row"><span>Font</span><select aria-label="Text font" value={font} onChange={(event) => setFont(event.target.value as (typeof FONTS)[number])}>{FONTS.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <div className="select-row font-select-row"><span>Font</span><FontFamilySelect label="Text font" className="" value={font} onChange={setFont} /></div>
         <label className="select-row"><span>Size</span><input aria-label="Text size" className="text-input" type="number" min="1" max="1000" value={size} onChange={(event) => setSize(event.target.value)} /></label>
         <div className="dialog-actions"><button type="button" onClick={close}>Cancel</button><button type="submit">Update text</button></div>
       </form>

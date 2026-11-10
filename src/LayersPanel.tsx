@@ -1,9 +1,31 @@
-import { useState, type ReactNode } from 'react';
 import {
-  BLENDS,
-  FONTS,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Contrast,
+  Copy,
+  Ellipsis,
+  FilePlus2,
+  FolderPlus,
+  GripVertical,
+  Link2,
+  SquareDashed,
+  Trash2,
+  Unlink2,
+} from 'lucide-react';
+import FontFamilySelect from './FontFamilySelect';
+import {
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
+  formatMegapixels,
   isMaskableLayer,
   isVectorMaskableLayer,
   type Frame,
@@ -11,25 +33,54 @@ import {
   type Layer,
   type SelectionOperation,
 } from './document';
-import type { ParametricShapeVariant } from './vectorShapes';
+import { SELECTION_FEATHER_STEP, formatSelectionFeather } from './selectionFeather';
+import { MAX_DOCUMENT_LAYERS, detectProjectLimits } from './projectLimits';
+import { CORNER_RADIUS_MAX, type ParametricShapeVariant } from './vectorShapes';
+import { shapeOutlineColor } from './shapeAppearance';
 import type { AlignmentMode, DistributionAxis } from './layerAlignment';
 import {
   planLayerArrange,
   type LayerArrangeMode,
 } from './layerArrange';
-import { effectiveLayerStyles, type LayerStyles } from './layerStyles';
+import {
+  effectiveLayerStyles,
+  GLOW_MAX_SIZE,
+  INNER_SHADOW_MAX_DISTANCE,
+  STYLE_MAX_BLUR,
+  STYLE_MAX_OFFSET,
+  type GlowSource,
+  type LayerStyles,
+  type ShadowFalloff,
+} from './layerStyles';
+import { BLEND_MODE_GROUPS, type LayerBlendMode } from './blendModes';
 import { PATTERN_IDS, type PatternId } from './patternStamp';
 import { normalizeOpenType } from './openType';
 import { normalizeTextLanguage, TEXT_DIRECTIONS, TEXT_LANGUAGES } from './textLanguage';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
 import {
   clippingCandidateBase,
-  clippingBase,
+  clippingGroupBase,
   isClippingSourceLayer,
 } from './layerClipping';
+import {
+  describeFileDrop,
+  describeLayerDrop,
+  describeLayerMove,
+  dropPositionFromPointer,
+  layerDeleteNotice,
+  layerDeleteReason,
+  layerStackDescription,
+  planLayerDelete,
+  planLayerDrop,
+  type LayerDragSource,
+  type LayerDropTarget,
+} from './layerDragReorder';
 
+export type LayersPanelProps = Props;
 type Props = {
   frame: Frame;
+  /** Raster pixels stored by top-level layers (see layerPixelUsage). */
+  pixelUsage?: number;
   select: (
     id: string,
     intent?: { additive?: boolean; range?: boolean },
@@ -44,9 +95,16 @@ type Props = {
   nestSelectedAsSmartObject: () => void;
   replaceSmartObject: () => void;
   duplicate: () => void;
-  remove: () => void;
+  /** Delete the selected layers (returns false when refused). */
+  remove: () => boolean | void;
   reorder: (direction: number) => void;
-  arrange: (mode: LayerArrangeMode) => void;
+  arrange: (mode: LayerArrangeMode) => boolean | void;
+  /** Commit one drag-and-drop move; returns the moved IDs or false. */
+  moveLayers?: (source: LayerDragSource, target: LayerDropTarget) => string[] | false;
+  /** Replace the layer selection without a history step. */
+  setLayerSelection?: (ids: readonly string[], activeId?: string) => void;
+  /** Files dropped on the panel at a drop line. */
+  dropFiles?: (files: File[], target: LayerDropTarget) => void;
   groupActive: () => void;
   ungroupActive: () => void;
   editGroup: (id: string, patch: Partial<Group>) => void;
@@ -69,9 +127,51 @@ type Props = {
   selectionOperation: SelectionOperation;
   setSelectionOperation: (operation: SelectionOperation) => void;
   setSelectionFeather: (feather: number) => void;
+  /**
+   * Which slice of the panel to render (docs/contextual-sidebar-contract.md):
+   * `layers` (default) is the always-visible list plus the active layer's
+   * essentials; `alignment` and `selection` are Move / selection tool
+   * options; `details` and `styles` are on-demand panels.
+   */
+  part?: LayersPanelPart;
 };
+export type LayersPanelPart = 'layers' | 'alignment' | 'selection' | 'details' | 'styles';
+/** One pointer gesture on a row: pending until it moves (mouse) or long-presses (touch). */
+type DragSession = {
+  pointerId: number;
+  source: LayerDragSource;
+  startX: number;
+  startY: number;
+  x: number;
+  y: number;
+  active: boolean;
+  target?: LayerDropTarget;
+  ok: boolean;
+  end: (drop: boolean) => void;
+};
+type DropState = {
+  target: LayerDropTarget;
+  label: string;
+  /** ok: a valid drop; idle: nothing would change; refused: locked. */
+  state: 'ok' | 'idle' | 'refused';
+  x: number;
+  y: number;
+};
+type MenuState = { id: string; x: number; y: number; trigger: HTMLElement | null };
+type RowMenuAction =
+  | 'duplicate'
+  | 'delete'
+  | LayerArrangeMode
+  | 'clip'
+  | 'release-clip'
+  | 'group'
+  | 'rename'
+  | 'visibility'
+  | 'lock';
+
 export default function LayersPanel({
   frame,
+  pixelUsage,
   select,
   selectAll,
   deselectLayers,
@@ -86,6 +186,9 @@ export default function LayersPanel({
   remove,
   reorder,
   arrange,
+  moveLayers,
+  setLayerSelection,
+  dropFiles,
   groupActive,
   ungroupActive,
   editGroup,
@@ -108,8 +211,53 @@ export default function LayersPanel({
   selectionOperation,
   setSelectionOperation,
   setSelectionFeather,
+  part = 'layers',
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
+  const main = part === 'layers';
+  // Drag-and-drop, keyboard reorder, delete and row menu state. See
+  // docs/layers-panel-interaction-contract.md.
+  const listRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef(frame);
+  const dragSession = useRef<DragSession | null>(null);
+  const pendingMove = useRef<{ ids: string[]; focusId?: string } | null>(null);
+  const pendingFocus = useRef<string | null>(null);
+  const suppressClick = useRef(false);
+  const suppressTimer = useRef<number | undefined>(undefined);
+  /** Swallow the click that follows a drag or long press. */
+  const suppressClicksFor = (ms: number) => {
+    suppressClick.current = true;
+    window.clearTimeout(suppressTimer.current);
+    suppressTimer.current = window.setTimeout(() => {
+      suppressClick.current = false;
+    }, ms);
+  };
+  const [dropState, setDropState] = useState<DropState | null>(null);
+  const [draggingIds, setDraggingIds] = useState<ReadonlySet<string> | null>(null);
+  const [menuState, setMenuState] = useState<MenuState | null>(null);
+  const [liveMessage, setLiveMessage] = useState('');
+  useEffect(() => {
+    frameRef.current = frame;
+    const focusRow = (id: string | undefined) => {
+      if (!id) return;
+      const row = listRef.current?.querySelector<HTMLElement>(
+        `[data-layer-row-id="${CSS.escape(id)}"]`,
+      );
+      row?.focus({ preventScroll: false });
+    };
+    const pending = pendingMove.current;
+    if (pending) {
+      pendingMove.current = null;
+      const message = describeLayerMove(frame, pending.ids);
+      if (message) setLiveMessage(message);
+      focusRow(pending.focusId);
+    }
+    if (pendingFocus.current) {
+      focusRow(pendingFocus.current);
+      pendingFocus.current = null;
+    }
+  }, [frame]);
+  useEffect(() => () => dragSession.current?.end(false), []);
   const layer = frame.layers.find((item) => item.id === frame.active)!;
   const groups = frame.groups || [];
   const groupById = new Map(groups.map((group) => [group.id, group]));
@@ -124,7 +272,7 @@ export default function LayersPanel({
   for (const group of groups)
     if (groupMatchesSearch(group, searchQuery)) matchingGroupIds.add(group.id);
   const activeGroup = layer.groupId ? groupById.get(layer.groupId) : undefined;
-  const clippingMaskBase = clippingBase(frame, layer);
+  const clippingMaskBase = clippingGroupBase(frame, layer);
   const clippingCandidate = clippingCandidateBase(frame, layer);
   const layerLocked = layer.locked || Boolean(activeGroup?.locked);
   const selectedIds = new Set(
@@ -155,6 +303,10 @@ export default function LayersPanel({
   const updateGradientOverlay = (
     patch: Partial<LayerStyles['gradientOverlay']>,
   ) => updateStyles({ gradientOverlay: { ...styles.gradientOverlay, ...patch } });
+  const updateOuterGlow = (patch: Partial<LayerStyles['outerGlow']>) =>
+    updateStyles({ outerGlow: { ...styles.outerGlow, ...patch } });
+  const updateInnerGlow = (patch: Partial<LayerStyles['innerGlow']>) =>
+    updateStyles({ innerGlow: { ...styles.innerGlow, ...patch } });
   const updatePatternOverlay = (
     patch: Partial<LayerStyles['patternOverlay']>,
   ) => updateStyles({ patternOverlay: { ...styles.patternOverlay, ...patch } });
@@ -174,6 +326,310 @@ export default function LayersPanel({
     !distributionCandidates.some((item) => item.groupId && item.groupId !== [...selectedGroupIds][0]) &&
     !distributionGroup?.locked && distributionGroup?.visible !== false &&
     distributableCount >= 3;
+  // ---- Layers panel interactions -----------------------------------------
+  /** The rows an action on `id` applies to: the selection when it includes the row. */
+  const idsFor = (id: string) => (selectedIds.has(id) ? [...selectedIds] : [id]);
+  /** Make `id` part of (and active in) the selection before a panel action. */
+  const prepareRow = (id: string) => {
+    if (!setLayerSelection) {
+      if (!selectedIds.has(id)) select(id);
+      return;
+    }
+    if (!selectedIds.has(id)) setLayerSelection([id], id);
+    else if (frame.active !== id) setLayerSelection([...selectedIds], id);
+  };
+  const arrangeRow = (id: string, mode: LayerArrangeMode, focus: boolean) => {
+    const ids = idsFor(id);
+    prepareRow(id);
+    pendingMove.current = { ids, ...(focus ? { focusId: id } : {}) };
+    if (arrange(mode) === false) {
+      pendingMove.current = null;
+      const plan = planLayerArrange({ ...frame, active: id, selectedLayerIds: ids }, mode);
+      if (!plan.ok)
+        setLiveMessage(
+          plan.reason === 'boundary'
+            ? 'Already at that end of the stack'
+            : plan.reason === 'locked-selection'
+              ? 'Unlock the layers before moving them'
+              : 'Those layers cannot be moved',
+        );
+    }
+  };
+  const deleteRow = (id: string) => {
+    const ids = idsFor(id);
+    const plan = planLayerDelete({ ...frame, active: id, selectedLayerIds: ids }, ids);
+    prepareRow(id);
+    const result = remove();
+    if (!plan.ok) {
+      setLiveMessage(layerDeleteReason(plan.reason));
+      return;
+    }
+    if (result === false) return;
+    setLiveMessage(layerDeleteNotice(plan));
+    pendingFocus.current = plan.frame.active;
+  };
+  const openMenu = (id: string, x: number, y: number, trigger: HTMLElement | null) => {
+    dragSession.current?.end(false);
+    setMenuState({ id, x, y, trigger });
+  };
+  const rowButtons = () =>
+    Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-layer-row-id]') || []);
+  const onRowKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, item: Layer) => {
+    const command = event.ctrlKey || event.metaKey;
+    let mode: LayerArrangeMode | undefined;
+    if (command && !event.altKey && (event.code === 'BracketRight' || event.code === 'BracketLeft'))
+      mode =
+        event.code === 'BracketRight'
+          ? event.shiftKey ? 'front' : 'forward'
+          : event.shiftKey ? 'back' : 'backward';
+    else if (event.altKey && !command && (event.key === 'ArrowUp' || event.key === 'ArrowDown'))
+      mode =
+        event.key === 'ArrowUp'
+          ? event.shiftKey ? 'front' : 'forward'
+          : event.shiftKey ? 'back' : 'backward';
+    if (mode) {
+      event.preventDefault();
+      event.stopPropagation();
+      arrangeRow(item.id, mode, true);
+      return;
+    }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && !command && !event.altKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      deleteRow(item.id);
+      return;
+    }
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      event.stopPropagation();
+      const box = event.currentTarget.getBoundingClientRect();
+      openMenu(item.id, box.left + 24, box.bottom, event.currentTarget);
+      return;
+    }
+    if (
+      !command &&
+      !event.altKey &&
+      !event.shiftKey &&
+      (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+    ) {
+      // Move focus between rows (top of the list = top of the stack).
+      const buttons = rowButtons();
+      const next = buttons[buttons.indexOf(event.currentTarget) + (event.key === 'ArrowUp' ? -1 : 1)];
+      if (next) {
+        event.preventDefault();
+        next.focus();
+      }
+    }
+  };
+  /** Resolve the row under a viewport point into a drop target. */
+  const resolveTarget = (x: number, y: number): LayerDropTarget | undefined => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    const rect = list.getBoundingClientRect();
+    const probeX = Math.min(rect.right - 6, Math.max(rect.left + 6, x));
+    const probeY = Math.min(rect.bottom - 2, Math.max(rect.top + 2, y));
+    const row = document.elementFromPoint(probeX, probeY)?.closest<HTMLElement>('[data-drop-row]');
+    if (!row || !list.contains(row)) return undefined;
+    const box = row.getBoundingClientRect();
+    if (row.dataset.dropRow === 'group' && row.dataset.groupId) {
+      const position = dropPositionFromPointer('group', box.top, box.height, y);
+      return { kind: 'group', id: row.dataset.groupId, position: position === 'above' ? 'above' : 'into' };
+    }
+    if (!row.dataset.layerId) return undefined;
+    const position = dropPositionFromPointer('layer', box.top, box.height, y);
+    return { kind: 'layer', id: row.dataset.layerId, position: position === 'above' ? 'above' : 'below' };
+  };
+  const updateDrag = (session: DragSession) => {
+    const target = resolveTarget(session.x, session.y) ?? session.target;
+    if (!target) return;
+    session.target = target;
+    const plan = planLayerDrop(frameRef.current, session.source, target);
+    session.ok = plan.ok;
+    setDropState({
+      target,
+      label: describeLayerDrop(plan, frameRef.current),
+      state: plan.ok
+        ? 'ok'
+        : plan.reason === 'no-change' || plan.reason === 'onto-self'
+          ? 'idle'
+          : 'refused',
+      x: session.x,
+      y: session.y,
+    });
+  };
+  const beginPointer = (
+    event: ReactPointerEvent<HTMLElement>,
+    rowKind: 'layer' | 'group',
+    rowId: string,
+  ) => {
+    if (event.button !== 0 || dragSession.current || !moveLayers) return;
+    const origin = event.target as HTMLElement;
+    if (origin.closest('.layer-row-action, input, select, textarea, label, [role="menu"]')) return;
+    const handle = Boolean(origin.closest('[data-drag-handle]'));
+    if (rowKind === 'group' && !handle && !origin.closest('.group-toggle')) return;
+    const touch = event.pointerType === 'touch';
+    const wasSelected = rowKind === 'layer' && selectedIds.has(rowId);
+    const source: LayerDragSource =
+      rowKind === 'group' ? { kind: 'group', id: rowId } : { kind: 'layers', ids: idsFor(rowId) };
+    let scrollTimer: number | undefined;
+    let pressTimer: number | undefined;
+    const session: DragSession = {
+      pointerId: event.pointerId,
+      source,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
+      ok: false,
+      end: () => undefined,
+    };
+    const activate = () => {
+      session.active = true;
+      suppressClicksFor(10_000);
+      setMenuState(null);
+      const frameNow = frameRef.current;
+      setDraggingIds(
+        new Set(
+          source.kind === 'group'
+            ? frameNow.layers.filter((item) => item.groupId === source.id).map((item) => item.id)
+            : source.ids,
+        ),
+      );
+      setLiveMessage('Dragging. Release to drop, Escape to cancel');
+      scrollTimer = window.setInterval(() => {
+        const list = listRef.current;
+        if (!list) return;
+        const rect = list.getBoundingClientRect(),
+          edge = 28,
+          before = list.scrollTop;
+        if (session.y < rect.top + edge)
+          list.scrollTop -= Math.ceil((rect.top + edge - session.y) / 3) + 2;
+        else if (session.y > rect.bottom - edge)
+          list.scrollTop += Math.ceil((session.y - (rect.bottom - edge)) / 3) + 2;
+        if (list.scrollTop !== before) updateDrag(session);
+      }, 30);
+      updateDrag(session);
+    };
+    const onMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== session.pointerId) return;
+      session.x = moveEvent.clientX;
+      session.y = moveEvent.clientY;
+      const distance = Math.hypot(session.x - session.startX, session.y - session.startY);
+      if (!session.active) {
+        if (touch) {
+          if (distance > 10) session.end(false);
+          return;
+        }
+        if (distance < 5) return;
+        activate();
+      }
+      moveEvent.preventDefault();
+      updateDrag(session);
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId === session.pointerId) session.end(session.active);
+    };
+    const onCancel = (cancelEvent: PointerEvent) => {
+      if (cancelEvent.pointerId !== session.pointerId) return;
+      if (session.active) setLiveMessage('Reorder cancelled');
+      session.end(false);
+    };
+    const onKey = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      if (session.active) setLiveMessage('Reorder cancelled; the layer order is unchanged');
+      session.end(false);
+    };
+    session.end = (drop: boolean) => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onCancel);
+      window.removeEventListener('keydown', onKey, true);
+      window.clearInterval(scrollTimer);
+      window.clearTimeout(pressTimer);
+      if (dragSession.current === session) dragSession.current = null;
+      const wasActive = session.active;
+      session.active = false;
+      if (wasActive) {
+        suppressClicksFor(400);
+        setDropState(null);
+        setDraggingIds(null);
+      }
+      if (!drop || !wasActive || !session.target) return;
+      const moved = moveLayers(source, session.target);
+      if (!moved) {
+        if (!session.ok)
+          setLiveMessage(
+            describeLayerDrop(planLayerDrop(frameRef.current, source, session.target), frameRef.current),
+          );
+        return;
+      }
+      pendingMove.current = { ids: moved };
+      if (rowKind === 'layer' && !wasSelected && setLayerSelection) setLayerSelection(moved, rowId);
+    };
+    dragSession.current = session;
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onCancel);
+    window.addEventListener('keydown', onKey, true);
+    if (touch)
+      // Touch: a long press on the handle starts a drag; a long press
+      // elsewhere on a layer row opens the row menu.
+      pressTimer = window.setTimeout(
+        () => {
+          if (handle) activate();
+          else {
+            session.end(false);
+            if (rowKind !== 'layer') return;
+            suppressClicksFor(800);
+            openMenu(rowId, session.x, session.y, null);
+          }
+        },
+        handle ? 300 : 550,
+      );
+  };
+  const fileDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!dropFiles || !Array.from(event.dataTransfer.types).includes('Files')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    const target = resolveTarget(event.clientX, event.clientY) ?? dropState?.target;
+    if (!target) return;
+    const label = describeFileDrop(frame, target);
+    if (
+      dropState?.label !== label ||
+      dropState.target.kind !== target.kind ||
+      dropState.target.id !== target.id ||
+      dropState.target.position !== target.position
+    )
+      setDropState({
+        target,
+        label,
+        state: label.startsWith('Locked') ? 'refused' : 'ok',
+        x: event.clientX,
+        y: event.clientY,
+      });
+  };
+  const fileDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!dropFiles || event.shiftKey) {
+      // Shift-drop opens the file as a document (handled by the editor).
+      setDropState(null);
+      return;
+    }
+    const files = Array.from(event.dataTransfer.files);
+    const target = resolveTarget(event.clientX, event.clientY) ?? dropState?.target;
+    setDropState(null);
+    if (!files.length || !target) return;
+    event.preventDefault();
+    dropFiles(files, target);
+  };
+  const dropClass = (kind: LayerDropTarget['kind'], id: string) => {
+    const target = dropState?.target;
+    if (!target || target.kind !== kind || target.id !== id) return '';
+    return ` drop-${target.position}${dropState.state === 'refused' ? ' drop-refused' : ''}`;
+  };
+  const menuLayer = menuState ? frame.layers.find((item) => item.id === menuState.id) : undefined;
   const renderedGroups = new Set<string>();
   const rows: ReactNode[] = [];
   for (const item of [...frame.layers].reverse()) {
@@ -186,31 +642,82 @@ export default function LayersPanel({
           group={group}
           editGroup={editGroup}
           selected={activeGroup?.id === group.id}
+          dropClass={dropClass('group', group.id)}
+          dragging={Boolean(draggingIds && frame.layers.some((member) => member.groupId === group.id && draggingIds.has(member.id)))}
+          onPointerDown={moveLayers ? (event) => beginPointer(event, 'group', group.id) : undefined}
+          ignoreClick={() => suppressClick.current}
         />,
       );
       renderedGroups.add(group.id);
     }
     if (!group || !group.collapsed || hasSearchQuery) {
+      // Clipped rows are indented under their clipping group's base with a
+      // ↳ glyph; the base name and the stack position are the row's
+      // accessible description, so its accessible name stays
+      // "Select layer <name>".
+      const clippedTo = item.clippingTo !== undefined ? clippingGroupBase(frame, item) : undefined;
+      const descriptionId = `layer-desc-${item.id}`;
+      const name = item.name || 'Untitled layer';
+      const locked = item.locked || Boolean(group?.locked);
       rows.push(
-        <button
+        // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+        <div
           key={item.id}
           className={
-            item.id === layer.id
+            'layer-row-item' +
+            (clippedTo ? ' clipped' : '') +
+            (draggingIds?.has(item.id) ? ' dragging' : '') +
+            dropClass('layer', item.id)
+          }
+          data-drop-row="layer"
+          data-layer-id={item.id}
+          onPointerDown={(event) => beginPointer(event, 'layer', item.id)}
+          onContextMenu={(event) => {
+            if ((event.target as HTMLElement).closest('input, select, textarea')) return;
+            event.preventDefault();
+            openMenu(item.id, event.clientX, event.clientY, event.target as HTMLElement);
+          }}
+        >
+          {moveLayers && (
+            <span
+              className="layer-drag-handle"
+              data-drag-handle="true"
+              aria-hidden="true"
+              title="Drag to reorder (long-press on touch)"
+            >
+              <GripVertical size={14} />
+            </span>
+          )}
+        <button
+          className={
+            (item.id === layer.id
               ? 'layer-row selected'
               : selectedIds.has(item.id)
                 ? 'layer-row multi-selected'
-                : 'layer-row'
+                : 'layer-row') + (clippedTo ? ' clipped' : '')
           }
-          onClick={(event) =>
+          data-clipped={clippedTo ? 'true' : undefined}
+          data-layer-row-id={item.id}
+          aria-describedby={descriptionId}
+          onClick={(event) => {
+            if (suppressClick.current) return;
             select(item.id, {
               additive: event.metaKey || event.ctrlKey,
               range: event.shiftKey,
-            })
-          }
+            });
+          }}
+          onKeyDown={(event) => onRowKeyDown(event, item)}
           aria-pressed={selectedIds.has(item.id)}
           data-selected={selectedIds.has(item.id) ? 'true' : 'false'}
           aria-label={`Select layer ${item.name}`}
         >
+          {clippedTo && (
+            <span className="layer-clip-glyph" aria-hidden="true">↳</span>
+          )}
+          <span id={descriptionId} className="sr-only">
+            {clippedTo ? `Clipped to ${clippedTo.name || 'Untitled layer'}; ` : ''}
+            {layerStackDescription(frame, item.id)}
+          </span>
           <span className="layer-type">
             {item.kind === 'text'
               ? 'T'
@@ -236,7 +743,31 @@ export default function LayersPanel({
               {group ? ` · ${group.name}` : ''}
             </small>
           </span>
-        </button>,
+        </button>
+          <button
+            type="button"
+            className={'layer-row-action layer-row-delete' + (locked ? ' refused' : '')}
+            aria-label={`Delete ${name}`}
+            title={locked ? 'Locked: unlock to delete' : 'Delete layer'}
+            onClick={() => deleteRow(item.id)}
+          >
+            <Trash2 size={14} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="layer-row-action layer-row-more"
+            aria-label={`Layer options for ${name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuState?.id === item.id}
+            onClick={(event) => {
+              const box = event.currentTarget.getBoundingClientRect();
+              if (menuState?.id === item.id) setMenuState(null);
+              else openMenu(item.id, box.right, box.bottom, event.currentTarget);
+            }}
+          >
+            <Ellipsis size={14} aria-hidden="true" />
+          </button>
+        </div>,
       );
     }
   }
@@ -249,22 +780,178 @@ export default function LayersPanel({
         group={group}
         editGroup={editGroup}
         selected={activeGroup?.id === group.id}
+        dropClass={dropClass('group', group.id)}
+        dragging={false}
       />,
     );
   }
+  const Root = main ? LayersRoot : PartRoot;
   return (
-    <section className="panel layers-panel" aria-label="Layers">
+    <Root>
+      {main && (<>
       <h3>
-        Layers <small>{frame.layers.length} / 32</small>
+        Layers <small>{frame.layers.length} / {MAX_DOCUMENT_LAYERS}</small>
       </h3>
+      {pixelUsage !== undefined && (
+        <p
+          className="layer-budget"
+          data-testid="layer-pixel-budget"
+          data-state={
+            pixelUsage > detectProjectLimits().layerPixelBudget * 0.9
+              ? "near"
+              : "ok"
+          }
+          title="Raster layers share one pixel budget. Trim sparse paint layers (Layer > Trim Layer to Content) or merge layers to free space."
+        >
+          Pixel budget {formatMegapixels(pixelUsage)} / {formatMegapixels(detectProjectLimits().layerPixelBudget)} MP
+        </p>
+      )}
+      <label className="layer-field layer-search-field">
+        Find layers
+        <input
+          id="find-layers"
+          aria-label="Find layers"
+          type="search"
+          maxLength={160}
+          value={searchQuery}
+          placeholder="Name, type, group, visible…"
+          onChange={(event) => setSearchQuery(event.target.value)}
+        />
+        {searchQuery.trim() && (
+          <small aria-live="polite">
+            {filteredLayers.length} of {frame.layers.length} layers match
+          </small>
+        )}
+      </label>
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions */}
+      <div
+        className={'layer-list' + (dropState ? ' drag-active' : '')}
+        ref={listRef}
+        data-file-drop-zone="layers"
+        onDragOver={fileDragOver}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropState(null);
+        }}
+        onDrop={fileDrop}
+      >
+        {rows}
+      </div>
+      {/* Layers panel footer (Photoshop-style): the everyday layer actions sit
+          right under the list. docs/contextual-sidebar-contract.md */}
+      <div className="layer-footer" role="toolbar" aria-label="Layer actions" data-testid="layer-footer">
+        <button
+          type="button"
+          aria-label="Add paint layer"
+          title="New paint layer"
+          onClick={add}
+          disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}
+        >
+          <FilePlus2 aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Add adjustment layer"
+          title="New adjustment layer"
+          onClick={addAdjustment}
+          disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}
+        >
+          <Contrast aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Group active layer"
+          title="New folder from the selected layers"
+          onClick={groupActive}
+          disabled={
+            [...selectedIds].some((id) =>
+              frame.layers.find((item) => item.id === id)?.groupId,
+            )
+          }
+        >
+          <FolderPlus aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Mask from selection"
+          title="Add a layer mask from the selection"
+          onClick={createMask}
+          disabled={
+            !isMaskableLayer(layer) ||
+            !frame.selection ||
+            layerLocked ||
+            !layer.visible
+          }
+        >
+          <SquareDashed aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Create clipping mask"
+          title="Clip to the layer below"
+          onClick={createClipping}
+          disabled={
+            !isClippingSourceLayer(layer) ||
+            Boolean(layer.clippingTo) ||
+            !clippingCandidate ||
+            layerLocked ||
+            Boolean(
+              clippingCandidate &&
+                (clippingCandidate.locked || !clippingCandidate.visible),
+            ) ||
+            !layer.visible
+          }
+        >
+          <Link2 aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Release clipping mask"
+          title="Release clipping mask"
+          onClick={releaseClipping}
+          disabled={!layer.clippingTo || layerLocked}
+        >
+          <Unlink2 aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Raise layer"
+          title="Raise layer"
+          onClick={() => reorder(1)}
+          disabled={layerLocked || frame.layers.at(-1)?.id === layer.id}
+        >
+          <ArrowUp aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Lower layer"
+          title="Lower layer"
+          onClick={() => reorder(-1)}
+          disabled={layerLocked || frame.layers[0].id === layer.id}
+        >
+          <ArrowDown aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          aria-label="Duplicate layer"
+          title="Duplicate layer"
+          onClick={duplicate}
+          disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}
+        >
+          <Copy aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="layer-footer-delete"
+          aria-label="Delete layer"
+          title="Delete layer (Delete key). Undo restores it."
+          onClick={remove}
+          disabled={layerLocked || frame.layers.length === 1}
+        >
+          <Trash2 aria-hidden="true" />
+        </button>
+      </div>
       <div className="layer-actions">
-        <button onClick={add} disabled={frame.layers.length >= 32}>
-          Add paint layer
-        </button>
-        <button onClick={addAdjustment} disabled={frame.layers.length >= 32}>
-          Add adjustment layer
-        </button>
-        <button onClick={addSmartObject} disabled={frame.layers.length >= 32}>
+        <button onClick={addSmartObject} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add smart object
         </button>
         <button
@@ -279,18 +966,8 @@ export default function LayersPanel({
         >
           Replace contents
         </button>
-        <button onClick={importImage} disabled={frame.layers.length >= 32}>
+        <button onClick={importImage} disabled={frame.layers.length >= MAX_DOCUMENT_LAYERS}>
           Add image layer
-        </button>
-        <button
-          onClick={groupActive}
-          disabled={
-            [...selectedIds].some((id) =>
-              frame.layers.find((item) => item.id === id)?.groupId,
-            )
-          }
-        >
-          Group active layer
         </button>
         <button
           onClick={ungroupActive}
@@ -313,44 +990,92 @@ export default function LayersPanel({
           </button>
         </div>
       </div>
-      <label className="layer-field layer-search-field">
-        Find layers
-        <input
-          id="find-layers"
-          aria-label="Find layers"
-          type="search"
-          maxLength={160}
-          value={searchQuery}
-          placeholder="Name, type, group, visible…"
-          onChange={(event) => setSearchQuery(event.target.value)}
+      <p className="sr-only" aria-live="polite" data-testid="layers-live">
+        {liveMessage}
+      </p>
+      {dropState && (
+        <div
+          className={'layer-drop-hint' + (dropState.state === 'refused' ? ' refused' : '')}
+          data-testid="layer-drop-hint"
+          data-state={dropState.state}
+          aria-hidden="true"
+          style={{
+            left: Math.max(8, Math.min(dropState.x + 14, window.innerWidth - 220)),
+            top: Math.max(8, Math.min(dropState.y + 14, window.innerHeight - 40)),
+          }}
+        >
+          {dropState.label}
+        </div>
+      )}
+      {menuState && menuLayer && (
+        <LayerRowMenu
+          frame={frame}
+          layer={menuLayer}
+          ids={idsFor(menuLayer.id)}
+          x={menuState.x}
+          y={menuState.y}
+          close={(restoreFocus) => {
+            const trigger = menuState.trigger;
+            setMenuState(null);
+            if (restoreFocus && trigger?.isConnected) trigger.focus();
+          }}
+          run={(action) => {
+            const id = menuLayer.id;
+            setMenuState(null);
+            switch (action) {
+              case 'duplicate':
+                prepareRow(id);
+                duplicate();
+                break;
+              case 'delete':
+                deleteRow(id);
+                break;
+              case 'front':
+              case 'forward':
+              case 'backward':
+              case 'back':
+                arrangeRow(id, action, true);
+                break;
+              case 'clip':
+                prepareRow(id);
+                createClipping();
+                break;
+              case 'release-clip':
+                prepareRow(id);
+                releaseClipping();
+                break;
+              case 'group':
+                prepareRow(id);
+                groupActive();
+                break;
+              case 'rename': {
+                const next = window.prompt('Layer name', menuLayer.name);
+                if (next === null) break;
+                prepareRow(id);
+                edit({ name: next.slice(0, 160) });
+                pendingFocus.current = id;
+                break;
+              }
+              case 'visibility':
+                prepareRow(id);
+                edit({ visible: !menuLayer.visible });
+                pendingFocus.current = id;
+                break;
+              case 'lock':
+                prepareRow(id);
+                edit({ locked: !menuLayer.locked });
+                pendingFocus.current = id;
+                break;
+            }
+          }}
         />
-        {searchQuery.trim() && (
-          <small aria-live="polite">
-            {filteredLayers.length} of {frame.layers.length} layers match
-          </small>
-        )}
-      </label>
-      <div className="layer-list">{rows}</div>
+      )}
       {searchQuery.trim() && filteredLayers.length === 0 && (
         <p className="layer-search-empty">No layers match this search.</p>
       )}
-      <label className="layer-field">
-        Layer folder
-        <select
-          aria-label="Layer folder"
-          value={layer.groupId || ''}
-          disabled={layerLocked}
-          onChange={(event) => edit({ groupId: event.target.value || undefined })}
-        >
-          <option value="">No folder</option>
-          {groups.map((group) => (
-            <option key={group.id} value={group.id} disabled={group.locked}>
-              {group.name || 'Untitled group'}
-            </option>
-          ))}
-        </select>
-      </label>
-      <fieldset className="layer-alignment" disabled={layerLocked}>
+      </>)}
+      {part === 'alignment' && (<>
+      <fieldset className="layer-alignment" disabled={layerLocked} data-sidebar-section="layer-alignment">
         <legend>Align to canvas</legend>
         <div className="layer-actions">
           <button onClick={() => align('left')}>Align left</button>
@@ -372,6 +1097,8 @@ export default function LayersPanel({
         </div>
         <p>Evenly space the centers of visible unlocked layers; outer layers stay fixed.</p>
       </fieldset>
+      </>)}
+      {main && (<>
       <div className="layer-toggles">
         <label>
           <input
@@ -382,19 +1109,6 @@ export default function LayersPanel({
           />
           Visible
         </label>
-        {frame.selection && (
-          <label className="layer-field">
-            Feather {Math.round(frame.selection.feather)} px
-            <input
-              aria-label="Selection feather"
-              type="range"
-              min="0"
-              max="100"
-              value={frame.selection.feather}
-              onChange={(e) => setSelectionFeather(Number(e.target.value))}
-            />
-          </label>
-        )}
         <label>
           <input
             type="checkbox"
@@ -405,33 +1119,7 @@ export default function LayersPanel({
           Lock layer
         </label>
       </div>
-      <div className="layer-actions">
-        <label className="layer-field">
-          Selection mode
-          <select
-            aria-label="Selection mode"
-            value={selectionOperation}
-            onChange={(e) =>
-              setSelectionOperation(e.target.value as SelectionOperation)
-            }
-          >
-            <option value="replace">Replace</option>
-            <option value="add">Add</option>
-            <option value="subtract">Subtract</option>
-            <option value="intersect">Intersect</option>
-          </select>
-        </label>
-        <button
-          onClick={createMask}
-          disabled={
-            !isMaskableLayer(layer) ||
-            !frame.selection ||
-            layerLocked ||
-            !layer.visible
-          }
-        >
-          Mask from selection
-        </button>
+      <div className="layer-actions layer-mask-actions">
         <button
           onClick={clearMask}
           disabled={
@@ -511,34 +1199,6 @@ export default function LayersPanel({
         >
           Remove vector mask
         </button>
-        <button
-          onClick={createClipping}
-          disabled={
-            !isClippingSourceLayer(layer) ||
-            Boolean(layer.clippingTo) ||
-            !clippingCandidate ||
-            layerLocked ||
-            Boolean(
-              clippingCandidate &&
-                (clippingCandidate.locked || !clippingCandidate.visible),
-            ) ||
-            !layer.visible
-          }
-        >
-          Create clipping mask
-        </button>
-        <button
-          onClick={releaseClipping}
-          disabled={!layer.clippingTo || layerLocked}
-        >
-          Release clipping mask
-        </button>
-        <button onClick={invertSelection} disabled={!frame.selection}>
-          Invert selection
-        </button>
-        <button onClick={clearSelection} disabled={!frame.selection}>
-          Clear selection
-        </button>
       </div>
       {isMaskableLayer(layer) && layer.mask && (
         <p className="mask-status">Nondestructive mask active</p>
@@ -560,6 +1220,12 @@ export default function LayersPanel({
           Embedded source · {layer.sourceName || 'untitled image'} · replaceable without changing transforms
         </p>
       )}
+      {layer.kind === 'raster' && layer.background === true && (
+        <p className="mask-status" data-testid="background-layer-status">
+          Background · position locked, Eraser paints the background colour · Layer &gt; Layer from Background or rename to unlock
+        </p>
+      )}
+      <div className="layer-properties" data-sidebar-section="layer-properties">
       <label className="layer-field">
         Layer name
         <input
@@ -603,17 +1269,54 @@ export default function LayersPanel({
           disabled={layerLocked}
           onChange={(e) => edit({ blend: e.target.value as Layer['blend'] })}
         >
-          {BLENDS.map((blend) => (
-            <option key={blend} value={blend}>
-              {blend === 'source-over'
-                ? 'Normal'
-                : blend[0].toUpperCase() + blend.slice(1)}
-            </option>
-          ))}
+          <BlendModeOptions />
         </select>
       </label>
-      <fieldset className="layer-alignment" disabled={layerLocked}>
+      </div>
+      </>)}
+      {part === 'selection' && (
+      <div className="layer-actions" data-sidebar-section="selection-options">
+        <label className="layer-field">
+          Selection mode
+          <select
+            aria-label="Selection mode"
+            value={selectionOperation}
+            onChange={(e) =>
+              setSelectionOperation(e.target.value as SelectionOperation)
+            }
+          >
+            <option value="replace">Replace</option>
+            <option value="add">Add</option>
+            <option value="subtract">Subtract</option>
+            <option value="intersect">Intersect</option>
+          </select>
+        </label>
+        {frame.selection && (
+          <label className="layer-field">
+            Current selection feather {formatSelectionFeather(frame.selection.feather)} px
+            <input
+              aria-label="Selection feather"
+              type="range"
+              min="0"
+              max="100"
+              step={SELECTION_FEATHER_STEP}
+              value={frame.selection.feather}
+              onChange={(e) => setSelectionFeather(Number(e.target.value))}
+            />
+          </label>
+        )}
+        <button onClick={invertSelection} disabled={!frame.selection}>
+          Invert selection
+        </button>
+        <button onClick={clearSelection} disabled={!frame.selection}>
+          Clear selection
+        </button>
+      </div>
+      )}
+      {part === 'styles' && (
+      <fieldset className="layer-alignment" disabled={layerLocked} data-sidebar-section="layer-styles">
         <legend>Layer styles</legend>
+        <div className="layer-style-block" data-sidebar-section="layer-style-drop-shadow">
         <label>
           <input
             type="checkbox"
@@ -651,16 +1354,16 @@ export default function LayersPanel({
           <NumberField
             label="Shadow X"
             value={styles.dropShadow.offsetX}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateDropShadow({ offsetX: value })}
           />
           <NumberField
             label="Shadow Y"
             value={styles.dropShadow.offsetY}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateDropShadow({ offsetY: value })}
           />
@@ -671,13 +1374,63 @@ export default function LayersPanel({
             aria-label="Drop shadow blur"
             type="range"
             min="0"
-            max="64"
+            max={STYLE_MAX_BLUR}
             value={Math.round(styles.dropShadow.blur)}
             onChange={(event) =>
               updateDropShadow({ blur: Number(event.target.value) })
             }
           />
         </label>
+        <div className="layer-position">
+          <label className="layer-field">
+            Shadow mode
+            <select
+              aria-label="Drop shadow blend mode"
+              value={styles.dropShadow.blend}
+              onChange={(event) => updateDropShadow({ blend: event.target.value as LayerBlendMode })}
+            >
+              <BlendModeOptions />
+            </select>
+          </label>
+          <ShadowFalloffSelect
+            label="Drop shadow falloff"
+            value={styles.dropShadow.falloff}
+            update={(falloff) => updateDropShadow({ falloff })}
+          />
+        </div>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-outer-glow">
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable outer glow"
+            checked={styles.outerGlow.enabled}
+            onChange={(event) => updateOuterGlow({ enabled: event.target.checked })}
+          />
+          Outer glow
+        </label>
+        {styles.outerGlow.enabled && (
+          <GlowControls
+            name="Outer glow"
+            color={styles.outerGlow.color}
+            opacity={styles.outerGlow.opacity}
+            size={styles.outerGlow.size}
+            amount={styles.outerGlow.spread}
+            amountLabel="spread"
+            blend={styles.outerGlow.blend}
+            update={(patch) =>
+              updateOuterGlow({
+                ...(patch.color !== undefined ? { color: patch.color } : {}),
+                ...(patch.opacity !== undefined ? { opacity: patch.opacity } : {}),
+                ...(patch.size !== undefined ? { size: patch.size } : {}),
+                ...(patch.amount !== undefined ? { spread: patch.amount } : {}),
+                ...(patch.blend !== undefined ? { blend: patch.blend } : {}),
+              })
+            }
+          />
+        )}
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-inner-shadow">
         <label>
           <input
             type="checkbox"
@@ -715,16 +1468,16 @@ export default function LayersPanel({
           <NumberField
             label="Inner shadow X"
             value={styles.innerShadow.offsetX}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateInnerShadow({ offsetX: value })}
           />
           <NumberField
             label="Inner shadow Y"
             value={styles.innerShadow.offsetY}
-            min={-256}
-            max={256}
+            min={-STYLE_MAX_OFFSET}
+            max={STYLE_MAX_OFFSET}
             disabled={layerLocked}
             apply={(value) => updateInnerShadow({ offsetY: value })}
           />
@@ -735,26 +1488,66 @@ export default function LayersPanel({
             aria-label="Inner shadow blur"
             type="range"
             min="0"
-            max="64"
+            max={STYLE_MAX_BLUR}
             value={Math.round(styles.innerShadow.blur)}
             onChange={(event) =>
               updateInnerShadow({ blur: Number(event.target.value) })
             }
           />
         </label>
+        <ShadowFalloffSelect
+          label="Inner shadow falloff"
+          value={styles.innerShadow.falloff}
+          update={(falloff) => updateInnerShadow({ falloff })}
+        />
         <label className="layer-field">
           Inner shadow distance {Math.round(styles.innerShadow.distance)} px
           <input
             aria-label="Inner shadow distance"
             type="range"
             min="1"
-            max="32"
+            max={INNER_SHADOW_MAX_DISTANCE}
             value={Math.round(styles.innerShadow.distance)}
             onChange={(event) =>
               updateInnerShadow({ distance: Number(event.target.value) })
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-inner-glow">
+        <label>
+          <input
+            type="checkbox"
+            aria-label="Enable inner glow"
+            checked={styles.innerGlow.enabled}
+            onChange={(event) => updateInnerGlow({ enabled: event.target.checked })}
+          />
+          Inner glow
+        </label>
+        {styles.innerGlow.enabled && (
+          <GlowControls
+            name="Inner glow"
+            color={styles.innerGlow.color}
+            opacity={styles.innerGlow.opacity}
+            size={styles.innerGlow.size}
+            amount={styles.innerGlow.choke}
+            amountLabel="choke"
+            blend={styles.innerGlow.blend}
+            source={styles.innerGlow.source}
+            update={(patch) =>
+              updateInnerGlow({
+                ...(patch.color !== undefined ? { color: patch.color } : {}),
+                ...(patch.opacity !== undefined ? { opacity: patch.opacity } : {}),
+                ...(patch.size !== undefined ? { size: patch.size } : {}),
+                ...(patch.amount !== undefined ? { choke: patch.amount } : {}),
+                ...(patch.blend !== undefined ? { blend: patch.blend } : {}),
+                ...(patch.source !== undefined ? { source: patch.source } : {}),
+              })
+            }
+          />
+        )}
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-bevel-emboss">
         <label>
           <input
             type="checkbox"
@@ -834,6 +1627,8 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-outline">
         <label>
           <input
             type="checkbox"
@@ -880,6 +1675,8 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-color-overlay">
         <label>
           <input
             type="checkbox"
@@ -913,6 +1710,8 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-gradient-overlay">
         <label>
           <input
             type="checkbox"
@@ -982,6 +1781,8 @@ export default function LayersPanel({
             Reverse
           </label>
         </div>
+        </div>
+        <div className="layer-style-block" data-sidebar-section="layer-style-pattern-overlay">
         <label>
           <input
             type="checkbox"
@@ -1059,7 +1860,53 @@ export default function LayersPanel({
             }
           />
         </label>
+        </div>
       </fieldset>
+      )}
+      {part === 'details' && (
+      <div className="layer-details" data-sidebar-section="layer-details">
+      <label className="layer-field">
+        Layer folder
+        <select
+          aria-label="Layer folder"
+          value={layer.groupId || ''}
+          disabled={layerLocked}
+          onChange={(event) => edit({ groupId: event.target.value || undefined })}
+        >
+          <option value="">No folder</option>
+          {groups.map((group) => (
+            <option key={group.id} value={group.id} disabled={group.locked}>
+              {group.name || 'Untitled group'}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="layer-actions layer-arrange-actions">
+        <button
+          onClick={() => arrange('front')}
+          disabled={arrangeDisabled('front')}
+        >
+          Bring to front
+        </button>
+        <button
+          onClick={() => arrange('forward')}
+          disabled={arrangeDisabled('forward')}
+        >
+          Bring forward
+        </button>
+        <button
+          onClick={() => arrange('backward')}
+          disabled={arrangeDisabled('backward')}
+        >
+          Send backward
+        </button>
+        <button
+          onClick={() => arrange('back')}
+          disabled={arrangeDisabled('back')}
+        >
+          Send to back
+        </button>
+      </div>
       <div className="layer-position">
         <NumberField
           key={layer.id + 'x' + layer.matrix[4]}
@@ -1092,6 +1939,9 @@ export default function LayersPanel({
           }
         />
       </div>
+      </div>
+      )}
+      {main && (<>
       {layer.kind === 'text' && (
         <div className="layer-typography">
           <label className="layer-field">
@@ -1104,21 +1954,16 @@ export default function LayersPanel({
               onChange={(e) => edit({ text: e.target.value })}
             />
           </label>
-          <label className="layer-field">
-            Typeface
-            <select
-              aria-label="Layer font"
+          <div className="layer-field" title="Applies to the whole layer. The Text section Font also restyles the selected type and sets the font for new type.">
+            Layer font (whole layer)
+            <FontFamilySelect
+              label="Layer font"
+              className=""
               value={layer.fontFamily}
               disabled={layerLocked}
-              onChange={(e) =>
-                edit({ fontFamily: e.target.value as (typeof FONTS)[number] })
-              }
-            >
-              {FONTS.map((font) => (
-                <option key={font}>{font}</option>
-              ))}
-            </select>
-          </label>
+              onChange={(fontFamily) => edit({ fontFamily })}
+            />
+          </div>
           <label className="layer-field">
             Text orientation
             <select
@@ -1261,6 +2106,18 @@ export default function LayersPanel({
                     />
                     Small caps
                   </label>
+                  <label className="layer-field">
+                    Variable weight ({Math.round(openType.variableAxes.wght)})
+                    <input aria-label="Variable font weight" type="range" min="100" max="900" step="1" value={openType.variableAxes.wght} disabled={layerLocked} onChange={(e) => edit({ openType: { ...openType, variableAxes: { ...openType.variableAxes, wght: Number(e.target.value) } } })} />
+                  </label>
+                  <label className="layer-field">
+                    Variable width ({Math.round(openType.variableAxes.wdth)}%)
+                    <input aria-label="Variable font width" type="range" min="50" max="200" step="1" value={openType.variableAxes.wdth} disabled={layerLocked} onChange={(e) => edit({ openType: { ...openType, variableAxes: { ...openType.variableAxes, wdth: Number(e.target.value) } } })} />
+                  </label>
+                  <label className="layer-field">
+                    Optical size ({Math.round(openType.variableAxes.opsz)}pt)
+                    <input aria-label="Variable optical size" type="range" min="8" max="144" step="1" value={openType.variableAxes.opsz} disabled={layerLocked} onChange={(e) => edit({ openType: { ...openType, variableAxes: { ...openType.variableAxes, opsz: Number(e.target.value) } } })} />
+                  </label>
                 </>
               );
             })()}
@@ -1336,6 +2193,17 @@ export default function LayersPanel({
             />
             Filled shape
           </label>
+          {layer.kind === 'rectangle' && (
+            <NumberField
+              key={layer.id + 'radius' + (layer.cornerRadius ?? 0)}
+              label="Corner radius"
+              value={layer.cornerRadius ?? 0}
+              min={0}
+              max={CORNER_RADIUS_MAX}
+              disabled={layerLocked}
+              apply={(cornerRadius) => edit({ cornerRadius })}
+            />
+          )}
           <input
             type="color"
             aria-label="Shape color"
@@ -1343,6 +2211,35 @@ export default function LayersPanel({
             disabled={layerLocked}
             onChange={(e) => edit({ color: e.target.value })}
           />
+          <label title={layer.fill ? undefined : 'An unfilled shape always draws its outline'}>
+            <input
+              type="checkbox"
+              checked={Boolean(shapeOutlineColor(layer))}
+              disabled={layerLocked || !layer.fill}
+              onChange={(e) => edit({ strokeColor: e.target.checked ? layer.strokeColor ?? '#000000' : undefined })}
+            />
+            Layer stroke
+          </label>
+          {shapeOutlineColor(layer) && (
+            <>
+              <input
+                type="color"
+                aria-label="Layer stroke color"
+                value={shapeOutlineColor(layer)}
+                disabled={layerLocked}
+                onChange={(e) => edit({ strokeColor: e.target.value })}
+              />
+              <NumberField
+                key={layer.id + 'stroke' + layer.stroke}
+                label="Layer stroke width"
+                value={layer.stroke}
+                min={1}
+                max={100}
+                disabled={layerLocked}
+                apply={(stroke) => edit({ stroke })}
+              />
+            </>
+          )}
           {layer.kind === 'polygon' && (
             <>
               <label className="layer-field">
@@ -1479,82 +2376,203 @@ export default function LayersPanel({
           </small>
         </div>
       )}
-      <div className="layer-actions">
-        <button
-          onClick={() => reorder(1)}
-          disabled={layerLocked || frame.layers.at(-1)?.id === layer.id}
-        >
-          Raise layer
-        </button>
-        <button
-          onClick={() => reorder(-1)}
-          disabled={layerLocked || frame.layers[0].id === layer.id}
-        >
-          Lower layer
-        </button>
-        <button
-          onClick={() => arrange('front')}
-          disabled={arrangeDisabled('front')}
-        >
-          Bring to front
-        </button>
-        <button
-          onClick={() => arrange('forward')}
-          disabled={arrangeDisabled('forward')}
-        >
-          Bring forward
-        </button>
-        <button
-          onClick={() => arrange('backward')}
-          disabled={arrangeDisabled('backward')}
-        >
-          Send backward
-        </button>
-        <button
-          onClick={() => arrange('back')}
-          disabled={arrangeDisabled('back')}
-        >
-          Send to back
-        </button>
-        <button onClick={duplicate} disabled={frame.layers.length >= 32}>
-          Duplicate layer
-        </button>
-        <button
-          onClick={remove}
-          disabled={layerLocked || frame.layers.length === 1}
-        >
-          Delete layer
-        </button>
-        {layer.kind !== 'raster' && layer.kind !== 'adjustment' && (
+      </>)}
+      {main && (<>
+      {layer.kind !== 'raster' && layer.kind !== 'adjustment' && (
+        <div className="layer-actions">
           <button onClick={rasterize} disabled={layerLocked}>
             Rasterize layer
           </button>
-        )}
-      </div>
-      <p>
-        Edits affect the selected layer. Deleting and rasterizing can be undone.
-      </p>
+        </div>
+      )}
+      </>)}
+    </Root>
+  );
+}
+function LayersRoot({ children }: { children: ReactNode }) {
+  return (
+    <section className="panel layers-panel" aria-label="Layers" data-sidebar-section="layers">
+      {children}
     </section>
+  );
+}
+function PartRoot({ children }: { children: ReactNode }) {
+  return <div className="layers-panel layers-panel-part">{children}</div>;
+}
+/**
+ * Row menu (right-click, long-press on touch, the row's "⋯" button, or the
+ * ContextMenu key / Shift+F10). Actions apply to the selection when it
+ * includes the row, otherwise to the row alone.
+ */
+function LayerRowMenu({
+  frame,
+  layer,
+  ids,
+  x,
+  y,
+  close,
+  run,
+}: {
+  frame: Frame;
+  layer: Layer;
+  ids: string[];
+  x: number;
+  y: number;
+  close: (restoreFocus: boolean) => void;
+  run: (action: RowMenuAction) => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const scoped: Frame = { ...frame, active: layer.id, selectedLayerIds: ids };
+  const group = layer.groupId ? frame.groups?.find((item) => item.id === layer.groupId) : undefined;
+  const locked = layer.locked || Boolean(group?.locked);
+  const candidate = clippingCandidateBase(frame, layer);
+  const selected = frame.layers.filter((item) => ids.includes(item.id));
+  const anyLocked = selected.some(
+    (item) => item.locked || Boolean(item.groupId && frame.groups?.find((g) => g.id === item.groupId)?.locked),
+  );
+  const items: Array<{ action: RowMenuAction; label: string; disabled: boolean; separator?: boolean }> = [
+    { action: 'duplicate', label: 'Duplicate', disabled: frame.layers.length + ids.length > MAX_DOCUMENT_LAYERS },
+    { action: 'delete', label: ids.length > 1 ? `Delete ${ids.length} layers` : 'Delete', disabled: !planLayerDelete(scoped, ids).ok },
+    { action: 'front', label: 'Bring to Front', disabled: !planLayerArrange(scoped, 'front').ok, separator: true },
+    { action: 'forward', label: 'Bring Forward', disabled: !planLayerArrange(scoped, 'forward').ok },
+    { action: 'backward', label: 'Send Backward', disabled: !planLayerArrange(scoped, 'backward').ok },
+    { action: 'back', label: 'Send to Back', disabled: !planLayerArrange(scoped, 'back').ok },
+    layer.clippingTo
+      ? { action: 'release-clip', label: 'Release Clipping Mask', disabled: locked, separator: true }
+      : {
+          action: 'clip',
+          label: 'Create Clipping Mask',
+          disabled:
+            !isClippingSourceLayer(layer) ||
+            !candidate ||
+            locked ||
+            !layer.visible ||
+            Boolean(candidate && (candidate.locked || !candidate.visible)),
+          separator: true,
+        },
+    {
+      action: 'group',
+      label: 'Group into Folder',
+      disabled: anyLocked || selected.some((item) => item.groupId !== undefined),
+    },
+    { action: 'rename', label: 'Rename…', disabled: locked, separator: true },
+    { action: 'visibility', label: layer.visible ? 'Hide' : 'Show', disabled: Boolean(group?.locked) },
+    { action: 'lock', label: layer.locked ? 'Unlock' : 'Lock', disabled: Boolean(group?.locked) },
+  ];
+  const closeRef = useRef(close);
+  useEffect(() => {
+    closeRef.current = close;
+  });
+  useEffect(() => {
+    // Focus the first item once on open; a pointer press outside closes.
+    menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) closeRef.current(false);
+    };
+    document.addEventListener('pointerdown', outside, true);
+    return () => document.removeEventListener('pointerdown', outside, true);
+  }, []);
+  const width = 216,
+    height = items.length * 32 + 16;
+  const left = Math.max(8, Math.min(x, window.innerWidth - width - 8));
+  const top = y + height > window.innerHeight - 8 ? Math.max(8, window.innerHeight - height - 8) : y;
+  return (
+    <div
+      ref={menuRef}
+      className="layer-row-menu"
+      role="menu"
+      tabIndex={-1}
+      aria-label={`Layer options for ${layer.name || 'Untitled layer'}`}
+      style={{ left, top }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          close(true);
+          return;
+        }
+        if (event.key === 'Tab') {
+          close(false);
+          return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          event.stopPropagation();
+          const buttons = Array.from(
+            menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') || [],
+          );
+          if (!buttons.length) return;
+          const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+          const next =
+            event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? buttons.length - 1
+                : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[next].focus();
+        }
+      }}
+    >
+      {items.map((item) => (
+        <button
+          key={item.action}
+          type="button"
+          role="menuitem"
+          className={item.separator ? 'separated' : undefined}
+          disabled={item.disabled}
+          onClick={() => run(item.action)}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
   );
 }
 function GroupRow({
   group,
   editGroup,
   selected,
+  dropClass = '',
+  dragging = false,
+  onPointerDown,
+  ignoreClick,
 }: {
   group: Group;
   editGroup: (id: string, patch: Partial<Group>) => void;
   selected: boolean;
+  dropClass?: string;
+  dragging?: boolean;
+  onPointerDown?: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  ignoreClick?: () => boolean;
 }) {
   const action = group.collapsed ? 'Expand' : 'Collapse';
   return (
-    <div className={selected ? 'group-row selected' : 'group-row'}>
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions
+    <div
+      className={(selected ? 'group-row selected' : 'group-row') + (dragging ? ' dragging' : '') + dropClass}
+      data-drop-row="group"
+      data-group-id={group.id}
+      onPointerDown={onPointerDown}
+    >
       <button
         className="group-toggle"
         aria-label={`${action} group ${group.name}`}
         aria-expanded={!group.collapsed}
-        onClick={() => editGroup(group.id, { collapsed: !group.collapsed })}
+        onClick={() => {
+          if (ignoreClick?.()) return;
+          editGroup(group.id, { collapsed: !group.collapsed });
+        }}
       >
+        {onPointerDown && (
+          <span
+            className="layer-drag-handle"
+            data-drag-handle="true"
+            aria-hidden="true"
+            title="Drag to move the folder (long-press on touch)"
+          >
+            <GripVertical size={14} />
+          </span>
+        )}
         <span aria-hidden="true">{group.collapsed ? '▸' : '▾'}</span>
         <b>{group.name || 'Untitled group'}</b>
       </button>
@@ -1616,13 +2634,7 @@ function GroupRow({
             editGroup(group.id, { blend: event.target.value as Group['blend'] })
           }
         >
-          {BLENDS.map((blend) => (
-            <option key={blend} value={blend}>
-              {blend === 'source-over'
-                ? 'Normal'
-                : blend[0].toUpperCase() + blend.slice(1)}
-            </option>
-          ))}
+          <BlendModeOptions />
         </select>
       </label>
     </div>
@@ -1666,6 +2678,162 @@ function NumberField({
           if (e.key === 'Enter') e.currentTarget.blur();
         }}
       />
+    </label>
+  );
+}
+
+/** Blend menu grouped like common editors; values stay stable document ids. */
+function BlendModeOptions() {
+  return (
+    <>
+      {BLEND_MODE_GROUPS.map((group) =>
+        group.modes.length === 1 ? (
+          <option key={group.modes[0].value} value={group.modes[0].value}>
+            {group.modes[0].label}
+          </option>
+        ) : (
+          <optgroup key={group.label} label={group.label}>
+            {group.modes.map((mode) => (
+              <option key={mode.value} value={mode.value}>
+                {mode.label}
+              </option>
+            ))}
+          </optgroup>
+        ),
+      )}
+    </>
+  );
+}
+
+type GlowPatch = {
+  color?: string;
+  opacity?: number;
+  size?: number;
+  amount?: number;
+  blend?: LayerBlendMode;
+  source?: GlowSource;
+};
+
+/** Compact shared controls for Outer Glow and Inner Glow. */
+function GlowControls({
+  name,
+  color,
+  opacity,
+  size,
+  amount,
+  amountLabel,
+  blend,
+  source,
+  update,
+}: {
+  name: string;
+  color: string;
+  opacity: number;
+  size: number;
+  amount: number;
+  amountLabel: 'spread' | 'choke';
+  blend: LayerBlendMode;
+  source?: GlowSource;
+  update: (patch: GlowPatch) => void;
+}) {
+  return (
+    <>
+      <div className="layer-position">
+        <label className="layer-field">
+          Color
+          <input
+            aria-label={`${name} color`}
+            type="color"
+            value={color}
+            onChange={(event) => update({ color: event.target.value })}
+          />
+        </label>
+        <label className="layer-field">
+          Mode
+          <select
+            aria-label={`${name} blend mode`}
+            value={blend}
+            onChange={(event) => update({ blend: event.target.value as LayerBlendMode })}
+          >
+            <BlendModeOptions />
+          </select>
+        </label>
+      </div>
+      <label className="layer-field">
+        {name} opacity {Math.round(opacity * 100)}%
+        <input
+          aria-label={`${name} opacity`}
+          type="range"
+          min="0"
+          max="100"
+          value={Math.round(opacity * 100)}
+          onChange={(event) => update({ opacity: Number(event.target.value) / 100 })}
+        />
+      </label>
+      <label className="layer-field">
+        {name} size {Math.round(size)} px
+        <input
+          aria-label={`${name} size`}
+          type="range"
+          min="0"
+          max={GLOW_MAX_SIZE}
+          value={Math.round(size)}
+          onChange={(event) => update({ size: Number(event.target.value) })}
+        />
+      </label>
+      <label className="layer-field">
+        {name} {amountLabel} {Math.round(amount)}%
+        <input
+          aria-label={`${name} ${amountLabel}`}
+          type="range"
+          min="0"
+          max="100"
+          value={Math.round(amount)}
+          onChange={(event) => update({ amount: Number(event.target.value) })}
+        />
+      </label>
+      {source !== undefined && (
+        <label className="layer-field">
+          Source
+          <select
+            aria-label={`${name} source`}
+            value={source}
+            onChange={(event) => update({ source: event.target.value as GlowSource })}
+          >
+            <option value="edge">Edge</option>
+            <option value="center">Center</option>
+          </select>
+        </label>
+      )}
+    </>
+  );
+}
+
+/**
+ * Shadow blur falloff. Gaussian is the default for new layers; shadows saved
+ * before the option load as Linear (the historical single box pass) so their
+ * look is unchanged until the user picks Gaussian.
+ */
+function ShadowFalloffSelect({
+  label,
+  value,
+  update,
+}: {
+  label: string;
+  value: ShadowFalloff;
+  update: (falloff: ShadowFalloff) => void;
+}) {
+  return (
+    <label className="layer-field">
+      Falloff
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => update(event.target.value as ShadowFalloff)}
+      >
+        <option value="gaussian">Gaussian</option>
+        <option value="box">Linear (legacy)</option>
+      </select>
     </label>
   );
 }

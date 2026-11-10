@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { openPanel } from './sidebar-panels';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -26,10 +27,21 @@ const project = async (page: Page) => {
   };
 };
 
+// Compare a fingerprint computed in the page instead of copying every pixel
+// over the browser protocol: a 1200x800 canvas is 3.84M numbers per call,
+// which made this spec exceed its time budget on loaded CI runners.
 const canvasPixels = (page: Page) =>
-  page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) =>
-    Array.from(canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data),
-  );
+  page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => {
+    const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+    // Two independent 32-bit FNV-1a hashes plus the size: any pixel change
+    // alters the fingerprint, and a collision is vanishingly unlikely.
+    let a = 0x811c9dc5, b = 0x01000193 ^ 0x5bd1e995;
+    for (let i = 0; i < data.length; i += 1) {
+      a = Math.imul(a ^ data[i], 0x01000193);
+      b = Math.imul(b ^ data[i] ^ (i & 0xff), 0x01000193);
+    }
+    return `${canvas.width}x${canvas.height}:${(a >>> 0).toString(16)}:${(b >>> 0).toString(16)}`;
+  });
 
 test('Layer Styles decorate an editable layer and survive undo, reload and project round trip', async ({ page }) => {
   // Pixel-level full-frame renders and project downloads are intentionally
@@ -45,6 +57,7 @@ test('Layer Styles decorate an editable layer and survive undo, reload and proje
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   const before = await canvasPixels(page);
 
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable outline', { exact: true }).check();
   await page.getByLabel('Outline width', { exact: true }).press('ArrowRight');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
@@ -78,6 +91,7 @@ test('Layer Styles decorate an editable layer and survive undo, reload and proje
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable drop shadow', { exact: true })).toBeChecked();
   await expect(page.getByLabel('Enable outline', { exact: true })).not.toBeChecked();
   const reloaded = await project(page);
@@ -88,6 +102,7 @@ test('Layer Styles decorate an editable layer and survive undo, reload and proje
 
 test('Layer Style controls are disabled for locked layers', async ({ page }) => {
   await page.getByLabel('Lock layer', { exact: true }).check();
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable drop shadow', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Enable outline', { exact: true })).toBeDisabled();
   await expect(page.getByLabel('Outline width', { exact: true })).toBeDisabled();
@@ -109,6 +124,7 @@ test('Color overlay is nondestructive, editable and survives project reload', as
   await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
   await expect(canvas).toHaveAttribute('data-rendering', 'false');
   const before = await canvasPixels(page);
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable color overlay', { exact: true }).check();
   await expect(canvas).toHaveAttribute('data-rendering', 'false');
   expect(await canvasPixels(page)).not.toEqual(before);
@@ -120,6 +136,7 @@ test('Color overlay is nondestructive, editable and survives project reload', as
   const sourceAsset = styledLayer.asset;
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable color overlay', { exact: true })).toBeChecked();
   const reloaded = await project(page);
   expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
@@ -136,6 +153,7 @@ test('Gradient overlay keeps endpoints editable, source pixels and project reloa
   expect(box).toBeTruthy();
   await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
   const before = await canvasPixels(page);
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable gradient overlay', { exact: true }).check();
   await page.getByLabel('Gradient overlay start color', { exact: true }).fill('#0011ff');
   await page.getByLabel('Gradient overlay end color', { exact: true }).fill('#ff1100');
@@ -157,6 +175,7 @@ test('Gradient overlay keeps endpoints editable, source pixels and project reloa
   const sourceAsset = styledLayer.asset;
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable gradient overlay', { exact: true })).toBeChecked();
   const reloaded = await project(page);
   expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
@@ -173,6 +192,7 @@ test('Inner shadow is nondestructive, stays inside the layer and survives reload
   expect(box).toBeTruthy();
   await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
   const before = await canvasPixels(page);
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable inner shadow', { exact: true }).check();
   await page.getByLabel('Inner shadow blur', { exact: true }).fill('0');
   await page.getByLabel('Inner shadow distance', { exact: true }).fill('1');
@@ -186,6 +206,7 @@ test('Inner shadow is nondestructive, stays inside the layer and survives reload
   const sourceAsset = styledLayer.asset;
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable inner shadow', { exact: true })).toBeChecked();
   const reloaded = await project(page);
   expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
@@ -202,6 +223,7 @@ test('Bevel and emboss keeps directional edge shading editable across reload', a
   expect(box).toBeTruthy();
   await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
   const before = await canvasPixels(page);
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable bevel emboss', { exact: true }).check();
   await page.getByLabel('Bevel angle', { exact: true }).fill('0');
   await page.getByLabel('Bevel depth', { exact: true }).fill('1');
@@ -216,6 +238,7 @@ test('Bevel and emboss keeps directional edge shading editable across reload', a
   const sourceAsset = styledLayer.asset;
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable bevel emboss', { exact: true })).toBeChecked();
   const reloaded = await project(page);
   expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(sourceAsset);
@@ -232,6 +255,7 @@ test('Pattern overlay repeats an editable tile and retains source identity acros
   expect(box).toBeTruthy();
   await canvas.click({ position: { x: box!.width / 2, y: box!.height / 2 }, force: true });
   const before = await canvasPixels(page);
+  await openPanel(page, 'Layer styles');
   await page.getByLabel('Enable pattern overlay', { exact: true }).check();
   await page.getByLabel('Pattern overlay pattern', { exact: true }).selectOption('stripes');
   await page.getByLabel('Pattern overlay foreground', { exact: true }).fill('#ff0000');
@@ -253,6 +277,7 @@ test('Pattern overlay repeats an editable tile and retains source identity acros
   const sourceAsset = styledLayer.asset;
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Layer styles');
   await expect(page.getByLabel('Enable pattern overlay', { exact: true })).toBeChecked();
   await expect(page.getByLabel('Pattern overlay pattern', { exact: true })).toHaveValue('stripes');
   const reloaded = await project(page);

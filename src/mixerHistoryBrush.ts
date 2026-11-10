@@ -1,4 +1,5 @@
 import { brushCoverage, effectiveBrushTipSettings, resolveBrushStamp, validBrushTipSettings, type BrushTipSettings } from './brush.ts';
+import { symmetryStrokePointCopies, symmetryTipForTransform, type SymmetryAffine } from './paintSymmetry.ts';
 
 /**
  * Bounded, deterministic controls for the Mixer Brush.  PixelForge keeps the
@@ -87,15 +88,19 @@ export const DEFAULT_ART_HISTORY_BRUSH: ArtHistoryBrushSettings = {
 export const MAX_ART_HISTORY_BRUSH_WORK = 1_000_000;
 
 /** Deterministic spacing for pointer segments so fast drags leave no dab gaps. */
-export function interpolateArtHistoryPoints(from: BrushStrokePoint, to: BrushStrokePoint, spacing: number): BrushStrokePoint[] {
+/** Interpolate a brush segment so wet pigment cannot leave pointer-speed gaps. */
+export function interpolateBrushStrokePoints(from: BrushStrokePoint, to: BrushStrokePoint, spacing: number): BrushStrokePoint[] {
   if (!finite(spacing) || spacing <= 0 || !finite(from.x) || !finite(from.y) || !finite(to.x) || !finite(to.y))
-    throw new Error('Art History Brush interpolation is invalid');
+    throw new Error('Brush interpolation is invalid');
   const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / spacing));
   return Array.from({ length: steps }, (_, index) => {
     const ratio = (index + 1) / steps;
     return { x: from.x + (to.x - from.x) * ratio, y: from.y + (to.y - from.y) * ratio, pressure: to.pressure };
   });
 }
+
+/** Backwards-compatible name used by the Art History brush contract. */
+export const interpolateArtHistoryPoints = interpolateBrushStrokePoints;
 
 export function validMixerBrushSettings(value: unknown): value is MixerBrushSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -192,15 +197,18 @@ function coverageAt(x: number, y: number, point: BrushStrokePoint, settings: Mix
 }
 
 function alphaMix(destination: Uint8ClampedArray, source: ArrayLike<number>, offset: number, amount: number, preserveSourceTransparency: boolean, sampledSource?: ArrayLike<number>) {
+  // A sampled colour is one RGBA pixel; otherwise paint the source pixel at
+  // this offset (not the source's first pixel).
   const paint = sampledSource ?? source;
-  const sa = paint[3] / 255;
+  const base = sampledSource ? 0 : offset;
+  const sa = paint[base + 3] / 255;
   if (preserveSourceTransparency && sa <= 0) return false;
   const da = destination[offset + 3] / 255;
   const outputAlpha = clamp(da + (sa - da) * amount, 0, 1);
   let changed = false;
   for (let channel = 0; channel < 3; channel += 1) {
     const before = destination[offset + channel];
-    const sourceColour = paint[channel];
+    const sourceColour = paint[base + channel];
     destination[offset + channel] = Math.round(before + (sourceColour - before) * amount);
     changed = changed || before !== destination[offset + channel];
   }
@@ -231,33 +239,85 @@ function applyStroke(destinationInput: Uint8ClampedArray, source: ArrayLike<numb
   return destination;
 }
 
-/** Apply one immutable-source Mixer Brush stroke. The input destination is never mutated. */
-export function applyMixerBrushPixels(destination: Uint8ClampedArray, source: ArrayLike<number>, width: number, height: number, points: readonly BrushStrokePoint[], settings: MixerBrushSettings, selectionMask?: ArrayLike<number>): Uint8ClampedArray {
+/**
+ * Paint carried by a Mixer Brush between dabs (and between pointer moves of
+ * one stroke). Create one empty state per stroke (per Paint Symmetry copy).
+ */
+export type MixerBrushState = { reservoir?: [number, number, number, number] };
+
+/** Fraction of the brush deposited per dab (Flow, raised by Wet). */
+export const mixerBrushDeposit = (settings: Pick<MixerBrushSettings, 'flow' | 'wet'>) =>
+  (settings.flow / 100) * (0.25 + 0.75 * (settings.wet / 100));
+/** Fraction of the reservoir replaced by the canvas paint under each dab (Mix, held back by Load). */
+export const mixerBrushPickup = (settings: Pick<MixerBrushSettings, 'mix' | 'load'>) =>
+  (settings.mix / 100) * (1 - 0.8 * (settings.load / 100));
+
+/**
+ * Apply one immutable-source Mixer Brush stroke. The input destination is
+ * never mutated. The brush is loaded with the source paint under its first
+ * dab and carries that reservoir along the stroke: every dab deposits the
+ * reservoir (Flow × Wet) and then picks up the source paint under it (Mix,
+ * held back by Load), so dragging from one colour into another smears the
+ * first into the second. Pass the same `state` for every call of a stroke.
+ */
+export function applyMixerBrushPixels(destination: Uint8ClampedArray, source: ArrayLike<number>, width: number, height: number, points: readonly BrushStrokePoint[], settings: MixerBrushSettings, selectionMask?: ArrayLike<number>, state: MixerBrushState = {}): Uint8ClampedArray {
   assertInput(destination, source, width, height, points);
   if (!validMixerBrushSettings(settings)) throw new Error('Mixer Brush settings are invalid');
-  const wet = settings.wet / 100;
-  const load = settings.load / 100;
-  const mix = settings.mix / 100;
-  const flow = settings.flow / 100;
-  return applyStroke(
-    destination,
-    source,
-    width,
-    height,
-    points,
-    settings.size,
-    settings.hardness,
-    (coverage) => coverage * flow * mix * (0.25 + 0.75 * wet * load),
-    selectionMask,
-    wet > 0 && load < 1
-      ? (current, immutable, offset) => new Uint8ClampedArray([
-        Math.round(immutable[offset] * (1 - wet * (1 - load)) + current[offset] * wet * (1 - load)),
-        Math.round(immutable[offset + 1] * (1 - wet * (1 - load)) + current[offset + 1] * wet * (1 - load)),
-        Math.round(immutable[offset + 2] * (1 - wet * (1 - load)) + current[offset + 2] * wet * (1 - load)),
-        immutable[offset + 3],
-      ])
-      : undefined,
-  );
+  const output = new Uint8ClampedArray(destination);
+  const deposit = mixerBrushDeposit(settings);
+  const pickup = mixerBrushPickup(settings);
+  for (const point of points) {
+    const stamp = resolveBrushStamp({
+      size: settings.size,
+      hardness: settings.hardness,
+      opacity: 1,
+      pressure: finite(point.pressure) ? clamp(point.pressure!, 0, 1) : 1,
+      pressureSize: false,
+      pressureOpacity: false,
+      ...effectiveBrushTipSettings(settings),
+    });
+    const left = Math.max(0, Math.floor(point.x - stamp.radius));
+    const top = Math.max(0, Math.floor(point.y - stamp.radius));
+    const right = Math.min(width, Math.floor(point.x + stamp.radius) + 1);
+    const bottom = Math.min(height, Math.floor(point.y + stamp.radius) + 1);
+    const coverage = (x: number, y: number) =>
+      brushCoverage(x - point.x, y - point.y, stamp.radius, stamp.hardness, stamp.roundness, stamp.angle, stamp.flipX, stamp.flipY);
+    // Canvas paint under the dab: coverage-weighted, alpha-weighted source colour.
+    let weight = 0, alphaWeight = 0, red = 0, green = 0, blue = 0;
+    for (let y = top; y < bottom; y += 1) for (let x = left; x < right; x += 1) {
+      const c = coverage(x, y);
+      if (c <= 0) continue;
+      const offset = (y * width + x) * 4, a = (source[offset + 3] / 255) * c;
+      weight += c;
+      alphaWeight += a;
+      red += source[offset] * a;
+      green += source[offset + 1] * a;
+      blue += source[offset + 2] * a;
+    }
+    if (weight <= 0) continue;
+    const sample: [number, number, number, number] = alphaWeight > 0
+      ? [red / alphaWeight, green / alphaWeight, blue / alphaWeight, (255 * alphaWeight) / weight]
+      : [0, 0, 0, 0];
+    const paint = state.reservoir ?? sample;
+    if (paint[3] > 0)
+      for (let y = top; y < bottom; y += 1) for (let x = left; x < right; x += 1) {
+        const index = y * width + x;
+        const selection = selectionMask ? clamp(selectionMask[index] / 255, 0, 1) : 1;
+        if (!selection) continue;
+        const amount = clamp(coverage(x, y) * deposit * selection, 0, 1);
+        if (amount <= 0) continue;
+        const offset = index * 4;
+        const da = output[offset + 3] / 255, pa = paint[3] / 255;
+        const keep = da * (1 - amount), add = pa * amount, alpha = keep + add;
+        if (alpha <= 0) continue;
+        for (let channel = 0; channel < 3; channel += 1)
+          output[offset + channel] = Math.round((output[offset + channel] * keep + paint[channel] * add) / alpha);
+        output[offset + 3] = Math.round(alpha * 255);
+      }
+    // Pick up the canvas paint under this dab for the next one.
+    state.reservoir = [0, 1, 2, 3].map((channel) => paint[channel] + (sample[channel] - paint[channel]) * pickup) as [number, number, number, number];
+  }
+  return output;
 }
 
 /** Restore a historical source through an opacity/flow-controlled brush. */
@@ -265,6 +325,24 @@ export function applyHistoryBrushPixels(destination: Uint8ClampedArray, source: 
   assertInput(destination, source, width, height, points);
   if (!validHistoryBrushSettings(settings)) throw new Error('History Brush settings are invalid');
   return applyStroke(destination, source, width, height, points, settings.size, settings.hardness, (coverage) => coverage * (settings.opacity / 100) * (settings.flow / 100), selectionMask);
+}
+
+function artHistoryDabBounds(points: readonly BrushStrokePoint[], size: number, width: number, height: number) {
+  return points.map((point) => {
+    const left = Math.max(0, Math.floor(point.x - size / 2));
+    const top = Math.max(0, Math.floor(point.y - size / 2));
+    const right = Math.min(width, Math.floor(point.x + size / 2) + 1);
+    const bottom = Math.min(height, Math.floor(point.y + size / 2) + 1);
+    return { left, top, right, bottom };
+  });
+}
+
+const artHistoryWorkOf = (bounds: readonly { left: number; top: number; right: number; bottom: number }[]) =>
+  bounds.reduce((total, box) => total + Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top), 0);
+
+/** Candidate pixels an Art History request touches (its local work budget). */
+export function artHistoryBrushWork(points: readonly BrushStrokePoint[], size: number, width: number, height: number): number {
+  return artHistoryWorkOf(artHistoryDabBounds(points, size, width, height));
 }
 
 /** Apply deterministic painterly dabs from an immutable historical source. */
@@ -281,14 +359,8 @@ export function applyArtHistoryBrushPixels(destination: Uint8ClampedArray, sourc
   if (!points.length || settings.opacity === 0) return new Uint8ClampedArray(destination);
   // Preflight before the detached output allocation. Never silently shrink the
   // requested footprint or skip grid cells to satisfy the local work budget.
-  const bounds = points.map((point) => {
-    const left = Math.max(0, Math.floor(point.x - settings.size / 2));
-    const top = Math.max(0, Math.floor(point.y - settings.size / 2));
-    const right = Math.min(width, Math.floor(point.x + settings.size / 2) + 1);
-    const bottom = Math.min(height, Math.floor(point.y + settings.size / 2) + 1);
-    return { left, top, right, bottom };
-  });
-  const work = bounds.reduce((total, box) => total + Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top), 0);
+  const bounds = artHistoryDabBounds(points, settings.size, width, height);
+  const work = artHistoryWorkOf(bounds);
   if (work > MAX_ART_HISTORY_BRUSH_WORK)
     throw new Error('Art History Brush stroke exceeds local work limit; reduce Size or use a shorter stroke');
   const output = new Uint8ClampedArray(destination);
@@ -332,6 +404,72 @@ export function applyArtHistoryBrushPixels(destination: Uint8ClampedArray, sourc
         output[offset + channel] = Math.round(output[offset + channel] + (colour - output[offset + channel]) * amount);
       }
     }
+  }
+  return output;
+}
+
+export type RetouchBrushKind = 'mixer-brush' | 'history-brush' | 'art-history-brush';
+type RetouchBrushSettings = MixerBrushSettings | HistoryBrushSettings | ArtHistoryBrushSettings;
+
+const applyRetouchBrush = (
+  kind: RetouchBrushKind,
+  destination: Uint8ClampedArray,
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  points: readonly BrushStrokePoint[],
+  settings: RetouchBrushSettings,
+  selectionMask?: ArrayLike<number>,
+  mixerState?: MixerBrushState,
+) =>
+  kind === 'mixer-brush'
+    ? applyMixerBrushPixels(destination, source, width, height, points, settings as MixerBrushSettings, selectionMask, mixerState)
+    : kind === 'history-brush'
+    ? applyHistoryBrushPixels(destination, source, width, height, points, settings as HistoryBrushSettings, selectionMask)
+    : applyArtHistoryBrushPixels(destination, source, width, height, points, settings as ArtHistoryBrushSettings, selectionMask);
+
+/**
+ * Mixer / History / Art History stroke with optional Paint Symmetry.
+ *
+ * Without transforms (or with only the identity) this is exactly the single
+ * brush call, so legacy strokes stay byte-identical. With symmetry each copy's
+ * point list (`symmetryStrokePointCopies`) is applied in transform order onto
+ * the same output, so later copies see earlier copies' paint exactly as later
+ * points of one stroke do. Each copy samples its own position: Mixer picks up
+ * the canvas there and History / Art History read the snapshot there. Art
+ * History's tip orientation is mirrored per copy, and its local work budget
+ * covers all copies together (the stroke is refused rather than shrunk).
+ */
+export function applySymmetricRetouchBrush(
+  kind: RetouchBrushKind,
+  destination: Uint8ClampedArray,
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  points: readonly BrushStrokePoint[],
+  settings: RetouchBrushSettings,
+  selectionMask?: ArrayLike<number>,
+  transforms?: readonly SymmetryAffine[],
+  /** Mixer Brush reservoirs, one per symmetry copy, kept for the whole stroke. */
+  mixerStates?: MixerBrushState[],
+): Uint8ClampedArray {
+  if (!transforms || transforms.length < 2)
+    return applyRetouchBrush(kind, destination, source, width, height, points, settings, selectionMask, mixerStates && (mixerStates[0] ??= {}));
+  const copies = symmetryStrokePointCopies(transforms, points);
+  if (kind === 'art-history-brush') {
+    const work = copies.reduce((total, list) => total + artHistoryBrushWork(list, settings.size, width, height), 0);
+    if (work > MAX_ART_HISTORY_BRUSH_WORK)
+      throw new Error('Art History Brush stroke exceeds local work limit; reduce Size, symmetry copies or stroke length');
+  }
+  let output = destination;
+  for (const [index, list] of copies.entries()) {
+    const tip = kind === 'art-history-brush'
+      ? symmetryTipForTransform(transforms[index], {
+        angle: settings.angle ?? 0, flipX: settings.flipX ?? false, flipY: settings.flipY ?? false,
+      })
+      : undefined;
+    output = applyRetouchBrush(kind, output, source, width, height, list, tip ? { ...settings, ...tip } : settings, selectionMask,
+      mixerStates && (mixerStates[index] ??= {}));
   }
   return output;
 }

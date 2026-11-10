@@ -3,12 +3,23 @@ import { renderArtboard } from './artboardRender';
 import type { Artboard } from './artboards';
 import { type Assets, type Frame } from './document';
 import {
+  COLOR_PROFILES,
+  type ColorProfile,
+} from './colorProfile';
+import {
+  convertCanvasProfile,
   encodeImage,
   encodeImageForTarget,
   exportLabels,
   validExportTargetBytes,
   type ExportFormat,
 } from './export';
+import {
+  downloadBlob,
+  pickSaveFile,
+  supportsSaveFilePicker,
+  writeToFileHandle,
+} from './download';
 import { beginPerformanceSpan, type PerformanceSpan } from './performanceMarks';
 
 type Props = {
@@ -57,6 +68,7 @@ export default function ExportDialog({
   const [selectedArtboardId, setSelectedArtboardId] =
     useState<string | undefined>(initialArtboardId);
   const [image, setImage] = useState<HTMLCanvasElement | null>(null);
+  const [exportProfile, setExportProfile] = useState<ColorProfile>(frame.colorProfile ?? 'srgb');
   const rasterPreviewUrl = useMemo(() => {
     if (!image) return null;
     try {
@@ -73,6 +85,8 @@ export default function ExportDialog({
   );
   const [targetError, setTargetError] = useState('');
   const exportSpan = useRef<PerformanceSpan | null>(null);
+  const [pickerAvailable] = useState(() => supportsSaveFilePicker(window));
+  const [savingWithPicker, setSavingWithPicker] = useState(false);
 
   useEffect(() => {
     if (!dialog.current?.open) dialog.current?.showModal();
@@ -84,7 +98,7 @@ export default function ExportDialog({
     )
       .then((result) => {
         if (!cancelled) {
-          setImage(result.canvas);
+          setImage(convertCanvasProfile(result.canvas, frame.colorProfile ?? 'srgb', exportProfile));
           setViewport(result.artboard);
         }
       })
@@ -95,7 +109,7 @@ export default function ExportDialog({
     return () => {
       cancelled = true;
     };
-  }, [selectedArtboardId]);
+  }, [selectedArtboardId, exportProfile, frame.colorProfile]);
 
   useEffect(() => {
     if (!image) return;
@@ -183,10 +197,9 @@ export default function ExportDialog({
         onSubmit={(event) => {
           event.preventDefault();
           if (!current) return;
-          const anchor = document.createElement('a');
-          anchor.download = filename;
-          anchor.href = current.url;
-          anchor.click();
+          // A dedicated object URL per download, revoked after a delay, so a
+          // host that fetches the blob asynchronously still finds it.
+          downloadBlob(current.blob, filename);
           downloaded(
             `${exportLabels[format]} export downloaded (${current.blob.size.toLocaleString()} bytes)`,
           );
@@ -235,6 +248,20 @@ export default function ExportDialog({
             <option value="webp">WebP — smaller, transparent</option>
             <option value="psd">PSD — flattened composite</option>
             <option value="pdf">PDF — flattened page</option>
+          </select>
+        </label>
+        <label>
+          Export color profile
+          <select
+            aria-label="Export color profile"
+            value={exportProfile}
+            onChange={(event) => setExportProfile(event.target.value as ColorProfile)}
+          >
+            {COLOR_PROFILES.map((item) => (
+              <option key={item} value={item}>
+                {item === 'srgb' ? 'sRGB IEC 61966-2.1' : 'Display P3'}
+              </option>
+            ))}
           </select>
         </label>
         {format !== 'png' && format !== 'psd' && format !== 'pdf' && (
@@ -332,10 +359,51 @@ export default function ExportDialog({
           title, description and author stay in the local draft and editable
           .pixelforge project only. File size depends on image content and browser encoding.
         </p>
+        {pickerAvailable && (
+          <p className="export-format-note" data-testid="export-picker-note">
+            If a download does not appear (some embedded browsers ignore
+            downloads), use Save with file picker to choose where the file is
+            written.
+          </p>
+        )}
         <div className="dialog-actions">
           <button type="button" onClick={close}>
             Close
           </button>
+          {pickerAvailable && (
+            <button
+              type="button"
+              disabled={!current || savingWithPicker}
+              onClick={() => {
+                if (!current) return;
+                const saved = current;
+                setSavingWithPicker(true);
+                void (async () => {
+                  try {
+                    const picked = await pickSaveFile(filename, window);
+                    if (picked.status === 'cancelled') return;
+                    if (picked.status === 'unavailable') {
+                      downloadBlob(saved.blob, filename);
+                      downloaded(
+                        `${picked.reason} ${exportLabels[saved.format]} export downloaded instead (${saved.blob.size.toLocaleString()} bytes)`,
+                      );
+                      return;
+                    }
+                    await writeToFileHandle(picked.handle, saved.blob);
+                    downloaded(
+                      `${exportLabels[saved.format]} export saved with the file picker (${saved.blob.size.toLocaleString()} bytes)`,
+                    );
+                  } catch {
+                    setError('The file could not be written. Try Download image instead.');
+                  } finally {
+                    setSavingWithPicker(false);
+                  }
+                })();
+              }}
+            >
+              Save with file picker…
+            </button>
+          )}
           <button type="submit" disabled={!current}>
             Download image
           </button>

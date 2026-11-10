@@ -39,11 +39,19 @@ acceptance tests cover toolbar and shortcut activation, representative
 pixel/alpha changes, active selections, settings persistence, undo/redo,
 no-op history behavior, lock guards and touch cancellation.
 
-The current browser path validates and scans the full asset buffer for each
-tonal segment. Worker/tile processing and non-destructive adjustment command
-layers remain staged behind the performance and serialization milestones; this
-contract does not claim Photoshop-scale memory or latency for very large
-images.
+Each tonal segment reads, validates and writes back only the segment's window
+of the gesture buffer (the brush reach around its two points, see
+`src/strokeWindow.ts`), so a pointer move costs the brush area rather than the
+whole layer; windowed and full-layer kernels give the same bytes
+(`tests/stroke-window.test.mjs`). Live previews of worker-sized documents use
+the shared coalesced gesture preview: the buffer is transferred to the
+persistent render worker, which starts from its cached composite below the
+edited layer (see [worker-render-contract.md](./worker-render-contract.md)).
+Layers above the edited one are still composited per preview, the whole layer
+bitmap is transferred per preview, and the commit still encodes the changed
+layer. Non-destructive adjustment command layers remain staged behind the
+performance and serialization milestones; this contract does not claim
+Photoshop-scale memory or latency for very large images.
 
 The implementation intentionally remains a baked raster command rather than a
 Photoshop adjustment layer. Non-destructive tonal command metadata and

@@ -8,12 +8,12 @@
  */
 
 export type PaletteToolId =
-  | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'count'
+  | 'move' | 'hand' | 'zoom' | 'rotate-view' | 'eyedropper' | 'color-sampler' | 'ruler' | 'note' | 'audio-note' | 'count'
   | 'fill' | 'gradient' | 'clone' | 'heal' | 'spot-heal' | 'patch' | 'red-eye' | 'pattern-stamp' | 'mixer-brush' | 'history-brush' | 'art-history-brush'
   | 'crop' | 'perspective-crop' | 'slice' | 'slice-select' | 'frame' | 'brush' | 'pencil' | 'color-replace' | 'eraser'
   | 'background-eraser' | 'magic-eraser' | 'dodge' | 'burn' | 'sponge' | 'smudge' | 'blur' | 'sharpen' | 'pen'
   | 'mask-brush' | 'mask-eraser' | 'adjustment-brush'
-  | 'direct-select' | 'text' | 'rectangle' | 'ellipse' | 'line' | 'polygon' | 'freeform-pen' | 'curvature-pen' | 'select'
+  | 'path-select' | 'direct-select' | 'add-anchor' | 'delete-anchor' | 'convert-point' | 'text' | 'vertical-text' | 'text-mask' | 'vertical-text-mask' | 'rectangle' | 'rounded-rectangle' | 'ellipse' | 'line' | 'polygon' | 'custom-shape' | 'freeform-pen' | 'curvature-pen' | 'select'
   | 'ellipse-select' | 'row-select' | 'column-select' | 'lasso' | 'polygonal-lasso'
   | 'magnetic-lasso' | 'selection-brush' | 'quick-selection' | 'magic-wand';
 
@@ -25,7 +25,7 @@ export type ToolCategory = {
 
 export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'navigation', label: 'Navigate', tools: ['move', 'hand', 'zoom', 'rotate-view'] },
-  { id: 'measure', label: 'Measure', tools: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'] },
+  { id: 'measure', label: 'Measure', tools: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'] },
   { id: 'marquee', label: 'Marquee', tools: ['select', 'ellipse-select', 'row-select', 'column-select'] },
   { id: 'lasso', label: 'Lasso', tools: ['lasso', 'polygonal-lasso', 'magnetic-lasso'] },
   { id: 'selection', label: 'Selection', tools: ['selection-brush', 'quick-selection', 'magic-wand'] },
@@ -33,7 +33,7 @@ export const TOOL_CATEGORIES: readonly ToolCategory[] = [
   { id: 'retouch', label: 'Retouch', tools: ['clone', 'pattern-stamp', 'heal', 'spot-heal', 'patch', 'red-eye', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'history-brush', 'art-history-brush'] },
   { id: 'paint', label: 'Paint & Fill', tools: ['brush', 'pencil', 'color-replace', 'mixer-brush', 'gradient', 'fill', 'eraser', 'background-eraser', 'magic-eraser'] },
   { id: 'mask', label: 'Mask Refinement', tools: ['mask-brush', 'mask-eraser', 'adjustment-brush'] },
-  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'direct-select', 'text', 'rectangle', 'ellipse', 'line', 'polygon'] },
+  { id: 'draw', label: 'Draw & Type', tools: ['pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point', 'path-select', 'direct-select', 'text', 'vertical-text', 'text-mask', 'vertical-text-mask', 'rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'] },
 ] as const;
 
 /** Photoshop's repeated-key families. Singletons are intentionally omitted. */
@@ -41,9 +41,9 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'ellipse', 'line', 'polygon'],
+  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   m: ['select', 'ellipse-select', 'row-select', 'column-select'],
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
+  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso'],
   w: ['selection-brush', 'quick-selection', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
@@ -52,7 +52,11 @@ export const TOOL_FAMILIES: Readonly<Record<string, readonly PaletteToolId[]>> =
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   y: ['history-brush', 'art-history-brush'],
   r: ['smudge', 'blur', 'sharpen'],
+  // Add/Delete Anchor Point and Convert Point have no Photoshop shortcut, so
+  // P keeps cycling only the three drawing pens.
   p: ['pen', 'freeform-pen', 'curvature-pen'],
+  t: ['text', 'vertical-text', 'text-mask', 'vertical-text-mask'],
+  a: ['path-select', 'direct-select'],
 };
 
 /** Pointer/touch flyouts use Photoshop's visible tool families. Selection
@@ -67,7 +71,7 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   crop: ['crop', 'perspective-crop', 'slice', 'slice-select', 'frame'],
   fill: ['gradient', 'fill'],
   brush: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  shape: ['rectangle', 'ellipse', 'line', 'polygon'],
+  shape: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   eraser: ['eraser', 'background-eraser', 'magic-eraser'],
   tone: ['dodge', 'burn', 'sponge'],
   stamp: ['clone', 'pattern-stamp'],
@@ -78,8 +82,103 @@ export const TOOL_FLYOUTS: Readonly<Record<string, readonly PaletteToolId[]>> = 
   // Pen variants share one Photoshop-style hold/keyboard flyout. The active
   // variant replaces the representative slot while the remaining variants
   // stay reachable from the flyout and P cycling.
-  pen: ['pen', 'freeform-pen', 'curvature-pen'],
+  pen: ['pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point'],
+  // Path Selection is the representative; Direct Selection is its variant.
+  'path-selection': ['path-select', 'direct-select'],
+  // Photoshop's T family: Horizontal/Vertical Type and the two Type Mask tools.
+  type: ['text', 'vertical-text', 'text-mask', 'vertical-text-mask'],
 };
+
+/**
+ * Lucide icon export used for each palette tool. Every tool has its own
+ * glyph so a flyout never shows several variants with the same picture and
+ * the representative slot changes visibly when a subtool is chosen. Names
+ * must be canonical Lucide exports (not aliases such as `Wand2`, which is the
+ * same drawing as `WandSparkles`).
+ */
+export const TOOL_ICONS = {
+  move: 'MousePointer2',
+  hand: 'Hand',
+  zoom: 'ZoomIn',
+  'rotate-view': 'RotateCw',
+  eyedropper: 'Pipette',
+  'color-sampler': 'Crosshair',
+  ruler: 'Ruler',
+  note: 'StickyNote',
+  'audio-note': 'AudioLines',
+  count: 'Hash',
+  select: 'SquareDashed',
+  'ellipse-select': 'CircleDashed',
+  'row-select': 'Rows3',
+  'column-select': 'Columns3',
+  lasso: 'Lasso',
+  'polygonal-lasso': 'Waypoints',
+  'magnetic-lasso': 'Magnet',
+  'selection-brush': 'Highlighter',
+  'quick-selection': 'WandSparkles',
+  'magic-wand': 'Wand',
+  crop: 'Crop',
+  'perspective-crop': 'Scan',
+  slice: 'Slice',
+  'slice-select': 'SquareMousePointer',
+  frame: 'Frame',
+  clone: 'Stamp',
+  'pattern-stamp': 'Grid3x3',
+  heal: 'Bandage',
+  'spot-heal': 'Target',
+  patch: 'ScissorsLineDashed',
+  'red-eye': 'Eye',
+  smudge: 'FingerprintPattern',
+  blur: 'Droplets',
+  sharpen: 'Triangle',
+  dodge: 'Sun',
+  burn: 'Moon',
+  sponge: 'Contrast',
+  'history-brush': 'RotateCcwClock',
+  'art-history-brush': 'Feather',
+  brush: 'Brush',
+  pencil: 'Pencil',
+  'color-replace': 'Replace',
+  'mixer-brush': 'Blend',
+  gradient: 'Rainbow',
+  fill: 'PaintBucket',
+  eraser: 'Eraser',
+  'background-eraser': 'ImageMinus',
+  'magic-eraser': 'Sparkles',
+  'mask-brush': 'VenetianMask',
+  'mask-eraser': 'BrushCleaning',
+  'adjustment-brush': 'SlidersHorizontal',
+  pen: 'PenTool',
+  'freeform-pen': 'Signature',
+  'curvature-pen': 'Spline',
+  'add-anchor': 'DiamondPlus',
+  'delete-anchor': 'DiamondMinus',
+  'convert-point': 'Diamond',
+  'path-select': 'MousePointer',
+  'direct-select': 'SplinePointer',
+  text: 'Type',
+  'vertical-text': 'ArrowDownAZ',
+  'text-mask': 'TypeOutline',
+  'vertical-text-mask': 'SquareDashedText',
+  rectangle: 'RectangleHorizontal',
+  'rounded-rectangle': 'SquareRoundCorner',
+  ellipse: 'Circle',
+  line: 'Minus',
+  polygon: 'Hexagon',
+  'custom-shape': 'Shapes',
+} as const satisfies Record<PaletteToolId, string>;
+
+export type ToolIconName = (typeof TOOL_ICONS)[PaletteToolId];
+
+/** Tools whose palette icon is shared with another tool (should be empty). */
+export function duplicateToolIcons(
+  icons: Readonly<Record<string, string>> = TOOL_ICONS,
+): string[][] {
+  const byIcon = new Map<string, string[]>();
+  for (const [tool, icon] of Object.entries(icons))
+    byIcon.set(icon, [...(byIcon.get(icon) ?? []), tool]);
+  return [...byIcon.values()].filter((tools) => tools.length > 1);
+}
 
 export function familyForTool(tool: string): string | undefined {
   return Object.entries(TOOL_FAMILIES).find(([, tools]) => tools.includes(tool as PaletteToolId))?.[0];

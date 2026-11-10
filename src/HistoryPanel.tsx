@@ -1,15 +1,25 @@
 import { History as HistoryIcon } from 'lucide-react';
 import type { Frame } from './document.ts';
 import { canRestoreHistory, summarizeHistory } from './historyTimeline.ts';
+import {
+  formatMiB,
+  persistedHistoryNote,
+  type HistoryBudget,
+  type PersistedHistoryWindow,
+} from './historyBudget.ts';
 
 type Props = {
   history: readonly Frame[];
   currentIndex: number;
   restore: (targetIndex: number) => void;
+  /** Range of history states written to the local draft by the last save. */
+  persisted?: PersistedHistoryWindow | null;
+  budget?: Pick<HistoryBudget, 'maxSteps' | 'maxBytes'>;
 };
 
-export default function HistoryPanel({ history, currentIndex, restore }: Props) {
+export default function HistoryPanel({ history, currentIndex, restore, persisted, budget }: Props) {
   const entries = summarizeHistory(history, currentIndex);
+  const memoryOnly = persistedHistoryNote(history.length, persisted);
   return (
     <section className="panel history-panel" aria-label="History">
       <div className="panel-title">
@@ -19,7 +29,13 @@ export default function HistoryPanel({ history, currentIndex, restore }: Props) 
       {entries.length ? (
         <ol className="history-list" aria-label="History states">
           {entries.map((entry) => (
-            <li key={entry.index} className={entry.current ? 'history-entry current' : 'history-entry'}>
+            <li
+              key={entry.index}
+              className={entry.current ? 'history-entry current' : 'history-entry'}
+              data-memory-only={
+                persisted && (entry.index < persisted.start || entry.index > persisted.end) ? 'true' : undefined
+              }
+            >
               <button
                 type="button"
                 aria-current={entry.current ? 'step' : undefined}
@@ -36,7 +52,8 @@ export default function HistoryPanel({ history, currentIndex, restore }: Props) 
       ) : (
         <p className="history-empty">No committed edits yet.</p>
       )}
-      <p className="history-note">Restore is local and undoable. New edits after a restore replace only the abandoned redo branch.</p>
+      <p className="history-note">Restore is local and undoable. New edits after a restore replace only the abandoned redo branch.{budget ? ` Undo and redo keep up to ${budget.maxSteps} states and ${formatMiB(budget.maxBytes)} of image data on this device; the oldest states are released first.` : ''}</p>
+      {memoryOnly && <p className="history-note" aria-label="History persistence">{memoryOnly}</p>}
     </section>
   );
 }

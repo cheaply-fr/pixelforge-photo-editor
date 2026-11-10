@@ -24,26 +24,63 @@ Blur More is a one-click stronger box blur. It doubles the bounded source-pixel 
 Box Blur uses a separable running-sum kernel. Gaussian Blur uses a separable,
 normalized Gaussian kernel with `sigma = max(0.5, radius / 3)`. Both kernels
 weight RGB by neighbouring alpha and renormalize the available samples at
-image edges. They retain every source alpha byte and leave fully transparent
-RGB padding unchanged, which avoids dark halos around cutouts. The renderer
-always copies the source before writing output, is deterministic for a given
-metadata record, and is applied in layer-local coordinates after decoding the
-immutable source asset. Layer transforms and masks therefore remain editable.
+image edges. The renderer always copies the source before writing output, is
+deterministic for a given metadata record, and is applied in layer-local
+coordinates after decoding the immutable source asset. Layer transforms and
+masks therefore remain editable.
 
-Motion Blur samples a symmetric, nearest-neighbour line through each covered
-pixel. Its bounded radius is the same 0–64 source-pixel field and its angle is
+### Alpha spreading (Blur, Blur More, Box, Gaussian, Motion and Lens Blur)
+
+These six blurs blur **alpha as well as colour** (premultiplied), so brush
+strokes on a transparent paint layer soften and widen with the radius. For
+each destination pixel the kernel accumulates `weight = Σ alpha·tap`,
+`colour = Σ rgb·alpha·tap` and the in-image kernel mass `coverage = Σ tap`;
+the blurred alpha is `weight / coverage`, the blurred premultiplied colour is
+`colour / coverage`, and both blend with the source by **Effect amount** in
+premultiplied space (`src/alphaSpread.ts`). Consequences:
+
+- An opaque pixel whose whole kernel is opaque keeps exactly the previous
+  arithmetic and alpha 255, so photos and other opaque layers render
+  byte-for-byte as before. Image edges still renormalize (Box, Gaussian) or
+  repeat the edge pixel (Motion, Lens), so a full-canvas layer gains no
+  transparent fringe.
+- Colours never come from hidden RGB under alpha 0, so cutouts still get no
+  dark halo; a pixel whose output alpha rounds to 0 keeps its source bytes.
+- Earlier builds kept every source alpha byte for these filters, which made
+  them invisible on uniformly coloured strokes over transparency (the
+  reported "Gaussian Blur has no effect on a brush-stroke layer"). Saved
+  documents that already use one of these filters on a layer with
+  transparency now render with the softened alpha; opaque layers are
+  unchanged.
+- Iris, Tilt-Shift, Field, Smart, Surface, Shape, Radial, Spin and Path Blur
+  still preserve source alpha.
+
+The spread reaches at most 64 px (the radius bound; Blur More doubles a
+radius up to the same 64 px cap). Stored-bounds paint layers do not cut it
+off: choosing any filter on a plain paint layer stored at its content (for
+example after Trim Layer to Content, which stays tight) first grows the
+layer to the canvas, and automatic content-bounds storage keeps a 64 px
+transparent margin (`AUTO_TRIM_MARGIN`) around baked results such as
+Rasterize. The only remaining truncation is at a layer's stored edge when
+that edge lies inside the canvas and the layer could not be grown (rotated,
+scaled or cleanup-metadata layers), and the faint last pixels of a 64 px
+tail that touches a stored edge are renormalized like an image edge.
+
+Motion Blur samples a symmetric, nearest-neighbour line through each pixel.
+Its bounded radius is the same 0–64 source-pixel field and its angle is
 an editable -180–180 degree direction. Samples are weighted by alpha, so
-transparent padding cannot darken the result; destination alpha and hidden RGB
-remain unchanged. The directional kernel is local and deterministic, with no
-remote processing or source upload.
+transparent padding cannot darken the result, and alpha spreads along the
+direction (see Alpha spreading above). The directional kernel is local and
+deterministic, with no remote processing or source upload.
 
 Lens Blur integrates a fixed 49-sample circular aperture using a golden-angle
 point set. It is deliberately labeled a local approximation: no depth map,
 occlusion ordering, specular highlight reconstruction or camera simulation is
 inferred. Iris Blur applies the alpha-aware box kernel through a smooth
 elliptical focal mask centred at `centerX`/`centerY`; pixels near the focal
-ellipse stay sharp while the outside ramps toward the requested blur. Both
-effects preserve destination alpha and transparent RGB padding, remain
+ellipse stay sharp while the outside ramps toward the requested blur. Lens
+Blur spreads alpha (see Alpha spreading); Iris Blur preserves destination
+alpha and transparent RGB padding. Both remain
 editable in metadata, and are bounded for tiny images and large radius values.
 
 Smart Blur uses a bounded bilateral kernel (spatial distance multiplied by
@@ -64,6 +101,19 @@ their Manhattan distance from the destination is within the bounded radius,
 with nearer samples weighted more heavily. This gives a stable non-circular
 shape variant while custom user-supplied kernels and the full Photoshop shape
 preset library remain future work.
+
+Implementation note (`src/fastNeighborhoodFilters.ts`): Smart, Surface and
+Shape Blur, Lens, Radial, Spin and Path Blur (plus Smart Sharpen and Reduce
+Noise) use rewritten kernels whose output is pinned to the previous per-pixel
+code by `tests/fast-remaining-filters.test.mjs`. Surface Blur, Reduce Noise,
+Lens Blur, zoom Radial Blur and both Path Blur modes are byte-identical.
+Smart Blur factors its range weight into per-pixel exponentials and Shape Blur
+sums exact integers (each kernel row is a 1-D tent read from double prefix
+sums), so a channel may round one level differently from the old
+floating-point sums. Spin Radial Blur and Spin Blur rotate the centre offset
+with a cosine/sine table, so only a sample that sits on a pixel-rounding tie
+may pick the neighbouring source pixel. Tiled and full-frame renders remain
+identical.
 
 Radial Blur is the spin variant: seventeen samples follow each covered
 pixel's polar ring around the editable **Blur center X/Y**. The centre uses

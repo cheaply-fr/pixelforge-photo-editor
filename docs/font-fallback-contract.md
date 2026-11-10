@@ -20,3 +20,14 @@ cover normalization, shorthand construction, positive/negative checks and
 browser-check failures. The desktop/mobile browser test forces an unavailable
 font surface, verifies the dialog and inspector disclosure, and confirms the
 editable family survives reload without an upload.
+
+## Font library update
+
+The self-hosted font library ([`font-library-contract.md`](./font-library-contract.md))
+extends this contract: Manage Missing Fonts now lists the system families plus
+every family used by the document. Library families report "Library font ·
+loaded" or "loads on demand" (or "Fallback active" when the face failed to
+load); families neither built in nor in the library are kept in the document
+and reported as "Missing · fallback active", with a one-time editor notice.
+The fallback warning in the Text tool also covers a library font that could not
+load.

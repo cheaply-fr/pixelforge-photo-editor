@@ -3,7 +3,7 @@
 The left palette keeps every implemented tool reachable in a compact two-column
 layout, expanding to three columns on wide editor viewports. Tools are grouped
 under Navigate, Measure, Marquee, Lasso, Selection, Crop & Slice, Retouch,
-Paint & Fill, and Draw & Type headings. Category grids use the same two/three
+Paint & Fill, Mask Refinement, and Draw & Type headings. Category grids use the same two/three
 column geometry as the palette. One-slot categories occupy one global track,
 two-slot categories occupy two tracks, and larger categories span the row; this
 packs sparse categories together without placeholder cells or large blank
@@ -25,7 +25,16 @@ flyout owns focus on open: Home/End move to the first/last item, Up/Down rove
 between items, and Escape or an outside pointer dismisses it and returns focus
 to its trigger. Flyout items are ordinary menu buttons, retain the existing
 tool IDs and shortcuts, display the same Lucide icon vocabulary as the toolbar,
-and can be activated by touch, mouse or keyboard.
+and can be activated by touch, mouse or keyboard. The item of the active
+variant carries `aria-current="true"` (and `data-checked="true"`), so its
+checked state is not conveyed by colour alone.
+
+Tool names are consistent between the rail, flyouts, status bar and tool
+presets: the marquee family is Rectangular Marquee, Elliptical Marquee,
+Single Row Marquee and Single Column Marquee, and the shape family's first
+tool is Rectangle. The Lasso flyout item reads Freeform Lasso. Status messages
+name the tool that made a selection (a freeform Lasso reports "Lasso selection
+created", not "Polygonal").
 
 Repeated Photoshop keys continue to cycle the existing keyboard families:
 `M` marquee, `L` lasso, `W` selection, `C` crop, `G` fill, `B` paint, `U`
@@ -37,12 +46,36 @@ three implemented selection tools, while `L` retains the legacy lasso family.
 The Pen, Freeform Pen and Curvature Pen variants likewise occupy one `P`
 family slot with a visible arrow and icon-bearing flyout; the active variant
 replaces that representative slot and the remembered choice survives reload.
+The Pen flyout also lists Add Anchor Point, Delete Anchor Point and Convert
+Point (no shortcut badge; `P` does not cycle them), and Path Selection and
+Direct Selection share one `A` family slot with Path Selection as its
+representative (see `docs/path-edit-tools-contract.md`).
 Measurement tools remain independent slots so Eyedropper, Color Sampler, Ruler,
 Note and Count are visible without being incorrectly collapsed into one family.
 
-Coverage lives in `src/toolPalette.ts`, `tests/tool-palette.test.mjs`, and the
+Every palette tool has its own icon, defined once in `TOOL_ICONS`
+(`src/toolPalette.ts`) and rendered through `src/toolIcons.ts`. No two tools
+may share an icon name or an identical drawing, so variants in a flyout are
+told apart visually and the representative slot's icon changes when a subtool
+is chosen. Icon names must be canonical Lucide exports; aliases such as
+`Wand2`, `Fingerprint` or `History` are rejected because they duplicate
+another export's drawing under a different name.
+
+Coverage lives in `src/toolPalette.ts`, `tests/tool-palette.test.mjs`,
+`tests/tool-icons.test.mjs`, and the
 desktop/mobile `tests/browser/toolbar-layout.spec.ts` acceptance tests. The
 tests assert category completeness, family cycling, explicit menu names,
 single-popup anchoring, viewport bounds, short activation, press-and-hold and
 touch selection, roving menu focus, Escape/outside dismissal, and preservation
 of two/three-column touch targets.
+
+## Contextual properties sidebar
+
+Selecting a tool (click, flyout, shortcut or menu) changes the properties
+sidebar to that tool's options only; other tools' settings are not rendered.
+The tool → sections table lives in `src/sidebarPanels.ts` (`TOOL_SIDEBAR`,
+exhaustive over `Tool`), so a new toolbar tool must register its sidebar
+sections, and optionally a default panel, to typecheck. Toolbar families,
+icons, flyouts and their keyboard behaviour are unchanged. See
+[`contextual-sidebar-contract.md`](contextual-sidebar-contract.md).
+

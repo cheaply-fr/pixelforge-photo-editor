@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
 test('Convert to Shape vectorizes editable text, persists contours and undo restores text on desktop/mobile', async ({ page }) => {
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await page.getByTestId('editor-canvas').click({ position: { x: 140, y: 120 } });
   await page.getByLabel('Edit layer text', { exact: true }).fill('Shape');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');

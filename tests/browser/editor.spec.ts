@@ -1,6 +1,7 @@
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
+import { openPanel } from './sidebar-panels';
 
 const additiveModifier: 'Meta' | 'Control' =
   process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -353,7 +354,7 @@ test('imports a local image and exposes text controls', async ({ page }) => {
   });
   await expect(page.getByLabel('Document name')).toHaveValue('sample');
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
-  await selectTool(page, 'Text');
+  await selectTool(page, 'Horizontal Type');
   await expect(page.getByLabel('Text content')).toBeVisible();
 });
 
@@ -521,6 +522,7 @@ test('signed-in users save, revisit and continue cloud projects without automati
     page.getByRole('status', { name: 'Draft save status' }),
   ).toHaveText('Saved on this device');
   expect(saves).toBe(0);
+  await openPanel(page, 'My projects');
   await page.getByRole('button', { name: 'Save to my projects' }).click();
   await expect(
     page.getByText('Cloud copy saved.', { exact: false }),
@@ -529,6 +531,7 @@ test('signed-in users save, revisit and continue cloud projects without automati
   await expect(
     page.getByRole('status', { name: 'Draft save status' }),
   ).toHaveText('Saved on this device');
+  await openPanel(page, 'My projects');
   await page.getByRole('link', { name: 'View my projects' }).click();
   await expect(
     page.getByRole('heading', { name: 'My projects' }),
@@ -705,6 +708,7 @@ test('flipping transparent artwork does not leave duplicate opaque pixels', asyn
     buffer: Buffer.from(fixture, 'base64'),
   });
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
+  await openPanel(page, 'Transform');
   await page
     .getByRole('button', { name: 'Flip horizontal', exact: true })
     .click();
@@ -807,34 +811,39 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   await page.keyboard.press('b');
   await expect(active('Color Replace')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('u');
-  await expect(active('Shape')).toHaveAttribute('aria-pressed', 'true');
+  await expect(active('Rectangle')).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('u');
+  await expect(active('Rounded Rectangle')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('u');
   await expect(active('Ellipse')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('m');
-  await expect(active('Select')).toHaveAttribute('aria-pressed', 'true');
+  await expect(active('Rectangular Marquee')).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('m');
-  await expect(active('Elliptical marquee')).toHaveAttribute(
+  await expect(active('Elliptical Marquee')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
   await page.keyboard.press('m');
-  await expect(active('Single Row marquee')).toHaveAttribute(
+  await expect(active('Single Row Marquee')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
   await page.keyboard.press('m');
-  await expect(active('Single Column marquee')).toHaveAttribute(
+  await expect(active('Single Column Marquee')).toHaveAttribute(
     'aria-pressed',
     'true',
   );
   const zoom = page.getByLabel('Zoom', { exact: true });
-  await expect(zoom).toHaveValue('72');
+  const fitted = await zoom.inputValue();
+  const fittedLabel = await page.getByTestId('zoom-level').textContent();
   await page.keyboard.press('+');
-  await expect(zoom).toHaveValue('82');
+  await expect(zoom).toHaveValue(String(Number(fitted) + 1));
   await page.keyboard.press('1');
-  await expect(zoom).toHaveValue('100');
+  await expect(page.getByTestId('zoom-level')).toHaveText('100%');
+  await expect(zoom).toHaveAttribute('aria-valuetext', '100%');
   await page.keyboard.press('0');
-  await expect(zoom).toHaveValue('72');
+  await expect(zoom).toHaveValue(fitted);
+  await expect(page.getByTestId('zoom-level')).toHaveText(fittedLabel!);
 
   const setColorInput = async (label: string, value: string) =>
     page.getByLabel(label).evaluate((input, next) => {
@@ -860,6 +869,7 @@ test('Photoshop-style tool, color and selection shortcuts are implemented', asyn
   await expect(page.getByLabel('Drawing color')).toHaveValue('#000000');
   await expect(page.getByLabel('Background color')).toHaveValue('#ffffff');
 
+  await selectTool(page, 'Select');
   await expect(
     page.getByRole('button', { name: 'Clear selection', exact: true }),
   ).toBeDisabled();
@@ -995,6 +1005,8 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const sample = () =>
     canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1025,6 +1037,7 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
     levelsGamma: 1,
   });
 
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Levels black point', { exact: true }).fill('128');
   await expect.poll(sample).toEqual([0, 0, 0, 255]);
   let adjusted = await project();
@@ -1054,6 +1067,7 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Adjust selected layer');
   await expect(page.getByLabel('Levels white point', { exact: true })).toHaveValue('200');
   await expect(page.getByLabel('Levels gamma', { exact: true })).toHaveValue('2');
   await expect.poll(() => sample().then((pixel) => pixel[0])).toBeGreaterThanOrEqual(203);
@@ -1084,6 +1098,8 @@ test('Edit Fill is undoable and menu selection commands persist', async ({
   const canvas = page.getByTestId('editor-canvas');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await expect
     .poll(() =>
       canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1142,6 +1158,10 @@ test('Edit Clear, Shift-F5 fill and Merge Visible preserve pixels and hidden lay
     )
     .toEqual([255, 255, 255, 255]);
   await page.keyboard.press('Shift+F5');
+  // Shift+F5 opens the Fill dialog with the Fill button focused: Enter applies
+  // the default foreground fill.
+  await expect(page.getByRole('dialog', { name: 'Fill' })).toBeVisible();
+  await page.keyboard.press('Enter');
   await expect
     .poll(() =>
       canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1605,7 +1625,7 @@ test('Photoshop-style document shortcuts drive existing actions and ignore text 
     page.getByRole('button', { name: /Collapse group Group 1/ }),
   ).toBeVisible();
   await page.keyboard.press('Control+j');
-  await expect(page.getByText('Layers 2 / 32', { exact: true })).toBeVisible();
+  await expect(page.getByText('Layers 2 / 512', { exact: true })).toBeVisible();
   await page.keyboard.press('Control+Shift+g');
   await expect(
     page.getByRole('button', { name: /Collapse group Group 1/ }),
@@ -1698,6 +1718,12 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   await expect(
     editMenu.getByRole('menuitem', { name: /^Copy Layer/ }),
   ).toBeFocused();
+  // Paste Image from Clipboard reads the OS clipboard, so it stays enabled
+  // without an internal layer clip.
+  await page.keyboard.press('ArrowDown');
+  await expect(
+    editMenu.getByRole('menuitem', { name: 'Paste Image from Clipboard', exact: true }),
+  ).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(
     editMenu.getByRole('menuitem', { name: /^Copy Merged/ }),
@@ -1735,6 +1761,7 @@ test('batch history export packages flattened snapshots with a privacy manifest'
   await batch.click();
   await expect(page.getByRole('heading', { name: 'Batch export history', exact: true })).toBeVisible();
   await page.getByLabel('Batch export format', { exact: true }).selectOption('webp');
+  await page.getByLabel('Batch export color profile', { exact: true }).selectOption('display-p3');
   await page.getByLabel('Batch export quality', { exact: true }).fill('80');
   await page.getByRole('button', { name: 'Build batch ZIP', exact: true }).click();
   await expect(page.getByRole('status', { name: 'Batch export progress', exact: true })).toContainText('2 snapshots');
@@ -1767,6 +1794,8 @@ test('batch history export packages flattened snapshots with a privacy manifest'
     application: string;
     snapshotCount: number;
     format: string;
+    colorProfile: string;
+    documentMetadata: { title: string; description: string; author: string };
     metadata: string;
     entries: Array<{ historyIndex: number; bytes: number; width: number; height: number; file: string }>;
   };
@@ -1774,7 +1803,9 @@ test('batch history export packages flattened snapshots with a privacy manifest'
     application: 'pixelforge-photo-editor',
     snapshotCount: 2,
     format: 'webp',
-    metadata: 'rendered pixels only; source EXIF, GPS and color profiles omitted',
+    colorProfile: 'display-p3',
+    documentMetadata: { title: '', description: '', author: '' },
+    metadata: 'rendered pixels only; source EXIF and GPS omitted; target color profile recorded',
   });
   expect(manifest.entries.map((entry) => entry.historyIndex)).toEqual([0, 1]);
   expect(manifest.entries.every((entry) => entry.bytes > 0)).toBe(true);
@@ -1888,6 +1919,8 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
   await setColorInput('#707070');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const sample = () =>
     canvas.evaluate((item: HTMLCanvasElement) =>
@@ -1895,6 +1928,7 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
     );
   await expect.poll(sample).toEqual([112, 112, 112, 255]);
   const source = await sample();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Midtones cyan/red', { exact: true }).fill('80');
   await expect.poll(sample).not.toEqual(source);
   const adjusted = await sample();
@@ -1914,6 +1948,7 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
   expect(project.history[project.index].layers.at(-1)!.adjustments.colorBalance.midtonesCyanRed).toBe(80);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Adjust selected layer');
   await expect(page.getByLabel('Midtones cyan/red', { exact: true })).toHaveValue('80');
   await expect.poll(sample).toEqual(adjusted);
 });
@@ -1932,12 +1967,15 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
   });
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
+  await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
   const sample = () =>
     canvas.evaluate((item: HTMLCanvasElement) =>
       Array.from(item.getContext('2d')!.getImageData(600, 400, 1, 1).data),
     );
   const before = await sample();
+  await openPanel(page, 'Adjust selected layer');
   await page.getByLabel('Noise amount', { exact: true }).fill('35');
   await page.getByLabel('Noise seed', { exact: true }).fill('42');
   await page.getByLabel('Monochromatic noise', { exact: true }).check();
@@ -1968,6 +2006,7 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
   });
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('add-noise');
   await expect(page.getByLabel('Effect amount', { exact: true })).toHaveValue('35');
   await expect(page.getByLabel('Add Noise monochromatic', { exact: true })).toBeChecked();

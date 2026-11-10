@@ -1,55 +1,84 @@
 'use client';
 
+import { toolAfterTypeCommit } from '../src/typeCommitTool';
+import { textSectionToReveal } from '../src/textSectionReveal';
 import {
+  ArrowDown,
+  ArrowUp,
   Brush,
+  Eye,
+  EyeOff,
+  Trash2,
   Bookmark,
   Crop,
   Download,
-  Droplets,
-  Eraser,
   FileImage,
-  Copy,
-  Columns3,
-  Palette,
   FlipHorizontal2,
   FlipVertical2,
   ImagePlus,
-  Hand,
-  Hash,
-  Hexagon,
-  Grid3x3,
-  Minus,
-  Pipette,
-  PaintBucket,
-  Pencil,
-  MousePointer2,
   Redo2,
-  Rows3,
   RotateCcw,
   RotateCw,
-  Ruler,
-  Eye,
   Save,
-  Shapes,
+  SlidersHorizontal,
   Sparkles,
-  StickyNote,
-  Sun,
-  Moon,
   Type,
   Undo2,
   Upload,
   WandSparkles,
-  Wand2,
   ZoomIn,
   ZoomOut,
+  Blend,
+  Cloud as CloudIcon,
+  History as HistoryIcon,
+  Image as ImageIcon,
+  Info,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { SidebarSection } from '../src/SidebarSection';
+import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
+import type { TriggerOrigin, TriggerSource } from '../src/sidebarAutoScroll';
+import type { RevealAlign } from '../src/sidebarScrollMath';
+import {
+  COLLAPSED_SECTIONS_STORAGE_KEY,
+  LAYER_SELECTION_SECTION,
+  LAYER_STYLE_IDS,
+  QUICK_FILTER_SECTION,
+  QUICK_MASK_SECTION,
+  parseCollapsedSections,
+  sectionForCommand,
+  sectionForFilter,
+  sectionForStyle,
+  sectionForTool,
+  serializeCollapsedSections,
+  type SidebarCommandId,
+  type SidebarSectionId,
+} from '../src/sidebarSections';
+import {
+  OPEN_PANELS_STORAGE_KEY,
+  SIDEBAR_PANELS,
+  SIDEBAR_PANEL_IDS,
+  openPanelForTool,
+  panelForSection,
+  parseOpenPanels,
+  serializeOpenPanels,
+  togglePanel,
+  toolAreaSectionsFor,
+
+  withOpenPanel,
+  type OpenPanels,
+  type SidebarPanelId,
+} from '../src/sidebarPanels';
 
 import {
   LOCAL_CONFLICT,
+  LOCAL_STORAGE_FULL,
   createDraftId,
   discardDraft,
-  initialDraftId,
+  draftOpenElsewhere,
+  holdDraftOpen,
+  resolveInitialDraft,
   isNewerDraftRevision,
   readDraft,
   saveDraft,
@@ -60,7 +89,7 @@ import {
   type Draft,
   type Settings,
 } from '../src/drafts';
-import { readPortableBundle, writePortableBundle } from '../src/portableBundle';
+import { PORTABLE_MAX_BYTES, readPortableBundle, writePortableBundle } from '../src/portableBundle';
 import { DEFAULT_DEINTERLACE_SETTINGS } from '../src/deinterlace';
 import {
   useMember,
@@ -70,11 +99,19 @@ import {
   CloudConflictError,
   type CloudLink,
 } from '../src/cloud';
+import { prewarmFilterWorkers, primeWorkerDecodedAsset } from '../src/workerRender';
+import { PREWARM_FILTER_TYPES } from '../src/filterWorkerPool';
 import {
-  addAsset,
+  addAsset as addDocumentAsset,
+  flattenTiledAssets,
+  primeDecodedAsset,
+  formatMegapixels,
+  layerPixelUsage,
   identity,
   colorSelectMask,
   commonLayer,
+  isBackgroundLayer,
+  layerFromBackground,
   isRasterContentLayer,
   isMaskableLayer,
   isVectorMaskableLayer,
@@ -93,8 +130,8 @@ import {
   transformSelection as transformSelectionModel,
   surface,
   transformFrameWithMasks,
-  floodFill,
   drawTextLayer,
+  loadTextLayerFonts,
   effectiveTextLayer,
   type Adjustments,
   type Group,
@@ -109,6 +146,7 @@ import {
   type Assets,
   FONTS,
 } from '../src/document';
+import { isPngAsset, type PngAsset } from '../src/tiledAssets';
 import {
   applyImagePixels,
   CALCULATION_MODES,
@@ -121,14 +159,72 @@ import { normalizeTextLanguage, type TextLanguageSettings } from '../src/textLan
 import { normalizeTextPathBinding } from '../src/textOnPath';
 import {
   createCustomBrushPreset,
-  normalizeCustomBrushPresets,
   type CustomBrushPreset,
 } from '../src/customBrushPresets';
+import {
+  BUILT_IN_BRUSH_PRESETS,
+  browserPresetStorage,
+  builtInBrushPresetById,
+  deleteCustomBrushPreset,
+  mergeBrushPresetLibraries,
+  readStoredBrushPresets,
+  renameCustomBrushPreset,
+  writeStoredBrushPresets,
+} from '../src/brushPresetLibrary';
+import { BrushPresetLibraryControls } from '../src/BrushPresetLibraryControls';
+import { ToolPresetsControl } from '../src/ToolPresetsControl';
+import {
+  addToolPreset,
+  allToolDefaultSettings,
+  createToolPreset,
+  deleteToolPreset,
+  duplicateToolPreset,
+  exportToolPresets,
+  isPresetTool,
+  mergeImportedToolPresets,
+  moveToolPreset,
+  moveToolPresetTo,
+  parseToolPresetImport,
+  PRESET_TOOL_LABELS,
+  readStoredToolPresets,
+  renameToolPreset,
+  resolveToolPresetSettings,
+  toolDefaultSettings,
+  toolPresetMatches,
+  TOOL_PRESET_IMPORT_MAX_BYTES,
+  updateToolPreset,
+  writeStoredToolPresets,
+  type PresetTool,
+  type ToolPreset,
+  type ToolPresetInclude,
+  type ToolSettingKey,
+  type ToolSettingValues,
+} from '../src/toolPresets';
 import {
   createCustomPatternPreset,
   normalizeCustomPatternPresets,
   type CustomPatternPreset,
 } from '../src/customPatternPresets';
+import {
+  addImagePattern,
+  capturePatternTile,
+  normalizeImagePatterns,
+  type ImagePattern,
+  type PatternTile,
+} from '../src/imagePatterns';
+import {
+  DEFAULT_RETOUCH_OPTIONS,
+  normalizeRetouchOptions,
+  type CloneSample,
+  type ColorReplaceLimits,
+  type ColorReplaceMode,
+  type ColorReplaceSampling,
+  type PatchMode,
+  type RetouchOptions,
+  type SpotHealingType,
+} from '../src/retouchOptions';
+import { GRADIENT_LOOKUP_SIZE, renderGradientShape } from '../src/gradientShapes';
+import { historySourceLabels } from '../src/historyTimeline';
 import { createCustomShapePreset, normalizeCustomShapePresets, type CustomShapeKind, type CustomShapePreset } from '../src/customShapePresets';
 import { createCustomPathPreset, normalizeCustomPathPresets, type CustomPathPreset } from '../src/customPathPresets';
 import { defaultVectorMaskPath } from '../src/vectorMask';
@@ -141,6 +237,8 @@ import {
   type TextMaskOrientation,
 } from '../src/textMask';
 import { useDocument } from '../src/useDocument';
+import { useDelayedFlag } from '../src/useDelayedFlag';
+import { RENDER_STATUS_HIDE_DELAY_MS, RENDER_STATUS_SHOW_DELAY_MS } from '../src/canvasPresentation';
 import {
   applySelectLinkedLayers,
   planSelectLinkedLayers,
@@ -163,7 +261,7 @@ import {
   beginPerformanceSpan,
   type PerformanceSpan,
 } from '../src/performanceMarks';
-import LayersPanel from '../src/LayersPanel';
+import LayersPanel, { type LayersPanelPart } from '../src/LayersPanel';
 import ResizeDialog from '../src/ResizeDialog';
 import GenerativeUpscaleDialog from '../src/GenerativeUpscaleDialog';
 import {
@@ -183,6 +281,32 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import {
+  formatSelectionFeather,
+  normalizeSelectionFeather,
+} from '../src/selectionFeather';
+import { selectionOutline, type SelectionOutline } from '../src/selectionOutline';
+import {
+  DEFAULT_COLOR_REGION_SETTINGS,
+  clearSelectedPixels,
+  colorRegionMask,
+  fillMaskedPixels,
+  frameMaskToLayer,
+  normalizeColorRegionSettings,
+  type ColorRegionSettings,
+} from '../src/colorRegion';
+import {
+  DEFAULT_MARQUEE_OPTIONS,
+  MARQUEE_FEATHER_MAX,
+  marqueeRect,
+  normalizeMarqueeOptions,
+  type MarqueeOptions,
+  type MarqueeStyle,
+} from '../src/marqueeOptions';
+import SaveSelectionDialog from '../src/SaveSelectionDialog';
+import EditFillDialog from '../src/EditFillDialog';
+import { editFillColor, type EditFillOptions } from '../src/editFill';
+import StrokePathDialog, { type StrokePathRequest } from '../src/StrokePathDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
 import FillLayerDialog from '../src/FillLayerDialog';
@@ -201,6 +325,8 @@ import {
 import CameraRawDialog from '../src/CameraRawDialog';
 import FocusAreaDialog from '../src/FocusAreaDialog';
 import CanvasSizeDialog from '../src/CanvasSizeDialog';
+import NewDocumentDialog from '../src/NewDocumentDialog';
+import { backgroundFill, type NewDocumentRequest } from '../src/newDocument';
 import TrimDialog from '../src/TrimDialog';
 import {
   DEFAULT_DOCUMENT_METADATA,
@@ -218,6 +344,22 @@ import {
   type TrimMode,
   type TrimSides,
 } from '../src/canvasSize';
+import {
+  AUTO_TRIM_MARGIN,
+  autoTrimCandidates,
+  canExpandRasterLayer,
+  canTrimRasterLayer,
+  EXPANDING_PAINT_TOOLS,
+  historySourceOffset,
+  planLayerExpansion,
+  planLayerTrim,
+} from '../src/layerTrim';
+import {
+  MAX_DOCUMENT_GROUPS,
+  MAX_DOCUMENT_LAYERS,
+  detectProjectLimits,
+  formatMebibytes,
+} from '../src/projectLimits';
 import {
   alignmentDelta,
   distributionDeltas,
@@ -239,19 +381,44 @@ import {
 } from '../src/layerMergeVisible';
 import {
   applyLayerArrange,
+  clippingGroupKeys,
+  expandClippingGroupSelection,
   layerArrangeReason,
   planLayerArrange,
+  stepLayerRuns,
   type LayerArrangeMode,
 } from '../src/layerArrange';
 import { combineSelectionBounds } from '../src/layerSelection';
+import { rasterizedLayer, rasterizeRenderSource } from '../src/layerRasterize';
 import { applyLayerLock, layerLockReason, planLayerLock } from '../src/layerLock';
 import {
   clippingCandidateBase,
+  clippingGroupBase,
   isClippingSourceLayer,
+  preserveClippingAfterReorder,
+  preserveClippingAfterReplace,
+  sanitizeClippingRelations,
   validClippingRelationship,
 } from '../src/layerClipping';
-import CurveEditor from '../src/CurveEditor';
-import { type CurveChannel, type CurvePoints } from '../src/curves';
+import { insertCopiesAboveSources, insertLayerAboveActive } from '../src/layerInsertion';
+import {
+  classifyDroppedFile,
+  layerDeleteNotice,
+  layerDeleteReason,
+  layerDropNotice,
+  placementMatrixAt,
+  planLayerDelete,
+  planLayerDrop,
+  type LayerDragSource,
+  type LayerDropTarget,
+} from '../src/layerDragReorder';
+import CurveEditor, { type CurveChangeOptions } from '../src/CurveEditor';
+import {
+  curveInterpolation,
+  type CurveChannel,
+  type CurveInterpolation,
+  type CurvePoints,
+} from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
 import { applyFadePixels } from '../src/fade';
 import { createBackgroundMask } from '../src/backgroundRemoval';
@@ -262,7 +429,28 @@ import {
   type MaskRefinementStroke,
 } from '../src/maskRefinement';
 import { type ExportFormat } from '../src/export';
+import { downloadBlob, pickSaveFile, writeToFileHandle } from '../src/download';
+import {
+  clipboardImageFile,
+  imageFileFromClipboardItems,
+  isTextEditingTarget,
+  readClipboardImage,
+} from '../src/clipboardImage';
+import ReferencePanel from '../src/ReferencePanel';
+import {
+  createReferenceImage,
+  referenceObjectFit,
+  referenceSourcePixel,
+  referenceStoredSize,
+  type ReferenceImage,
+} from '../src/referenceImage';
 import ActionsPanel from '../src/ActionsPanel';
+import { TypeEditorOverlay, type TypePointerHandlers } from '../src/TypeEditorOverlay';
+import { TypeOptionsBar, TypePanels, type TypeActions, type TypeView } from '../src/TypePanels';
+import { isTypeTool, layoutTextLayer, useTypeTool } from '../src/useTypeTool';
+import { convertToParagraphText, convertToPointText, sessionCharacterState, withTextRemapped } from '../src/textSession';
+import { baseCharacterStyle, commonStyle, normalizeParagraph, type TextAntiAlias } from '../src/richText';
+import { TYPE_PRESETS_STORAGE_KEY, parseTypePresets, presetFromState, serializeTypePresets, upsertTypePreset, type TypePreset } from '../src/typePresets';
 import TextReplaceDialog from '../src/TextReplaceDialog';
 import { replaceTextLayers } from '../src/textReplace';
 import CommandSearchDialog, { type CommandSearchItem } from '../src/CommandSearchDialog';
@@ -300,6 +488,16 @@ import { decodeTiffComposite } from '../src/tiff';
 import { prepareSvgBytes } from '../src/svg';
 import { renderSelection } from '../src/selections';
 import {
+  brushSegmentRect,
+  brushStampReach,
+  maskCoverageAt,
+  mixByMask,
+  mixRectByMask,
+  type PixelRect,
+} from '../src/selectionClip';
+import { canvasDirtyBox, noteCanvasWrite, trackCanvasWrites, untrackCanvasWrites } from '../src/canvasDirty';
+import { emptyTiledAsset, isTiledAsset, tiledContentRegion } from '../src/tiledAssets';
+import {
   refineSelectionAlpha,
   type SelectionRefineMode,
 } from '../src/selectionRefine';
@@ -308,8 +506,11 @@ import {
   paintSelectionBrushSegment,
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
+import { boundSelectionPolygon, ellipsePolygon } from '../src/selectionPolygon';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
+import { DEFAULT_PEN_OPTIONS, PATH_TOOL_HINTS, normalizePenOptions, pathToolOptions, penAutoEditMode, penLayerName, penLayerNotice, penPathStyle, rubberBandNodes, type PathOptionTool, type PenOptions } from '../src/penOptions';
+import { DEFAULT_SHAPE_APPEARANCE, SHAPE_CREATE_MAX, SHAPE_STROKE_WIDTH_MAX, centeredShapeBox, isShapeToolId, lineShapeAppearance, normalizeShapeAppearance, parametricShapeAppearance, parametricShapePathStyle, pathShapeAppearance, shapeLayerName, type ShapeAppearanceSettings, type ShapePaintSource, type ShapeToolId } from '../src/shapeAppearance';
 import { colorRangeMask } from '../src/colorRange';
 import { focusAreaMask } from '../src/focusArea';
 import { skySelectionMask, subjectSelectionMask } from '../src/assistedSelection';
@@ -332,7 +533,8 @@ import { pathContours, transformPath } from '../src/paths';
 import { pathToSvg } from '../src/svgExport';
 import { cloneLayerCss } from '../src/cssExport';
 import { traceAlphaContours } from '../src/alphaContours';
-import { shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
+import { CORNER_RADIUS_MAX, clampCornerRadius, roundedRectNodes, roundedRectPoints, shapeDragBox, shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
+import { CUSTOM_SHAPE_LIBRARY, DEFAULT_CUSTOM_SHAPE_ID, PATH_PRESET_SHAPE_PREFIX, validCustomShapeChoice, customShapeAspect, customShapeEntry, customShapePath, customShapeThumbnailPath, fitPathToBox } from '../src/customShapeLibrary';
 import { quickSelectionMask } from '../src/quickSelection';
 import { composeSelectionAlpha } from '../src/selectionComposition';
 import {
@@ -358,18 +560,90 @@ import {
 } from '../src/imageSize';
 import {
   applyRadialStamp,
+  BrushStrokeBuffer,
   BRUSH_DEFAULT_ANGLE,
   BRUSH_DEFAULT_ROUNDNESS,
   BRUSH_DEFAULT_SPACING,
+  BRUSH_SPACING_MAX,
+  BRUSH_SPACING_MIN,
+  normalizeBrushPressure,
   resolveBrushStamp,
   type BrushColor,
   type BrushMode,
 } from '../src/brush';
 import {
+  BRUSH_BLEND_DEFAULT,
+  BRUSH_BLEND_MODE_GROUPS,
+  compositeBrushBlendLayer,
+  compositeBrushBlendRect,
+  normalizeBrushBlendMode,
+  usesBrushBlendStroke,
+  type BrushBlendMode,
+} from '../src/brushBlend';
+import {
+  GRADIENT_BLEND_DEFAULT,
+  GRADIENT_BLEND_LABELS,
+  GRADIENT_BLEND_MODES,
+  GRADIENT_OPACITY_DEFAULT,
+  compositeGradientPixels,
+  normalizeGradientBlendMode,
+  normalizeGradientOpacity,
+  type GradientBlendMode,
+} from '../src/gradientBlend';
+import {
+  SelectionSnapshotCache,
+  maskDigest,
+  selectionSnapshotKey,
+} from '../src/selectionSnapshotCache';
+import {
+  downscaleMask,
+  maskBounds,
+  planGradientPreview,
+  toPreviewPoint,
+  type GradientPreviewPlan,
+} from '../src/gradientPreview';
+import {
+  BRUSH_SIZE_MAX,
+  BRUSH_SIZE_MIN,
+  BRUSH_SIZE_SLIDER_STEPS,
+  brushSizeToSliderPosition,
+  brushSizeValueText,
+  clampBrushSize,
+  sliderPositionToBrushSize,
+  brushSegmentDue,
+  spacedDabPositions,
+  stepBrushSize,
+  type BrushSpacingState,
+} from '../src/brushSize';
+import { precedingCoalescedSamples } from '../src/pointerSamples';
+import {
   BRUSH_PRESSURE_CURVES,
+  mapBrushPressure,
   normalizeBrushPressureCurve,
   type BrushPressureCurve,
 } from '../src/brushPressure';
+import {
+  BRUSH_STRANDS_COUNT_MAX,
+  BRUSH_STRANDS_COUNT_MIN,
+  BRUSH_STRANDS_MAX_INPUT_POINTS,
+  BRUSH_STRANDS_SEED_MAX,
+  BRUSH_STRANDS_TWISTS_MAX,
+  BRUSH_STRANDS_THICKNESS_MAX,
+  BRUSH_STRANDS_THICKNESS_MIN,
+  BRUSH_STRANDS_WIDTH_MAX,
+  BRUSH_STRANDS_WIDTH_MIN,
+  DEFAULT_BRUSH_STRANDS,
+  buildStrands,
+  drawStrands,
+  normalizeBrushStrands,
+  smoothStrandPath,
+  strandBounds,
+  strandPathOptions,
+  thinStrandInput,
+  type BrushStrandSettings,
+  type Strand,
+  type StrandInputPoint,
+} from '../src/brushStrands';
 import {
   BRUSH_PRESETS,
   brushPresetById,
@@ -387,6 +661,20 @@ import {
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
+import { toolIcon } from '../src/toolIcons';
+import {
+  LEGACY_STAGE_ZOOM,
+  ZOOM_STEPS,
+  anchorScrollDelta,
+  clampViewZoom,
+  fillViewZoom,
+  fitViewZoom,
+  formatViewZoom,
+  scrubbyViewZoom,
+  nearestZoomStepIndex,
+  stepViewZoom,
+  validViewZoom,
+} from '../src/viewZoom';
 import {
   pastePlacementMatrix,
   type PasteSpecialMode,
@@ -413,9 +701,34 @@ import {
   stabilizeBrushPoint,
 } from '../src/brushSmoothing';
 import {
+  BRUSH_COUNT_MAX,
+  BRUSH_COUNT_MIN,
   BRUSH_SCATTER_DEFAULT,
-  scatterBrushPoint,
+  BRUSH_SCATTER_MAX,
+  DEFAULT_BRUSH_DYNAMICS,
+  brushDabColor,
+  brushDabsAt,
+  deferFirstBrushDab,
+  normalizeBrushDynamics,
+  wrapBrushAngle,
+  type BrushDynamics,
 } from '../src/brushDynamics';
+import {
+  DEFAULT_PAINT_SYMMETRY,
+  IDENTITY_AFFINE,
+  affineMaxScale,
+  applyAffine,
+  invertAffine,
+  normalizePaintSymmetry,
+  paintSymmetryForLayer,
+  paintSymmetryAppliesToTool,
+  symmetryCloneCopies,
+  symmetryDabCopies,
+  type PaintSymmetrySettings,
+  type SymmetryAffine,
+  type SymmetryDab,
+} from '../src/paintSymmetry';
+import { PaintSymmetryControls, PaintSymmetryOverlay } from '../src/PaintSymmetryControls';
 import {
   BRUSH_TEXTURE_DEFAULT,
   brushTextureOpacity,
@@ -449,11 +762,16 @@ import {
 } from '../src/gradientNoise';
 import {
   MAX_GRADIENT_STOPS,
+  buildGradientColorStops,
   normalizeGradientStops,
   type GradientStop,
 } from '../src/gradientStops';
 import { ToolFlyout } from '../src/ToolFlyout';
 import HistoryPanel from '../src/HistoryPanel';
+import {
+  persistableHistoryDraft,
+  type PersistedHistoryWindow,
+} from '../src/historyBudget';
 import { eraseBackgroundStroke, eraseMagicRegion } from '../src/erasers';
 import {
   applyDodgeBurnStroke,
@@ -464,27 +782,60 @@ import {
 import {
   hitTestPathHandle,
   hitTestPathNode,
+  pathBounds,
   movePathHandle,
   movePathNode,
-  insertPathNode,
-  nearestPathSegment,
-  removePathNode,
-  setPathNodeSmooth,
   validatePath,
   type PathHandleKind,
   type PathNode,
   type PathModel,
 } from '../src/paths';
-import { applySmudgeStroke } from '../src/smudge';
+import {
+  editPathAnchor,
+  hitTestWholePath,
+  isPathAnchorEdit,
+  pathAnchorEditNotice,
+  pullPathNodeHandles,
+  translatePath,
+} from '../src/pathEditTools';
+import {
+  DEFAULT_SMUDGE_SETTINGS,
+  applySmudgeDabs,
+  createSmudgeStroke,
+  normalizeSmudgeSettings,
+  planSmudgeSegment,
+  smudgeDabReach,
+  type RasterView,
+  type SmudgeApplyOptions,
+  type SmudgePoint,
+  type SmudgeSettings,
+  type SmudgeStroke,
+  type SmudgeTip,
+} from '../src/smudge';
+import { SmudgeToolOptions } from '../src/SmudgeToolOptions';
+import {
+  DEFAULT_STROKE_PATH_SETTINGS,
+  STROKE_PATH_TOOL_LABELS,
+  defaultStrokePathChoice,
+  normalizeStrokePathSettings,
+  planStrokePath,
+  strokePathMaxSamplesForCopies,
+  strokePathSources,
+  type StrokePathSample,
+  type StrokePathSettings,
+} from '../src/strokePath';
 import { applyRetouchStroke } from '../src/retouch';
+import { strokeWindow, strokeWindowReach, windowPoint, windowedCanvasStroke } from '../src/strokeWindow';
 import {
   DEFAULT_HISTORY_BRUSH,
   DEFAULT_ART_HISTORY_BRUSH,
   DEFAULT_MIXER_BRUSH,
   applyArtHistoryBrushPixels,
-  interpolateArtHistoryPoints,
   applyHistoryBrushPixels,
   applyMixerBrushPixels,
+  applySymmetricRetouchBrush,
+  type MixerBrushState,
+  interpolateBrushStrokePoints,
   type HistoryBrushSettings,
   type ArtHistoryBrushSettings,
   type MixerBrushSettings,
@@ -496,6 +847,7 @@ import {
   type SpotHealingStroke,
 } from '../src/spotHealing';
 import {
+  PATCH_MAX_OFFSET,
   PATCH_MAX_POINTS,
   PATCH_MAX_STROKES,
   type PatchStroke,
@@ -519,6 +871,10 @@ import {
 import {
   DEFAULT_COLOR_HALFTONE_SETTINGS,
   DEFAULT_FIBERS_SETTINGS,
+  MAX_CLOUD_RENDER_SCALE,
+  MIN_CLOUD_RENDER_SCALE,
+  defaultCloudScale,
+  differenceCloudScale,
   DEFAULT_MEZZOTINT_SETTINGS,
   DEFAULT_NEURAL_ENHANCE_SETTINGS,
   DEFAULT_TILT_SHIFT_SETTINGS,
@@ -526,9 +882,31 @@ import {
   effectiveFilterEffects,
   isNeutralFilterEffects,
   neutralFilterEffects,
+  retypeFilterEffects,
   type FilterEffectType,
 } from '../src/filterEffects';
-import { appendSmartFilter } from '../src/smartFilters';
+import {
+  appendSmartFilter,
+  moveSmartFilter,
+  planFilterChoice,
+  removeSmartFilter,
+  replaceSmartFilter,
+  setSmartFilterEnabled,
+  smartFilterEntries,
+  trackedSmartFilterIndex,
+  SMART_FILTER_MAX,
+  type SmartFilterEntry,
+} from '../src/smartFilters';
+import {
+  filterCenterFromFrame,
+  filterCenterFromPercent,
+  filterCenterPercent,
+  filterCenterToFrame,
+  isCenteredFilter,
+  nudgeFilterCenter,
+} from '../src/filterCenter';
+import LightRaysControls, { lightRaysEffectDefaults } from '../src/LightRaysControls';
+import { effectiveLayerStyles, isNeutralLayerStyles } from '../src/layerStyles';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
   DEFAULT_FIELD_POINTS,
@@ -541,6 +919,7 @@ import {
   planRectangularCrop,
   planSlices,
   warpPerspectiveRgba,
+  type CropPoint,
   type CropQuad,
   type PerspectiveCropPlan,
   type RectangularCropPlan,
@@ -558,16 +937,67 @@ import {
   setArtboardVisibility,
 } from '../src/artboards';
 import { fitLayerToArtboard, type FrameFit } from '../src/artboardFit';
-import { sliceAtPoint } from '../src/slices';
+import { adjustSliceRect, hitTestSliceHandle, sliceAtPoint, type SliceHandle } from '../src/slices';
 import {
+  EYEDROPPER_SAMPLE_SIZES,
+  averageSample,
+  countGroupOf,
+  countGroupTotals,
   formatMeasurement,
   measurementAngle,
   measurementDistance,
   newMeasurementId,
-  nextCountIndex,
+  nextCountIndexInGroup,
+  photoshopAngle,
+  rgbHex,
+  rotationAboutPoint,
+  rulerReadout,
+  straightenRotation,
+  type EyedropperSampleSize,
   type MeasurementAnnotation,
   type MeasurementPoint,
 } from '../src/measurements';
+import {
+  CROP_OVERLAYS,
+  CROP_RATIO_PRESETS,
+  COUNT_LABEL_SIZE_MAX,
+  COUNT_LABEL_SIZE_MIN,
+  CROP_DIMENSION_MAX,
+  CROP_RESOLUTION_MAX,
+  DEFAULT_NAVIGATION_TOOL_SETTINGS,
+  normalizeNavigationToolSettings,
+  updateNavigationToolSetting,
+  type CropOverlay,
+  type CropRatioPreset,
+  type NavigationToolSettings,
+} from '../src/navigationOptions';
+import {
+  constrainCropEnd,
+  cropAspectRatio,
+  inscribedCropAfterRotation,
+  nearestQuadCorner,
+  orderQuadCorners,
+  planCropTrim,
+  rectangleQuad,
+  scaleMeasurements,
+} from '../src/cropOptions';
+import {
+  audioAnnotations,
+  audioClipBytes,
+  moveAudioAnnotation,
+  newAudioClipId,
+  nextAudioNoteLabel,
+  referencedAudioClips,
+  removeAudioAnnotation,
+  type AudioClip,
+  type AudioNoteAnnotation,
+} from '../src/audioAnnotations';
+import {
+  AudioAnnotationList,
+  AudioAnnotationMarkers,
+  AudioRecordPanel,
+  useAudioAnnotationPlayer,
+} from '../src/audioAnnotationPanel';
 import {
   cycleScreenMode,
   normalizeScreenMode,
@@ -585,6 +1015,14 @@ import {
 } from '../src/fontPreview';
 import { checkFontAvailability } from '../src/fontAvailability';
 import MissingFontsDialog from '../src/MissingFontsDialog';
+import FontFamilySelect from '../src/FontFamilySelect';
+import { textSidebarFields } from '../src/textSidebarFields';
+import { ALL_FONT_FAMILIES, fontFamilyKind, isSelectableFontFamily, missingFontFamilies } from '../src/fontLibrary';
+import { ensureTextLayerFonts, sharedFontLoader } from '../src/fontLoader';
+import { currentTextCaretAdapter, planGlyphInsert, registerTextCaretAdapter } from '../src/glyphInsert';
+import type { GlyphInsertMode } from '../src/GlyphsPanel';
+import { useFontLoadState } from '../src/useFontLibrary';
+const GlyphsPanel = lazy(() => import('../src/GlyphsPanel'));
 import HistogramDialog from '../src/HistogramDialog';
 import { buildHistogram, type HistogramData } from '../src/histogram';
 import AdjustmentsDialog, { type AdjustmentCommand } from '../src/AdjustmentsDialog';
@@ -645,6 +1083,8 @@ type Command =
   | 'trim'
   | 'reveal-all'
   | 'project-save'
+  | 'project-save-as'
+  | 'reference-place'
   | 'file-info'
   | 'batch-export'
   | 'batch-images'
@@ -652,6 +1092,7 @@ type Command =
   | 'project-open'
   | 'new-white'
   | 'new-transparent'
+  | 'new-document'
   | 'open'
   | 'png'
   | 'jpg'
@@ -663,13 +1104,16 @@ type Command =
   | 'copy-merged'
   | 'cut-layer'
   | 'paste-layer'
+  | 'paste-clipboard-image'
   | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
   | 'stroke-selection'
+  | 'stroke-path-brush'
   | 'new-layer'
   | 'new-fill-layer'
   | 'new-adjustment-layer'
+  | 'layer-from-background'
   | 'new-smart-object'
   | 'nest-smart-object'
   | 'replace-smart-object'
@@ -681,6 +1125,7 @@ type Command =
   | 'load-default-type-styles'
   | 'save-default-type-styles'
   | 'rasterize-layer'
+  | 'trim-layer'
   | 'matting'
   | 'duplicate-layer'
   | 'copy-svg'
@@ -719,6 +1164,14 @@ type Command =
   | 'text-orientation-horizontal'
   | 'text-orientation-vertical'
   | 'text-warp'
+  | 'type-panels'
+  | 'type-aa-none'
+  | 'type-aa-sharp'
+  | 'type-aa-crisp'
+  | 'type-aa-strong'
+  | 'type-aa-smooth'
+  | 'type-convert-point'
+  | 'type-convert-paragraph'
   | 'text-on-path'
   | 'convert-to-shape'
   | 'rasterize-type'
@@ -770,6 +1223,7 @@ type Command =
   | 'puppet-warp'
   | 'quick-mask'
   | 'save-selection'
+  | 'download-selection'
   | 'load-selection'
   | 'reset'
   | 'levels'
@@ -832,6 +1286,7 @@ type Command =
   | 'filter-lens-correction'
   | 'filter-adaptive-wide-angle'
   | 'filter-lens-flare'
+  | 'filter-light-rays'
   | 'filter-vanishing-point'
   | 'filter-displace'
   | 'filter-pinch'
@@ -878,9 +1333,13 @@ type Command =
   | 'font-preview-size'
   | 'language-options'
   | 'missing-fonts'
+  | 'glyphs'
   | 'image-mode'
   | 'image-analysis'
   | 'image-adjustments';
+/** Fails typecheck if the sidebar registry names a command the editor lacks. */
+type AssertCommands<T extends Command> = T;
+type SidebarCommand = AssertCommands<SidebarCommandId>;
 
 type MenuItem = {
   label: string;
@@ -891,108 +1350,165 @@ type MenuItem = {
 };
 
 const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
-  { id: 'move', label: 'Move', icon: MousePointer2, key: 'V' },
-  { id: 'hand', label: 'Hand', icon: Hand, key: 'H' },
-  { id: 'zoom', label: 'Zoom', icon: ZoomIn, key: 'Z' },
-  { id: 'rotate-view', label: 'Rotate View', icon: RotateCw, key: 'R' },
-  { id: 'eyedropper', label: 'Eyedropper', icon: Pipette, key: 'I' },
-  { id: 'color-sampler', label: 'Color Sampler', icon: Pipette, key: 'I' },
-  { id: 'ruler', label: 'Ruler', icon: Ruler, key: 'I' },
-  { id: 'note', label: 'Note', icon: StickyNote, key: 'I' },
-  { id: 'count', label: 'Count', icon: Hash, key: 'I' },
-  { id: 'fill', label: 'Fill', icon: PaintBucket, key: 'G' },
-  { id: 'gradient', label: 'Gradient', icon: Palette, key: 'G' },
-  { id: 'clone', label: 'Clone', icon: Copy, key: 'S' },
-  { id: 'heal', label: 'Healing', icon: WandSparkles, key: 'J' },
-  { id: 'spot-heal', label: 'Spot Healing', icon: WandSparkles, key: 'J' },
-  { id: 'patch', label: 'Patch', icon: WandSparkles, key: 'J' },
-  { id: 'red-eye', label: 'Red Eye', icon: Eye, key: 'J' },
-  { id: 'pattern-stamp', label: 'Pattern Stamp', icon: Grid3x3, key: 'S' },
-  { id: 'crop', label: 'Crop', icon: Crop, key: 'C' },
-  { id: 'perspective-crop', label: 'Perspective Crop', icon: Crop, key: 'C' },
-  { id: 'slice', label: 'Slice', icon: Crop, key: 'C' },
-  { id: 'slice-select', label: 'Slice Select', icon: Crop, key: 'C' },
-  { id: 'frame', label: 'Frame', icon: Crop, key: 'K' },
-  { id: 'brush', label: 'Brush', icon: Brush, key: 'B' },
-  { id: 'mixer-brush', label: 'Mixer Brush', icon: Brush, key: 'B' },
-  { id: 'history-brush', label: 'History Brush', icon: Undo2, key: 'Y' },
-  { id: 'art-history-brush', label: 'Art History Brush', icon: Undo2, key: 'Y' },
-  { id: 'pencil', label: 'Pencil', icon: Pencil, key: 'B' },
-  { id: 'color-replace', label: 'Color Replace', icon: Palette, key: 'B' },
-  { id: 'eraser', label: 'Eraser', icon: Eraser, key: 'E' },
+  { id: 'move', label: 'Move', icon: toolIcon('move'), key: 'V' },
+  { id: 'hand', label: 'Hand', icon: toolIcon('hand'), key: 'H' },
+  { id: 'zoom', label: 'Zoom', icon: toolIcon('zoom'), key: 'Z' },
+  { id: 'rotate-view', label: 'Rotate View', icon: toolIcon('rotate-view'), key: 'R' },
+  { id: 'eyedropper', label: 'Eyedropper', icon: toolIcon('eyedropper'), key: 'I' },
+  { id: 'color-sampler', label: 'Color Sampler', icon: toolIcon('color-sampler'), key: 'I' },
+  { id: 'ruler', label: 'Ruler', icon: toolIcon('ruler'), key: 'I' },
+  { id: 'note', label: 'Note', icon: toolIcon('note'), key: 'I' },
+  { id: 'audio-note', label: 'Audio Annotation', icon: toolIcon('audio-note'), key: 'I' },
+  { id: 'count', label: 'Count', icon: toolIcon('count'), key: 'I' },
+  { id: 'fill', label: 'Fill', icon: toolIcon('fill'), key: 'G' },
+  { id: 'gradient', label: 'Gradient', icon: toolIcon('gradient'), key: 'G' },
+  { id: 'clone', label: 'Clone', icon: toolIcon('clone'), key: 'S' },
+  { id: 'heal', label: 'Healing', icon: toolIcon('heal'), key: 'J' },
+  { id: 'spot-heal', label: 'Spot Healing', icon: toolIcon('spot-heal'), key: 'J' },
+  { id: 'patch', label: 'Patch', icon: toolIcon('patch'), key: 'J' },
+  { id: 'red-eye', label: 'Red Eye', icon: toolIcon('red-eye'), key: 'J' },
+  { id: 'pattern-stamp', label: 'Pattern Stamp', icon: toolIcon('pattern-stamp'), key: 'S' },
+  { id: 'crop', label: 'Crop', icon: toolIcon('crop'), key: 'C' },
+  { id: 'perspective-crop', label: 'Perspective Crop', icon: toolIcon('perspective-crop'), key: 'C' },
+  { id: 'slice', label: 'Slice', icon: toolIcon('slice'), key: 'C' },
+  { id: 'slice-select', label: 'Slice Select', icon: toolIcon('slice-select'), key: 'C' },
+  { id: 'frame', label: 'Frame', icon: toolIcon('frame'), key: 'K' },
+  { id: 'brush', label: 'Brush', icon: toolIcon('brush'), key: 'B' },
+  { id: 'mixer-brush', label: 'Mixer Brush', icon: toolIcon('mixer-brush'), key: 'B' },
+  { id: 'history-brush', label: 'History Brush', icon: toolIcon('history-brush'), key: 'Y' },
+  { id: 'art-history-brush', label: 'Art History Brush', icon: toolIcon('art-history-brush'), key: 'Y' },
+  { id: 'pencil', label: 'Pencil', icon: toolIcon('pencil'), key: 'B' },
+  { id: 'color-replace', label: 'Color Replace', icon: toolIcon('color-replace'), key: 'B' },
+  { id: 'eraser', label: 'Eraser', icon: toolIcon('eraser'), key: 'E' },
   {
     id: 'background-eraser',
     label: 'Background Eraser',
-    icon: Eraser,
+    icon: toolIcon('background-eraser'),
     key: 'E',
   },
-  { id: 'magic-eraser', label: 'Magic Eraser', icon: Wand2, key: 'E' },
-  { id: 'mask-brush', label: 'Mask Brush', icon: Brush, key: 'K' },
-  { id: 'mask-eraser', label: 'Mask Eraser', icon: Eraser, key: 'K' },
-  { id: 'adjustment-brush', label: 'Adjustment Brush', icon: Brush, key: 'K' },
-  { id: 'dodge', label: 'Dodge', icon: Sun, key: 'O' },
-  { id: 'burn', label: 'Burn', icon: Moon, key: 'O' },
-  { id: 'sponge', label: 'Sponge', icon: Sparkles, key: 'O' },
-  { id: 'smudge', label: 'Smudge', icon: Brush, key: 'R' },
-  { id: 'blur', label: 'Blur', icon: Droplets, key: 'R' },
-  { id: 'sharpen', label: 'Sharpen', icon: Sparkles, key: 'R' },
-  { id: 'pen', label: 'Pen', icon: Pencil, key: 'P' },
-  { id: 'freeform-pen', label: 'Freeform Pen', icon: Pencil, key: 'P' },
-  { id: 'curvature-pen', label: 'Curvature Pen', icon: Pencil, key: 'P' },
+  { id: 'magic-eraser', label: 'Magic Eraser', icon: toolIcon('magic-eraser'), key: 'E' },
+  { id: 'mask-brush', label: 'Mask Brush', icon: toolIcon('mask-brush'), key: 'K' },
+  { id: 'mask-eraser', label: 'Mask Eraser', icon: toolIcon('mask-eraser'), key: 'K' },
+  { id: 'adjustment-brush', label: 'Adjustment Brush', icon: toolIcon('adjustment-brush'), key: 'K' },
+  { id: 'dodge', label: 'Dodge', icon: toolIcon('dodge'), key: 'O' },
+  { id: 'burn', label: 'Burn', icon: toolIcon('burn'), key: 'O' },
+  { id: 'sponge', label: 'Sponge', icon: toolIcon('sponge'), key: 'O' },
+  { id: 'smudge', label: 'Smudge', icon: toolIcon('smudge'), key: 'R' },
+  { id: 'blur', label: 'Blur', icon: toolIcon('blur'), key: 'R' },
+  { id: 'sharpen', label: 'Sharpen', icon: toolIcon('sharpen'), key: 'R' },
+  { id: 'pen', label: 'Pen', icon: toolIcon('pen'), key: 'P' },
+  { id: 'freeform-pen', label: 'Freeform Pen', icon: toolIcon('freeform-pen'), key: 'P' },
+  { id: 'curvature-pen', label: 'Curvature Pen', icon: toolIcon('curvature-pen'), key: 'P' },
+  // Photoshop gives the anchor-editing pens no shortcut; an empty key hides
+  // the shortcut badge rather than advertising a P press that skips them.
+  { id: 'add-anchor', label: 'Add Anchor Point', icon: toolIcon('add-anchor'), key: '' },
+  { id: 'delete-anchor', label: 'Delete Anchor Point', icon: toolIcon('delete-anchor'), key: '' },
+  { id: 'convert-point', label: 'Convert Point', icon: toolIcon('convert-point'), key: '' },
+  { id: 'path-select', label: 'Path Selection', icon: toolIcon('path-select'), key: 'A' },
   {
     id: 'direct-select',
     label: 'Direct Selection',
-    icon: MousePointer2,
+    icon: toolIcon('direct-select'),
     key: 'A',
   },
-  { id: 'text', label: 'Text', icon: Type, key: 'T' },
-  { id: 'rectangle', label: 'Shape', icon: Shapes, key: 'U' },
-  { id: 'ellipse', label: 'Ellipse', icon: Shapes, key: 'U' },
-  { id: 'line', label: 'Line', icon: Minus, key: 'U' },
-  { id: 'polygon', label: 'Polygon', icon: Hexagon, key: 'U' },
-  { id: 'select', label: 'Select', icon: Crop, key: 'M' },
-  { id: 'ellipse-select', label: 'Elliptical marquee', icon: Shapes, key: 'M' },
-  { id: 'row-select', label: 'Single Row marquee', icon: Rows3, key: 'M' },
+  { id: 'text', label: 'Horizontal Type', icon: toolIcon('text'), key: 'T' },
+  { id: 'vertical-text', label: 'Vertical Type', icon: toolIcon('vertical-text'), key: 'T' },
+  { id: 'text-mask', label: 'Horizontal Type Mask', icon: toolIcon('text-mask'), key: 'T' },
+  { id: 'vertical-text-mask', label: 'Vertical Type Mask', icon: toolIcon('vertical-text-mask'), key: 'T' },
+  { id: 'rectangle', label: 'Rectangle', icon: toolIcon('rectangle'), key: 'U' },
+  { id: 'rounded-rectangle', label: 'Rounded Rectangle', icon: toolIcon('rounded-rectangle'), key: 'U' },
+  { id: 'ellipse', label: 'Ellipse', icon: toolIcon('ellipse'), key: 'U' },
+  { id: 'line', label: 'Line', icon: toolIcon('line'), key: 'U' },
+  { id: 'polygon', label: 'Polygon', icon: toolIcon('polygon'), key: 'U' },
+  { id: 'custom-shape', label: 'Custom Shape', icon: toolIcon('custom-shape'), key: 'U' },
+  { id: 'select', label: 'Rectangular Marquee', icon: toolIcon('select'), key: 'M' },
+  { id: 'ellipse-select', label: 'Elliptical Marquee', icon: toolIcon('ellipse-select'), key: 'M' },
+  { id: 'row-select', label: 'Single Row Marquee', icon: toolIcon('row-select'), key: 'M' },
   {
     id: 'column-select',
-    label: 'Single Column marquee',
-    icon: Columns3,
+    label: 'Single Column Marquee',
+    icon: toolIcon('column-select'),
     key: 'M',
   },
-  { id: 'lasso', label: 'Lasso', icon: WandSparkles, key: 'L' },
+  { id: 'lasso', label: 'Lasso', icon: toolIcon('lasso'), key: 'L' },
   {
     id: 'polygonal-lasso',
     label: 'Polygonal Lasso',
-    icon: WandSparkles,
+    icon: toolIcon('polygonal-lasso'),
     key: 'L',
   },
   {
     id: 'magnetic-lasso',
     label: 'Magnetic Lasso',
-    icon: WandSparkles,
+    icon: toolIcon('magnetic-lasso'),
     key: 'L',
   },
   {
     id: 'selection-brush',
     label: 'Selection Brush',
-    icon: WandSparkles,
+    icon: toolIcon('selection-brush'),
     key: 'L',
   },
-  { id: 'quick-selection', label: 'Quick Selection', icon: Wand2, key: 'W' },
-  { id: 'magic-wand', label: 'Magic Wand', icon: Wand2, key: 'W' },
+  { id: 'quick-selection', label: 'Quick Selection', icon: toolIcon('quick-selection'), key: 'W' },
+  { id: 'magic-wand', label: 'Magic Wand', icon: toolIcon('magic-wand'), key: 'W' },
 ];
+/** Icons of the "More panels" strip (docs/contextual-sidebar-contract.md). */
+const SIDEBAR_PANEL_ICONS: Record<SidebarPanelId, typeof Brush> = {
+  'layer-details': Info,
+  adjustments: WandSparkles,
+  filters: Sparkles,
+  'layer-styles': Blend,
+  history: HistoryIcon,
+  'saved-selections': Bookmark,
+  transform: Crop,
+  reference: ImageIcon,
+  projects: CloudIcon,
+};
+/** Panels whose controls work before a document is open. */
+const PANELS_WITHOUT_DOCUMENT: ReadonlySet<SidebarPanelId> = new Set(['adjustments', 'filters', 'transform', 'projects']);
+/** Fitted view zoom for an image inside the stage, excluding its padding. */
+function fittedZoom(element: HTMLElement | null, width: number, height: number) {
+  if (!element) return 100;
+  const style = window.getComputedStyle(element);
+  return fitViewZoom({
+    imageWidth: width,
+    imageHeight: height,
+    stageWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+    stageHeight: element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+  });
+}
+/** Fitted zoom for a draft's current frame (used when it has no viewZoom). */
+function fittedDraftZoom(element: HTMLElement | null, draft: Draft) {
+  const frame = draft.history[draft.index];
+  return frame ? fittedZoom(element, frame.w, frame.h) : undefined;
+}
+/**
+ * Tools whose Tool options section is titled with the tool name and holds
+ * no brush Size (docs/navigation-tool-options-contract.md).
+ */
+const NAMED_OPTION_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
+  'zoom',
+  'eyedropper',
+  'color-sampler',
+  'ruler',
+  'note',
+  'audio-note',
+  'count',
+  'crop',
+  'perspective-crop',
+]);
+/** Tools whose press is a click unless the pointer travels a few pixels. */
+const CLICK_OR_DRAG_TOOLS: ReadonlySet<Tool> = new Set<Tool>(['zoom', 'note', 'perspective-crop', 'slice-select']);
 const toolSelectionNotice = (tool: Tool, label: string) =>
   tool === 'magnetic-lasso'
     ? 'Magnetic Lasso: drag along an edge, release to close'
-    : `${label} tool selected`;
+    : tool === 'perspective-crop'
+      ? 'Perspective Crop: drag a rectangle or click four corners, then drag the corner handles; Enter applies'
+      : tool === 'frame'
+        ? 'Frame (artboard): drag to add a named artboard viewport'
+        : `${label} tool selected`;
 const flyoutToolLabel = (tool: Tool, label: string) =>
-  tool === 'select'
-    ? 'Rectangular Marquee'
-    : tool === 'ellipse-select'
-      ? 'Elliptical Marquee'
-    : tool === 'lasso'
-      ? 'Freeform Lasso'
-      : label;
+  tool === 'lasso' ? 'Freeform Lasso' : label;
 const flyoutToolKey = (tool: Tool, key: string) =>
   tool === 'selection-brush' ? 'W' : key;
 
@@ -1008,6 +1524,13 @@ const discardPreviewAsset = (assets: Assets, id: string | undefined) => {
   if (id) delete assets[id];
 };
 
+/** Status names for lasso-family selections (a freeform lasso is not "Polygonal"). */
+const LASSO_CREATED_LABELS = {
+  Lasso: 'Lasso',
+  'Polygonal lasso': 'Polygonal',
+  'Magnetic Lasso': 'Magnetic',
+  'Elliptical marquee': 'Elliptical',
+} as const;
 const MARQUEE_TOOLS: Tool[] = [
   'select',
   'ellipse-select',
@@ -1019,9 +1542,9 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
   g: ['gradient', 'fill'],
   b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'ellipse', 'line', 'polygon'],
+  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
   m: MARQUEE_TOOLS,
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'count'],
+  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
   l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
   w: ['selection-brush', 'quick-selection', 'magic-wand'],
   e: ['eraser', 'background-eraser', 'magic-eraser'],
@@ -1032,11 +1555,11 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   y: ['history-brush', 'art-history-brush'],
   j: ['heal', 'spot-heal', 'patch', 'red-eye'],
   p: ['pen', 'freeform-pen', 'curvature-pen'],
+  a: ['path-select', 'direct-select'],
 };
-/** Existing PixelForge aliases retained while the primary keys follow Photoshop. */
-const TOOL_ALIASES: Record<string, Tool> = {
-  a: 'direct-select',
-};
+/** Existing PixelForge aliases retained while the primary keys follow Photoshop.
+ * A used to alias Direct Selection; it is now the Path/Direct Selection family. */
+const TOOL_ALIASES: Record<string, Tool> = {};
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
   ['Vivid', 'saturate(1.45) contrast(1.08)', '#244d96', '#ef854a'],
@@ -1048,9 +1571,12 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
     { label: 'Download project file', command: 'project-save' },
+    { label: 'Save project with file picker…', command: 'project-save-as' },
+    { label: 'Place reference image…', command: 'reference-place' },
     { label: 'File Info / Privacy…', command: 'file-info' },
     { label: 'Batch export history…', command: 'batch-export' },
     { label: 'Batch export images…', command: 'batch-images' },
+    { label: 'New…', command: 'new-document' },
     { label: 'New white document', shortcut: 'Ctrl+N', command: 'new-white' },
     { label: 'New transparent document', command: 'new-transparent' },
     { label: 'Open image…', shortcut: 'Ctrl+O', command: 'open' },
@@ -1076,6 +1602,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Copy Layer', shortcut: 'Ctrl+C', command: 'copy-layer' },
     { label: 'Cut Layer', shortcut: 'Ctrl+X', command: 'cut-layer' },
     { label: 'Paste Layer', shortcut: 'Ctrl+V', command: 'paste-layer' },
+    { label: 'Paste Image from Clipboard', command: 'paste-clipboard-image' },
     { label: 'Paste Special…', command: 'paste-special' },
     { label: 'Copy Merged', shortcut: 'Ctrl+Shift+C', command: 'copy-merged' },
     { label: 'Clear', command: 'clear-layer' },
@@ -1185,6 +1712,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Clear Smart Filter Stack', command: 'clear-smart-filters' },
     { label: 'New Fill Layer…', command: 'new-fill-layer' },
     { label: 'New Adjustment Layer', command: 'new-adjustment-layer' },
+    { label: 'Layer from Background', command: 'layer-from-background' },
     { label: 'Layer Mask', command: 'mask-selection' },
     { label: 'Mask All Objects', command: 'mask-all-objects' },
     { label: 'Invert Layer Mask', command: 'invert-layer-mask' },
@@ -1205,6 +1733,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Link Layers', command: 'link-layers' },
     { label: 'Unlink Layers', command: 'unlink-layers' },
     { label: 'Rasterize', command: 'rasterize-layer' },
+    { label: 'Trim Layer to Content', command: 'trim-layer' },
     { label: 'Matting…', command: 'matting' },
     { label: '', command: 'noop', separator: true },
     { label: 'Group Layers', shortcut: 'Ctrl+G', command: 'group-layer' },
@@ -1225,6 +1754,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Combine Shapes → Subtract Front Shape', command: 'combine-shapes-subtract' },
     { label: 'Combine Shapes → Intersect', command: 'combine-shapes-intersect' },
     { label: 'Combine Shapes → Exclude Overlapping Shapes', command: 'combine-shapes-exclude' },
+    { label: 'Stroke Path with Brush…', command: 'stroke-path-brush' },
     { label: 'Align Left', command: 'align-left' },
     { label: 'Align Horizontal Centers', command: 'align-center-horizontal' },
     { label: 'Align Right', command: 'align-right' },
@@ -1243,8 +1773,14 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Align Left', command: 'text-align-left' },
     { label: 'Align Center', command: 'text-align-center' },
     { label: 'Align Right', command: 'text-align-right' },
-    { label: 'Panels', command: 'noop', disabled: true },
-    { label: 'Anti-Alias', command: 'noop', disabled: true },
+    { label: 'Character & Paragraph Panels', command: 'type-panels' },
+    { label: 'Anti-Alias: None', command: 'type-aa-none' },
+    { label: 'Anti-Alias: Sharp', command: 'type-aa-sharp' },
+    { label: 'Anti-Alias: Crisp', command: 'type-aa-crisp' },
+    { label: 'Anti-Alias: Strong', command: 'type-aa-strong' },
+    { label: 'Anti-Alias: Smooth', command: 'type-aa-smooth' },
+    { label: 'Convert to Point Text', command: 'type-convert-point' },
+    { label: 'Convert to Paragraph Text', command: 'type-convert-paragraph' },
     { label: 'Horizontal Type', command: 'text-orientation-horizontal' },
     { label: 'Vertical Type', command: 'text-orientation-vertical' },
     { label: 'Horizontal Type Mask', command: 'text-mask-horizontal' },
@@ -1259,6 +1795,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Language Options', command: 'language-options' },
     { label: 'Update All Text Layers', command: 'update-text-layers' },
     { label: 'Manage Missing Fonts', command: 'missing-fonts' },
+    { label: 'Glyphs, Icons & Symbols…', command: 'glyphs' },
     { label: 'Paste Lorem Ipsum', command: 'paste-lorem' },
     { label: 'Load Default Type Styles', command: 'load-default-type-styles' },
     { label: 'Save Default Type Styles', command: 'save-default-type-styles' },
@@ -1288,8 +1825,9 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Similar', command: 'similar-selection' },
     { label: 'Transform Selection', command: 'transform-selection' },
     { label: 'Edit in Quick Mask Mode', command: 'quick-mask' },
-    { label: 'Load Selection…', command: 'load-selection' },
+    { label: 'Load Selection File…', command: 'load-selection' },
     { label: 'Save Selection…', command: 'save-selection' },
+    { label: 'Download Selection File…', command: 'download-selection' },
     { label: 'Mask from Selection', command: 'mask-selection' },
   ],
   Filter: [
@@ -1360,6 +1898,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Difference Clouds', command: 'filter-difference-clouds' },
     { label: 'Fibers…', command: 'filter-fibers' },
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
+    { label: 'Light Rays…', command: 'filter-light-rays' },
     { label: 'Flame…', command: 'filter-flame' },
     { label: 'Sharpen', command: 'filter-sharpen' },
     { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
@@ -1404,14 +1943,63 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   ],
 };
 
+/** Tools whose one gesture spans several presses (click-to-place, tap-to-arm). */
+const MULTI_PRESS_GESTURE_TOOLS: readonly Tool[] = ['polygonal-lasso', 'magnetic-lasso', 'pen', 'curvature-pen'];
+/** Image-pixel distance a path tool press must travel before it is a drag. */
+const PATH_TOOL_DRAG_SLOP = 2;
+/** Pen-family and path-selection tools that share the path Tool options. */
+const PATH_TOOL_OPTION_TOOLS: readonly Tool[] = [
+  'pen', 'freeform-pen', 'curvature-pen', 'add-anchor', 'delete-anchor', 'convert-point',
+  'path-select', 'direct-select',
+];
+/**
+ * Tools whose result depends on the whole pointer path, not just its latest
+ * position: each browser-coalesced sample of a move is applied to them (see
+ * `precedingCoalescedSamples`). Drag-to-size tools (shapes, marquees, crop,
+ * move, gradient) only need the latest position.
+ */
+const STROKE_SAMPLING_TOOLS: ReadonlySet<Tool> = new Set<Tool>([
+  'brush', 'pencil', 'eraser', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge',
+  'clone', 'heal', 'spot-heal', 'patch', 'pattern-stamp', 'red-eye', 'color-replace',
+  'background-eraser', 'mixer-brush', 'history-brush', 'art-history-brush',
+  'mask-brush', 'mask-eraser', 'adjustment-brush', 'selection-brush', 'quick-selection',
+  'lasso', 'magnetic-lasso', 'freeform-pen',
+]);
+
+type GradientType = NonNullable<Settings['gradientMode']>;
+
+/**
+ * Patch selection workflow: the stored offset is source minus destination.
+ * Source mode reads from where the selection was dragged to; Destination
+ * mode writes there, reading the original selection.
+ */
+const patchRegionOffset = (
+  mode: 'source' | 'destination',
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+) => {
+  const clampOffset = (value: number) => Math.max(-PATCH_MAX_OFFSET, Math.min(PATCH_MAX_OFFSET, Math.round(value))),
+    x = clampOffset(end.x - start.x),
+    y = clampOffset(end.y - start.y);
+  return mode === 'source' ? { x, y } : { x: -x, y: -y };
+};
+
 type Gesture = {
   tool: Tool;
+  /** The owning press was released; the commit may still be waiting. */
+  released?: boolean;
   start: { x: number; y: number };
   last: { x: number; y: number };
   frame: Frame;
   layer?: Layer;
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
+  /** Mixer Brush paint reservoirs for this stroke, one per symmetry copy. */
+  mixerStates?: MixerBrushState[];
+  /** Eraser on the Background layer paints the background colour. */
+  eraseToBackground?: boolean;
+  /** Per-stroke coverage buffers keyed by paint target (Opacity ceiling). */
+  strokeBuffers?: WeakMap<HTMLCanvasElement, BrushStrokeBuffer>;
   /** Immutable source captured at pointer-down for Mixer/History Brush. */
   sourcePixels?: Uint8ClampedArray;
   historySourceIndex?: number;
@@ -1426,16 +2014,52 @@ type Gesture = {
   maskPreviewAsset?: string;
   patternId?: PatternId;
   patternTileSize?: number;
+  /** Pattern Stamp: selection-defined tile and non-aligned phase anchor. */
+  patternTile?: PatternTile;
+  patternAnchor?: { x: number; y: number };
   redEyeThreshold?: number;
   redEyeAmount?: number;
+  /** Patch: the press point is being tested against the selection. */
+  patchRegionPending?: boolean;
+  /** Color Replace: options fixed at pointer-down. */
+  colorReplace?: Pick<RetouchOptions, 'colorReplaceMode' | 'colorReplaceSampling' | 'colorReplaceLimits'>;
   /** Local-space nondestructive context-aware cleanup metadata. */
   spotHealingStroke?: SpotHealingStroke;
+  /** Gradient drag: decoded layer and selection, prepared at pointer-down. */
+  gradientBase?: GradientBase;
+  /** Gradient drag: latest layer-local end point for the live preview. */
+  gradientEnd?: { x: number; y: number };
+  /** Spot Healing / Patch: the selection snapshot is still being captured. */
+  selectionPending?: boolean;
   /** Local-space nondestructive source-offset patch metadata. */
   patchStroke?: PatchStroke;
   /** Canvas-space nondestructive mask repair metadata for one gesture. */
   maskRefinementStroke?: MaskRefinementStroke;
   /** Selection alpha sampled once in the edited layer's local pixel space. */
   selectionMask?: Uint8ClampedArray;
+  /** Unconfined paint/retouch/mask stroke, present only while a selection confines it. */
+  selectionStroke?: SelectionStroke;
+  /** Separate stroke buffer for a Brush/Pencil stroke in a non-Normal blend mode. */
+  blendStroke?: BrushBlendStroke;
+  /** Layer-space Paint Symmetry transforms (identity first) for this stroke. */
+  paintSymmetry?: readonly SymmetryAffine[];
+  /**
+   * Brush Silk strands stroke: layer-local pointer samples. Moves only redraw
+   * a lightweight overlay preview; the strands are painted into the layer
+   * buffer once, on release.
+   */
+  strands?: {
+    settings: BrushStrandSettings;
+    points: StrandInputPoint[];
+    frameRequest?: number;
+  };
+  /**
+   * Asset id `buffer` was drawn from when its writes are tracked
+   * (`src/canvasDirty.ts`), so the commit hashes only the touched tiles.
+   */
+  tileBase?: string;
+  /** Clone/Healing source anchor captured at pointer-down for this whole stroke. */
+  cloneAnchor?: { x: number; y: number };
   /** Existing selection alpha retained while a Selection Brush stroke is built. */
   selectionBase?: Uint8ClampedArray;
   /** Existing resolved alpha is retained for replace no-op detection. */
@@ -1480,10 +2104,45 @@ type Gesture = {
     pointerType?: string;
   }>;
   smoothedLast?: { x: number; y: number };
+  /** Dab spacing carried across pointer segments of one stroke. */
+  spacingState?: BrushSpacingState;
+  /** Smudge carried paint, tip and sample for this stroke. */
+  smudge?: SmudgeGestureState & { last: SmudgePoint };
   points?: PathNode[];
   lastPressure?: number;
   pointerType?: string;
   moved: boolean;
+  /** Scrubby Zoom: zoom and client point at pointer-down. */
+  zoomStart?: number;
+  zoomOut?: boolean;
+  /** Note tool: the note being dragged. */
+  noteId?: string;
+  /** Perspective Crop: the corner handle being dragged. */
+  quadCorner?: number;
+  /** Crop: the drag draws a Straighten line instead of a crop box. */
+  cropStraighten?: boolean;
+  /** Slice Select: grabbed handle and the slice at pointer-down. */
+  sliceHandle?: SliceHandle;
+  sliceOrigin?: SliceRect;
+};
+
+/** Layer pixels and selection coverage a gradient drag renders over. */
+type GradientBase = {
+  layerCanvas: HTMLCanvasElement;
+  selectionMask?: Uint8ClampedArray;
+  /**
+   * Reduced-resolution live preview for large layers (see
+   * `src/gradientPreview.ts`): the changeable region downscaled once, its
+   * selection coverage, and two full-size override surfaces used in turn
+   * (the preview scheduler keeps at most one render in flight).
+   */
+  preview?: {
+    plan: GradientPreviewPlan;
+    layerSmall: HTMLCanvasElement;
+    maskSmall?: Uint8ClampedArray;
+    buffers: HTMLCanvasElement[];
+    next: number;
+  };
 };
 
 type SlicePreview = SliceRect & { frame: Frame };
@@ -1519,6 +2178,8 @@ type StampCanvasOptions = {
   pressureCurve?: BrushPressureCurve;
   spacing?: number;
   scatter?: number;
+  /** Scatter axes, Count and jitter; omitted means one unjittered dab per step. */
+  dynamics?: BrushDynamics;
   texture?: number;
   dual?: number;
   secondaryPreset?: SecondaryBrushPreset;
@@ -1531,9 +2192,33 @@ type StampCanvasOptions = {
   flipY?: boolean;
   mode: BrushMode;
   color?: BrushColor;
+  /** Background colour for the colour dynamics foreground/background mix jitter. */
+  colorBackground?: BrushColor;
   source?: HTMLCanvasElement;
   sourceX?: number;
   sourceY?: number;
+  /** Per-gesture stroke buffers: Opacity becomes a per-stroke ceiling. */
+  strokeBuffers?: BrushStrokeBuffers;
+  /** Stroke opacity ceiling (0..1); defaults to `opacity`. */
+  strokeOpacity?: number;
+};
+
+/** One `BrushStrokeBuffer` per paint target (layer buffer, selection raw, blend paint). */
+type BrushStrokeBuffers = WeakMap<HTMLCanvasElement, BrushStrokeBuffer>;
+const brushStrokeTarget = (
+  buffers: BrushStrokeBuffers | undefined,
+  target: HTMLCanvasElement,
+  ceiling: number,
+  originX: number,
+  originY: number,
+) => {
+  if (!buffers) return undefined;
+  let buffer = buffers.get(target);
+  if (!buffer) {
+    buffer = new BrushStrokeBuffer(target.width, target.height, Math.max(0, Math.min(1, ceiling)));
+    buffers.set(target, buffer);
+  }
+  return { buffer, originX, originY };
 };
 
 /** Apply one bounded local radial stamp without allocating a full-canvas mask. */
@@ -1544,8 +2229,10 @@ const stampCanvas = (
   const texturedOpacity = options.opacity * brushTextureOpacity(options.x, options.y, options.texture ?? 0) *
     dualBrushOpacity(options.x, options.y, options.dual ?? 0) *
     bristleOpacity(options.x, options.y, options.bristle ?? 0),
-    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity }),
-    radius = resolved.radius,
+    resolved = resolveBrushStamp({ ...options, opacity: texturedOpacity });
+  // A pen lift (near-zero pressure with pressure mapping on) paints nothing.
+  if (resolved.opacity <= 0) return false;
+  const radius = resolved.radius,
     left = Math.max(0, Math.floor(options.x - radius)),
     top = Math.max(0, Math.floor(options.y - radius)),
     right = Math.min(target.width, Math.floor(options.x + radius) + 1),
@@ -1579,6 +2266,7 @@ const stampCanvas = (
     sourceX = (options.sourceX ?? options.x) - sourceLeft;
     sourceY = (options.sourceY ?? options.y) - sourceTop;
   }
+  const stroke = brushStrokeTarget(options.strokeBuffers, target, options.strokeOpacity ?? options.opacity, left, top);
   const result = applyRadialStamp(image.data, {
     width,
     height,
@@ -1605,7 +2293,7 @@ const stampCanvas = (
     source,
     sourceX,
     sourceY,
-  });
+  }, stroke);
   let changed = result.changed;
   const secondary = options.secondaryPreset && options.secondaryPreset !== 'none'
     ? brushPresetById(options.secondaryPreset)
@@ -1638,11 +2326,29 @@ const stampCanvas = (
       source,
       sourceX,
       sourceY,
-    });
+    }, stroke);
     changed = secondaryResult.changed || changed;
   }
-  if (changed) context.putImageData(image, left, top);
+  if (changed) {
+    context.putImageData(image, left, top);
+    noteCanvasWrite(target, left, top, width, height);
+  }
   return changed;
+};
+
+/**
+ * Dab positions along one segment. With a stroke's spacing state, dabs follow
+ * the configured spacing across pointer events (so a 5,000 px brush does not
+ * re-dab every pointermove); without one, both endpoints are stamped.
+ */
+const brushSegmentPositions = (
+  distance: number,
+  interval: number,
+  spacingState?: BrushSpacingState,
+) => {
+  if (spacingState) return spacedDabPositions(distance, interval, spacingState);
+  const steps = Math.max(1, Math.ceil(distance / interval));
+  return Array.from({ length: steps + 1 }, (_, step) => step / steps);
 };
 
 /** Stamp a line at bounded intervals so fast pointer moves remain continuous. */
@@ -1653,6 +2359,11 @@ const stampCanvasSegment = (
   options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY'> & {
     sourceAnchor?: { x: number; y: number };
     destinationAnchor?: { x: number; y: number };
+    spacingState?: BrushSpacingState;
+    /** Stamp a deferred first dab even without a direction (stroke end). */
+    flushDeferred?: boolean;
+    /** Paint Symmetry transforms (identity first); omitted paints one copy. */
+    symmetry?: readonly SymmetryAffine[];
   },
 ) => {
   const resolved = resolveBrushStamp({
@@ -1671,16 +2382,68 @@ const stampCanvasSegment = (
       flipY: options.flipY,
     }),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    steps = Math.max(
-      1,
-      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
-    );
+    interval = Math.max(1, resolved.size * resolved.spacing / 100);
   let changed = false;
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps,
-      x = from.x + (to.x - from.x) * t,
+  const direction = { x: to.x - from.x, y: to.y - from.y },
+    dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS,
+    state = options.spacingState,
+    // Perpendicular-only scatter has no direction for a stroke's first dab:
+    // hold it back and place it with the next segment's direction.
+    deferFirst = Boolean(state && !state.started && !options.sourceAnchor &&
+      deferFirstBrushDab(dynamics, options.scatter ?? 0, direction)),
+    positions = brushSegmentPositions(distance, interval, state);
+  const stampDabs = (x: number, y: number, dabDirection: { x: number; y: number }, sourceX?: number, sourceY?: number) => {
+    for (const dab of brushDabsAt({ x, y }, resolved.size, options.scatter ?? 0, dynamics, dabDirection)) {
+      if (options.symmetry && options.symmetry.length > 1) {
+        // Each copy is the geometric image of the already-jittered dab.
+        const size = dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
+          opacity = options.opacity * dab.opacityScale,
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          // Colour dynamics are resolved once per source dab and shared.
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
+        const sourceDab = {
+          x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
+        };
+        // Clone/Healing: the copy's transform also maps the source sample
+        // point, so the source offset turns or mirrors with the copy.
+        const copies: Array<SymmetryDab & { sourceX?: number; sourceY?: number }> =
+          sourceX !== undefined && sourceY !== undefined
+            ? symmetryCloneCopies(options.symmetry, sourceDab, { x: sourceX, y: sourceY })
+            : symmetryDabCopies(options.symmetry, sourceDab);
+        for (const copy of copies)
+          changed = stampCanvas(target, {
+            ...options, size, opacity, color, angle: copy.angle, flipX: copy.flipX, flipY: copy.flipY,
+            x: copy.x, y: copy.y, sourceX: copy.sourceX, sourceY: copy.sourceY,
+          }) || changed;
+        continue;
+      }
+      changed =
+        stampCanvas(target, {
+          ...options,
+          size: dab.sizeScale === 1 ? options.size : Math.max(1, options.size * dab.sizeScale),
+          angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          opacity: options.opacity * dab.opacityScale,
+          // Colour dynamics; dabs without colour offsets keep the exact colour.
+          color: options.color && brushDabColor(options.color, options.colorBackground, dab),
+          x: dab.x,
+          y: dab.y,
+          sourceX,
+          sourceY,
+        }) || changed;
+    }
+  };
+  if (state?.deferredFirst && (distance > 0 || options.flushDeferred)) {
+    const deferred = state.deferredFirst;
+    state.deferredFirst = undefined;
+    stampDabs(deferred.x, deferred.y, direction);
+  }
+  for (const [positionIndex, t] of positions.entries()) {
+    if (deferFirst && positionIndex === 0 && t === 0) {
+      state!.deferredFirst = { x: from.x, y: from.y };
+      continue;
+    }
+    const x = from.x + (to.x - from.x) * t,
       y = from.y + (to.y - from.y) * t,
-      scattered = scatterBrushPoint({ x, y }, resolved.size, options.scatter ?? 0),
       sourceX = options.sourceAnchor
         ? options.sourceAnchor.x +
           (x - (options.destinationAnchor?.x ?? from.x))
@@ -1689,14 +2452,68 @@ const stampCanvasSegment = (
         ? options.sourceAnchor.y +
           (y - (options.destinationAnchor?.y ?? from.y))
         : undefined;
-    changed =
-      stampCanvas(target, {
-        ...options,
-        x: scattered.x,
-        y: scattered.y,
-        sourceX,
-        sourceY,
+    // Count dabs per spacing step, each with deterministic scatter and jitter.
+    stampDabs(x, y, direction, sourceX, sourceY);
+  }
+  return changed;
+};
+
+/**
+ * Stroke Path with Brush: stamp pre-planned arc-length samples (see
+ * `src/strokePath.ts`) with the same dab renderer and brush dynamics as a
+ * pointer stroke. Simulated pressure arrives as per-sample size and opacity
+ * multipliers, so the stamp itself ignores pointer pressure.
+ */
+const stampStrokePathSamples = (
+  target: HTMLCanvasElement,
+  samples: readonly StrokePathSample[],
+  options: Omit<StampCanvasOptions, 'x' | 'y' | 'sourceX' | 'sourceY' | 'pointerType' | 'pressure'> & {
+    /** Paint Symmetry transforms (identity first); omitted paints one copy. */
+    symmetry?: readonly SymmetryAffine[];
+  },
+) => {
+  const dynamics = options.dynamics ?? DEFAULT_BRUSH_DYNAMICS,
+    { symmetry, ...stampOptions } = options;
+  let changed = false;
+  for (const sample of samples) {
+    const size = Math.max(1, options.size * sample.sizeScale),
+      opacity = options.opacity * sample.opacityScale;
+    if (opacity <= 0) continue;
+    for (const dab of brushDabsAt({ x: sample.x, y: sample.y }, size, options.scatter ?? 0, dynamics, sample.direction)) {
+      if (symmetry && symmetry.length > 1) {
+        // Same rule as a pointer stroke: every copy is the geometric image of
+        // the already-jittered dab and shares its colour dynamics.
+        const dabSize = dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
+          angle = dab.angleOffset === 0 ? (options.angle ?? 0) : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+          color = options.color && brushDabColor(options.color, options.colorBackground, dab);
+        for (const copy of symmetryDabCopies(symmetry, {
+          x: dab.x, y: dab.y, angle, flipX: options.flipX ?? false, flipY: options.flipY ?? false,
+        }))
+          changed = stampCanvas(target, {
+            ...stampOptions,
+            pointerType: 'mouse',
+            size: dabSize,
+            opacity: opacity * dab.opacityScale,
+            color,
+            angle: copy.angle,
+            flipX: copy.flipX,
+            flipY: copy.flipY,
+            x: copy.x,
+            y: copy.y,
+          }) || changed;
+        continue;
+      }
+      changed = stampCanvas(target, {
+        ...stampOptions,
+        pointerType: 'mouse',
+        size: dab.sizeScale === 1 ? size : Math.max(1, size * dab.sizeScale),
+        angle: dab.angleOffset === 0 ? options.angle : wrapBrushAngle((options.angle ?? 0) + dab.angleOffset),
+        opacity: opacity * dab.opacityScale,
+        color: options.color && brushDabColor(options.color, options.colorBackground, dab),
+        x: dab.x,
+        y: dab.y,
       }) || changed;
+    }
   }
   return changed;
 };
@@ -1724,6 +2541,13 @@ const patternCanvas = (
     tileSize: number;
     foreground: BrushColor;
     background: BrushColor;
+    /** Non-aligned strokes restart the tile phase at the stroke start. */
+    anchorX?: number;
+    anchorY?: number;
+    /** Selection-defined image tile replacing the procedural pattern. */
+    tile?: PatternTile;
+    strokeBuffers?: BrushStrokeBuffers;
+    strokeOpacity?: number;
   },
 ) => {
   const radius = resolveBrushStamp(options).radius,
@@ -1760,7 +2584,10 @@ const patternCanvas = (
       background: options.background,
       originX: left,
       originY: top,
-    });
+      anchorX: options.anchorX,
+      anchorY: options.anchorY,
+      tile: options.tile,
+    }, brushStrokeTarget(options.strokeBuffers, target, options.strokeOpacity ?? options.opacity, left, top));
   if (result.changed) context.putImageData(image, left, top);
   return result.changed;
 };
@@ -1769,17 +2596,16 @@ const patternCanvasSegment = (
   target: HTMLCanvasElement,
   from: { x: number; y: number },
   to: { x: number; y: number },
-  options: Omit<Parameters<typeof patternCanvas>[1], 'x' | 'y'>,
+  options: Omit<Parameters<typeof patternCanvas>[1], 'x' | 'y'> & {
+    spacingState?: BrushSpacingState;
+  },
 ) => {
   const resolved = resolveBrushStamp(options),
     distance = Math.hypot(to.x - from.x, to.y - from.y),
-    steps = Math.max(
-      1,
-      Math.ceil(distance / Math.max(1, resolved.size * resolved.spacing / 100)),
-    );
+    interval = Math.max(1, resolved.size * resolved.spacing / 100),
+    positions = brushSegmentPositions(distance, interval, options.spacingState);
   let changed = false;
-  for (let step = 0; step <= steps; step += 1) {
-    const t = step / steps;
+  for (const t of positions) {
     changed =
       patternCanvas(target, {
         ...options,
@@ -1815,8 +2641,12 @@ const redEyeCanvasSegment = (
       threshold: options.threshold,
       amount: options.amount,
     });
-  if (result.changed) context.putImageData(image, left, top);
-  return result.changed;
+  // removeRedEye never mutates its input: write the corrected copy back.
+  if (!result.changed) return false;
+  image.data.set(result.pixels);
+  context.putImageData(image, left, top);
+  noteCanvasWrite(target, left, top, width, height);
+  return true;
 };
 
 const redEyeCanvasStroke = (
@@ -1843,7 +2673,11 @@ const redEyeCanvasStroke = (
   return changed;
 };
 
-/** Apply one immutable tonal stroke to a canvas pair and publish the new pixels. */
+/**
+ * Apply one immutable tonal stroke to a canvas pair and publish the new
+ * pixels. Only the segment's window (its brush reach) is read and written, so
+ * a pointer move costs the brush area, not the whole layer.
+ */
 const tonalCanvasSegment = (
   source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
@@ -1860,59 +2694,144 @@ const tonalCanvasSegment = (
     spongeVibrance: number;
     selectionMask?: Uint8ClampedArray;
   },
-) => {
-  const sourceContext = source.getContext('2d')!,
-    destinationContext = destination.getContext('2d')!,
-    sourcePixels = sourceContext.getImageData(
-      0,
-      0,
-      source.width,
-      source.height,
-    ),
-    destinationPixels = destinationContext.getImageData(
-      0,
-      0,
-      destination.width,
-      destination.height,
-    );
-  const result =
-    options.mode === 'sponge'
-      ? applySpongeStroke(sourcePixels.data, destinationPixels.data, {
-          width: destination.width,
-          height: destination.height,
-          x1: from.x,
-          y1: from.y,
-          x2: to.x,
-          y2: to.y,
-          size: options.size,
-          hardness: options.hardness,
-          amount: options.spongeVibrance / 100,
-          flow: options.flow,
-          mode: options.spongeMode,
-          selectionMask: options.selectionMask,
-        })
-      : applyDodgeBurnStroke(sourcePixels.data, destinationPixels.data, {
-          width: destination.width,
-          height: destination.height,
-          x1: from.x,
-          y1: from.y,
-          x2: to.x,
-          y2: to.y,
-          size: options.size,
-          hardness: options.hardness,
-          exposure: options.exposure / 100,
-          flow: options.flow,
-          range: options.range,
-          mode: options.mode,
-          selectionMask: options.selectionMask,
-        });
-  destinationPixels.data.set(result.pixels);
-  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
-  return result.changed;
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.tonal(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return options.mode === 'sponge'
+        ? applySpongeStroke(sourcePixels!, destinationPixels, {
+            width,
+            height,
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            size: options.size,
+            hardness: options.hardness,
+            amount: options.spongeVibrance / 100,
+            flow: options.flow,
+            mode: options.spongeMode,
+            selectionMask,
+          })
+        : applyDodgeBurnStroke(sourcePixels!, destinationPixels, {
+            width,
+            height,
+            x1: a.x,
+            y1: a.y,
+            x2: b.x,
+            y2: b.y,
+            size: options.size,
+            hardness: options.hardness,
+            exposure: options.exposure / 100,
+            flow: options.flow,
+            range: options.range,
+            mode: options.mode,
+            selectionMask,
+          });
+    },
+    { source, selectionMask: options.selectionMask, tool: options.mode },
+  );
+
+/** Per-stroke Smudge engine state, fixed at pointer-down (see src/smudge.ts). */
+type SmudgeGestureState = {
+  stroke: SmudgeStroke;
+  /** Last applied point (layer space) with its pressure. */
+  last?: SmudgePoint;
+  tip: SmudgeTip;
+  apply: Omit<SmudgeApplyOptions, 'selectionMask'>;
+  symmetry?: readonly SymmetryAffine[];
 };
 
-/** Apply one immutable Smudge segment and publish the preview pixels. */
+/**
+ * Apply one Smudge segment to the gesture buffer. Dabs are planned first (the
+ * carried paint lives in `state`), then only the window around them is read
+ * and written; a Sample All Layers composite is read in place.
+ */
 const smudgeCanvasSegment = (
+  destination: HTMLCanvasElement,
+  from: SmudgePoint,
+  to: SmudgePoint,
+  state: SmudgeGestureState,
+  selectionMask?: Uint8ClampedArray,
+) => {
+  const dabs = planSmudgeSegment(state.stroke, from, to, state.tip, state.symmetry);
+  if (!dabs.length) return false;
+  return windowedCanvasStroke(
+    destination,
+    strokeWindow(dabs, smudgeDabReach(state.stroke), destination.width, destination.height),
+    ({ destination: pixels, selectionMask: mask, rect }) => ({
+      pixels,
+      changed: applySmudgeDabs(
+        state.stroke,
+        dabs,
+        { data: pixels, width: rect.width, height: rect.height, x: rect.x, y: rect.y },
+        { ...state.apply, selectionMask: mask },
+      ),
+    }),
+    { selectionMask, tool: 'smudge' },
+  );
+};
+
+/**
+ * Render the visible composite (optionally without adjustment layers) into
+ * a layer's local pixel space for Smudge's Sample All Layers.
+ */
+const smudgeCompositeSample = async (
+  frame: Frame,
+  layer: Layer,
+  assets: Assets,
+  width: number,
+  height: number,
+  ignoreAdjustments: boolean,
+): Promise<RasterView> => {
+  const rendered = await renderFrame(
+      ignoreAdjustments ? { ...frame, layers: frame.layers.filter((item) => item.kind !== 'adjustment') } : frame,
+      assets,
+    ),
+    local = surface(width, height),
+    context = local.getContext('2d')!,
+    inverse = invertAffine(layer.matrix as unknown as SymmetryAffine);
+  if (inverse) {
+    context.imageSmoothingEnabled = false;
+    context.setTransform(inverse[0], inverse[1], inverse[2], inverse[3], inverse[4], inverse[5]);
+    context.drawImage(rendered, 0, 0);
+  }
+  return { data: context.getImageData(0, 0, width, height).data, width, height, x: 0, y: 0 };
+};
+
+/**
+ * Clone/Healing Sample Current & Below or All Layers: the visible composite
+ * of the bottom layers up to and including `layer` (or of every layer),
+ * rendered into the layer's local pixel space.
+ */
+const compositeSampleCanvas = async (
+  frame: Frame,
+  layer: Layer,
+  assets: Assets,
+  width: number,
+  height: number,
+  sample: 'below' | 'all',
+): Promise<HTMLCanvasElement> => {
+  const index = frame.layers.findIndex((item) => item.id === layer.id),
+    rendered = await renderFrame(
+      sample === 'below' && index >= 0 ? { ...frame, layers: frame.layers.slice(0, index + 1) } : frame,
+      assets,
+    ),
+    local = surface(width, height),
+    context = local.getContext('2d')!,
+    inverse = invertAffine(layer.matrix as unknown as SymmetryAffine);
+  if (inverse) {
+    context.imageSmoothingEnabled = false;
+    context.setTransform(inverse[0], inverse[1], inverse[2], inverse[3], inverse[4], inverse[5]);
+    context.drawImage(rendered, 0, 0);
+  }
+  return local;
+};
+
+/** Apply one immutable Blur or Sharpen segment to the gesture buffer (windowed). */
+const retouchCanvasSegment = (
   source: HTMLCanvasElement,
   destination: HTMLCanvasElement,
   from: { x: number; y: number },
@@ -1921,38 +2840,101 @@ const smudgeCanvasSegment = (
     size: number;
     hardness: number;
     flow: number;
+    mode: 'blur' | 'sharpen';
     selectionMask?: Uint8ClampedArray;
   },
-) => {
-  const sourceContext = source.getContext('2d')!,
-    destinationContext = destination.getContext('2d')!,
-    sourcePixels = sourceContext.getImageData(
-      0,
-      0,
-      source.width,
-      source.height,
-    ),
-    destinationPixels = destinationContext.getImageData(
-      0,
-      0,
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow([from, to], strokeWindowReach.retouch(options.size), destination.width, destination.height),
+    ({ source: sourcePixels, destination: destinationPixels, selectionMask, rect, width, height }) => {
+      const a = windowPoint(from, rect), b = windowPoint(to, rect);
+      return applyRetouchStroke(sourcePixels!, destinationPixels, {
+        width,
+        height,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        size: options.size,
+        hardness: options.hardness,
+        flow: options.flow,
+        mode: options.mode,
+        selectionMask,
+      });
+    },
+    { source, selectionMask: options.selectionMask, tool: options.mode },
+  );
+
+/**
+ * Apply Mixer Brush, History Brush or Art History Brush dabs at `points` to
+ * the gesture buffer, reading the stroke-source pixels only inside the dabs'
+ * window. Returns whether the buffer changed.
+ */
+const mixerHistoryCanvasDabs = (
+  tool: 'mixer-brush' | 'history-brush' | 'art-history-brush',
+  sourcePixels: Uint8ClampedArray,
+  destination: HTMLCanvasElement,
+  points: readonly BrushStrokePoint[],
+  settings: MixerBrushSettings | HistoryBrushSettings | ArtHistoryBrushSettings,
+  selectionMask?: Uint8ClampedArray,
+  mixerState?: MixerBrushState,
+) =>
+  windowedCanvasStroke(
+    destination,
+    strokeWindow(
+      points,
+      tool === 'art-history-brush'
+        ? strokeWindowReach.artHistory(settings.size, (settings as ArtHistoryBrushSettings).style)
+        : strokeWindowReach.mixer(settings.size),
       destination.width,
       destination.height,
     ),
-    result = applySmudgeStroke(sourcePixels.data, destinationPixels.data, {
-      width: destination.width,
-      height: destination.height,
-      x1: from.x,
-      y1: from.y,
-      x2: to.x,
-      y2: to.y,
-      size: options.size,
-      hardness: options.hardness,
-      flow: options.flow,
-      selectionMask: options.selectionMask,
-    });
-  destinationPixels.data.set(result.pixels);
-  if (result.changed) destinationContext.putImageData(destinationPixels, 0, 0);
-  return result.changed;
+    ({ source, destination: pixels, selectionMask: mask, rect, width, height }) => {
+      const local = points.map((point) => windowPoint(point, rect));
+      return {
+        pixels: tool === 'mixer-brush'
+          ? applyMixerBrushPixels(pixels, source!, width, height, local, settings as MixerBrushSettings, mask, mixerState)
+          : tool === 'history-brush'
+          ? applyHistoryBrushPixels(pixels, source!, width, height, local, settings as HistoryBrushSettings, mask)
+          : applyArtHistoryBrushPixels(pixels, source!, width, height, local, settings as ArtHistoryBrushSettings, mask),
+      };
+    },
+    { source: sourcePixels, selectionMask, tool },
+  );
+
+/**
+ * Smudge counterpart of `stampStrokePathSamples`: drag carried paint along
+ * each contour exactly like a pointer Smudge stroke (one stroke state per
+ * contour). Simulated pressure scales the dab size and Strength.
+ */
+const smudgeStrokePathSamples = (
+  destination: HTMLCanvasElement,
+  samples: readonly StrokePathSample[],
+  state: Omit<SmudgeGestureState, 'stroke'>,
+  selectionMask?: Uint8ClampedArray,
+) => {
+  const width = destination.width, height = destination.height,
+    context = destination.getContext('2d')!,
+    image = context.getImageData(0, 0, width, height),
+    view: RasterView = { data: image.data, width, height, x: 0, y: 0 };
+  let changed = false, stroke: SmudgeStroke | undefined, contour = -1;
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index];
+    if (sample.contour !== contour || !stroke) {
+      contour = sample.contour;
+      stroke = createSmudgeStroke({ size: state.tip.size, copies: state.symmetry?.length ?? 1 });
+    }
+    const previous = index > 0 && samples[index - 1].contour === contour ? samples[index - 1] : sample,
+      point = (item: StrokePathSample): SmudgePoint => ({
+        x: item.x, y: item.y, sizeScale: item.sizeScale, strengthScale: item.opacityScale,
+      }),
+      dabs = planSmudgeSegment(stroke, point(previous), point(sample), state.tip, state.symmetry);
+    if (dabs.length)
+      changed = applySmudgeDabs(stroke, dabs, view, { ...state.apply, selectionMask }) || changed;
+  }
+  if (changed) context.putImageData(image, 0, 0);
+  return changed;
 };
 
 /**
@@ -1961,6 +2943,307 @@ const smudgeCanvasSegment = (
  * selection once at pointer-down keeps every subsequent segment clipped to
  * the same feathered/inverted selection even when the layer is transformed.
  */
+/** Keep an edit only inside the selection mask (layer pixel space). */
+const confineToSelection = (
+  original: HTMLImageElement | HTMLCanvasElement,
+  edited: HTMLCanvasElement,
+  mask: Uint8ClampedArray,
+) => {
+  const width = edited.width, height = edited.height;
+  const base = surface(width, height), baseContext = base.getContext('2d')!;
+  baseContext.drawImage(original, 0, 0);
+  const editedContext = edited.getContext('2d')!;
+  const mixed = mixByMask(
+    baseContext.getImageData(0, 0, width, height).data,
+    editedContext.getImageData(0, 0, width, height).data,
+    mask,
+  );
+  const image = editedContext.createImageData(width, height);
+  image.data.set(mixed);
+  editedContext.putImageData(image, 0, 0);
+};
+/**
+ * A brush-family stroke confined by the active selection. Dabs land on `raw`
+ * exactly as they would without a selection; each touched rectangle is then
+ * blended over the stroke-start pixels by the selection coverage into the
+ * visible buffer, so the preview and the committed asset are identical and a
+ * feathered edge receives proportional paint however often it is overpainted.
+ */
+type SelectionStroke = {
+  raw: HTMLCanvasElement;
+  original: Uint8ClampedArray;
+  mask: Uint8ClampedArray;
+};
+const beginSelectionStroke = (
+  buffer: HTMLCanvasElement,
+  mask: Uint8ClampedArray | undefined,
+): SelectionStroke | undefined => {
+  if (!mask) return undefined;
+  if (mask.length !== buffer.width * buffer.height)
+    throw new Error('Selection mask does not match the paint buffer');
+  const raw = surface(buffer.width, buffer.height);
+  raw.getContext('2d')!.drawImage(buffer, 0, 0);
+  return {
+    raw,
+    original: buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+    mask,
+  };
+};
+/**
+ * Copy one confined rectangle of the raw stroke into the visible buffer and
+ * report whether the visible pixels changed.
+ */
+const confineStrokeRect = (
+  stroke: SelectionStroke,
+  target: HTMLCanvasElement,
+  rect: PixelRect | null,
+) => {
+  if (!rect) return false;
+  const image = stroke.raw
+      .getContext('2d')!
+      .getImageData(rect.x, rect.y, rect.width, rect.height),
+    targetContext = target.getContext('2d')!,
+    before = targetContext.getImageData(rect.x, rect.y, rect.width, rect.height).data,
+    mixed = mixRectByMask(stroke.original, image.data, stroke.mask, target.width, rect);
+  let changed = false;
+  for (let index = 0; index < mixed.length && !changed; index += 1)
+    changed = mixed[index] !== before[index];
+  if (!changed) return false;
+  image.data.set(mixed);
+  targetContext.putImageData(image, rect.x, rect.y);
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
+  return true;
+};
+/** Frame-space selection coverage (alpha) for edits stored at canvas size. */
+const frameSelectionMask = async (
+  selection: Frame['selection'],
+  frame: Frame,
+  assets: Assets,
+): Promise<Uint8ClampedArray | undefined> => {
+  if (!selection) return undefined;
+  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
+    data = rendered.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
+    mask = new Uint8ClampedArray(frame.w * frame.h);
+  for (let pixel = 0; pixel < mask.length; pixel += 1) mask[pixel] = data[pixel * 4 + 3];
+  return mask;
+};
+/**
+ * Run one stroke segment of a buffer-based paint or retouch tool, confined to
+ * the selection when one was active at pointer-down. `draw` edits the canvas
+ * it is given and must not change pixels further than `reach` from the
+ * from→to segment. Without a selection it simply draws on the gesture buffer.
+ */
+const confinedGestureEdit = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  reach: number,
+  draw: (target: HTMLCanvasElement) => boolean,
+) => {
+  const buffer = g.buffer!, stroke = g.selectionStroke;
+  if (g.blendStroke) {
+    const changed = draw(g.blendStroke.paint);
+    if (changed)
+      blendStrokeRect(g.blendStroke, buffer, stroke?.mask, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
+    return changed;
+  }
+  if (!stroke) return draw(buffer);
+  const changed = draw(stroke.raw);
+  if (changed)
+    confineStrokeRect(stroke, buffer, brushSegmentRect(from, to, reach, buffer.width, buffer.height));
+  return changed;
+};
+/**
+ * Brush/Pencil stroke in a non-Normal blend mode (see `src/brushBlend.ts`).
+ * Dabs land on the transparent `paint` canvas with the ordinary source-over
+ * dab arithmetic, so they build coverage like Normal and never blend against
+ * each other; each touched rectangle of the visible buffer is recomposited as
+ * `original ⊕mode paint` (then confined by the selection, if any). The preview
+ * and the commit both read that buffer, so they are identical. Normal strokes
+ * never create one and keep stamping straight onto the buffer.
+ */
+type BrushBlendStroke = {
+  paint: HTMLCanvasElement;
+  original: Uint8ClampedArray;
+  mode: BrushBlendMode;
+};
+const beginBrushBlendStroke = (
+  buffer: HTMLCanvasElement,
+  tool: string,
+  mode: BrushBlendMode,
+  selection: SelectionStroke | undefined,
+): BrushBlendStroke | undefined => {
+  if (!usesBrushBlendStroke(tool, mode)) return undefined;
+  return {
+    paint: surface(buffer.width, buffer.height),
+    original: selection?.original ??
+      buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+    mode,
+  };
+};
+/** Recomposite one rectangle of a blend-mode stroke into the visible buffer. */
+const blendStrokeRect = (
+  stroke: BrushBlendStroke,
+  target: HTMLCanvasElement,
+  mask: Uint8ClampedArray | undefined,
+  rect: PixelRect | null,
+) => {
+  if (!rect) return false;
+  const image = stroke.paint
+      .getContext('2d')!
+      .getImageData(rect.x, rect.y, rect.width, rect.height),
+    targetContext = target.getContext('2d')!,
+    before = targetContext.getImageData(rect.x, rect.y, rect.width, rect.height).data,
+    composed = compositeBrushBlendRect(stroke.original, image.data, target.width, rect, stroke.mode, mask);
+  let changed = false;
+  for (let index = 0; index < composed.length && !changed; index += 1)
+    changed = composed[index] !== before[index];
+  if (!changed) return false;
+  image.data.set(composed);
+  targetContext.putImageData(image, rect.x, rect.y);
+  // Report the write so a tracked gesture buffer commits these tiles.
+  noteCanvasWrite(target, rect.x, rect.y, rect.width, rect.height);
+  return true;
+};
+/**
+ * Stamp a Brush/Pencil/Eraser/Clone/Healing segment into the gesture buffer,
+ * confined to the selection when one was active at pointer-down. Without a
+ * selection this is exactly `stampCanvasSegment` on the buffer.
+ */
+const stampGestureSegment = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  strokeOptions: Parameters<typeof stampCanvasSegment>[3],
+) => {
+  // One stroke buffer set per gesture caps the stroke at its Opacity.
+  const options = {
+      ...strokeOptions,
+      strokeBuffers: g.strokeBuffers ??= new WeakMap(),
+      strokeOpacity: strokeOptions.strokeOpacity ?? strokeOptions.opacity,
+    },
+    reach = brushStampReach(options.size, options.scatter),
+    symmetry = g.paintSymmetry;
+  if (!symmetry || symmetry.length < 2)
+    return confinedGestureEdit(g, from, to, reach, (target) =>
+      stampCanvasSegment(target, from, to, options));
+  // Paint Symmetry: every copy lands on the same buffer (or raw selection
+  // stroke); the confined region is each copy's transformed segment.
+  const draw = (target: HTMLCanvasElement) =>
+      stampCanvasSegment(target, from, to, { ...options, symmetry }),
+    buffer = g.buffer!,
+    stroke = g.selectionStroke,
+    blend = g.blendStroke;
+  if (!stroke && !blend) return draw(buffer);
+  const changed = draw(blend ? blend.paint : stroke!.raw);
+  if (changed)
+    for (const transform of symmetry) {
+      const rect = brushSegmentRect(
+        applyAffine(transform, from), applyAffine(transform, to),
+        reach * Math.max(1, affineMaxScale(transform)), buffer.width, buffer.height);
+      if (blend) blendStrokeRect(blend, buffer, stroke?.mask, rect);
+      else confineStrokeRect(stroke!, buffer, rect);
+    }
+  return changed;
+};
+/**
+ * Paint a finished Silk strands stroke into the gesture buffer (each Paint
+ * Symmetry copy too), confined to the selection and composited in the brush
+ * blend mode exactly like ordinary dabs. Returns whether anything was drawn.
+ */
+const paintGestureStrands = (
+  g: Gesture,
+  strands: readonly Strand[],
+  color: string,
+  opacity: number,
+) => {
+  const bounds = strandBounds(strands);
+  if (!bounds || !g.buffer || opacity <= 0) return false;
+  const copies: readonly SymmetryAffine[] =
+      g.paintSymmetry && g.paintSymmetry.length > 1 ? g.paintSymmetry : [IDENTITY_AFFINE],
+    buffer = g.buffer,
+    stroke = g.selectionStroke,
+    blend = g.blendStroke,
+    target = blend ? blend.paint : stroke ? stroke.raw : buffer,
+    context = target.getContext('2d')!;
+  for (const copy of copies) {
+    context.save();
+    context.transform(copy[0], copy[1], copy[2], copy[3], copy[4], copy[5]);
+    drawStrands(context, strands, color, opacity);
+    context.restore();
+  }
+  for (const copy of copies) {
+    const corners = [
+      applyAffine(copy, { x: bounds.x, y: bounds.y }),
+      applyAffine(copy, { x: bounds.x + bounds.width, y: bounds.y }),
+      applyAffine(copy, { x: bounds.x, y: bounds.y + bounds.height }),
+      applyAffine(copy, { x: bounds.x + bounds.width, y: bounds.y + bounds.height }),
+    ];
+    const rect = brushSegmentRect(
+      { x: Math.min(...corners.map((c) => c.x)), y: Math.min(...corners.map((c) => c.y)) },
+      { x: Math.max(...corners.map((c) => c.x)), y: Math.max(...corners.map((c) => c.y)) },
+      2, buffer.width, buffer.height);
+    if (blend) blendStrokeRect(blend, buffer, stroke?.mask, rect);
+    else if (stroke) confineStrokeRect(stroke, buffer, rect);
+    // Straight onto the buffer: report the touched area for the dirty-tile commit.
+    else if (rect) noteCanvasWrite(buffer, rect.x, rect.y, rect.width, rect.height);
+  }
+  return true;
+};
+/** Path samples the live Silk strands preview uses at most per redraw. */
+const STRAND_PREVIEW_MAX_SAMPLES = 1200;
+/** CSS blend for the Silk strands overlay so the preview matches the brush mode. */
+const STRAND_PREVIEW_CSS_BLENDS = new Set([
+  'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn',
+  'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity',
+]);
+const strandPreviewBlend = (mode: BrushBlendMode): React.CSSProperties['mixBlendMode'] =>
+  STRAND_PREVIEW_CSS_BLENDS.has(mode) ? (mode as React.CSSProperties['mixBlendMode']) : 'normal';
+/** Pattern Stamp counterpart of `stampGestureSegment`. */
+const patternGestureSegment = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof patternCanvasSegment>[3],
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
+    patternCanvasSegment(target, from, to, {
+      ...options,
+      strokeBuffers: g.strokeBuffers ??= new WeakMap(),
+      strokeOpacity: options.strokeOpacity ?? options.opacity,
+    }));
+/** Red Eye counterpart of `stampGestureSegment`. */
+const redEyeGestureStroke = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: Parameters<typeof redEyeCanvasStroke>[3],
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.radius * 2), (target) =>
+    redEyeCanvasStroke(target, from, to, options));
+/**
+ * Color Replacement and Background Eraser read the stroke-start pixels from
+ * `g.source` and write to the gesture buffer, confined like the stamps above.
+ */
+const sampledGestureStroke = (
+  g: Gesture,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  options: { size: number; tolerance: number; opacity: number } & (
+    | { kind: 'replace'; color: string }
+    | { kind: 'background-erase' }
+  ),
+) =>
+  confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
+    options.kind === 'replace'
+      ? replaceColorStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
+        options.color, options.size, options.tolerance, options.opacity, {
+          mode: g.colorReplace?.colorReplaceMode,
+          sampling: g.colorReplace?.colorReplaceSampling,
+          limits: g.colorReplace?.colorReplaceLimits,
+        })
+      : eraseBackgroundStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
+        options.size, options.tolerance, options.opacity));
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
   frame: Frame,
@@ -1990,6 +3273,24 @@ const selectionMaskForLayer = async (
         mask[y * width + x] = frameData[(frameY * frame.w + frameX) * 4 + 3];
     }
   return mask;
+};
+/**
+ * Sample the active selection in the layer's pixel space and prepare the
+ * confined stroke over `buffer` (the stroke-start layer pixels). Without a
+ * selection the result is empty and the stroke stays unconfined. Callers
+ * assign the fields only once the gesture is still current.
+ */
+const prepareGestureSelection = async (
+  buffer: HTMLCanvasElement,
+  frame: Frame,
+  layer: Extract<Layer, { kind: 'raster' }>,
+  assets: Assets,
+): Promise<Pick<Gesture, 'selectionMask' | 'selectionStroke'>> => {
+  if (!frame.selection) return {};
+  const selectionMask = await selectionMaskForLayer(
+    frame.selection, frame, layer, assets, buffer.width, buffer.height,
+  );
+  return { selectionMask, selectionStroke: beginSelectionStroke(buffer, selectionMask) };
 };
 
 function readToolbarPreferences() {
@@ -2075,6 +3376,8 @@ export default function Home() {
     selectionFile = useRef<HTMLInputElement>(null),
     batchImageFile = useRef<HTMLInputElement>(null),
     quickMaskOverlayCanvas = useRef<HTMLCanvasElement>(null),
+    strandOverlay = useRef<HTMLCanvasElement>(null),
+    strandOverlayClear = useRef<{ timer: number; revision: number } | null>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
     menuButtonRefs = useRef<Record<MenuName, HTMLButtonElement | null>>(
@@ -2088,7 +3391,9 @@ export default function Home() {
       {} as Record<MenuName, 'first' | 'last' | undefined>,
     ),
     commandDisabledRef = useRef<Record<string, boolean>>({}),
-    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new');
+    smartObjectAction = useRef<'new' | 'replace' | 'replace-fit'>('new'),
+    // History entry created by the current curve-point drag (see setCurve).
+    curveGestureFrame = useRef<Frame | null>(null);
   const [notice, setNotice] = useState('Ready'),
     [ready, setReady] = useState(false),
     [name, setName] = useState('coastline-edit');
@@ -2096,6 +3401,8 @@ export default function Home() {
     {
       canvas,
       assets,
+      audio: audioClips,
+      addAudioClip,
       history,
       index,
       frame,
@@ -2104,13 +3411,20 @@ export default function Home() {
       tiledTelemetry,
       tiledProgress,
       tiledCacheBudget,
-      commit,
+      historyBudget,
+      commit: commitDocument,
       install,
       select,
       setLayerSelection,
       travel,
       paint,
+      schedulePaint,
     } = doc;
+  // The status bar reports a render only once it has run for a moment, and
+  // keeps reporting while back-to-back stroke previews follow each other, so
+  // sub-frame renders do not flicker "Rendering… / Render ready". The canvas
+  // `data-rendering` attribute and the shell's aria-busy stay exact.
+  const renderStatusBusy = useDelayedFlag(doc.rendering, RENDER_STATUS_SHOW_DELAY_MS, RENDER_STATUS_HIDE_DELAY_MS);
   // A render can outlive the React event that started it. Keep a mutable
   // revision mirror so async layer commands can reject stale ownership even
   // before a new render paints its replacement frame.
@@ -2136,7 +3450,8 @@ export default function Home() {
       useState<HTMLButtonElement | null>(null),
     [selectionOperation, setSelectionOperation] =
       useState<SelectionOperation>('replace'),
-    [zoom, setZoom] = useState(72),
+    // True pixel zoom: 100 = one image pixel per CSS pixel.
+    [viewZoom, setViewZoomState] = useState(100),
     [viewRotation, setViewRotation] = useState(0),
     [screenMode, setScreenMode] = useState<ScreenMode>(() => {
       if (typeof window === 'undefined') return 'standard';
@@ -2152,13 +3467,20 @@ export default function Home() {
     [backgroundColor, setBackgroundColor] = useState('#ffffff'),
     [size, setSize] = useState(18),
     [brushOpacity, setBrushOpacity] = useState(100),
+    [brushBlendMode, setBrushBlendMode] = useState<BrushBlendMode>(BRUSH_BLEND_DEFAULT),
     [hardness, setHardness] = useState(100),
     [pressureSize, setPressureSize] = useState(false),
     [pressureOpacity, setPressureOpacity] = useState(false),
     [pressureCurve, setPressureCurve] = useState<BrushPressureCurve>('linear'),
     [brushPreset, setBrushPreset] = useState<BrushPresetId>('round-hard'),
-    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>([]),
+    // Saved brush presets start from this device's library (localStorage).
+    [customBrushPresets, setCustomBrushPresets] = useState<CustomBrushPreset[]>(() => readStoredBrushPresets(browserPresetStorage())),
+    [selectedBrushLibraryId, setSelectedBrushLibraryId] = useState(''),
+    [toolPresets, setToolPresets] = useState<ToolPreset[]>(() => readStoredToolPresets(browserPresetStorage())),
+    [appliedToolPresets, setAppliedToolPresets] = useState<Partial<Record<PresetTool, string>>>({}),
     [customPatternPresets, setCustomPatternPresets] = useState<CustomPatternPreset[]>([]),
+    [imagePatterns, setImagePatterns] = useState<ImagePattern[]>([]),
+    [retouchOptions, setRetouchOptions] = useState<RetouchOptions>(() => ({ ...DEFAULT_RETOUCH_OPTIONS })),
     [customShapePresets, setCustomShapePresets] = useState<CustomShapePreset[]>([]),
     [customPathPresets, setCustomPathPresets] = useState<CustomPathPreset[]>([]),
     [selectedCustomShapePresetId, setSelectedCustomShapePresetId] = useState(''),
@@ -2166,9 +3488,16 @@ export default function Home() {
     [polygonVariant, setPolygonVariant] = useState<ParametricShapeVariant>('polygon'),
     [polygonSides, setPolygonSides] = useState(5),
     [polygonInnerRadius, setPolygonInnerRadius] = useState(0.5),
+    [shapeCornerRadius, setShapeCornerRadius] = useState(16),
+    [customShapeId, setCustomShapeId] = useState<string>(DEFAULT_CUSTOM_SHAPE_ID),
+    [shapeAppearance, setShapeAppearance] = useState<ShapeAppearanceSettings>(() => ({ ...DEFAULT_SHAPE_APPEARANCE })),
+    [penOptions, setPenOptions] = useState<PenOptions>(() => ({ ...DEFAULT_PEN_OPTIONS })),
     [brushSpacing, setBrushSpacing] = useState(BRUSH_DEFAULT_SPACING),
     [brushSmoothing, setBrushSmoothing] = useState(BRUSH_SMOOTHING_DEFAULT),
     [brushScatter, setBrushScatter] = useState(BRUSH_SCATTER_DEFAULT),
+    [brushDynamics, setBrushDynamics] = useState<BrushDynamics>(() => ({ ...DEFAULT_BRUSH_DYNAMICS })),
+    [brushStrands, setBrushStrands] = useState<BrushStrandSettings>(() => ({ ...DEFAULT_BRUSH_STRANDS })),
+    [paintSymmetry, setPaintSymmetry] = useState<PaintSymmetrySettings>(() => ({ ...DEFAULT_PAINT_SYMMETRY })),
     [brushTexture, setBrushTexture] = useState(BRUSH_TEXTURE_DEFAULT),
     [brushDual, setBrushDual] = useState(BRUSH_DUAL_DEFAULT),
     [brushBristle, setBrushBristle] = useState(BRUSH_BRISTLE_DEFAULT),
@@ -2176,13 +3505,15 @@ export default function Home() {
     [brushBuildUp, setBrushBuildUp] = useState(BRUSH_BUILD_UP_DEFAULT),
     [secondaryBrushPreset, setSecondaryBrushPreset] = useState<SecondaryBrushPreset>('none'),
     [brushFlow, setBrushFlow] = useState(100),
-    [gradientMode, setGradientMode] = useState<'linear' | 'radial' | 'reflected'>('linear'),
+    [gradientMode, setGradientMode] = useState<GradientType>('linear'),
     [gradientEnd, setGradientEnd] = useState<'transparent' | 'background'>('transparent'),
     [gradientMidpoint, setGradientMidpoint] = useState('none'),
     [gradientMidpointPosition, setGradientMidpointPosition] = useState(50),
     [gradientReverse, setGradientReverse] = useState(false),
     [gradientDither, setGradientDither] = useState(GRADIENT_DITHER_DEFAULT),
     [gradientNoise, setGradientNoise] = useState(GRADIENT_NOISE_DEFAULT),
+    [gradientBlend, setGradientBlend] = useState<GradientBlendMode>(GRADIENT_BLEND_DEFAULT),
+    [gradientOpacity, setGradientOpacity] = useState(GRADIENT_OPACITY_DEFAULT),
     [gradientStops, setGradientStops] = useState<GradientStop[]>([]),
     [brushAngle, setBrushAngle] = useState(BRUSH_DEFAULT_ANGLE),
     [brushRoundness, setBrushRoundness] = useState(BRUSH_DEFAULT_ROUNDNESS),
@@ -2193,11 +3524,16 @@ export default function Home() {
     [redEyeThreshold, setRedEyeThreshold] = useState(36),
     [redEyeAmount, setRedEyeAmount] = useState(100),
     [colorTolerance, setColorTolerance] = useState(24),
+    [colorRegion, setColorRegion] = useState<ColorRegionSettings>(DEFAULT_COLOR_REGION_SETTINGS),
+    [marqueeOptions, setMarqueeOptions] = useState<MarqueeOptions>(DEFAULT_MARQUEE_OPTIONS),
     [tonalExposure, setTonalExposure] = useState(50),
     [tonalRange, setTonalRange] = useState<TonalRange>('midtones'),
     [spongeMode, setSpongeMode] = useState<SpongeMode>('saturate'),
     [spongeVibrance, setSpongeVibrance] = useState(50),
     [mixerBrush, setMixerBrush] = useState<MixerBrushSettings>({ ...DEFAULT_MIXER_BRUSH }),
+    // Adjustment Brush paints the adjustment in (reveal) or out (conceal); Alt flips it per stroke.
+    [adjustmentBrushMode, setAdjustmentBrushMode] = useState<'reveal' | 'conceal'>('reveal'),
+    [smudgeSettings, setSmudgeSettings] = useState<SmudgeSettings>(() => ({ ...DEFAULT_SMUDGE_SETTINGS })),
     [historyBrush, setHistoryBrush] = useState<HistoryBrushSettings>({ ...DEFAULT_HISTORY_BRUSH }),
     [artHistoryBrush, setArtHistoryBrush] = useState<ArtHistoryBrushSettings>({ ...DEFAULT_ART_HISTORY_BRUSH }),
     [historySourceIndex, setHistorySourceIndex] = useState<number | undefined>(undefined),
@@ -2208,16 +3544,190 @@ export default function Home() {
     ),
     [text, setText] = useState('Your text'),
     [fontSize, setFontSize] = useState(56),
-    [fontFamily, setFontFamily] = useState<(typeof FONTS)[number]>('Arial'),
+    [fontFamily, setFontFamily] = useState<string>('Arial'),
+    [glyphsOpen, setGlyphsOpen] = useState(false),
     [fontPreviewSize, setFontPreviewSize] = useState<FontPreviewSize>(DEFAULT_FONT_PREVIEW_SIZE),
     [missingFontsOpen, setMissingFontsOpen] = useState(false),
-    [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined);
+    [defaultTypeStyle, setDefaultTypeStyle] = useState<TypeStyle | undefined>(undefined),
+    [typeDefaults, setTypeDefaults] = useState<{ bold: boolean; textAlign: 'left' | 'center' | 'right'; antiAlias: TextAntiAlias }>({ bold: false, textAlign: 'left', antiAlias: 'smooth' }),
+    [typePanelsOpen, setTypePanelsOpen] = useState({ character: true, paragraph: false }),
+    [typePresets, setTypePresets] = useState<TypePreset[]>(() => {
+      try {
+        return typeof localStorage === 'undefined' ? [] : parseTypePresets(localStorage.getItem(TYPE_PRESETS_STORAGE_KEY));
+      } catch {
+        return [];
+      }
+    });
   const [metadata, setMetadata] = useState<DocumentMetadata>({
     ...DEFAULT_DOCUMENT_METADATA,
   });
+  // Properties sidebar: collapsible registered sections, and auto-scroll to
+  // the section a user activation targets. See
+  // docs/sidebar-autoscroll-contract.md for the full behaviour contract.
+  const inspectorRef = useRef<HTMLElement | null>(null);
+  const sidebarAnnouncerRef = useRef<HTMLDivElement | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<ReadonlySet<SidebarSectionId>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      return new Set(parseCollapsedSections(window.localStorage.getItem(COLLAPSED_SECTIONS_STORAGE_KEY)));
+    } catch {
+      return new Set();
+    }
+  });
+  const updateSidebarSectionCollapsed = useCallback(
+    (section: SidebarSectionId, collapsed: (wasCollapsed: boolean) => boolean) => {
+      setCollapsedSections((current) => {
+        const next = collapsed(current.has(section));
+        if (current.has(section) === next) return current;
+        const updated = new Set(current);
+        if (next) updated.add(section);
+        else updated.delete(section);
+        try {
+          window.localStorage.setItem(COLLAPSED_SECTIONS_STORAGE_KEY, serializeCollapsedSections(updated));
+        } catch { /* private mode */ }
+        return updated;
+      });
+    },
+    [],
+  );
+  const toggleSidebarSection = useCallback(
+    (section: SidebarSectionId) => updateSidebarSectionCollapsed(section, (was) => !was),
+    [updateSidebarSectionCollapsed],
+  );
+  const expandSidebarSection = useCallback(
+    (section: SidebarSectionId) => updateSidebarSectionCollapsed(section, () => false),
+    [updateSidebarSectionCollapsed],
+  );
+  // Contextual sidebar (docs/contextual-sidebar-contract.md): the tool
+  // options area shows only the active tool's sections; large panels open one
+  // at a time from the "More panels" strip, remembered per tool per device.
+  const toolOptionsAreaRef = useRef<HTMLElement | null>(null);
+  const [openPanels, setOpenPanels] = useState<OpenPanels>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      return parseOpenPanels(window.localStorage.getItem(OPEN_PANELS_STORAGE_KEY));
+    } catch {
+      return {};
+    }
+  });
+  // The panel the user last chose; it stays open across tool switches until
+  // a tool has its own remembered choice.
+  const [carriedPanel, setCarriedPanel] = useState<SidebarPanelId | null>(null);
+  const [propertiesSheetOpen, setPropertiesSheetOpen] = useState(true);
+  const openSidebarPanel = openPanelForTool(openPanels, tool, carriedPanel);
+  const activeToolLabel = TOOLS.find((item) => item.id === tool)?.label ?? tool;
+  /** Open `panel` (or close every panel with null) for the active tool. */
+  const chooseSidebarPanel = (panel: SidebarPanelId | null) => {
+    const forTool = tool;
+    setCarriedPanel(panel);
+    setOpenPanels((current) => {
+      const next = withOpenPanel(current, forTool, panel);
+      if (next === current) return current;
+      try {
+        window.localStorage.setItem(OPEN_PANELS_STORAGE_KEY, serializeOpenPanels(next));
+      } catch { /* private mode */ }
+      return next;
+    });
+  };
+  /** Open the panel that renders `section` (and the phone sheet) before a reveal. */
+  const openSidebarFor = (section: SidebarSectionId, sync = false) => {
+    const panel = panelForSection(section);
+    const run = () => {
+      if (panel && openSidebarPanel !== panel) chooseSidebarPanel(panel);
+      if (!propertiesSheetOpen && (panel || sync)) setPropertiesSheetOpen(true);
+    };
+    if (sync && ((panel && openSidebarPanel !== panel) || !propertiesSheetOpen)) flushSync(run);
+    else run();
+  };
+  /** F6 / Ctrl+.: move focus into the active tool's options. */
+  const focusToolOptions = () => {
+    if (!propertiesSheetOpen) flushSync(() => setPropertiesSheetOpen(true));
+    const area = toolOptionsAreaRef.current;
+    if (!area) return;
+    const target = Array.from(
+      area.querySelectorAll<HTMLElement>('button, input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+    ).find((element) => !element.matches(':disabled') && element.getClientRects().length > 0);
+    (target ?? area).focus();
+    setNotice(`${activeToolLabel} tool options focused`);
+  };
+  const focusToolOptionsRef = useRef(focusToolOptions);
+  useLayoutEffect(() => {
+    focusToolOptionsRef.current = focusToolOptions;
+  });
+  const { reveal: requestSidebarReveal, clear: clearSidebarReveal } = useSidebarAutoScroll({
+    container: inspectorRef,
+    announcer: sidebarAnnouncerRef,
+    expand: expandSidebarSection,
+  });
+  // The user activation currently being handled. Programmatic paths (draft
+  // restore, action playback, presets) run without one and never scroll.
+  const sidebarTrigger = useRef<{ source: TriggerSource; origin: TriggerOrigin } | null>(null);
+  const withSidebarTrigger = <T,>(source: TriggerSource, origin: TriggerOrigin, run: () => T): T => {
+    const previous = sidebarTrigger.current;
+    sidebarTrigger.current = { source, origin };
+    try {
+      return run();
+    } finally {
+      sidebarTrigger.current = previous;
+    }
+  };
+  /** Reveal `section` for the current user activation; returns whether a reveal was requested. */
+  const revealSidebarSection = (
+    section: SidebarSectionId | null,
+    options: { keep?: Element | null; align?: RevealAlign } = {},
+  ): boolean => {
+    const trigger = sidebarTrigger.current;
+    if (!trigger) return false;
+    if (!section) {
+      clearSidebarReveal();
+      return false;
+    }
+    // A section behind the "More panels" strip is opened first; the reveal
+    // then lands on it once the panel has committed.
+    openSidebarFor(section);
+    requestSidebarReveal({
+      section,
+      source: trigger.source,
+      origin: trigger.origin,
+      ...(options.align ? { align: options.align } : {}),
+      ...(options.keep ? { keep: options.keep } : {}),
+    });
+    return true;
+  };
+  // Text section reveal on text-layer selection (src/textSectionReveal.ts).
+  const lastRevealedTextLayer = useRef<string | undefined>(undefined);
+  const revealTextSectionFor = (layer: { id: string; kind: string } | undefined): boolean => {
+    if (layer?.kind === 'text' && layer.id === lastRevealedTextLayer.current) return true;
+    const section = textSectionToReveal(layer, lastRevealedTextLayer.current);
+    if (!section || !layer) return false;
+    lastRevealedTextLayer.current = layer.id;
+    // The Text section renders once the selection updates; reveal it after
+    // that render (see the effect below).
+    setTextRevealRequest((value) => value + 1);
+    return true;
+  };
+  const [textRevealRequest, setTextRevealRequest] = useState(0);
+  const revealTextSectionNow = useRef<() => void>(() => undefined);
+  useLayoutEffect(() => {
+    revealTextSectionNow.current = () => withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection('text'));
+  });
+  useEffect(() => {
+    if (textRevealRequest) revealTextSectionNow.current();
+  }, [textRevealRequest]);
+  // Selecting any other layer (by any route) re-arms the reveal.
+  const activeLayerId = frame?.active;
+  useEffect(() => {
+    if (activeLayerId !== lastRevealedTextLayer.current) lastRevealedTextLayer.current = undefined;
+  }, [activeLayerId]);
+  const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
+    revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
+  /** Where a new audio annotation will be pinned while its panel is open. */
+  const [audioDraft, setAudioDraft] = useState<MeasurementPoint | null>(null);
   const setTool = useCallback((next: Tool) => {
     setActiveTool(next);
+    // Any tool switch closes a pending Audio Annotation panel.
+    setAudioDraft(null);
     if (next === 'smudge' || next === 'blur' || next === 'sharpen')
       lastRFamilyTool.current = next;
     const family = flyoutForTool(next);
@@ -2234,12 +3744,188 @@ export default function Home() {
         return updated;
       });
   }, []);
+  /** Switch tool for a user activation and reveal that tool's sidebar section. */
+  const activateTool = (next: Tool) => {
+    setTool(next);
+    revealSidebarSection(sectionForTool(next));
+  };
   const toolHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toolHoldOpened = useRef(false);
+  // The source is a layer pixel plus the layer placement it was picked in, so
+  // it stays on the same document point when the layer is later stored at
+  // different bounds (content-bounds storage, paint-time expansion).
   const [cloneSource, setCloneSource] = useState<{
     x: number;
     y: number;
+    matrix: Matrix;
   } | null>(null);
+  // The latest source point, readable synchronously by the next pointer-down
+  // even before React re-renders (an Alt-click right after a stroke on a
+  // large document must not be lost or read stale).
+  const cloneSourceRef = useRef<{ x: number; y: number; matrix: Matrix } | null>(null);
+  /**
+   * Aligned Clone/Healing: the document-space source-minus-destination offset
+   * of the first stroke after a source was chosen, tied to that source.
+   */
+  const cloneOffsetRef = useRef<{ source: object; x: number; y: number } | null>(null);
+  /** Stored selection snapshots, reused by selection value and by mask content. */
+  const selectionSnapshots = useRef(new SelectionSnapshotCache());
+  /**
+   * Spot Healing and Patch store strokes as metadata that is rendered later,
+   * so the active selection (rectangle, ellipse, lasso or pixel mask) is
+   * captured once at pointer-down as a layer-space alpha asset. The stroke
+   * records its id and replay confines writes to it, also after reload.
+   * Returns undefined without a selection.
+   */
+  const captureSelectionSnapshot = async (
+    frame: Frame,
+    layer: Extract<Layer, { kind: 'raster' }>,
+  ): Promise<string | undefined> => {
+    const selection = frame.selection;
+    if (!selection) return undefined;
+    const asset = assets.current[layer.asset],
+      cache = selectionSnapshots.current,
+      present = (id: string) => Boolean(assets.current[id]),
+      key = selectionSnapshotKey(selection, layer.id, layer.matrix, asset.w, asset.h);
+    // An equal selection on the same placement: no rasterizing or encoding.
+    const known = cache.lookup(key, present);
+    if (known) return known;
+    const mask = await selectionMaskForLayer(selection, frame, layer, assets.current, asset.w, asset.h);
+    if (!mask) return undefined;
+    // An identical mask from another selection value: reuse its asset.
+    const digest = maskDigest(mask, asset.w, asset.h),
+      same = cache.lookupDigest(digest, present);
+    if (same) {
+      cache.remember(key, digest, same);
+      return same;
+    }
+    const maskCanvas = surface(asset.w, asset.h),
+      context = maskCanvas.getContext('2d')!,
+      image = context.createImageData(asset.w, asset.h);
+    for (let pixel = 0; pixel < mask.length; pixel += 1) {
+      const offset = pixel * 4;
+      image.data[offset] = image.data[offset + 1] = image.data[offset + 2] = 255;
+      image.data[offset + 3] = mask[pixel];
+    }
+    context.putImageData(image, 0, 0);
+    const id = addAsset(assets.current, maskCanvas);
+    cache.remember(key, digest, id);
+    return id;
+  };
+  const chooseCloneSource = (point: { x: number; y: number }, matrix: Matrix) => {
+    const next = { x: point.x, y: point.y, matrix };
+    cloneSourceRef.current = next;
+    setCloneSource(next);
+  };
+  /** The clone source in the given layer placement's pixel space. */
+  const cloneSourceIn = (matrix: Matrix): { x: number; y: number } | null => {
+    const source = cloneSourceRef.current;
+    if (!source) return null;
+    const [a, b, c, d, e, f] = source.matrix;
+    const documentPoint = { x: a * source.x + c * source.y + e, y: b * source.x + d * source.y + f };
+    return inversePoint(matrix, documentPoint) || { x: source.x, y: source.y };
+  };
+  /**
+   * The source point for a Clone/Healing stroke starting at `start` (layer
+   * pixels). Non-aligned strokes always restart at the chosen source; aligned
+   * strokes keep the first stroke's offset until a new source is chosen.
+   */
+  const cloneStrokeSource = (
+    start: { x: number; y: number },
+    matrix: Matrix,
+    aligned: boolean,
+  ): { x: number; y: number } | null => {
+    const anchor = cloneSourceIn(matrix), source = cloneSourceRef.current;
+    if (!anchor || !source || !aligned) return anchor;
+    const [a, b, c, d, e, f] = matrix,
+      toDocument = (point: { x: number; y: number }) => ({
+        x: a * point.x + c * point.y + e,
+        y: b * point.x + d * point.y + f,
+      }),
+      startDocument = toDocument(start);
+    const offset = cloneOffsetRef.current;
+    if (!offset || offset.source !== source) {
+      const anchorDocument = toDocument(anchor);
+      cloneOffsetRef.current = {
+        source,
+        x: anchorDocument.x - startDocument.x,
+        y: anchorDocument.y - startDocument.y,
+      };
+      return anchor;
+    }
+    return inversePoint(matrix, { x: startDocument.x + offset.x, y: startDocument.y + offset.y }) || anchor;
+  };
+  /** Decoded selection-defined Pattern Stamp tiles, by pattern id. */
+  const imagePatternTiles = useRef(new Map<string, PatternTile>());
+  const imagePatternTile = async (id: string | null): Promise<PatternTile | undefined> => {
+    const pattern = id ? imagePatterns.find((item) => item.id === id) : undefined;
+    if (!pattern) return undefined;
+    const known = imagePatternTiles.current.get(pattern.id);
+    if (known) return known;
+    const image = new Image();
+    image.src = pattern.url;
+    await image.decode();
+    const canvas = surface(pattern.width, pattern.height),
+      context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const tile = { width: pattern.width, height: pattern.height, data: context.getImageData(0, 0, pattern.width, pattern.height).data };
+    imagePatternTiles.current.set(pattern.id, tile);
+    return tile;
+  };
+  /**
+   * Pattern Stamp "Define pattern from selection": the selected pixels of
+   * the active raster layer become a small local image pattern (see
+   * src/imagePatterns.ts) and the Pattern Stamp source.
+   */
+  const definePatternFromSelection = async () => {
+    const frame = current(),
+      layer = frame?.layers.find((item) => item.id === frame.active);
+    if (!frame?.selection) {
+      setNotice('Make a selection before defining a pattern from it');
+      return;
+    }
+    if (!layer || layer.kind !== 'raster') {
+      setNotice('Select a raster layer before defining a pattern');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        width = image.naturalWidth,
+        height = image.naturalHeight,
+        canvas = surface(width, height),
+        context = canvas.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const mask = await selectionMaskForLayer(frame.selection, frame, layer, assets.current, width, height),
+        tile = mask && capturePatternTile(context.getImageData(0, 0, width, height).data, width, height, mask);
+      if (!tile) {
+        setNotice('The selection contains no visible pixels on this layer');
+        return;
+      }
+      const tileCanvas = surface(tile.width, tile.height);
+      const tileContext = tileCanvas.getContext('2d')!,
+        tileImage = tileContext.createImageData(tile.width, tile.height);
+      tileImage.data.set(tile.data);
+      tileContext.putImageData(tileImage, 0, 0);
+      const pattern: ImagePattern = {
+        id: crypto.randomUUID(),
+        label: `Selection pattern ${imagePatterns.length + 1}`,
+        width: tile.width,
+        height: tile.height,
+        url: tileCanvas.toDataURL('image/png'),
+      };
+      const next = addImagePattern(imagePatterns, pattern);
+      imagePatternTiles.current.set(pattern.id, tile);
+      setImagePatterns(next);
+      setRetouchOptions((options) => ({ ...options, patternImage: pattern.id }));
+      setNotice(`${pattern.label} defined (${tile.width}×${tile.height} px)`);
+    } catch {
+      setNotice('Could not define a pattern from this selection');
+    }
+  };
+  const clearCloneSource = () => {
+    cloneSourceRef.current = null;
+    setCloneSource(null);
+  };
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
@@ -2262,6 +3948,7 @@ export default function Home() {
     [commandShortcutBindings, setCommandShortcutBindings] = useState<Record<string, string>>(() => initialCommandShortcutPreferences.bindings),
     [lastFilterType, setLastFilterType] = useState<FilterEffectType | undefined>(() => initialLastFilterType),
     [purgeHistoryOpen, setPurgeHistoryOpen] = useState(false),
+    [persistedHistory, setPersistedHistory] = useState<PersistedHistoryWindow | null>(null),
     [textReplaceOpen, setTextReplaceOpen] = useState(false),
     [updateTextLayersOpen, setUpdateTextLayersOpen] = useState(false),
     [spellcheckOpen, setSpellcheckOpen] = useState(false),
@@ -2288,6 +3975,7 @@ export default function Home() {
       history: Frame[];
       assets: typeof assets.current;
       name: string;
+      documentMetadata: DocumentMetadata;
     } | null>(null),
     [batchImages, setBatchImages] = useState<BatchImageSource[] | null>(null),
     [batchActionId, setBatchActionId] = useState<string>(),
@@ -2296,7 +3984,7 @@ export default function Home() {
     [generativeFillOpen, setGenerativeFillOpen] = useState(false),
     [promptToEditOpen, setPromptToEditOpen] = useState(false),
     [generateImageOpen, setGenerateImageOpen] = useState(false),
-    [drag, setDrag] = useState(false),
+    [drag, setDrag] = useState<false | 'layer' | 'open'>(false),
     [resizing, setResizing] = useState<{
       width: number;
       height: number;
@@ -2313,6 +4001,11 @@ export default function Home() {
   const recordingActionRef = useRef<string | undefined>(undefined),
     replayingActionRef = useRef(false),
     batchActionRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    // Storage failures are reported as false and never block editing.
+    writeStoredBrushPresets(browserPresetStorage(), customBrushPresets);
+  }, [customBrushPresets]);
+
   useEffect(() => {
     try {
       window.localStorage.setItem(
@@ -2378,7 +4071,7 @@ export default function Home() {
             command,
             menuItem?.label || command,
             command.startsWith('filter-')
-              ? filterActionParameters(filterEffects)
+              ? filterActionParameters(liveFilterEffects)
               : undefined,
           );
         } catch {
@@ -2388,6 +4081,7 @@ export default function Home() {
     );
   };
   const [trimming, setTrimming] = useState(false);
+  const [newDocumentOpen, setNewDocumentOpen] = useState(false);
   /**
    * A crop drag is deliberately staged before it changes the document.  The
    * preview keeps the current history frame immutable while the user checks
@@ -2421,6 +4115,10 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  const [saveSelectionOpen, setSaveSelectionOpen] = useState(false);
+  const [editFillOpen, setEditFillOpen] = useState(false);
+  const [strokePathDialog, setStrokePathDialog] = useState<{ pathLayerId?: string; targetLayerId?: string } | null>(null);
+  const [strokePathSettings, setStrokePathSettings] = useState<StrokePathSettings>(() => ({ ...DEFAULT_STROKE_PATH_SETTINGS }));
   const [cameraRawEditing, setCameraRawEditing] = useState(false);
   const [colorRanging, setColorRanging] = useState(false);
   const [fillLayerDialog, setFillLayerDialog] = useState(false);
@@ -2431,7 +4129,8 @@ export default function Home() {
   const [quickMasking, setQuickMasking] = useState(false),
     [quickMask, setQuickMask] = useState<QuickMask | null>(null),
     [quickMaskReveal, setQuickMaskReveal] = useState(false),
-    [savedSelectionName, setSavedSelectionName] = useState('Selection 1');
+    [savedSelectionName, setSavedSelectionName] = useState('Selection 1'),
+    [selectionOutlineState, setSelectionOutlineState] = useState<{ selection: Selection; outline: SelectionOutline } | null>(null);
   const quickMaskRef = useRef<QuickMask | null>(null),
     quickMaskGesture = useRef<{
       frame: Frame;
@@ -2443,6 +4142,80 @@ export default function Home() {
     start: MeasurementPoint;
     end: MeasurementPoint;
   } | null>(null);
+  // Navigation / sampling / measurement / crop tool options
+  // (docs/navigation-tool-options-contract.md), persisted with the draft.
+  const [navigationTools, setNavigationTools] = useState<NavigationToolSettings>(() => ({
+    ...DEFAULT_NAVIGATION_TOOL_SETTINGS,
+  }));
+  const setNavigationTool = <K extends keyof NavigationToolSettings>(key: K, value: NavigationToolSettings[K]) =>
+    setNavigationTools((settings) => updateNavigationToolSetting(settings, key, value));
+  /** Crop aspect constraint (width / height) for a frame, or null for Free. */
+  const currentCropRatio = (f: { w: number; h: number }) =>
+    cropAspectRatio(navigationTools.cropRatio, {
+      canvasWidth: f.w,
+      canvasHeight: f.h,
+      width: navigationTools.cropWidth,
+      height: navigationTools.cropHeight,
+    });
+  /** In-app note editor (replaces window.prompt); `id` edits an existing note. */
+  const [noteEditor, setNoteEditor] = useState<{
+    id?: string;
+    x: number;
+    y: number;
+    text: string;
+    color: string;
+  } | null>(null);
+  // Focus the note text when the editor opens (not on every keystroke).
+  const noteTextRef = useRef<HTMLTextAreaElement>(null);
+  const noteEditorKey = noteEditor ? `${noteEditor.id ?? 'new'}:${noteEditor.x}:${noteEditor.y}` : '';
+  useEffect(() => {
+    if (!noteEditorKey) return;
+    // After the opening press finishes (its mousedown would take focus back).
+    const handle = requestAnimationFrame(() => noteTextRef.current?.focus());
+    return () => cancelAnimationFrame(handle);
+  }, [noteEditorKey]);
+  /** Live position of a note while it is dragged. */
+  const [noteDrag, setNoteDrag] = useState<{ id: string; x: number; y: number } | null>(null);
+  /** Live composite values under each Color Sampler marker. */
+  const [samplerLive, setSamplerLive] = useState<Record<string, { color: string; alpha: number }>>({});
+  /** Perspective Crop corner clicks collected before the fourth. */
+  const [perspectiveClicks, setPerspectiveClicks] = useState<CropPoint[]>([]);
+  /** Crop Straighten: the next crop drag draws a horizon line. */
+  const [cropStraightenArmed, setCropStraightenArmed] = useState(false);
+  // Switching tools drops half-finished click sequences and editors
+  // (adjusted during render, React's pattern for state derived from props).
+  const [navigationToolSeen, setNavigationToolSeen] = useState(tool);
+  if (navigationToolSeen !== tool) {
+    setNavigationToolSeen(tool);
+    setPerspectiveClicks([]);
+    setCropStraightenArmed(false);
+    if (tool !== 'note') setNoteEditor(null);
+  }
+  // Color Sampler readouts are live: once a render settles, re-read the
+  // composite under every sampler (the stored value is the placement value).
+  const readSamplerValues = (value: Frame) => {
+    const context = canvas.current?.getContext('2d');
+    if (!context) return;
+    const next: Record<string, { color: string; alpha: number }> = {};
+    for (const item of value.measurements || []) {
+      if (item.kind !== 'sample') continue;
+      const x = Math.min(value.w - 1, Math.max(0, Math.floor(item.x))),
+        y = Math.min(value.h - 1, Math.max(0, Math.floor(item.y)));
+      const data = context.getImageData(x, y, 1, 1).data;
+      next[item.id] = { color: rgbHex({ r: data[0], g: data[1], b: data[2] }), alpha: data[3] };
+    }
+    setSamplerLive(next);
+  };
+  const readSamplerValuesRef = useRef(readSamplerValues);
+  useLayoutEffect(() => {
+    readSamplerValuesRef.current = readSamplerValues;
+  });
+  useEffect(() => {
+    if (tool !== 'color-sampler' || !frame || doc.rendering) return;
+    if (!frame.measurements?.some((item) => item.kind === 'sample')) return;
+    const handle = requestAnimationFrame(() => readSamplerValuesRef.current(frame));
+    return () => cancelAnimationFrame(handle);
+  }, [tool, frame, doc.rendering]);
 
   /**
    * Menus use a small roving-focus model rather than relying on browser tab
@@ -2452,6 +4225,12 @@ export default function Home() {
   const openMenu = (menu: MenuName, focus: 'first' | 'last' = 'first') => {
     pendingMenuFocus.current[menu] = focus;
     setActiveMenu(menu);
+    if (menu === 'Filter') {
+      // Warm the filter worker pool at idle time, so a heavy filter chosen
+      // next does not pay worker start-up and JIT tier-up.
+      const frame = current();
+      prewarmFilterWorkers(PREWARM_FILTER_TYPES, { w: frame.w, h: frame.h });
+    }
   };
   const closeMenu = (restoreFocus = false) => {
     const menu = activeMenu;
@@ -2491,7 +4270,8 @@ export default function Home() {
       setActiveMenu(null);
     }
   };
-  const [draftId, setDraftId] = useState(initialDraftId),
+  const [initialDraft] = useState(resolveInitialDraft),
+    [draftId, setDraftId] = useState(initialDraft.id),
     openingDraftId = useRef(draftId),
     [saveStatus, setSaveStatus] = useState('Opening saved document…');
   const localVersions = useRef(new Map<string, number>());
@@ -2499,12 +4279,14 @@ export default function Home() {
   const saveSequence = useRef(0),
     saving = useRef(false),
     discarding = useRef(false);
-  const { member, checking } = useMember();
+  const { member, checking, unavailable: signInUnavailable, retry: retrySignIn } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
     [recovering, setRecovering] = useState(false),
     [cloudMessage, setCloudMessage] = useState(''),
     [cloudConflict, setCloudConflict] = useState<CloudConflictError | null>(null);
+  /** The filter-stack entry the Filter effects controls currently edit, if any. */
+  const [filterStackEdit, setFilterStackEdit] = useState<{ layerId: string; index: number } | null>(null);
   const active = frame?.layers.find((l) => l.id === frame.active),
     adjustments = active ? effectiveAdjustments(active.adjustments) : neutral;
   const {
@@ -2522,22 +4304,420 @@ export default function Home() {
     curves,
     colorBalance,
     sharpenNoise,
-    filterEffects,
+    filterEffects: liveFilterEffects,
     photoAdjustments,
   } = adjustments;
+  // While a stacked filter is selected for editing, the Filter effects
+  // controls (type, sliders, centre fields and crosshair) show and change that
+  // entry instead of the live filter. A stale selection (another layer, or an
+  // entry removed by undo) falls back to the live filter.
+  const filterStackEntries = active && isRasterContentLayer(active) ? smartFilterEntries(active.smartFilters) : [];
+  const filterStackEditIndex =
+    filterStackEdit && active && filterStackEdit.layerId === active.id && filterStackEdit.index < filterStackEntries.length
+      ? filterStackEdit.index
+      : null;
+  const filterEffects =
+    filterStackEditIndex !== null ? filterStackEntries[filterStackEditIndex].effect : liveFilterEffects;
   const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
+  /**
+   * Encode a committed paint buffer as an asset and keep its decoded pixels
+   * warm: the next stroke on this layer copies them instead of decoding the
+   * PNG it was just encoded from, and the render worker receives the pixels
+   * with the commit render instead of decoding the data URL again.
+   */
+  const addPaintedAsset = (buffer: HTMLCanvasElement, base?: string) => {
+    // Dirty-rectangle hint: every write since the buffer was drawn from
+    // `base` was tracked, so unchanged tiles keep `base`'s tiles unread.
+    const dirty = base ? canvasDirtyBox(buffer) : undefined;
+    untrackCanvasWrites(buffer);
+    const id = addAsset(
+      assets.current,
+      buffer,
+      dirty !== undefined ? { hint: { base: assets.current[base!], dirty } } : undefined,
+    );
+    const asset = assets.current[id];
+    primeDecodedAsset(asset, buffer);
+    primeWorkerDecodedAsset(asset, buffer);
+    return id;
+  };
+  /**
+   * Coalesce the live preview of a painting gesture. Stamping into
+   * `g.buffer` stays synchronous per pointer event; only the full-document
+   * composite is limited to one in flight and one per animation frame. The
+   * request re-reads the gesture when it runs, so it shows the latest buffer
+   * and is dropped once the gesture has been committed or abandoned.
+   */
+  /** Smudge engine settings for a stroke on `layer`, fixed when the stroke starts. */
+  const smudgeStrokeSettings = (
+    layer: Layer,
+    frame: Frame,
+    sample?: RasterView,
+  ): Omit<SmudgeGestureState, 'stroke'> => ({
+    tip: {
+      size: localSize(layer.matrix, size),
+      hardness,
+      angle: brushAngle,
+      roundness: brushRoundness,
+      flipX: brushFlipX,
+      flipY: brushFlipY,
+      scatter: brushScatter,
+      dynamics: brushDynamics,
+      pressureSize,
+      pressureStrength: smudgeSettings.pressureStrength,
+      pressureCurve,
+    },
+    apply: {
+      strength: smudgeSettings.strength / 100,
+      mode: smudgeSettings.mode,
+      fingerPainting: smudgeSettings.fingerPainting,
+      color: brushColor(color),
+      sample,
+      bristle: brushBristle,
+      texture: brushTexture,
+    },
+    symmetry: paintSymmetryForLayer(paintSymmetry, frame.w, frame.h, layer.matrix),
+  });
+  const previewGesture = (g: Gesture) =>
+    schedulePaint(() =>
+      gesture.current === g && g.buffer && g.layer
+        ? { frame: g.frame, overrides: { [g.layer.id]: g.buffer } }
+        : null,
+    );
+  /**
+   * Silk strands for the current gesture, in the layer's pixel space. The
+   * live preview uses a coarser path on very long strokes.
+   */
+  const buildGestureStrands = (g: Gesture, preview = false): Strand[] => {
+    if (!g.strands || !g.layer) return [];
+    const matrix = g.layer.matrix,
+      // Size is the overall ribbon width; strands are spread across it.
+      settings = normalizeBrushStrands({
+        ...g.strands.settings,
+        width: Math.min(BRUSH_STRANDS_WIDTH_MAX, Math.max(BRUSH_STRANDS_WIDTH_MIN, localSize(matrix, size))),
+      }),
+      path = smoothStrandPath(g.strands.points, {
+        ...strandPathOptions(settings),
+        ...(preview ? { maxSamples: STRAND_PREVIEW_MAX_SAMPLES } : {}),
+      });
+    return buildStrands(path, settings, {
+      strandWidth: localSize(matrix, settings.thickness),
+      sizeAt: pressureSize ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
+      opacityAt: pressureOpacity ? (value) => mapBrushPressure(value, pressureCurve) : undefined,
+    });
+  };
+  /** Wipe the Silk strands overlay preview. */
+  const clearStrandPreview = () => {
+    const overlay = strandOverlay.current;
+    if (strandOverlayClear.current) window.clearTimeout(strandOverlayClear.current.timer);
+    strandOverlayClear.current = null;
+    if (!overlay) return;
+    overlay.getContext('2d')?.clearRect(0, 0, overlay.width, overlay.height);
+    overlay.dataset.strands = '0';
+  };
+  /**
+   * Keep the preview until the committed document has rendered, so the
+   * strands never blink out between release and the new composite.
+   */
+  const clearStrandPreviewAfterRender = (revisionBefore: number) => {
+    if (strandOverlayClear.current) window.clearTimeout(strandOverlayClear.current.timer);
+    // The render effect below clears it; the timer is only a fallback.
+    strandOverlayClear.current = { timer: window.setTimeout(clearStrandPreview, 4000), revision: revisionBefore };
+  };
+  /**
+   * Draw the in-progress Silk strands on the overlay canvas (screen
+   * resolution, bounded) instead of re-rendering the layer stack.
+   */
+  const drawStrandPreview = (g: Gesture) => {
+    const overlay = strandOverlay.current,
+      element = canvas.current;
+    if (!overlay || !element || !g.layer || !g.strands) return;
+    const ratio = window.devicePixelRatio || 1,
+      cssWidth = element.clientWidth || g.frame.w,
+      cssHeight = element.clientHeight || g.frame.h,
+      fit = Math.min(1, 4096 / Math.max(cssWidth * ratio, cssHeight * ratio, 1)),
+      width = Math.max(1, Math.round(cssWidth * ratio * fit)),
+      height = Math.max(1, Math.round(cssHeight * ratio * fit));
+    if (overlay.width !== width) overlay.width = width;
+    if (overlay.height !== height) overlay.height = height;
+    const context = overlay.getContext('2d');
+    if (!context) return;
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const strands = buildGestureStrands(g, true),
+      sx = width / g.frame.w,
+      sy = height / g.frame.h,
+      [a, b, c, d, e, f] = g.layer.matrix,
+      copies: readonly SymmetryAffine[] =
+        g.paintSymmetry && g.paintSymmetry.length > 1 ? g.paintSymmetry : [IDENTITY_AFFINE];
+    for (const copy of copies) {
+      context.setTransform(sx * a, sy * b, sx * c, sy * d, sx * e, sy * f);
+      context.transform(copy[0], copy[1], copy[2], copy[3], copy[4], copy[5]);
+      drawStrands(context, strands, color, (brushOpacity / 100) * (brushFlow / 100));
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    overlay.dataset.strands = String(strands.length);
+  };
+  /** At most one overlay redraw per animation frame. */
+  const scheduleStrandPreview = (g: Gesture) => {
+    if (!g.strands || g.strands.frameRequest !== undefined) return;
+    if (strandOverlayClear.current) {
+      window.clearTimeout(strandOverlayClear.current.timer);
+      strandOverlayClear.current = null;
+    }
+    g.strands.frameRequest = requestAnimationFrame(() => {
+      if (!g.strands) return;
+      g.strands.frameRequest = undefined;
+      if (gesture.current === g && !g.released) drawStrandPreview(g);
+    });
+  };
+  // Clear a committed Silk strands preview once the new composite has rendered.
+  useEffect(() => {
+    const pending = strandOverlayClear.current;
+    if (pending && !doc.rendering && revision !== pending.revision) clearStrandPreview();
+  }, [doc.rendering, revision]);
+  /** Decoded layer pixels and selection coverage a gradient drag renders over. */
+  const prepareGradientBase = async (
+    frame: Frame,
+    layer: Extract<Layer, { kind: 'raster' }>,
+  ): Promise<GradientBase> => {
+    const image = await decodeAsset(assets.current[layer.asset]),
+      width = image.naturalWidth,
+      height = image.naturalHeight,
+      layerCanvas = surface(width, height);
+    layerCanvas.getContext('2d')!.drawImage(image, 0, 0);
+    // Photoshop confines a gradient to the active selection.
+    const selectionMask = await selectionMaskForLayer(
+      frame.selection, frame, layer, assets.current, width, height,
+    );
+    // Large layers preview only the region the gradient can change, at a
+    // bounded resolution; the commit still renders every layer pixel.
+    const plan = planGradientPreview(
+      width,
+      height,
+      selectionMask ? (maskBounds(selectionMask, width, height) ?? { x: 0, y: 0, width: 0, height: 0 }) : null,
+    );
+    if (!plan) return { layerCanvas, selectionMask };
+    const layerSmall = surface(Math.max(1, plan.width), Math.max(1, plan.height));
+    if (plan.width > 0) {
+      const smallContext = layerSmall.getContext('2d')!;
+      smallContext.imageSmoothingQuality = 'high';
+      smallContext.drawImage(
+        layerCanvas,
+        plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height,
+        0, 0, plan.width, plan.height,
+      );
+    }
+    return {
+      layerCanvas,
+      selectionMask,
+      preview: {
+        plan,
+        layerSmall,
+        maskSmall: selectionMask && plan.width > 0 ? downscaleMask(selectionMask, width, plan) : undefined,
+        buffers: [],
+        next: 0,
+      },
+    };
+  };
+  /**
+   * Render the gradient from `start` to `end` over the prepared layer with the
+   * current Mode, Opacity, Noise, Dither and selection. Shared by the live
+   * drag preview and the pointer-up commit, so both show the same pixels.
+   */
+  const renderGradientBuffer = (
+    base: GradientBase,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) => {
+    const { layerCanvas, selectionMask } = base,
+      buffer = surface(layerCanvas.width, layerCanvas.height);
+    buffer.getContext('2d')!.drawImage(layerCanvas, 0, 0);
+    // Render the gradient on its own surface, then composite it onto the
+    // layer with the chosen Mode and Opacity (Normal paints over).
+    const shaped = gradientMode === 'angle' || gradientMode === 'diamond',
+      // Angle and Diamond are rendered per pixel from a lookup row that uses
+      // the same colour stops as Linear (src/gradientShapes.ts).
+      gradientSurface = surface(shaped ? GRADIENT_LOOKUP_SIZE : buffer.width, shaped ? 1 : buffer.height),
+      context = gradientSurface.getContext('2d')!,
+      gradient = shaped
+        ? context.createLinearGradient(0, 0, GRADIENT_LOOKUP_SIZE, 0)
+        : gradientMode === 'radial'
+        ? context.createRadialGradient(
+          start.x,
+          start.y,
+          0,
+          start.x,
+          start.y,
+          Math.max(1, Math.hypot(end.x - start.x, end.y - start.y)),
+        )
+        : context.createLinearGradient(start.x, start.y, end.x, end.y);
+    // A transparent end fades the adjacent colour's alpha (not toward
+    // transparent white, which leaves a pale fringe in canvas gradients).
+    for (const stop of buildGradientColorStops({
+      mode: gradientMode,
+      color,
+      backgroundColor,
+      end: gradientEnd,
+      reverse: gradientReverse,
+      midpoint: gradientMidpoint,
+      midpointPosition: gradientMidpointPosition,
+      stops: gradientStops,
+    })) gradient.addColorStop(stop.offset, stop.color);
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, gradientSurface.width, gradientSurface.height);
+    let gradientPixels: Uint8ClampedArray = shaped
+      ? renderGradientShape(
+        gradientMode as 'angle' | 'diamond', buffer.width, buffer.height, start, end,
+        context.getImageData(0, 0, GRADIENT_LOOKUP_SIZE, 1).data,
+      )
+      : context.getImageData(0, 0, buffer.width, buffer.height).data;
+    if (gradientNoise > 0 || gradientDither > 0) {
+      gradientPixels = applyGradientNoise(gradientPixels, buffer.width, buffer.height, gradientNoise);
+      gradientPixels = applyGradientDither(gradientPixels, buffer.width, buffer.height, gradientDither);
+    }
+    const bufferContext = buffer.getContext('2d')!,
+      layerPixels = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+    layerPixels.data.set(compositeGradientPixels(
+      layerPixels.data,
+      gradientPixels,
+      gradientBlend,
+      normalizeGradientOpacity(gradientOpacity) / 100,
+    ));
+    bufferContext.putImageData(layerPixels, 0, 0);
+    if (selectionMask) confineToSelection(layerCanvas, buffer, selectionMask);
+    return buffer;
+  };
+  /**
+   * Live gradient while dragging: the latest end point is rendered at most
+   * once per animation frame (and one render in flight) through the shared
+   * preview scheduler; pointer-up commits one undo step.
+   */
+  const previewGradient = (g: Gesture) =>
+    schedulePaint(() => {
+      if (gesture.current !== g || !g.gradientBase || !g.layer || !g.moved) return null;
+      const end = g.gradientEnd ?? g.last;
+      const base = g.gradientBase, preview = base.preview;
+      if (!preview)
+        return { frame: g.frame, overrides: { [g.layer.id]: renderGradientBuffer(base, g.start, end) } };
+      // Reduced preview: only the changeable region is re-rendered, at the
+      // planned scale, and upscaled into one of two full-size surfaces that
+      // already hold the untouched layer pixels outside that region.
+      const { plan } = preview, index = preview.next;
+      preview.next = 1 - index;
+      let output = preview.buffers[index];
+      if (!output) {
+        output = surface(base.layerCanvas.width, base.layerCanvas.height);
+        output.getContext('2d')!.drawImage(base.layerCanvas, 0, 0);
+        preview.buffers[index] = output;
+      }
+      if (plan.width > 0) {
+        const small = renderGradientBuffer(
+          { layerCanvas: preview.layerSmall, selectionMask: preview.maskSmall },
+          toPreviewPoint(plan, g.start),
+          toPreviewPoint(plan, end),
+        );
+        const context = output.getContext('2d')!;
+        context.clearRect(plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height);
+        context.imageSmoothingEnabled = true;
+        context.drawImage(small, 0, 0, plan.width, plan.height, plan.rect.x, plan.rect.y, plan.rect.width, plan.rect.height);
+      }
+      return { frame: g.frame, overrides: { [g.layer.id]: output } };
+    });
+  // Pointer whose paint gesture waits for a trimmed layer to expand.
+  const expansionPointer = useRef<{
+    pointerId: number;
+    /** Moves made while the layer grows; replayed into the started gesture. */
+    moves: React.PointerEvent<HTMLCanvasElement>[];
+    release?: React.PointerEvent<HTMLCanvasElement>;
+  } | null>(null);
+  /**
+   * Pointer that owns the current single-drag gesture. Moves and releases of
+   * another pointer (a hovering pen, a second finger) never extend or end it,
+   * so a new stroke can never continue a stroke from a different press.
+   */
+  const gesturePointer = useRef<number | null>(null);
   const paintSpan = useRef<PerformanceSpan | null>(null);
+  const viewZoomRef = useRef(viewZoom);
+  /** Image box and client anchor captured before a zoom, applied after commit. */
+  const zoomAnchor = useRef<{ before: DOMRect; x: number; y: number } | null>(null);
+  /**
+   * Change the view zoom, keeping the image point under `anchor` (client
+   * coordinates; the stage centre by default) in place.
+   */
+  const setZoomAround = (target: number, anchor?: { x: number; y: number }) => {
+    const next = clampViewZoom(target);
+    const previous = viewZoomRef.current;
+    const element = stage.current,
+      wrap = element?.querySelector<HTMLElement>('.canvas-wrap');
+    if (!element || !wrap || next === previous) {
+      setViewZoomState(next);
+      viewZoomRef.current = next;
+      return next;
+    }
+    const stageRect = element.getBoundingClientRect();
+    const anchorX = (anchor?.x ?? stageRect.left + element.clientWidth / 2) - stageRect.left,
+      anchorY = (anchor?.y ?? stageRect.top + element.clientHeight / 2) - stageRect.top;
+    zoomAnchor.current = {
+      before: wrap.getBoundingClientRect(),
+      x: stageRect.left + anchorX,
+      y: stageRect.top + anchorY,
+    };
+    setViewZoomState(next);
+    viewZoomRef.current = next;
+    return next;
+  };
+  const zoomBy = (direction: 1 | -1, anchor?: { x: number; y: number }) =>
+    setZoomAround(stepViewZoom(viewZoomRef.current, direction), anchor);
+  const fitZoom = () => {
+    const next = fittedZoom(stage.current, frame?.w ?? 0, frame?.h ?? 0);
+    setViewZoomState(next);
+    viewZoomRef.current = next;
+    requestAnimationFrame(() => stage.current?.scrollTo({ left: 0, top: 0 }));
+    return next;
+  };
+  const zoomByRef = useRef(zoomBy);
+  useLayoutEffect(() => {
+    viewZoomRef.current = viewZoom;
+    zoomByRef.current = zoomBy;
+  });
+  // Once the new size is laid out, scroll so the anchored image point is
+  // back under the pointer (or the stage centre).
+  useLayoutEffect(() => {
+    const anchor = zoomAnchor.current,
+      element = stage.current,
+      wrap = element?.querySelector<HTMLElement>('.canvas-wrap');
+    zoomAnchor.current = null;
+    if (!anchor || !element || !wrap) return;
+    const { dx, dy } = anchorScrollDelta(anchor.before, wrap.getBoundingClientRect(), anchor.x, anchor.y);
+    element.scrollLeft += dx;
+    element.scrollTop += dy;
+  }, [viewZoom]);
+  // Ctrl/Cmd + wheel (and trackpad pinch) zooms around the pointer.
+  useEffect(() => {
+    const element = stage.current;
+    if (!element) return;
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      if (event.deltaY === 0) return;
+      zoomByRef.current(event.deltaY < 0 ? 1 : -1, { x: event.clientX, y: event.clientY });
+    };
+    element.addEventListener('wheel', wheel, { passive: false });
+    return () => element.removeEventListener('wheel', wheel);
+  }, []);
   const settings = (): Settings => ({
     tool,
-    zoom,
+    zoom: LEGACY_STAGE_ZOOM,
+    viewZoom,
     viewRotation,
     color,
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -2545,14 +4725,23 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    imagePatterns,
+    retouchOptions,
     customShapePresets,
     customPathPresets,
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
+    shapeCornerRadius,
+    customShapeId,
+    shapeAppearance,
+    penOptions,
     spacing: brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushDynamics,
+    brushStrands,
+    paintSymmetry,
     brushTexture,
     brushDual,
     brushBristle,
@@ -2567,6 +4756,9 @@ export default function Home() {
     gradientReverse,
     gradientDither,
     gradientNoise,
+    gradientBlend,
+    gradientOpacity,
+    navigationTools,
     gradientStops,
     angle: brushAngle,
     roundness: brushRoundness,
@@ -2577,11 +4769,14 @@ export default function Home() {
     redEyeThreshold,
     redEyeAmount,
     colorTolerance,
+    colorRegion,
+    marquee: marqueeOptions,
     tonalExposure,
     tonalRange,
     spongeMode,
     spongeVibrance,
     mixerBrush,
+    smudge: smudgeSettings,
     historyBrush,
     artHistoryBrush,
     historySourceIndex,
@@ -2595,43 +4790,82 @@ export default function Home() {
     defaultTypeStyle,
     ...neutral,
   });
-  const documentValue = (): Draft => ({
-    version: 2,
-    history: history.current,
-    assets: assets.current,
-    index: index.current,
-    name,
-    metadata: { ...metadata },
-    settings: settings(),
-  });
-  /** File Info is intentionally local/project-only; never send personal metadata to cloud APIs. */
-  const cloudDocumentValue = (): Draft => {
-    return stripPrivateMetadata(documentValue());
+  // Drafts, duplicates, cloud saves and portable projects keep the most
+  // recent history states that fit the draft limits; the in-memory undo/redo
+  // stack can be larger (see src/historyBudget.ts).
+  const documentValue = (): Draft =>
+    persistableHistoryDraft<Draft>({
+      version: 2,
+      history: history.current,
+      assets: assets.current,
+      audio: audioClips.current,
+      index: index.current,
+      name,
+      metadata: { ...metadata },
+      settings: settings(),
+    }).draft;
+  /**
+   * The document for interchange that stores one PNG per asset (portable
+   * bundle v3, cloud): the history window is chosen by each asset's full
+   * size and tiled assets are flattened (tiled-layer-assets-contract.md).
+   */
+  const interchangeDocumentValue = async (): Promise<Draft> => {
+    const value = persistableHistoryDraft<Draft>(
+      {
+        version: 2,
+        history: history.current,
+        assets: assets.current,
+        audio: audioClips.current,
+        index: index.current,
+        name,
+        metadata: { ...metadata },
+        settings: settings(),
+      },
+      { flattened: true },
+    ).draft;
+    return { ...value, assets: await flattenTiledAssets(value.assets) };
   };
-  const restoreSettings = useCallback((s: Settings) => {
+  /** File Info is intentionally local/project-only; never send personal metadata to cloud APIs. */
+  const cloudDocumentValue = async (): Promise<Draft> => {
+    return stripPrivateMetadata(await interchangeDocumentValue());
+  };
+  const restoreSettings = useCallback((s: Settings, fallbackZoom?: number) => {
     setTool(s.tool);
-    setZoom(s.zoom);
+    if (validViewZoom(s.viewZoom)) setViewZoomState(s.viewZoom);
+    // Older drafts stored a stage-relative zoom; fit those to the window.
+    else if (fallbackZoom !== undefined) setViewZoomState(fallbackZoom);
     setViewRotation(normalizeViewRotation(s.viewRotation ?? 0));
     setColor(s.color);
     setBackgroundColor(s.backgroundColor || '#ffffff');
-    setSize(s.size);
+    setSize(clampBrushSize(s.size));
     setBrushOpacity(s.brushOpacity ?? 100);
+    setBrushBlendMode(normalizeBrushBlendMode(s.brushBlendMode));
     setHardness(s.hardness ?? 100);
     setPressureSize(s.pressureSize ?? false);
     setPressureOpacity(s.pressureOpacity ?? false);
     setPressureCurve(normalizeBrushPressureCurve(s.pressureCurve));
     setBrushPreset(s.brushPreset ?? 'round-hard');
-    setCustomBrushPresets(normalizeCustomBrushPresets(s.customBrushPresets));
+    // Keep this device's library and add any presets carried by the draft/project.
+    setCustomBrushPresets((currentPresets) => mergeBrushPresetLibraries(currentPresets, s.customBrushPresets));
     setCustomPatternPresets(normalizeCustomPatternPresets(s.customPatternPresets));
+    setImagePatterns(normalizeImagePatterns(s.imagePatterns));
+    setRetouchOptions(normalizeRetouchOptions(s.retouchOptions));
     setCustomShapePresets(normalizeCustomShapePresets(s.customShapePresets));
     setCustomPathPresets(normalizeCustomPathPresets(s.customPathPresets));
     setSelectedCustomPathPresetId('');
     setPolygonVariant(s.polygonVariant ?? 'polygon');
     setPolygonSides(Math.max(3, Math.min(32, Math.round(s.polygonSides ?? 5))));
     setPolygonInnerRadius(Math.max(0.1, Math.min(0.9, Number(s.polygonInnerRadius ?? 0.5))));
+    setShapeCornerRadius(Math.max(0, Math.min(CORNER_RADIUS_MAX, Number(s.shapeCornerRadius ?? 16))));
+    setCustomShapeId(validCustomShapeChoice(s.customShapeId) ? s.customShapeId : DEFAULT_CUSTOM_SHAPE_ID);
+    setShapeAppearance(normalizeShapeAppearance(s.shapeAppearance));
+    setPenOptions(normalizePenOptions(s.penOptions));
     setBrushSpacing(s.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushSmoothing(s.brushSmoothing ?? BRUSH_SMOOTHING_DEFAULT);
     setBrushScatter(s.brushScatter ?? BRUSH_SCATTER_DEFAULT);
+    setBrushDynamics(normalizeBrushDynamics(s.brushDynamics));
+    setBrushStrands(normalizeBrushStrands(s.brushStrands));
+    setPaintSymmetry(normalizePaintSymmetry(s.paintSymmetry));
     setBrushTexture(s.brushTexture ?? BRUSH_TEXTURE_DEFAULT);
     setBrushDual(s.brushDual ?? BRUSH_DUAL_DEFAULT);
     setBrushBristle(s.brushBristle ?? BRUSH_BRISTLE_DEFAULT);
@@ -2640,12 +4874,15 @@ export default function Home() {
     setSecondaryBrushPreset(normalizeSecondaryBrushPreset(s.secondaryBrushPreset));
     setBrushFlow(s.brushFlow ?? 100);
     setGradientMode(s.gradientMode ?? 'linear');
+    setNavigationTools(normalizeNavigationToolSettings(s.navigationTools));
     setGradientEnd(s.gradientEnd ?? 'transparent');
     setGradientMidpoint(s.gradientMidpoint ?? 'none');
     setGradientMidpointPosition(s.gradientMidpointPosition ?? 50);
     setGradientReverse(s.gradientReverse ?? false);
     setGradientDither(s.gradientDither ?? GRADIENT_DITHER_DEFAULT);
     setGradientNoise(s.gradientNoise ?? GRADIENT_NOISE_DEFAULT);
+    setGradientBlend(normalizeGradientBlendMode(s.gradientBlend));
+    setGradientOpacity(normalizeGradientOpacity(s.gradientOpacity));
     setGradientStops(normalizeGradientStops(s.gradientStops));
     setBrushAngle(s.angle ?? BRUSH_DEFAULT_ANGLE);
     setBrushRoundness(s.roundness ?? BRUSH_DEFAULT_ROUNDNESS);
@@ -2656,11 +4893,15 @@ export default function Home() {
     setRedEyeThreshold(s.redEyeThreshold ?? 36);
     setRedEyeAmount(s.redEyeAmount ?? 100);
     setColorTolerance(s.colorTolerance ?? 24);
+    setColorRegion(normalizeColorRegionSettings(s.colorRegion));
+    setMarqueeOptions(normalizeMarqueeOptions(s.marquee));
     setTonalExposure(s.tonalExposure ?? 50);
     setTonalRange(s.tonalRange ?? 'midtones');
     setSpongeMode(s.spongeMode ?? 'saturate');
     setSpongeVibrance(s.spongeVibrance ?? 50);
     setMixerBrush({ ...DEFAULT_MIXER_BRUSH, ...s.mixerBrush });
+    // Drafts saved before Strength existed used the shared brush opacity as the Smudge "Flow".
+    setSmudgeSettings(normalizeSmudgeSettings(s.smudge, s.tool === 'smudge' ? s.brushOpacity : undefined));
     setHistoryBrush({ ...DEFAULT_HISTORY_BRUSH, ...s.historyBrush });
     setArtHistoryBrush({ ...DEFAULT_ART_HISTORY_BRUSH, ...s.artHistoryBrush });
     setHistorySourceIndex(s.historySourceIndex);
@@ -2669,17 +4910,17 @@ export default function Home() {
     setExportTargetBytes(s.exportTargetBytes);
     setText(s.text);
     setFontSize(s.fontSize);
-    setFontFamily(s.fontFamily && FONTS.includes(s.fontFamily) ? s.fontFamily : 'Arial');
+    setFontFamily(s.fontFamily && isSelectableFontFamily(s.fontFamily) ? s.fontFamily : 'Arial');
     setFontPreviewSize(normalizeFontPreviewSize(s.fontPreviewSize));
     setDefaultTypeStyle(normalizeTypeStyle(s.defaultTypeStyle));
   }, [
     setTool,
-    setZoom,
     setViewRotation,
     setColor,
     setBackgroundColor,
     setSize,
     setBrushOpacity,
+    setBrushBlendMode,
     setHardness,
     setPressureSize,
     setPressureOpacity,
@@ -2696,6 +4937,8 @@ export default function Home() {
     setBrushSpacing,
     setBrushSmoothing,
     setBrushScatter,
+    setBrushDynamics,
+    setBrushStrands,
     setBrushTexture,
     setBrushDual,
     setBrushBristle,
@@ -2710,6 +4953,8 @@ export default function Home() {
     setGradientReverse,
     setGradientDither,
     setGradientNoise,
+    setGradientBlend,
+    setGradientOpacity,
     setGradientStops,
     setBrushAngle,
     setBrushRoundness,
@@ -2736,18 +4981,30 @@ export default function Home() {
     setFontFamily,
     setFontPreviewSize,
   ]);
-  const fontAvailability = checkFontAvailability(
+  // Library fonts load on demand; choosing one starts its download.
+  const libraryFontState = useFontLoadState(fontFamily, fontFamilyKind(fontFamily) === 'library' ? { priority: 'high', weight: 700 } : false);
+  const fontAvailability = fontFamilyKind(fontFamily) === 'library' ? (libraryFontState === 'failed' ? 'fallback' : 'available') : checkFontAvailability(
     fontFamily,
     (font) =>
       typeof document !== 'undefined' && document.fonts
         ? document.fonts.check(font)
         : true,
   );
+  // Portable projects keep unknown family names; disclose them once per set.
+  const missingDocumentFonts = missingFontFamilies(
+    (frame?.layers ?? []).flatMap((layer) => (layer.kind === 'text' ? [layer.fontFamily] : [])),
+  ).join(', ');
+  const announcedMissingFonts = useRef('');
+  useEffect(() => {
+    if (!missingDocumentFonts || announcedMissingFonts.current === missingDocumentFonts) return;
+    announcedMissingFonts.current = missingDocumentFonts;
+    setNotice(`Missing fonts: ${missingDocumentFonts}. Text stays editable and renders with a fallback font.`);
+  }, [missingDocumentFonts]);
   const applyBrushPreset = (id: BrushPresetId) => {
     const preset = brushPresetById(id);
     if (!preset) return;
     setBrushPreset(id);
-    setSize(preset.size);
+    setSize(clampBrushSize(preset.size));
     setHardness(preset.hardness);
     setBrushSpacing(preset.spacing ?? BRUSH_DEFAULT_SPACING);
     setBrushAngle(preset.angle ?? BRUSH_DEFAULT_ANGLE);
@@ -2760,7 +5017,7 @@ export default function Home() {
     setNotice(`Brush preset “${preset.label}” applied`);
   };
   const applyCustomBrushPreset = (preset: CustomBrushPreset) => {
-    setSize(preset.size);
+    setSize(clampBrushSize(preset.size));
     setHardness(preset.hardness);
     setBrushSpacing(preset.spacing);
     setBrushAngle(preset.angle);
@@ -2772,6 +5029,9 @@ export default function Home() {
     setPressureCurve(normalizeBrushPressureCurve(preset.pressureCurve));
     setBrushSmoothing(preset.brushSmoothing);
     setBrushScatter(preset.brushScatter);
+    setBrushDynamics(normalizeBrushDynamics(preset.brushDynamics));
+    // Presets saved before Silk strands existed paint ordinary dabs.
+    setBrushStrands(normalizeBrushStrands(preset.brushStrands));
     setBrushTexture(preset.brushTexture);
     setBrushDual(preset.brushDual);
     setSecondaryBrushPreset(preset.secondaryBrushPreset);
@@ -2779,7 +5039,37 @@ export default function Home() {
     setBrushWetEdges(preset.brushWetEdges);
     setBrushBuildUp(preset.brushBuildUp);
     setBrushFlow(preset.brushFlow);
+    if (preset.brushOpacity !== undefined) setBrushOpacity(preset.brushOpacity);
+    // Presets saved before the blend mode existed paint Normal.
+    setBrushBlendMode(normalizeBrushBlendMode(preset.brushBlendMode));
+    // Presets saved from Smudge also restore its Strength, Mode and toggles.
+    if (preset.smudge) setSmudgeSettings(normalizeSmudgeSettings(preset.smudge));
+    setSelectedBrushLibraryId(preset.id);
     setNotice(`Brush preset “${preset.label}” applied`);
+  };
+  const selectBrushLibraryPreset = (id: string) => {
+    const preset = builtInBrushPresetById(id) ?? customBrushPresets.find((item) => item.id === id);
+    if (preset) applyCustomBrushPreset(preset);
+    else setSelectedBrushLibraryId('');
+  };
+  const renameBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing) return;
+    const label = window.prompt('Rename this brush preset', existing.label);
+    if (label === null) return;
+    try {
+      setCustomBrushPresets(renameCustomBrushPreset(customBrushPresets, existing.id, label));
+      setNotice(`Brush preset renamed to “${label.trim().slice(0, 80)}”`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Brush preset could not be renamed');
+    }
+  };
+  const deleteBrushLibraryPreset = () => {
+    const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
+    if (!existing || !window.confirm(`Delete the brush preset “${existing.label}” from this device?`)) return;
+    setCustomBrushPresets(deleteCustomBrushPreset(customBrushPresets, existing.id));
+    setSelectedBrushLibraryId('');
+    setNotice(`Brush preset “${existing.label}” deleted from this device`);
   };
   const defineBrushPreset = () => {
     const label = window.prompt('Name this brush preset', 'Custom brush');
@@ -2803,6 +5093,8 @@ export default function Home() {
         pressureCurve,
         brushSmoothing,
         brushScatter,
+        brushDynamics,
+        brushStrands,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -2810,6 +5102,9 @@ export default function Home() {
         brushWetEdges,
         brushBuildUp,
         brushFlow,
+        brushOpacity,
+        brushBlendMode,
+        ...(tool === 'smudge' ? { smudge: smudgeSettings } : {}),
       });
       setCustomBrushPresets((currentPresets) => [...currentPresets, preset].slice(-32));
       applyCustomBrushPreset(preset);
@@ -2818,7 +5113,14 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Brush preset could not be saved');
     }
   };
+  const setRetouchOption = <K extends keyof RetouchOptions>(key: K, value: RetouchOptions[K]) =>
+    setRetouchOptions((options) => ({ ...options, [key]: value }));
+  /** The selected selection-defined pattern, if it still exists. */
+  const activeImagePattern = retouchOptions.patternImage
+    ? imagePatterns.find((item) => item.id === retouchOptions.patternImage)
+    : undefined;
   const applyCustomPatternPreset = (preset: CustomPatternPreset) => {
+    setRetouchOption('patternImage', null);
     setPatternId(preset.pattern);
     setPatternTileSize(preset.tileSize);
     setColor(preset.foreground);
@@ -2865,6 +5167,136 @@ export default function Home() {
     setCustomShapePresets((currentPresets) => currentPresets.filter((item) => item.id !== selectedCustomShapePresetId));
     setSelectedCustomShapePresetId('');
     setNotice(`Shape preset “${preset.label}” removed from this device`);
+  };
+  /** Path preset referenced by a `path-preset:<id>` Custom Shape choice. */
+  const customShapePathPreset = (choice = customShapeId) =>
+    choice.startsWith(PATH_PRESET_SHAPE_PREFIX)
+      ? customPathPresets.find((preset) => `${PATH_PRESET_SHAPE_PREFIX}${preset.id}` === choice)
+      : undefined;
+  const customShapeLabel = () =>
+    customShapePathPreset()?.label ?? customShapeEntry(customShapeId)?.label ?? 'Custom Shape';
+  /** Shift keeps proportions (a square, or the shape's own aspect); Alt drags from the centre. */
+  const newShapeDragBox = (
+    shapeTool: Exclude<ShapeToolId, 'line'>,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    modifiers: { shiftKey: boolean; altKey: boolean },
+  ) => {
+    let aspect = 1;
+    if (shapeTool === 'custom-shape') {
+      const preset = customShapePathPreset();
+      if (preset) {
+        try {
+          const bounds = pathBounds(preset.path);
+          aspect = bounds.width > 0 && bounds.height > 0 ? bounds.width / bounds.height : 1;
+        } catch {
+          aspect = 1;
+        }
+      } else aspect = customShapeAspect(customShapeId);
+    }
+    return shapeDragBox(start, end, { proportional: modifiers.shiftKey, fromCenter: modifiers.altKey, aspect });
+  };
+  /**
+   * Build the editable layer any U-family shape tool creates. Every tool
+   * uses the shared Fill / Stroke / Stroke width options (default: filled
+   * with the foreground colour, no stroke); `undefined` when both are None.
+   */
+  const newShapeLayer = (
+    shapeTool: ShapeToolId,
+    box: { left: number; top: number; width: number; height: number },
+    name: string,
+  ): Layer | undefined => {
+    const width = Math.max(1, Math.min(16000, Math.round(box.width))),
+      height = Math.max(1, Math.min(16000, Math.round(box.height))),
+      matrix: Matrix = [1, 0, 0, 1, Math.round(box.left), Math.round(box.top)];
+    if (shapeTool === 'line') {
+      const line = lineShapeAppearance(shapeAppearance, color, backgroundColor);
+      return { ...commonLayer(name), kind: 'line', width, height, ...line, matrix };
+    }
+    if (shapeTool === 'custom-shape') {
+      const style = pathShapeAppearance(shapeAppearance, color, backgroundColor);
+      if (!style) return undefined;
+      try {
+        const preset = customShapePathPreset();
+        const path = preset
+          ? fitPathToBox(preset.path, width, height, color)
+          : customShapePath(customShapeEntry(customShapeId) ? customShapeId : DEFAULT_CUSTOM_SHAPE_ID, width, height, color);
+        return { ...commonLayer(name), kind: 'path', path: validatePath({ ...path, ...style }), matrix };
+      } catch {
+        return undefined;
+      }
+    }
+    const look = parametricShapeAppearance(shapeAppearance, color, backgroundColor);
+    if (!look) return undefined;
+    if (shapeTool === 'ellipse') return { ...commonLayer(name), kind: 'ellipse', width, height, ...look, matrix };
+    if (shapeTool === 'polygon')
+      return {
+        ...commonLayer(name),
+        kind: 'polygon',
+        width,
+        height,
+        ...look,
+        sides: polygonSides,
+        variant: polygonVariant,
+        innerRadius: polygonInnerRadius,
+        matrix,
+      };
+    return {
+      ...commonLayer(name),
+      kind: 'rectangle',
+      width,
+      height,
+      ...look,
+      ...(shapeTool === 'rounded-rectangle' ? { cornerRadius: shapeCornerRadius } : {}),
+      matrix,
+    };
+  };
+  /** Add a finished shape layer, or explain why nothing was drawn. */
+  const addShapeLayer = (shapeTool: ShapeToolId, box: { left: number; top: number; width: number; height: number }) => {
+    const f = current();
+    const name = shapeLayerName(shapeTool, f.layers.length, customShapeLabel());
+    const layer = newShapeLayer(shapeTool, box, name);
+    if (!layer) {
+      void paint(f);
+      setNotice('Choose a fill or a stroke colour before drawing a shape');
+      return false;
+    }
+    if (!addLayer(layer)) return false;
+    setNotice((value) => (value === 'Layer added' ? `${name} added` : value));
+    return true;
+  };
+  /** Fill or Stroke paint row in the shape Tool options. */
+  const shapePaintRow = (kind: 'fill' | 'stroke') => {
+    const colorKey = kind === 'fill' ? 'fillColor' : 'strokeColor';
+    return (
+      <div className="select-row shape-paint-row">
+        <span>{kind === 'fill' ? 'Fill' : 'Stroke'}</span>
+        <select
+          aria-label={`Shape ${kind}`}
+          value={shapeAppearance[kind]}
+          onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, [kind]: event.target.value as ShapePaintSource }))}
+        >
+          <option value="foreground">Foreground colour</option>
+          <option value="background">Background colour</option>
+          <option value="custom">Custom colour</option>
+          <option value="none">None</option>
+        </select>
+        {shapeAppearance[kind] === 'custom' && (
+          <input
+            type="color"
+            aria-label={`Shape ${kind} colour`}
+            value={shapeAppearance[colorKey]}
+            onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, [colorKey]: event.target.value }))}
+          />
+        )}
+      </div>
+    );
+  };
+  /** Tool options "Create W×H": a shape of the numeric size centred on the canvas. */
+  const createNumericShape = () => {
+    if (!isShapeToolId(tool)) return;
+    const f = current();
+    addShapeLayer(tool, centeredShapeBox(f.w, f.h, shapeAppearance.createWidth, shapeAppearance.createHeight));
   };
   const defineCustomShape = () => {
     const label = window.prompt('Name this custom shape', 'Custom shape');
@@ -2989,12 +5421,7 @@ export default function Home() {
     });
     let points: BooleanPoint[];
     if (layer.kind === 'rectangle') {
-      points = [
-        { x: 0, y: 0 },
-        { x: layer.width, y: 0 },
-        { x: layer.width, y: layer.height },
-        { x: 0, y: layer.height },
-      ];
+      points = roundedRectPoints(layer.width, layer.height, layer.cornerRadius, 12);
     } else if (layer.kind === 'ellipse') {
       points = Array.from({ length: 64 }, (_, index) => {
         const angle = (index * Math.PI * 2) / 64;
@@ -3013,13 +5440,7 @@ export default function Home() {
         y: point.y + layer.stroke / 2,
       }));
     }
-    return booleanPathFromPoints(points.map(map), {
-      fill: layer.fill,
-      stroke: true,
-      strokeWidth: layer.stroke,
-      fillColor: layer.color,
-      strokeColor: layer.color,
-    });
+    return booleanPathFromPoints(points.map(map), parametricShapePathStyle(layer));
   };
   const combineSelectedShapes = (operation: PathBooleanOperation) => {
     const f = current(), selected = selectedLayersForFrame(f);
@@ -3091,6 +5512,30 @@ export default function Home() {
     )
       setNotice('Selected layers isolated; undo restores visibility');
   };
+  /**
+   * Delete Cropped Pixels: plain raster layers placed on whole pixels are
+   * trimmed to the canvas (a lossless copy). Type, shape, smart object,
+   * scaled/rotated and metadata-bearing layers keep their content.
+   */
+  const deleteCroppedPixels = async (next: Frame): Promise<Frame> => {
+    const layers = await Promise.all(
+      next.layers.map(async (layer) => {
+        if (layer.kind !== 'raster' || !canExpandRasterLayer(layer)) return layer;
+        const asset = assets.current[layer.asset];
+        if (!asset) return layer;
+        const plan = planCropTrim(layer.matrix, asset.w, asset.h, next.w, next.h);
+        if (!plan) return layer;
+        if (plan.empty) {
+          return { ...layer, asset: addAsset(assets.current, surface(1, 1)), matrix: [1, 0, 0, 1, 0, 0] as Matrix };
+        }
+        const image = await decodeAsset(asset),
+          trimmed = surface(plan.crop.width, plan.crop.height);
+        trimmed.getContext('2d')!.drawImage(image, -plan.crop.x, -plan.crop.y);
+        return { ...layer, asset: addAsset(assets.current, trimmed), matrix: plan.matrix as Matrix };
+      }),
+    );
+    return { ...next, layers };
+  };
   const cancelCropPreview = () => {
     if (!cropPreview) return;
     cropPreviewId.current += 1;
@@ -3108,33 +5553,59 @@ export default function Home() {
       setNotice('Crop preview expired because the document changed');
       return;
     }
-    if (!preview.changed) {
+    // W × H mode resamples the crop to a fixed size; a resolution (ppi) is
+    // written to the image size metadata when one is set.
+    const options = navigationTools;
+    const sized = options.cropRatio === 'size';
+    const outputWidth = sized ? options.cropWidth : preview.width,
+      outputHeight = sized ? options.cropHeight : preview.height;
+    const resolution = options.cropResolution > 0 ? options.cropResolution : undefined;
+    if (
+      !preview.changed &&
+      outputWidth === preview.width &&
+      outputHeight === preview.height &&
+      (!resolution || effectiveImageSize(f.imageSize).resolution === resolution)
+    ) {
       setCropPreview(null);
       setNotice('Crop already matches the canvas; document unchanged');
+      return;
+    }
+    if (outputWidth * outputHeight > 16_000_000) {
+      setNotice('Crop output exceeds 16 megapixels; choose a smaller W × H');
       return;
     }
     const expectedPreviewId = cropPreviewId.current;
     setCropApplying(true);
     try {
-      const next = await transformFrameWithMasks(
+      const sx = outputWidth / preview.width,
+        sy = outputHeight / preview.height;
+      let next = await transformFrameWithMasks(
         f,
-        [1, 0, 0, 1, -preview.left, -preview.top],
+        [sx, 0, 0, sy, -preview.left * sx, -preview.top * sy],
         assets.current,
-        preview.width,
-        preview.height,
+        outputWidth,
+        outputHeight,
       );
+      if (options.cropDeletePixels) next = await deleteCroppedPixels(next);
+      if (resolution)
+        next = { ...next, imageSize: { ...effectiveImageSize(next.imageSize), resolution } };
       if (current() !== f || cropPreviewId.current !== expectedPreviewId) {
         void paint(current());
         setNotice('Crop cancelled because the preview or document changed');
         return;
       }
+      const cropped = cropMeasurements(f.measurements, preview);
       const changed = commit({
         ...next,
-        measurements: cropMeasurements(f.measurements, preview),
+        measurements: sized ? scaleMeasurements(cropped, sx, sy) : cropped,
       });
       if (changed) {
         setCropPreview(null);
-        setNotice(`Crop applied: ${preview.width} × ${preview.height} px`);
+        setNotice(
+          `Crop applied: ${outputWidth} × ${outputHeight} px` +
+            (sized ? ` (resampled from ${preview.width} × ${preview.height})` : '') +
+            (options.cropDeletePixels ? ' · cropped pixels deleted' : ''),
+        );
       }
     } catch {
       setNotice('Could not apply crop preview');
@@ -3282,12 +5753,7 @@ export default function Home() {
         output.toBlob(resolve, 'image/png'),
       );
       if (!blob) throw new Error('Could not encode the slice');
-      const url = URL.createObjectURL(blob),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${plan.slices[0].name}.png`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(blob, `${plan.slices[0].name}.png`);
       setSliceName(plan.slices[0].name);
       setNotice(
         `Slice downloaded: ${plan.slices[0].name}.png · ${slice.width} × ${slice.height} px`,
@@ -3451,6 +5917,573 @@ export default function Home() {
       return true;
     return false;
   };
+  /** Remove matching annotations in one undoable step. */
+  const removeMeasurements = (
+    matches: (item: MeasurementAnnotation) => boolean,
+    done: string,
+    nothing: string,
+  ) => {
+    const f = current(),
+      all = f.measurements || [],
+      kept = all.filter((item) => !matches(item));
+    if (kept.length === all.length) {
+      setNotice(nothing);
+      return;
+    }
+    if (commit({ ...f, measurements: kept })) setNotice(done);
+  };
+  const latestRuler = (f: Frame) => {
+    const found = [...(f.measurements || [])].reverse().find((item) => item.kind === 'ruler');
+    return found?.kind === 'ruler' ? found : undefined;
+  };
+  /**
+   * Ruler → Straighten Layer: rotate the active layer about the ruler's
+   * midpoint so the ruler line becomes horizontal, and clear the ruler (as
+   * Photoshop does). One undoable step; a layer mask turns with the layer.
+   */
+  const straightenLayerToRuler = async () => {
+    const f = current(),
+      ruler = latestRuler(f),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!ruler) {
+      setNotice('Draw a ruler line along the edge that should be level first');
+      return;
+    }
+    if (!layer || layer.kind === 'adjustment' || layerIsLocked(f, layer)) {
+      setNotice('Select an unlocked pixel, type, shape or smart object layer to straighten');
+      return;
+    }
+    const degrees = straightenRotation(ruler.start, ruler.end);
+    if (Math.abs(degrees) < 0.05) {
+      setNotice('The ruler is already level');
+      return;
+    }
+    const rotation = rotationAboutPoint(
+      degrees,
+      (ruler.start.x + ruler.end.x) / 2,
+      (ruler.start.y + ruler.end.y) / 2,
+    ) as Matrix;
+    let mask = isMaskableLayer(layer) ? layer.mask : undefined;
+    try {
+      if (mask && assets.current[mask]) {
+        const image = await decodeAsset(assets.current[mask]),
+          turned = surface(f.w, f.h),
+          context = turned.getContext('2d')!;
+        context.setTransform(...rotation);
+        context.drawImage(image, 0, 0);
+        mask = addAsset(assets.current, turned);
+      }
+    } catch {
+      setNotice('Could not rotate this layer mask');
+      return;
+    }
+    if (current() !== f) {
+      setNotice('Straighten cancelled because the document changed');
+      return;
+    }
+    if (
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id
+            ? { ...item, matrix: multiply(rotation, item.matrix), ...(mask && isMaskableLayer(item) ? { mask } : {}) }
+            : item,
+        ),
+        measurements: (f.measurements || []).filter((item) => item.kind !== 'ruler'),
+      })
+    )
+      setNotice(`Layer straightened: rotated ${degrees > 0 ? 'clockwise' : 'counter-clockwise'} ${Math.abs(degrees).toFixed(1)}°`);
+  };
+  /**
+   * Crop → Straighten: rotate every layer about the canvas centre so the
+   * drawn line is level (one undoable step), then stage a crop of the
+   * largest rectangle without transparent corners.
+   */
+  const straightenDocument = async (f: Frame, start: CropPoint, end: CropPoint) => {
+    const degrees = straightenRotation(start, end);
+    if (Math.abs(degrees) < 0.05) {
+      setNotice('That line is already level; nothing to straighten');
+      return;
+    }
+    try {
+      const rotation = rotationAboutPoint(degrees, f.w / 2, f.h / 2) as Matrix;
+      const next = await transformFrameWithMasks(f, rotation, assets.current, f.w, f.h);
+      if (current() !== f) {
+        setNotice('Straighten cancelled because the document changed');
+        return;
+      }
+      if (!commit({ ...next, measurements: f.measurements })) return;
+      const inner = inscribedCropAfterRotation(f.w, f.h, degrees);
+      const plan = planRectangularCrop(f.w, f.h, { x: inner.left, y: inner.top }, {
+        x: inner.left + inner.width,
+        y: inner.top + inner.height,
+      });
+      cropPreviewId.current += 1;
+      setCropPreview({ frame: current(), ...plan });
+      setNotice(
+        `Straightened ${Math.abs(degrees).toFixed(1)}° · crop preview ${plan.width} × ${plan.height} px removes the empty corners; Enter applies`,
+      );
+    } catch {
+      setNotice('Could not straighten the document');
+    }
+  };
+  const saveNoteEditor = () => {
+    const editor = noteEditor;
+    if (!editor) return;
+    const text = editor.text.trim().slice(0, 500);
+    if (!text) {
+      setNotice('Type a note before saving, or Cancel');
+      return;
+    }
+    const f = current();
+    if (editor.id) {
+      const exists = (f.measurements || []).some((item) => item.id === editor.id);
+      if (
+        exists &&
+        commit({
+          ...f,
+          measurements: (f.measurements || []).map((item) =>
+            item.id === editor.id && item.kind === 'note' ? { ...item, text, color: editor.color } : item,
+          ),
+        })
+      ) {
+        setNoteEditor(null);
+        setNotice('Note updated');
+      }
+      return;
+    }
+    if (
+      appendMeasurement({
+        id: newMeasurementId(),
+        kind: 'note',
+        x: editor.x,
+        y: editor.y,
+        text,
+        color: editor.color,
+      })
+    ) {
+      setNoteEditor(null);
+      setNotice('Note added to the draft');
+    } else setNotice('Note could not be saved (check for control characters)');
+  };
+  const deleteNote = (id: string) => {
+    setNoteEditor(null);
+    removeMeasurements((item) => item.id === id, 'Note deleted', 'Note already removed');
+  };
+  /** Draft text of the Count group name field until it is committed. */
+  const [countGroupDraft, setCountGroupDraft] = useState<string | null>(null);
+  const commitCountGroupDraft = () => {
+    if (countGroupDraft === null) return;
+    const name = countGroupDraft.trim().replace(/\s+/g, ' ').slice(0, 40);
+    setCountGroupDraft(null);
+    if (name) setNavigationTool('countGroup', name);
+  };
+  /**
+   * Tool options for Zoom, Eyedropper, Color Sampler, Ruler, Note, Count,
+   * Crop and Perspective Crop (docs/navigation-tool-options-contract.md).
+   */
+  const renderNavigationToolOptions = () => {
+    const options = navigationTools;
+    const measurements = frame?.measurements || [];
+    if (tool === 'zoom')
+      return (
+        <div className="nav-tool-options" data-testid="zoom-options">
+          <label className="select-row">
+            <span>Zoom mode</span>
+            <select
+              aria-label="Zoom mode"
+              value={options.zoomMode}
+              onChange={(event) => setNavigationTool('zoomMode', event.target.value as NavigationToolSettings['zoomMode'])}
+            >
+              <option value="in">Zoom In</option>
+              <option value="out">Zoom Out</option>
+            </select>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              aria-label="Scrubby Zoom"
+              checked={options.scrubbyZoom}
+              onChange={(event) => setNavigationTool('scrubbyZoom', event.target.checked)}
+            />
+            Scrubby Zoom
+          </label>
+          <div className="option-buttons">
+            <button type="button" onClick={actualPixels}>100%</button>
+            <button type="button" onClick={fitToScreen}>Fit Screen</button>
+            <button type="button" onClick={fillScreen}>Fill Screen</button>
+          </div>
+          <p className="adjust-note">
+            Click zooms {options.zoomMode === 'in' ? 'in' : 'out'}; Alt-click zooms {options.zoomMode === 'in' ? 'out' : 'in'}.
+            {options.scrubbyZoom ? ' Drag right to zoom in, left to zoom out.' : ''} Ctrl/⌘+0 fits, Ctrl/⌘+1 shows 100%.
+          </p>
+        </div>
+      );
+    if (tool === 'eyedropper')
+      return (
+        <div className="nav-tool-options" data-testid="eyedropper-options">
+          <label className="select-row">
+            <span>Sample size</span>
+            <select
+              aria-label="Sample size"
+              value={options.eyedropperSize}
+              onChange={(event) => setNavigationTool('eyedropperSize', Number(event.target.value) as EyedropperSampleSize)}
+            >
+              {EYEDROPPER_SAMPLE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size === 1 ? 'Point Sample' : `${size} by ${size} Average`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="select-row">
+            <span>Sample</span>
+            <select
+              aria-label="Eyedropper sample"
+              value={options.eyedropperSample}
+              onChange={(event) => setNavigationTool('eyedropperSample', event.target.value as NavigationToolSettings['eyedropperSample'])}
+            >
+              <option value="all">All Layers</option>
+              <option value="current">Current Layer</option>
+            </select>
+          </label>
+          <p className="adjust-note">Click sets the foreground color; Alt-click sets the background color.</p>
+        </div>
+      );
+    if (tool === 'color-sampler') {
+      const samples = measurements.filter((item) => item.kind === 'sample');
+      return (
+        <div className="nav-tool-options" data-testid="color-sampler-options">
+          {samples.length ? (
+            <ol className="measure-list" aria-label="Color samplers">
+              {samples.map((item, index) => {
+                if (item.kind !== 'sample') return null;
+                const live = samplerLive[item.id] ?? { color: item.color, alpha: item.alpha };
+                const rgb = [1, 3, 5].map((offset) => parseInt(live.color.slice(offset, offset + 2), 16));
+                return (
+                  <li key={item.id} data-testid="color-sampler-row">
+                    <i className="measure-swatch" style={{ background: live.color }} aria-hidden="true" />
+                    <b>#{index + 1}</b>
+                    <span>
+                      R {rgb[0]} G {rgb[1]} B {rgb[2]} · {live.color.toUpperCase()} · α {live.alpha}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Delete color sampler ${index + 1}`}
+                      title="Delete sampler"
+                      onClick={() =>
+                        removeMeasurements((entry) => entry.id === item.id, `Color sampler ${index + 1} deleted`, 'Sampler already removed')
+                      }
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="adjust-note">Click the image to place color samplers; their values update as you edit.</p>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={!samples.length}
+            onClick={() => removeMeasurements((item) => item.kind === 'sample', 'All color samplers cleared', 'No color samplers to clear')}
+          >
+            Clear All
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'ruler') {
+      const ruler = frame ? latestRuler(frame) : undefined;
+      const line = measurementPreview ?? (ruler ? { start: ruler.start, end: ruler.end } : null);
+      const readout = line ? rulerReadout(line.start, line.end) : null;
+      return (
+        <div className="nav-tool-options" data-testid="ruler-options">
+          <dl className="measure-readout" data-testid="ruler-readout" aria-live="polite">
+            <div><dt>Length</dt><dd>{readout ? `${readout.length.toFixed(1)} px` : '—'}</dd></div>
+            <div><dt>Angle</dt><dd>{readout ? `${readout.angle.toFixed(1)}°` : '—'}</dd></div>
+            <div><dt>Δx</dt><dd>{readout ? `${readout.dx.toFixed(1)} px` : '—'}</dd></div>
+            <div><dt>Δy</dt><dd>{readout ? `${readout.dy.toFixed(1)} px` : '—'}</dd></div>
+          </dl>
+          <div className="option-buttons">
+            <button type="button" disabled={!ruler} onClick={() => void straightenLayerToRuler()}>
+              Straighten Layer
+            </button>
+            <button
+              type="button"
+              disabled={!ruler}
+              onClick={() => removeMeasurements((item) => item.kind === 'ruler', 'Ruler cleared', 'No ruler to clear')}
+            >
+              Clear
+            </button>
+          </div>
+          <p className="adjust-note">
+            Angles follow Photoshop: a line rising to the right is positive. Δy is measured downwards in image pixels.
+          </p>
+        </div>
+      );
+    }
+    if (tool === 'note') {
+      const notes = measurements.filter((item) => item.kind === 'note');
+      return (
+        <div className="nav-tool-options" data-testid="note-options">
+          <label className="select-row">
+            <span>Note color</span>
+            <input
+              type="color"
+              aria-label="Note color"
+              value={options.noteColor}
+              onChange={(event) => setNavigationTool('noteColor', event.target.value)}
+            />
+          </label>
+          <p className="adjust-note">
+            Click the image to add a note. Click a note to edit, recolor or delete it; drag it to move it.
+          </p>
+          <button
+            type="button"
+            className="secondary"
+            disabled={!notes.length}
+            onClick={() => removeMeasurements((item) => item.kind === 'note', 'All notes cleared', 'No notes to clear')}
+          >
+            Clear notes ({notes.length})
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'count') {
+      const totals = countGroupTotals(measurements);
+      const groupCount = totals.find((entry) => entry.group === options.countGroup)?.count ?? 0;
+      return (
+        <div className="nav-tool-options" data-testid="count-options">
+          <label className="select-row">
+            <span>Count group</span>
+            <input
+              className="text-input"
+              aria-label="Count group name"
+              list="count-group-names"
+              maxLength={40}
+              value={countGroupDraft ?? options.countGroup}
+              onChange={(event) => setCountGroupDraft(event.target.value)}
+              onBlur={commitCountGroupDraft}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  commitCountGroupDraft();
+                }
+              }}
+            />
+          </label>
+          <datalist id="count-group-names">
+            {totals.map((entry) => (
+              <option key={entry.group} value={entry.group}>{entry.group}</option>
+            ))}
+          </datalist>
+          <label className="select-row">
+            <span>Group color</span>
+            <input
+              type="color"
+              aria-label="Count group color"
+              value={options.countColor}
+              onChange={(event) => setNavigationTool('countColor', event.target.value)}
+            />
+          </label>
+          <Slider
+            label="Label size"
+            value={options.countLabelSize}
+            min={COUNT_LABEL_SIZE_MIN}
+            max={COUNT_LABEL_SIZE_MAX}
+            set={(value) => setNavigationTool('countLabelSize', Math.round(value))}
+            suffix=" px"
+          />
+          {totals.length > 0 && (
+            <ul className="measure-list" aria-label="Count groups">
+              {totals.map((entry) => (
+                <li key={entry.group}>
+                  <i className="measure-swatch" style={{ background: entry.color ?? '#ff5c35' }} aria-hidden="true" />
+                  <span>{entry.group}</span>
+                  <b>{entry.count}</b>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button
+            type="button"
+            className="secondary"
+            disabled={!groupCount}
+            onClick={() =>
+              removeMeasurements(
+                (item) => item.kind === 'count' && countGroupOf(item) === options.countGroup,
+                `Count cleared for ${options.countGroup}`,
+                'No count markers in this group',
+              )
+            }
+          >
+            Clear count
+          </button>
+        </div>
+      );
+    }
+    if (tool === 'crop') {
+      const ratioLabels: Record<CropRatioPreset, string> = {
+        free: 'Ratio (free)',
+        original: 'Original ratio',
+        '1:1': '1 : 1 (square)',
+        '4:5': '4 : 5 (8 : 10)',
+        '5:7': '5 : 7',
+        '2:3': '2 : 3 (4 : 6)',
+        '3:4': '3 : 4',
+        '16:9': '16 : 9',
+        ratio: 'Custom ratio',
+        size: 'W × H px (resample)',
+      };
+      const custom = options.cropRatio === 'ratio' || options.cropRatio === 'size';
+      return (
+        <div className="nav-tool-options" data-testid="crop-options">
+          <label className="select-row">
+            <span>Ratio</span>
+            <select
+              aria-label="Crop aspect ratio"
+              value={options.cropRatio}
+              onChange={(event) => setNavigationTool('cropRatio', event.target.value as CropRatioPreset)}
+            >
+              {CROP_RATIO_PRESETS.map((preset) => (
+                <option key={preset} value={preset}>{ratioLabels[preset]}</option>
+              ))}
+            </select>
+          </label>
+          {custom && (
+            <div className="select-row crop-size-row">
+              <span>{options.cropRatio === 'size' ? 'W × H px' : 'W : H'}</span>
+              <IntegerField
+                label="Crop width"
+                value={options.cropWidth}
+                min={1}
+                max={CROP_DIMENSION_MAX}
+                set={(value) => setNavigationTool('cropWidth', value)}
+              />
+              <i aria-hidden="true">×</i>
+              <IntegerField
+                label="Crop height"
+                value={options.cropHeight}
+                min={1}
+                max={CROP_DIMENSION_MAX}
+                set={(value) => setNavigationTool('cropHeight', value)}
+              />
+            </div>
+          )}
+          <div className="select-row">
+            <span>Resolution (ppi, 0 keeps)</span>
+            <IntegerField
+              label="Crop resolution"
+              value={options.cropResolution}
+              min={0}
+              max={CROP_RESOLUTION_MAX}
+              set={(value) => setNavigationTool('cropResolution', value)}
+            />
+          </div>
+          <label className="select-row">
+            <span>Overlay</span>
+            <select
+              aria-label="Crop overlay"
+              value={options.cropOverlay}
+              onChange={(event) => setNavigationTool('cropOverlay', event.target.value as CropOverlay)}
+            >
+              {CROP_OVERLAYS.map((overlay) => (
+                <option key={overlay} value={overlay}>
+                  {overlay === 'thirds' ? 'Rule of thirds' : overlay === 'grid' ? 'Grid' : 'None'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              aria-label="Delete cropped pixels"
+              checked={options.cropDeletePixels}
+              onChange={(event) => setNavigationTool('cropDeletePixels', event.target.checked)}
+            />
+            Delete Cropped Pixels
+          </label>
+          <div className="option-buttons">
+            <button
+              type="button"
+              aria-pressed={cropStraightenArmed}
+              onClick={() => {
+                setCropStraightenArmed((armed) => !armed);
+                setNotice(cropStraightenArmed ? 'Straighten cancelled' : 'Straighten: drag along a line that should be level');
+              }}
+            >
+              Straighten
+            </button>
+          </div>
+          <p className="adjust-note">
+            {options.cropDeletePixels
+              ? 'Raster layers placed on whole pixels are trimmed to the crop; type, shapes, smart objects and transformed layers keep their content.'
+              : 'Pixels outside the crop stay on their layers and can be moved back into view.'}
+          </p>
+        </div>
+      );
+    }
+    if (tool === 'perspective-crop')
+      return (
+        <div className="nav-tool-options" data-testid="perspective-crop-options">
+          <p className="adjust-note">
+            {perspectiveCropPreview
+              ? 'Drag the corner handles on the canvas or edit the corner fields, then Apply or press Enter.'
+              : perspectiveClicks.length
+                ? `Corner ${perspectiveClicks.length} of 4 placed; click the remaining corners.`
+                : 'Drag a rectangle, or click four corners of the surface, then drag the corner handles.'}
+          </p>
+          {perspectiveClicks.length > 0 && !perspectiveCropPreview && (
+            <button type="button" className="secondary" onClick={() => setPerspectiveClicks([])}>
+              Reset corners
+            </button>
+          )}
+        </div>
+      );
+    return null;
+  };
+  // Audio Annotation (docs/audio-annotation-contract.md): markers are frame
+  // measurements (undoable, never rendered); clips are draft-level.
+  const audioPlayer = useAudioAnnotationPlayer(setNotice);
+  const commitAudioAnnotation = (clip: AudioClip, label: string) => {
+    const at = audioDraft;
+    if (!at) return;
+    const clipId = newAudioClipId();
+    addAudioClip(clipId, clip);
+    if (
+      appendMeasurement({
+        id: newMeasurementId(),
+        kind: 'audio',
+        x: at.x,
+        y: at.y,
+        clip: clipId,
+        durationMs: clip.durationMs,
+        label,
+      })
+    ) {
+      setAudioDraft(null);
+      setNotice(`${label} added to the draft`);
+    }
+  };
+  const updateAudioAnnotations = (next: MeasurementAnnotation[] | undefined, message: string) => {
+    if (next && commit({ ...current(), measurements: next })) setNotice(message);
+  };
+  const moveAudioNote = (item: AudioNoteAnnotation, to: MeasurementPoint) => {
+    const f = current();
+    updateAudioAnnotations(
+      moveAudioAnnotation(f.measurements || [], item.id, to.x, to.y, f.w, f.h),
+      `${item.label} moved`,
+    );
+  };
+  const deleteAudioNote = (item: AudioNoteAnnotation) => {
+    if (audioPlayer.playing === item.id) audioPlayer.stop();
+    updateAudioAnnotations(removeAudioAnnotation(current().measurements || [], item.id), `${item.label} deleted`);
+  };
+  const toggleAudioNote = (item: AudioNoteAnnotation) =>
+    audioPlayer.toggle(item.id, audioClips.current[item.clip]);
   const transformSelectionValue = selectionTransforming
     ? current().selection
     : undefined;
@@ -3622,6 +6655,12 @@ export default function Home() {
     if (quickMasking) exitQuickMask();
     else void enterQuickMask();
   };
+  /** User toggle: entering Quick Mask reveals its options section. */
+  const toggleQuickMaskFromUser = () => {
+    const entering = !quickMasking;
+    toggleQuickMask();
+    if (entering) revealSidebarSection(QUICK_MASK_SECTION);
+  };
   const updateQuickMaskAt = (
     mask: QuickMask,
     x: number,
@@ -3738,16 +6777,12 @@ export default function Home() {
           bounds: { w: f.w, h: f.h },
         },
       );
-      const url = URL.createObjectURL(
-          new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
-            type: 'application/json',
-          }),
-        ),
-        link = document.createElement('a');
-      link.href = url;
-      link.download = `${savedSelectionName || 'selection'}.pixelselection`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      downloadBlob(
+        new Blob([serializeSavedSelections(book, { w: f.w, h: f.h })], {
+          type: 'application/json',
+        }),
+        `${savedSelectionName || 'selection'}.pixelselection`,
+      );
       setNotice('Selection file downloaded');
     } catch (error) {
       setNotice(
@@ -3838,13 +6873,45 @@ export default function Home() {
       : undefined;
   const layerIsLocked = (f: Frame, layer: Layer) =>
     layer.locked || Boolean(groupForLayer(f, layer)?.locked);
-  const editLayer = (patch: Partial<Layer>) => {
+  /** Layers panel row click: a plain (single) selection reveals the layer properties. */
+  const selectLayerFromPanel = (
+    id: string,
+    intent?: { additive?: boolean; range?: boolean },
+  ) => {
+    select(id, intent);
+    if (intent?.additive || intent?.range) return;
+    // A text layer reveals its Type/Character panels; other layers reveal
+    // the layer properties.
+    if (revealTextSectionFor(current().layers.find((layer) => layer.id === id))) return;
+    lastRevealedTextLayer.current = undefined;
+    withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection(LAYER_SELECTION_SECTION));
+  };
+  /** Layers panel edits: enabling exactly one layer style reveals that style's controls. */
+  const editLayerFromPanel = (patch: Partial<Layer>) => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    const before = layer ? effectiveLayerStyles(layer.styles) : undefined;
+    const result = editLayer(patch);
+    const nextStyles = (patch as { styles?: Partial<Record<(typeof LAYER_STYLE_IDS)[number], { enabled?: boolean }>> }).styles;
+    if (before && nextStyles && result !== false) {
+      const enabled = LAYER_STYLE_IDS.filter((style) => nextStyles[style]?.enabled === true && !before[style].enabled);
+      if (enabled.length === 1)
+        withSidebarTrigger('sidebar', 'unknown', () => revealSidebarSection(sectionForStyle(enabled[0])));
+    }
+    return result;
+  };
+  const editLayer = (requested: Partial<Layer>) => {
     if (quickMasking) {
       setNotice('Exit Quick Mask mode before editing layers');
       return false;
     }
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
+    // Renaming the Background turns it into an ordinary layer, as in Photoshop.
+    const patch: Partial<Layer> = 'name' in requested && layer.kind === 'raster' && layer.background === true &&
+      requested.name !== layer.name
+      ? ({ ...requested, background: undefined } as Partial<Layer>)
+      : requested;
     const group = groupForLayer(f, layer);
     if (
       group?.locked ||
@@ -3870,10 +6937,14 @@ export default function Home() {
       }
       return false;
     }
-    const next =
+    let next =
       patch.kind && patch.kind !== layer.kind
         ? (patch as Layer)
         : ({ ...layer, ...patch } as Layer);
+    if (patch !== requested) next = layerFromBackground(next);
+    // Plain-text edits (Layers panel field) keep character styles aligned.
+    if (next.kind === 'text' && layer.kind === 'text' && next.text !== layer.text && !('rich' in patch))
+      next = withTextRemapped(layer, next.text, next);
     if (JSON.stringify(next) === JSON.stringify(layer)) return true;
     let layers = f.layers.map((l) => (l.id === layer.id ? next : l));
     if (patch.matrix !== undefined && layer.layerLinkId !== undefined) {
@@ -4017,9 +7088,54 @@ export default function Home() {
     editLayer({ textPath: binding });
     setNotice('Text attached to editable path');
   };
+  /** Glyphs panel insertion; see src/glyphInsert.ts for the adapter order. */
+  const insertGlyph = async (glyph: string, family: string, mode: GlyphInsertMode) => {
+    const f = current();
+    const plan = mode === 'shape'
+      ? { kind: 'new-layer' as const, text: glyph, fontFamily: family }
+      : planGlyphInsert({ active: f.active, layers: f.layers.map((layer) => ({ ...layer, locked: layerIsLocked(f, layer) })) }, glyph, family);
+    void sharedFontLoader().ensure(family, { text: glyph, priority: 'high' });
+    if (plan.kind === 'caret') {
+      if (currentTextCaretAdapter()?.insertTextAtCaret(glyph) !== false) {
+        setNotice('Glyph inserted at the text caret');
+        return;
+      }
+    }
+    if (plan.kind === 'append') {
+      if (editLayer({ text: plan.text } as Partial<Layer>)) setNotice('Glyph added to the active text layer');
+      return;
+    }
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice('Layer limit reached; remove a layer before inserting a glyph');
+      return;
+    }
+    const size = Math.max(24, Math.min(256, fontSize * 2));
+    const added = addLayer({
+      ...commonLayer(`Glyph ${glyph}`),
+      kind: 'text',
+      text: glyph,
+      fontSize: size,
+      fontFamily: family,
+      bold: false,
+      color,
+      boxWidth: Math.max(size * 2, 64),
+      textAlign: 'left',
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      orientation: 'horizontal',
+      matrix: [1, 0, 0, 1, Math.max(0, Math.round(f.w / 2 - size / 2)), Math.max(0, Math.round(f.h / 2 - size / 2))],
+    });
+    if (!added) return;
+    if (mode === 'shape') {
+      await ensureTextLayerFonts([{ fontFamily: family, text: glyph }]);
+      await convertTextToShape();
+      return;
+    }
+    setNotice(`Glyph added as a new ${family} text layer`);
+  };
   const pasteLoremIpsum = () => {
     const f = current();
-    if (f.layers.length >= 32) {
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
       setNotice('Layer limit reached; remove a layer before inserting text');
       return;
     }
@@ -4180,10 +7296,14 @@ export default function Home() {
    * The source layer is cloned with a temporary flow orientation, so the
    * command never converts or mutates the user's text metadata.
    */
-  const applyTextMask = async (orientation: TextMaskOrientation) => {
+  const applyTextMask = async (
+    orientation: TextMaskOrientation,
+    /** Type Mask tools pass their uncommitted type instead of a document layer. */
+    source?: Extract<Layer, { kind: 'text' }>,
+  ) => {
     const f = current();
-    const layer = f.layers.find((item) => item.id === f.active);
-    if (!layer || layer.kind !== 'text' || layerIsLocked(f, layer) || !layer.visible || groupForLayer(f, layer)?.visible === false) {
+    const layer = source ?? f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'text' || (!source && (layerIsLocked(f, layer) || !layer.visible || groupForLayer(f, layer)?.visible === false))) {
       setNotice('Select a visible, unlocked text layer before creating a type mask');
       return;
     }
@@ -4216,6 +7336,7 @@ export default function Home() {
         context = mask.getContext('2d');
       if (!context) throw new Error('Text mask canvas is unavailable');
       const textLayer = effectiveTextLayer({ ...layer, orientation }, f.w);
+      await loadTextLayerFonts(textLayer);
       context.save();
       context.setTransform(...textLayer.matrix);
       context.globalAlpha = 1;
@@ -4268,7 +7389,7 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Could not create a Type Mask selection');
     }
   };
-  const setSelection = (selection: Selection | undefined) => {
+  const setSelection = (selection: Selection | undefined, createdLabel?: string) => {
     const f = current();
     if (JSON.stringify(f.selection) === JSON.stringify(selection)) return;
     // A deselect keeps the exact editable snapshot needed by Select > Reselect.
@@ -4283,11 +7404,12 @@ export default function Home() {
         };
     if (commit(next)) {
       const label =
-        selection?.shape === 'ellipse'
+        createdLabel ??
+        (selection?.shape === 'ellipse'
           ? 'Elliptical'
           : selection?.shape === 'polygon'
             ? 'Polygonal'
-            : 'Rectangular';
+            : 'Rectangular');
       setNotice(selection ? `${label} selection created` : 'Selection cleared');
     }
   };
@@ -4487,7 +7609,7 @@ export default function Home() {
           shape: 'rectangle', x: 0, y: 0, w: f.w, h: f.h,
           feather, inverted: false, mask: maskId,
         },
-      })) setNotice(`Select and Mask applied (smooth ${smoothRadius} px, feather ${feather} px)`);
+      })) setNotice(`Select and Mask applied (smooth ${smoothRadius} px, feather ${formatSelectionFeather(feather)} px)`);
     } catch (error) {
       if (isCurrentSelectionOperation(f, frameIndex, workToken))
         setNotice(error instanceof Error ? error.message : 'Select and Mask failed');
@@ -4698,7 +7820,7 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : `${label} failed`);
     }
   };
-  const applyPerspectiveWarp = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
+  const perspectiveWarpLayer = async (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
@@ -4739,7 +7861,7 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : `Could not apply ${mode}`);
     }
   };
-  const applyPuppetWarp = async () => {
+  const puppetWarpLayer = async () => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object') || !layer.asset) {
@@ -4893,7 +8015,16 @@ export default function Home() {
     points: selection.points,
     operation: 'replace',
   });
-  const mergeSelection = (next: Selection) => {
+  /**
+   * Merge a marquee/lasso selection with the current one. The options-bar
+   * Feather (docs/selection-feather-contract.md) applies to every new marquee
+   * and lasso selection except the one-pixel Single Row/Column marquees.
+   */
+  const mergeSelection = (created: Selection, createdLabel?: string) => {
+    const next =
+      marqueeOptions.feather > 0 && tool !== 'row-select' && tool !== 'column-select' && !created.feather
+        ? { ...created, feather: marqueeOptions.feather }
+        : created;
     const frame = current(),
       frameIndex = index.current,
       workToken = ++selectionWorkToken.current,
@@ -4901,7 +8032,7 @@ export default function Home() {
       sourceAssets = assets.current,
       currentSelection = frame.selection;
     if (!currentSelection || operation === 'replace') {
-      setSelection({ ...next, parts: [selectionPart(next)] });
+      setSelection({ ...next, parts: [selectionPart(next)] }, createdLabel);
       return;
     }
     // Keep simple geometry editable. Once either side is an alpha mask or has
@@ -4922,7 +8053,7 @@ export default function Home() {
       ];
       parts.push({ ...selectionPart(next), operation });
       if (isCurrentSelectionOperation(frame, frameIndex, workToken))
-        setSelection({ ...next, parts });
+        setSelection({ ...next, parts }, createdLabel);
       return;
     }
     void (async () => {
@@ -4947,7 +8078,7 @@ export default function Home() {
           frameIndex,
           workToken,
           candidate,
-          `${next.shape === 'ellipse' ? 'Elliptical' : next.shape === 'polygon' ? 'Polygonal' : 'Rectangular'} selection created`,
+          `${createdLabel ?? (next.shape === 'ellipse' ? 'Elliptical' : next.shape === 'polygon' ? 'Polygonal' : 'Rectangular')} selection created`,
         );
       } catch {
         if (isCurrentSelectionOperation(frame, frameIndex, workToken))
@@ -4955,37 +8086,42 @@ export default function Home() {
       }
     })();
   };
-  const finishPolygonalLasso = (g: Gesture) => {
-    const points = g.points || [];
-    if (points.length < 3) {
+  /**
+   * Clip a lasso path to the canvas and merge it as a polygon selection.
+   * Returns false, with a notice and the selection unchanged, when nothing of
+   * the path remains on the canvas.
+   */
+  const commitLassoPolygon = (
+    g: Gesture,
+    label: 'Lasso' | 'Polygonal lasso' | 'Magnetic Lasso' | 'Elliptical marquee',
+  ) => {
+    const bounded = boundSelectionPolygon(g.points || [], g.frame.w, g.frame.h);
+    if (!bounded.ok) {
       void paint(g.frame);
-      setNotice('Polygonal lasso needs at least three points');
-      return;
-    }
-    const bounded = points.map((point) => ({
-      x: Math.max(0, Math.min(g.frame.w, point.x)),
-      y: Math.max(0, Math.min(g.frame.h, point.y)),
-    }));
-    const x = Math.min(...bounded.map((point) => point.x)),
-      y = Math.min(...bounded.map((point) => point.y)),
-      right = Math.max(...bounded.map((point) => point.x)),
-      bottom = Math.max(...bounded.map((point) => point.y));
-    if (right - x <= 0 || bottom - y <= 0) {
-      void paint(g.frame);
-      setNotice('Polygonal lasso needs a non-zero area');
-      return;
+      setNotice(
+        bounded.reason === 'too-few-points'
+          ? `${label} needs at least three points`
+          : bounded.reason === 'outside'
+            ? `${label} selection is outside the image`
+            : `${label} needs a non-zero area`,
+      );
+      return false;
     }
     mergeSelection({
       shape: 'polygon',
-      x,
-      y,
-      w: right - x,
-      h: bottom - y,
-      points: bounded,
+      x: bounded.x,
+      y: bounded.y,
+      w: bounded.w,
+      h: bounded.h,
+      points: bounded.points,
       feather: 0,
       inverted: false,
-    });
-    setNotice('Polygonal selection created');
+    }, LASSO_CREATED_LABELS[label]);
+    return true;
+  };
+  const finishPolygonalLasso = (g: Gesture) => {
+    if (commitLassoPolygon(g, 'Polygonal lasso'))
+      setNotice('Polygonal selection created');
   };
   const invertSelection = () => {
     const f = current();
@@ -4995,10 +8131,47 @@ export default function Home() {
     }
     setSelection({ ...f.selection, inverted: !f.selection.inverted });
   };
-  const setSelectionFeather = (feather: number) => {
-    const f = current();
+  const setSelectionFeather = (value: number) => {
+    const f = current(), feather = normalizeSelectionFeather(value);
+    if (Number.isNaN(feather)) {
+      setNotice('Selection feather must be 0 to 1000 px');
+      return;
+    }
     if (f.selection && commit({ ...f, selection: { ...f.selection, feather } }))
-      setNotice(`Selection feather set to ${Math.round(feather)} px`);
+      setNotice(`Selection feather set to ${formatSelectionFeather(feather)} px`);
+  };
+  /**
+   * Delete/Backspace with an active selection: clear the selected pixels of
+   * the active raster layer to transparency as one undoable history step
+   * (docs/selection-outline-contract.md). Feathered coverage clears partially.
+   */
+  const clearSelectedLayerPixels = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!f.selection) return;
+    if (!layer || layer.kind !== 'raster' || !layer.visible || layerIsLocked(f, layer)) {
+      setNotice('Select a visible, unlocked raster layer to clear the selected pixels');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        buffer = surface(image.naturalWidth, image.naturalHeight),
+        context = buffer.getContext('2d')!;
+      context.drawImage(image, 0, 0);
+      const mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height);
+      if (current() !== f) return;
+      const pixels = context.getImageData(0, 0, buffer.width, buffer.height);
+      if (!mask || !clearSelectedPixels(pixels.data, mask)) {
+        setNotice('The selection has no pixels to clear on this layer');
+        return;
+      }
+      context.putImageData(pixels, 0, 0);
+      const asset = addAsset(assets.current, buffer);
+      if (commit({ ...f, layers: f.layers.map((item) => (item.id === layer.id ? { ...item, asset } : item)) }))
+        setNotice('Selected pixels cleared; undo restores them');
+    } catch {
+      setNotice('Could not clear the selected pixels');
+    }
   };
   const createMaskFromSelection = async () => {
     const f = current(),
@@ -5011,16 +8184,31 @@ export default function Home() {
       setNotice('Unlock this layer before editing its mask');
       return;
     }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return;
+    }
     const mask = await renderSelection(f.selection, f.w, f.h, assets.current);
+    if (current() !== f) {
+      setNotice('Mask from selection cancelled because the document changed');
+      return;
+    }
     const maskId = addAsset(assets.current, mask);
+    // Like Photoshop, the selection is consumed into the mask: one undo step
+    // adds the mask and deselects, and Select > Reselect restores it.
     if (
-      editLayer({
-        mask: maskId,
-        maskEnabled: true,
-        maskInverted: false,
+      commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id
+            ? ({ ...item, mask: maskId, maskEnabled: true, maskInverted: false } as Layer)
+            : item,
+        ),
+        selection: undefined,
+        previousSelection: f.selection,
       })
     )
-      setNotice('Nondestructive layer mask created');
+      setNotice('Nondestructive layer mask created; selection cleared (Select > Reselect restores it)');
   };
   const invertLayerMask = () => {
     const f = current(),
@@ -5475,8 +8663,8 @@ export default function Home() {
       return;
     }
     const f = current();
-    if (f.layers.length >= 32) {
-      setNotice('32-layer limit reached; remove a layer before generating an image');
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached; remove a layer before generating an image`);
       return;
     }
     try {
@@ -5717,8 +8905,47 @@ export default function Home() {
       adjust({ levelsOutputWhite });
   const setColorBalance = (patch: Partial<Adjustments['colorBalance']>) =>
     adjust({ colorBalance: { ...colorBalance, ...patch } });
-  const setCurve = (channel: CurveChannel, points: CurvePoints) =>
-    adjust({ curves: { ...curves, [channel]: points } });
+  // One curve-point drag is one undo step: the first change commits, later
+  // changes of the same drag amend that history entry in place.
+  const setCurve = (
+    channel: CurveChannel,
+    points: CurvePoints,
+    options?: CurveChangeOptions,
+  ) => {
+    const next = {
+      ...curves,
+      interpolation: curveInterpolation(curves),
+      [channel]: points,
+    };
+    const top = current();
+    if (options?.continuing && curveGestureFrame.current === top) {
+      const amended: Frame = {
+        ...top,
+        layers: top.layers.map((layer) =>
+          layer.id === top.active
+            ? {
+                ...layer,
+                adjustments: {
+                  ...effectiveAdjustments(layer.adjustments),
+                  curves: next,
+                },
+              }
+            : layer,
+        ),
+      };
+      if (doc.amend(amended, top)) {
+        curveGestureFrame.current = current();
+        // amend() replaces the entry without rendering; repaint like commit.
+        void paint(current());
+        return;
+      }
+    }
+    const committed = adjust({ curves: next });
+    curveGestureFrame.current =
+      committed && current() !== top ? current() : null;
+  };
+  const setCurveInterpolation = (interpolation: CurveInterpolation) =>
+    adjust({ curves: { ...curves, interpolation } });
   const setSharpenNoise = (patch: Partial<Adjustments['sharpenNoise']>) =>
     adjust({ sharpenNoise: { ...sharpenNoise, ...patch } });
   const updateRecordedFilterParameters = (effects: Adjustments['filterEffects']) => {
@@ -5736,10 +8963,26 @@ export default function Home() {
       return { ...action, steps, updatedAt: new Date().toISOString() };
     }));
   };
+  /**
+   * Commit Filter effects parameters to their current target: the live filter,
+   * or the stacked entry selected for editing (one undoable metadata edit;
+   * the #185 cache key follows because it hashes the normalised stack).
+   */
+  const commitFilterEffects = (next: Adjustments['filterEffects']) => {
+    if (filterStackEditIndex === null) return adjust({ filterEffects: next });
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer?.smartFilters?.length) return false;
+    try {
+      return editLayer({ smartFilters: replaceSmartFilter(layer.smartFilters, filterStackEditIndex, next) });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not change the stacked filter');
+      return false;
+    }
+  };
   const setFilterEffects = (patch: Partial<Adjustments['filterEffects']>) => {
     const next = { ...filterEffects, ...patch };
-    const changed = adjust({ filterEffects: next });
-    if (changed) updateRecordedFilterParameters(next);
+    const changed = commitFilterEffects(next);
+    if (changed && filterStackEditIndex === null) updateRecordedFilterParameters(next);
     return changed;
   };
   const setPhotoAdjustments = (
@@ -5805,18 +9048,49 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Color profile conversion failed; the draft is unchanged');
     }
   };
-  const chooseFilterEffect = (type: FilterEffectType, label: string) => {
+  // Live filters render over the stored asset. A paint layer stored at its
+  // content bounds (or a new empty layer) is grown to the canvas first, so a
+  // generator such as Clouds or a blur covers the canvas, not the stored box.
+  const chooseFilterEffect = (
+    type: FilterEffectType,
+    label: string,
+    choice: { switchInPlace?: boolean } = {},
+  ) => {
+    if (filterStackEditIndex !== null && type === 'none') {
+      setNotice('Remove the stacked filter, or choose Done to edit the live filter');
+      return;
+    }
+    // Menu / gallery / shortcut picks reveal the Filter effects section; the
+    // section's own select (switchInPlace) never moves the sidebar.
+    if (!choice.switchInPlace) revealSidebarSection(sectionForFilter(type));
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (
+      type !== 'none' &&
+      layer?.kind === 'raster' &&
+      canTrimRasterLayer(layer) &&
+      rasterExpansionTarget(f)
+    ) {
+      void expandRasterLayerForPaint().then(() => applyFilterEffectChoice(type, label, choice));
+      return;
+    }
+    applyFilterEffectChoice(type, label, choice);
+  };
+  const applyFilterEffectChoice = (
+    type: FilterEffectType,
+    label: string,
+    choice: { switchInPlace?: boolean } = {},
+  ) => {
     if (type !== 'none') {
+      const frame = current();
+      prewarmFilterWorkers([type], { w: frame.w, h: frame.h });
       setLastFilterType(type);
       try { window.localStorage.setItem('pixelforge.last-filter', type); } catch { /* private mode */ }
     }
-    if (
-      adjust({
-        filterEffects:
+    const next: Adjustments['filterEffects'] =
           type === 'none'
             ? { ...neutralFilterEffects }
-            : {
-                ...effectiveFilterEffects(filterEffects),
+            : retypeFilterEffects(filterEffects, {
                 type,
                 ...(type === 'path-blur' ? { path: DEFAULT_BLUR_PATH.map((point) => ({ ...point })) } : {}),
                 ...(type === 'spin-blur' ? { spinEllipse: { ...DEFAULT_SPIN_ELLIPSE } } : {}),
@@ -5836,6 +9110,17 @@ export default function Home() {
                 ...(type === 'deinterlace' ? { deinterlace: { ...DEFAULT_DEINTERLACE_SETTINGS } } : {}),
                 ...(type === 'fibers' ? {
                   fibers: { ...DEFAULT_FIBERS_SETTINGS },
+                } : {}),
+                ...(type === 'difference-clouds' ? {
+                  cloudScale: defaultCloudScale(frame?.w ?? 0, frame?.h ?? 0),
+                } : {}),
+                ...(type === 'clouds' ? {
+                  cloudRender: {
+                    foreground: color,
+                    background: backgroundColor,
+                    scale: defaultCloudScale(frame?.w ?? 0, frame?.h ?? 0),
+                    fill: true,
+                  },
                 } : {}),
                 ...(type === 'gradient-map' ? {
                   gradientMap: { shadow: '#000000', highlight: '#ffffff' },
@@ -5924,13 +9209,48 @@ export default function Home() {
                     : type === 'shear'
                       ? 90
                       : 0,
-              },
-      })
-    )
+                ...(type === 'light-rays' ? lightRaysEffectDefaults() : {}),
+              });
+    if (filterStackEditIndex !== null) {
+      if (commitFilterEffects(next))
+        setNotice(type === 'none' ? 'Local filter effect cleared' : `Stacked filter ${filterStackEditIndex + 1} is now ${label}`);
+      return;
+    }
+    const activeLayer = current().layers.find((item) => item.id === current().active);
+    const plan = planFilterChoice({
+      live: activeLayer?.adjustments.filterEffects,
+      stack: activeLayer?.smartFilters,
+      type,
+      stackable: Boolean(activeLayer && isRasterContentLayer(activeLayer)),
+      switchInPlace: choice.switchInPlace,
+    });
+    const previousLabel = plan.kind === 'stack' ? filterTypeLabel(plan.moved.type) : plan.replaced ? filterTypeLabel(plan.replaced.type) : '';
+    if (plan.kind === 'stack') {
+      // One undoable step: the previous live filter keeps rendering from the
+      // filter stack and the chosen filter applies on top of it.
+      if (
+        activeLayer &&
+        editLayer({
+          smartFilters: plan.stack,
+          adjustments: { ...effectiveAdjustments(activeLayer.adjustments), filterEffects: next },
+        })
+      )
+        setNotice(
+          `${previousLabel} moved to the filter stack (${plan.stack.length}/${SMART_FILTER_MAX}); ${label} applied on top and remains editable in Filter effects`,
+        );
+      return;
+    }
+    if (commitFilterEffects(next))
       setNotice(
         type === 'none'
           ? 'Local filter effect cleared'
-          : `${label} applied; remains editable in Filter effects`,
+          : plan.reason === 'stack-full'
+            ? `Filter stack is full (${SMART_FILTER_MAX}/${SMART_FILTER_MAX}); ${label} replaced ${previousLabel} as the live filter`
+            : plan.reason === 'unsupported'
+              ? `${label} replaced ${previousLabel}; this layer cannot hold a filter stack`
+              : plan.reason === 'switch'
+                ? `${label} replaced ${previousLabel} as the live filter; remains editable in Filter effects`
+                : `${label} applied; remains editable in Filter effects`,
       );
   };
   const convertForSmartFilters = () => {
@@ -5966,7 +9286,29 @@ export default function Home() {
     if (editLayer({ smartFilters: [] }))
       setNotice(`Smart Filter stack cleared${layer?.smartFilters?.length ? '; undo restores it' : ''}`);
   };
+  /** Apply one undoable reorder/toggle/remove edit to the active layer's filter stack. */
+  const editSmartFilterStack = (
+    change: (stack: SmartFilterEntry[]) => SmartFilterEntry[],
+    message: string,
+  ) => {
+    const layer = current().layers.find((item) => item.id === current().active);
+    if (!layer?.smartFilters?.length) return false;
+    try {
+      if (editLayer({ smartFilters: change(layer.smartFilters) })) {
+        setNotice(message);
+        return true;
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not change the filter stack');
+    }
+    return false;
+  };
+  const filterTypeLabel = (type: string) =>
+    type.split('-').map((word, index) => (index ? word : word[0].toUpperCase() + word.slice(1))).join(' ');
+  /** Live filter-centre drag preview (frame space) before the edit commits. */
+  const [filterCenterDrag, setFilterCenterDrag] = useState<{ centerX: number; centerY: number } | null>(null);
   const chooseFilter = (filter: string, label: string) => {
+    revealSidebarSection(QUICK_FILTER_SECTION);
     if (adjust({ filter }))
       setNotice(`${label} applied to selected layer; remains editable`);
   };
@@ -5974,15 +9316,15 @@ export default function Home() {
     setCloud(undefined);
     setCloudMessage('');
   };
-  const startRaster = (image: HTMLCanvasElement, title: string) => {
-    const f = rasterFrame(image, assets.current);
+  const startRaster = (image: HTMLCanvasElement, title: string, background = false) => {
+    const f = rasterFrame(image, assets.current, 'Background', background);
     if (commit(f, true)) {
       clearClipboard();
       setDraftId(createDraftId());
       clearCloud();
       setName(title.slice(0, 160));
       setMetadata({ ...DEFAULT_DOCUMENT_METADATA });
-      setZoom(72);
+      setViewZoomState(fittedZoom(stage.current, image.width, image.height));
       return true;
     }
     return false;
@@ -5993,8 +9335,23 @@ export default function Home() {
       image.getContext('2d')!.fillStyle = '#fff';
       image.getContext('2d')!.fillRect(0, 0, 1200, 800);
     }
-    startRaster(image, transparent ? 'untitled-transparent' : 'untitled');
+    // A filled document starts with a locked-position Background layer.
+    startRaster(image, transparent ? 'untitled-transparent' : 'untitled', !transparent);
     setNotice(transparent ? 'New transparent document' : 'New document');
+  };
+  /** File → New…: a document of any allowed size and background. */
+  const createDocument = (request: NewDocumentRequest) => {
+    const image = surface(request.width, request.height);
+    const fill = backgroundFill(request.background, backgroundColor);
+    if (fill) {
+      const context = image.getContext('2d')!;
+      context.fillStyle = fill;
+      context.fillRect(0, 0, request.width, request.height);
+    }
+    if (startRaster(image, request.name || 'untitled', Boolean(fill))) {
+      setNewDocumentOpen(false);
+      setNotice(`New document ${request.width} × ${request.height} px`);
+    }
   };
   const duplicateDocument = async () => {
     if (!frame) {
@@ -6010,7 +9367,7 @@ export default function Home() {
       setDraftId(createDraftId());
       setName(copy.name);
       setMetadata(effectiveDocumentMetadata(copy.metadata));
-      restoreSettings(copy.settings);
+      restoreSettings(copy.settings, fittedDraftZoom(stage.current, copy));
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
@@ -6027,8 +9384,25 @@ export default function Home() {
     let cancelled = false;
     void (async () => {
       try {
-        const saved = await readDraft(openingDraftId.current);
+        // `/editor` without a bookmark falls back to the browser-wide last
+        // draft. If another tab already has that draft open, attaching here
+        // would make both tabs save the same revision chain and the other tab
+        // would report a conflict; start a new draft instead. The other tab
+        // and its bookmark keep the original draft.
+        const elsewhere =
+          initialDraft.source === 'last-draft' &&
+          (await draftOpenElsewhere(openingDraftId.current));
         if (cancelled) return;
+        const saved = elsewhere
+          ? undefined
+          : await readDraft(openingDraftId.current);
+        if (cancelled) return;
+        if (elsewhere) {
+          setDraftId(createDraftId());
+          setNotice(
+            'Your last draft is open in another tab, so this tab started a new draft.',
+          );
+        }
         if (saved) {
           await install(saved);
           if (cancelled) return;
@@ -6039,7 +9413,7 @@ export default function Home() {
             openingDraftId.current,
             saved.localRevision || 0,
           );
-          restoreSettings(saved.settings);
+          restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved));
           const restoredMask = saved.history[saved.index].quickMask;
           if (restoredMask?.active) {
             try {
@@ -6108,33 +9482,43 @@ export default function Home() {
         x.bezierCurveTo(350, y - 38, 610, y + 34, 980, y - 6);
         x.stroke();
       }
-      commit(rasterFrame(c, assets.current), true);
+      commitDocument(rasterFrame(c, assets.current, 'Background', true), true);
+      setViewZoomState(fittedZoom(stage.current, c.width, c.height));
       setReady(true);
     })();
     return () => {
       cancelled = true;
     };
     // Settings are loaded once from the opening bookmark.
-  }, [assets, commit, install, paint, restoreSettings]);
+  }, [assets, commitDocument, initialDraft, install, paint, restoreSettings]);
+  // Advertise which draft this tab has open so a bookmark-less `/editor` tab
+  // does not silently attach to it (see the opening effect above).
+  useEffect(() => {
+    if (!ready) return;
+    return holdDraftOpen(draftId);
+  }, [ready, draftId]);
   useLayoutEffect(() => {
     if (!ready || index.current < 0 || discarding.current) return;
     const sequence = ++saveSequence.current;
     saving.current = true;
     setSaveStatus('Saving on this device…');
-    const value: Draft = {
+    const fullValue: Draft = {
       version: 2,
       cloud,
       history: history.current.slice(),
       assets: { ...assets.current },
+      audio: audioClips.current,
       index: index.current,
       name,
       settings: {
         tool,
-        zoom,
+        zoom: LEGACY_STAGE_ZOOM,
+        viewZoom,
         color,
         backgroundColor,
         size,
         brushOpacity,
+        brushBlendMode,
         hardness,
         pressureSize,
         pressureOpacity,
@@ -6142,14 +9526,23 @@ export default function Home() {
         brushPreset,
         customBrushPresets,
         customPatternPresets,
+        imagePatterns,
+        retouchOptions,
         customShapePresets,
         customPathPresets,
         polygonVariant,
         polygonSides,
         polygonInnerRadius,
+        shapeCornerRadius,
+        customShapeId,
+        shapeAppearance,
+        penOptions,
         spacing: brushSpacing,
         brushSmoothing,
         brushScatter,
+        brushDynamics,
+        brushStrands,
+        paintSymmetry,
         brushTexture,
         brushDual,
         secondaryBrushPreset,
@@ -6165,6 +9558,9 @@ export default function Home() {
         gradientDither,
         gradientStops,
         gradientNoise,
+        gradientBlend,
+        gradientOpacity,
+        navigationTools,
         angle: brushAngle,
         roundness: brushRoundness,
         flipX: brushFlipX,
@@ -6174,11 +9570,14 @@ export default function Home() {
         redEyeThreshold,
         redEyeAmount,
         colorTolerance,
+        colorRegion,
+        marquee: marqueeOptions,
         tonalExposure,
         tonalRange,
         spongeMode,
         spongeVibrance,
         mixerBrush,
+        smudge: smudgeSettings,
         historyBrush,
         artHistoryBrush,
         historySourceIndex,
@@ -6195,6 +9594,18 @@ export default function Home() {
       },
       metadata: { ...metadata },
     };
+    // Persist only the history window that fits the local draft limits so a
+    // larger in-memory undo/redo stack can never make local saves fail.
+    const { draft: value, window: persistedWindow } =
+      persistableHistoryDraft(fullValue);
+    setPersistedHistory((previous) =>
+      previous &&
+      previous.start === persistedWindow.start &&
+      previous.end === persistedWindow.end &&
+      previous.omittedRedo === persistedWindow.omittedRedo
+        ? previous
+        : persistedWindow,
+    );
     const pendingToken = stagePendingDraft(
       draftId,
       value,
@@ -6223,22 +9634,26 @@ export default function Home() {
           setSaveStatus(
             error instanceof Error && error.message === LOCAL_CONFLICT
               ? LOCAL_CONFLICT
-              : 'Local save failed — export a copy',
+              : error instanceof Error && error.message === LOCAL_STORAGE_FULL
+                ? LOCAL_STORAGE_FULL
+                : 'Local save failed — export a copy',
           );
         }
       });
   }, [
     ready,
     revision,
+    audioClips,
     draftId,
     cloud,
     name,
     tool,
-    zoom,
+    viewZoom,
     color,
     backgroundColor,
     size,
     brushOpacity,
+    brushBlendMode,
     hardness,
     pressureSize,
     pressureOpacity,
@@ -6246,14 +9661,23 @@ export default function Home() {
     brushPreset,
     customBrushPresets,
     customPatternPresets,
+    imagePatterns,
+    retouchOptions,
     customShapePresets,
     customPathPresets,
     polygonVariant,
     polygonSides,
     polygonInnerRadius,
+    shapeCornerRadius,
+    customShapeId,
+    shapeAppearance,
+    penOptions,
     brushSpacing,
     brushSmoothing,
     brushScatter,
+    brushDynamics,
+    brushStrands,
+    paintSymmetry,
     brushTexture,
     brushDual,
     brushBristle,
@@ -6269,6 +9693,9 @@ export default function Home() {
     gradientDither,
     gradientStops,
     gradientNoise,
+    gradientBlend,
+    gradientOpacity,
+    navigationTools,
     brushAngle,
     brushRoundness,
     brushFlipX,
@@ -6278,11 +9705,14 @@ export default function Home() {
     redEyeThreshold,
     redEyeAmount,
     colorTolerance,
+    colorRegion,
+    marqueeOptions,
     tonalExposure,
     tonalRange,
     spongeMode,
     spongeVibrance,
     mixerBrush,
+    smudgeSettings,
     historyBrush,
     artHistoryBrush,
     historySourceIndex,
@@ -6303,6 +9733,32 @@ export default function Home() {
   useEffect(() => {
     if (quickMasking && quickMask) drawQuickMaskOverlay(quickMask);
   }, [quickMasking, quickMask]);
+  // Marching ants (docs/selection-outline-contract.md): trace the rendered
+  // selection once per selection change; the overlay only animates a dash.
+  const outlineSelection = frame?.selection,
+    outlineWidth = frame?.w ?? 0,
+    outlineHeight = frame?.h ?? 0;
+  useEffect(() => {
+    if (!outlineSelection || !outlineWidth || !outlineHeight) return;
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void frameSelectionMask(outlineSelection, { w: outlineWidth, h: outlineHeight } as Frame, assets.current)
+        .then((mask) => {
+          if (cancelled || !mask) return;
+          setSelectionOutlineState({
+            selection: outlineSelection,
+            outline: selectionOutline(mask, outlineWidth, outlineHeight),
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setSelectionOutlineState(null);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [outlineSelection, outlineWidth, outlineHeight, assets]);
   useEffect(() => {
     if (!ready) return;
     if (!frame?.quickMask?.active) {
@@ -6330,6 +9786,23 @@ export default function Home() {
       cancelled = true;
     };
   }, [ready, frame, quickMasking, paint, assets]);
+  /**
+   * "New version available → Reload": wait for the queued local draft save,
+   * and only reload when nothing unsaved or in progress would be lost.
+   */
+  const reloadForNewVersion = async () => {
+    if (gesture.current || cloudBusy || recovering) {
+      setNotice('Finish the current edit, then reload to update');
+      return;
+    }
+    setNotice('Saving the local draft before reloading…');
+    await saveQueue.current.catch(() => undefined);
+    if (saving.current) {
+      setNotice('The local draft is not saved yet; reload after it is saved (or export a copy)');
+      return;
+    }
+    window.location.reload();
+  };
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
       if (saving.current || cloudBusy || recovering || gesture.current)
@@ -6356,11 +9829,15 @@ export default function Home() {
       const result = await saveCloudProject(
         link?.id || crypto.randomUUID(),
         link?.generation || '0',
-        cloudDocumentValue(),
+        await cloudDocumentValue(),
       );
       setCloud({ ...result, owner: member.id });
       setCloudMessage(
-        'Cloud copy saved. Choose Update cloud project after further edits.',
+        `Cloud copy saved.${
+          audioAnnotations(current()).length
+            ? ' Audio annotations stay on this device and were not uploaded.'
+            : ''
+        } Choose Update cloud project after further edits.`,
       );
     } catch (error) {
       if (error instanceof CloudConflictError) setCloudConflict(error);
@@ -6402,7 +9879,7 @@ export default function Home() {
         generation: result.generation,
         owner: member.id,
       });
-      restoreSettings(result.document.settings);
+      restoreSettings(result.document.settings, fittedDraftZoom(stage.current, result.document));
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
@@ -6419,16 +9896,28 @@ export default function Home() {
       setCloudBusy(false);
     }
   };
-  const exportProject = async () => {
+  const exportProject = async (withPicker = false) => {
+    const filename = (name || 'untitled') + '.pixelforge';
+    // Ask for the destination first, while the click's user activation is
+    // still valid; building a large bundle can outlast that window.
+    const picked = withPicker ? await pickSaveFile(filename, window) : undefined;
+    if (picked?.status === 'cancelled') {
+      setNotice('Project save cancelled');
+      return;
+    }
     try {
-      const blob = await writePortableBundle(documentValue());
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = (name || 'untitled') + '.pixelforge';
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setNotice('Editable project file downloaded');
+      const blob = await writePortableBundle(await interchangeDocumentValue());
+      if (picked?.status === 'picked') {
+        await writeToFileHandle(picked.handle, blob);
+        setNotice('Editable project file saved with the file picker');
+        return;
+      }
+      downloadBlob(blob, filename);
+      setNotice(
+        picked?.status === 'unavailable'
+          ? `${picked.reason} Editable project file downloaded instead`
+          : 'Editable project file downloaded',
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Project could not be downloaded');
     }
@@ -6437,8 +9926,8 @@ export default function Home() {
     if (!selected) return;
     const expected = current();
     try {
-      if (selected.size > 64 * 1024 * 1024)
-        throw new Error('Project file exceeds 64 MB');
+      if (selected.size > PORTABLE_MAX_BYTES)
+        throw new Error(`Project file exceeds ${formatMebibytes(PORTABLE_MAX_BYTES)} MB`);
       const saved = selected.type === 'application/json' || selected.name.toLowerCase().endsWith('.json')
         ? validateDraft(JSON.parse(await selected.text()))
         : await readPortableBundle(selected);
@@ -6450,7 +9939,7 @@ export default function Home() {
       clearCloud();
       setName(saved.name);
       setMetadata(effectiveDocumentMetadata(saved.metadata));
-      restoreSettings(saved.settings);
+      restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved));
       setNotice('Project opened with editable layers and history');
     } catch (error) {
       setNotice(
@@ -6708,7 +10197,7 @@ export default function Home() {
       setName(latest.name);
       setMetadata(effectiveDocumentMetadata(latest.metadata));
       setCloud(latest.cloud);
-      restoreSettings(latest.settings);
+      restoreSettings(latest.settings, fittedDraftZoom(stage.current, latest));
       localVersions.current.set(draftId, latest.localRevision);
       quickMaskRef.current = null;
       setQuickMask(null);
@@ -6726,11 +10215,23 @@ export default function Home() {
       setRecovering(false);
     }
   };
-  const addLayer = (layer: Layer) => {
+  const addLayer = (layer: Layer, placement: 'top' | 'above-active' = 'above-active') => {
     const f = current();
-    if (f.layers.length >= 32) {
-      setNotice('32-layer limit reached');
+    if (f.layers.length >= MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       void paint(f);
+      return false;
+    }
+    if (placement === 'above-active' && !layer.groupId && !layer.clippingTo) {
+      // New layers go directly above the active layer, joining its folder
+      // and clipping group (see layerInsertion.ts). A caller that names its
+      // own folder or clipping base (Paste of a copied member) keeps the
+      // explicit path below.
+      const inserted = insertLayerAboveActive(f, layer);
+      if (commit(inserted.frame)) {
+        setNotice(inserted.clipped ? 'Layer added to the clipping group' : 'Layer added');
+        return true;
+      }
       return false;
     }
     let next: Frame = {
@@ -6808,8 +10309,8 @@ export default function Home() {
       setNotice('Unlock all selected layers before grouping');
       return;
     }
-    if ((f.groups || []).length >= 32) {
-      setNotice('32-group limit reached');
+    if ((f.groups || []).length >= MAX_DOCUMENT_GROUPS) {
+      setNotice(`${MAX_DOCUMENT_GROUPS}-group limit reached`);
       return;
     }
     const group: Group = {
@@ -6859,7 +10360,9 @@ export default function Home() {
         ),
       })
     ) {
-      setNotice(`Clipping mask created from ${base.name || 'base layer'}`);
+      // Clipping to an already-clipped layer joins that layer's clipping group.
+      const groupBase = clippingGroupBase(f, base) ?? base;
+      setNotice(`Clipping mask created from ${groupBase.name || 'base layer'}`);
       return true;
     }
     return false;
@@ -7047,15 +10550,21 @@ export default function Home() {
         ...commonLayer(`Adjustment ${f.layers.length}`),
         kind: 'adjustment',
       })
-    )
+    ) {
+      // Its controls live in the Adjust selected layer panel: open it.
+      openSidebarFor('adjustments');
       setNotice('Adjustment layer added; edit its nondestructive controls below');
+    }
   };
   const addPaint = () => {
     const f = current();
+    // A new paint layer stores one transparent pixel; the first paint tool
+    // grows it to the canvas and the stroke is then stored at its content
+    // bounds, so empty layers cost nothing against the layer pixel budget.
     addLayer({
       ...commonLayer('Paint ' + f.layers.length),
       kind: 'raster',
-      asset: addAsset(assets.current, surface(f.w, f.h)),
+      asset: addAsset(assets.current, surface(1, 1)),
     });
     setTool('brush');
   };
@@ -7070,8 +10579,8 @@ export default function Home() {
       setNotice('Unlock all selected layers before duplicating');
       return;
     }
-    if (f.layers.length + layers.length > 32) {
-      setNotice('32-layer limit reached');
+    if (f.layers.length + layers.length > MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
       return;
     }
     const copies = layers.map((layer) => ({
@@ -7080,26 +10589,9 @@ export default function Home() {
       name: (layer.name + ' copy').slice(0, 160),
       locked: false,
     }));
-    let next: Frame = {
-      ...f,
-      layers: [...f.layers, ...copies],
-      active: copies.at(-1)!.id,
-      selectedLayerIds: copies.map((layer) => layer.id),
-    };
-    // Copies of grouped layers inherit their folder, so normalize every
-    // affected folder after appending the copies instead of leaving a second
-    // block at the end of the flat stack.
-    for (const groupId of new Set(
-      copies.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
-    )) {
-      const memberIds = next.layers
-        .filter((layer) => layer.groupId === groupId)
-        .map((layer) => layer.id);
-      next = {
-        ...next,
-        layers: groupLayerMembers(next, memberIds, groupId).layers,
-      };
-    }
+    // Each copy goes directly above its source, in the source's folder and
+    // clipping group (src/layerInsertion.ts).
+    const next = insertCopiesAboveSources(f, layers, copies as Layer[]);
     if (
       commit(next)
     )
@@ -7169,7 +10661,23 @@ export default function Home() {
       setNotice(error instanceof Error ? error.message : 'Fade could not be applied');
     }
   };
-  const applyImage = async () => {
+  // Apply Image, Calculations and the destructive warps work in canvas space:
+  // grow a paint layer stored at its content bounds to the canvas first (a
+  // pixel-identical in-place step), and restore its stored bounds if the
+  // command is cancelled. Warp handles are therefore canvas coordinates for
+  // every paint layer, however it is stored.
+  const onCanvasSizedLayer = (run: () => Promise<void>) => async () => {
+    await expandRasterLayerForPaint();
+    try {
+      await run();
+    } finally {
+      dropUnusedExpansion();
+    }
+  };
+  const applyPerspectiveWarp = (mode: 'Perspective Warp' | 'Vanishing Point' = 'Perspective Warp') =>
+    onCanvasSizedLayer(() => perspectiveWarpLayer(mode))();
+  const applyPuppetWarp = onCanvasSizedLayer(puppetWarpLayer);
+  const applyImage = onCanvasSizedLayer(async () => {
     const beforeFrame = current();
     const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
     if (!layer || layer.kind !== 'raster') {
@@ -7249,8 +10757,8 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Apply Image could not be applied');
     }
-  };
-  const calculateImage = async () => {
+  });
+  const calculateImage = onCanvasSizedLayer(async () => {
     const beforeFrame = current();
     const layer = beforeFrame.layers.find((item) => item.id === beforeFrame.active);
     if (!layer || layer.kind !== 'raster') {
@@ -7340,7 +10848,7 @@ export default function Home() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Calculations could not be applied');
     }
-  };
+  });
   const copyLayer = () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
@@ -7360,7 +10868,18 @@ export default function Home() {
       return;
     }
     try {
-      const svg = pathToSvg(booleanOperand(layer), f.w, f.h);
+      // Rounded rectangles keep true cubic corners in SVG; booleans flatten them.
+      const svg = pathToSvg(
+        layer.kind === 'rectangle' && clampCornerRadius(layer.cornerRadius, layer.width, layer.height) > 0
+          ? transformPath({
+              nodes: roundedRectNodes(layer.width, layer.height, layer.cornerRadius),
+              closed: true,
+              ...parametricShapePathStyle(layer),
+            }, layer.matrix)
+          : booleanOperand(layer),
+        f.w,
+        f.h,
+      );
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
       await navigator.clipboard.writeText(svg);
       setNotice('SVG copied from the editable vector layer');
@@ -7522,7 +11041,22 @@ export default function Home() {
     const layer = current().layers.find((item) => item.id === current().active);
     if (layer) editLayer({ visible: !layer.visible });
   };
-  const fillActiveLayer = async () => {
+  /** Edit > Fill… / Shift+F5: check the target, then ask for contents. */
+  const openEditFill = () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
+      setNotice('Select a visible, unlocked raster layer before filling');
+      return;
+    }
+    setEditFillOpen(true);
+  };
+  const fillActiveLayer = async (
+    options: EditFillOptions = { contents: 'foreground', color, opacity: 100, mode: 'source-over' },
+  ) => {
+    // A paint layer stored at its content bounds (or a new empty layer) is
+    // grown to the canvas first, so Fill covers the whole selection.
+    await expandRasterLayerForPaint();
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (
@@ -7541,7 +11075,11 @@ export default function Home() {
       context.drawImage(image, 0, 0);
       const fill = surface(output.width, output.height),
         fillContext = fill.getContext('2d')!;
-      fillContext.fillStyle = color;
+      fillContext.fillStyle = editFillColor(options.contents, {
+        foreground: color,
+        background: backgroundColor,
+        color: options.color,
+      });
       fillContext.fillRect(0, 0, fill.width, fill.height);
       if (f.selection) {
         const mask = await localSelectionMask(
@@ -7555,6 +11093,8 @@ export default function Home() {
         fillContext.globalCompositeOperation = 'destination-in';
         fillContext.drawImage(mask, 0, 0);
       }
+      context.globalAlpha = options.opacity / 100;
+      context.globalCompositeOperation = options.mode as GlobalCompositeOperation;
       context.drawImage(fill, 0, 0);
       const asset = addAsset(assets.current, output);
       if (
@@ -7576,7 +11116,7 @@ export default function Home() {
   };
   /** Paint an editable inner border from the current selection onto the active raster layer. */
   const strokeSelection = async () => {
-    const f = current(),
+    let f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (!f.selection) {
       setNotice('Create a selection before stroking it');
@@ -7593,6 +11133,13 @@ export default function Home() {
       setNotice('Stroke width must be a number');
       return;
     }
+    // Grow a layer stored at its content bounds so the border is not clipped.
+    const layerId = layer.id;
+    await expandRasterLayerForPaint();
+    f = current();
+    const expanded = f.layers.find((item) => item.id === layerId);
+    if (!f.selection || !expanded || expanded.kind !== 'raster') return;
+    layer = expanded;
     try {
       const image = await decodeAsset(assets.current[layer.asset]),
         output = surface(image.naturalWidth, image.naturalHeight),
@@ -7642,6 +11189,152 @@ export default function Home() {
         setNotice(`Selection stroked with ${width}px ${color}`);
     } catch {
       setNotice('Could not stroke the selection');
+    }
+  };
+  /** Stroke Path with Brush: choose defaults and open the dialog. */
+  const openStrokePathDialog = () => {
+    const f = current();
+    if (!f.layers.some((item) => item.kind === 'path')) {
+      setNotice('Create a Pen path layer before stroking a path');
+      return;
+    }
+    const choice = defaultStrokePathChoice(f.layers, f.active, selectedIdsForFrame(f),
+      (item) => item.kind === 'raster' && item.visible && !layerIsLocked(f, item));
+    if (!choice.targetLayerId) {
+      setNotice('Add a visible, unlocked paint layer to stroke the path onto');
+      return;
+    }
+    setStrokePathDialog(choice);
+  };
+  /**
+   * Paint the current brush (or Pencil, Eraser, Smudge) along path layers
+   * onto one raster layer, confined to the selection, as one undo step.
+   */
+  const strokePathWithBrush = async (request: StrokePathRequest) => {
+    setStrokePathDialog(null);
+    const settings = normalizeStrokePathSettings(request);
+    setStrokePathSettings(settings);
+    let f = current();
+    const chosen = f.layers.find((item) => item.id === request.targetLayerId);
+    if (!chosen || chosen.kind !== 'raster' || layerIsLocked(f, chosen) || !chosen.visible) {
+      setNotice('Select a visible, unlocked raster layer to stroke the path onto');
+      return;
+    }
+    // The target becomes the active layer so the stroke expands and commits
+    // like any paint stroke (a path layer may have been active).
+    if (f.active !== chosen.id) setLayerSelection([chosen.id], chosen.id);
+    await expandRasterLayerForPaint();
+    f = current();
+    const layer = f.layers.find((item) => item.id === chosen.id);
+    const sources = strokePathSources(
+      f.layers.filter((item): item is Extract<Layer, { kind: 'path' }> => item.kind === 'path'),
+      request.pathLayerId, settings.scope,
+    );
+    if (!layer || layer.kind !== 'raster') return;
+    if (!sources.length) {
+      dropUnusedExpansion();
+      setNotice(settings.scope === 'all' ? 'No visible path layers to stroke' : 'Choose a path layer to stroke');
+      return;
+    }
+    try {
+      const image = await decodeAsset(assets.current[layer.asset]),
+        buffer = surface(image.naturalWidth, image.naturalHeight);
+      buffer.getContext('2d')!.drawImage(image, 0, 0);
+      const selectionMask = f.selection
+        ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
+        : undefined;
+      if (current() !== f) {
+        setNotice('Stroke Path cancelled because the document changed');
+        return;
+      }
+      const tool = settings.tool,
+        brushSize = localSize(layer.matrix, size),
+        // Paint Symmetry applies to Brush, Pencil and Eraser paths exactly as
+        // to a hand-drawn stroke of those tools (Smudge has no symmetry).
+        symmetry = tool === 'smudge' ? undefined : paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
+        plan = planStrokePath(
+          sources.map((item) => ({ path: item.path, matrix: item.matrix })),
+          layer.matrix,
+          {
+            ...settings,
+            size: brushSize,
+            spacing: tool === 'smudge' ? Math.max(50, brushSpacing) : brushSpacing,
+            ...(symmetry && symmetry.length > 1 ? { maxSamples: strokePathMaxSamplesForCopies(symmetry.length) } : {}),
+          },
+        );
+      let changed: boolean;
+      if (tool === 'smudge') {
+        const sample = smudgeSettings.sampleAllLayers
+          ? await smudgeCompositeSample(f, layer, assets.current, buffer.width, buffer.height, smudgeSettings.ignoreAdjustments)
+          : undefined;
+        changed = smudgeStrokePathSamples(buffer, plan.samples, smudgeStrokeSettings(layer, f, sample), selectionMask);
+      } else {
+        // Brush/Pencil in a non-Normal mode stroke the path on a transparent
+        // buffer, then composite it once over the layer (src/brushBlend.ts).
+        const blendMode = usesBrushBlendStroke(tool, brushBlendMode) ? brushBlendMode : undefined,
+          target = blendMode ? surface(buffer.width, buffer.height) : buffer;
+        // Without a selection or blend mode every write is a tracked stamp, so
+        // the commit hashes only the tiles the path touched. A blend-mode
+        // path rewrites the whole buffer at once and is scanned in full.
+        if (!selectionMask && !blendMode) trackCanvasWrites(buffer);
+        // Like a pointer stroke: Opacity caps the whole path; the Eraser
+        // paints the background colour on the Background layer.
+        const eraseToBackground = tool === 'eraser' && isBackgroundLayer(f, layer);
+        changed = stampStrokePathSamples(target, plan.samples, {
+          strokeBuffers: new WeakMap(),
+          strokeOpacity: brushOpacity / 100,
+          size: brushSize,
+          hardness: tool === 'pencil' ? 100 : hardness,
+          opacity: (brushOpacity / 100) * (brushFlow / 100),
+          spacing: brushSpacing,
+          scatter: brushScatter,
+          dynamics: brushDynamics,
+          texture: brushTexture,
+          dual: brushDual,
+          secondaryPreset: secondaryBrushPreset,
+          bristle: brushBristle,
+          wetEdges: brushWetEdges,
+          buildUp: brushBuildUp,
+          angle: brushAngle,
+          roundness: tool === 'pencil' ? 100 : brushRoundness,
+          flipX: brushFlipX,
+          flipY: brushFlipY,
+          mode: tool === 'eraser' && !eraseToBackground ? 'destination-out' : 'source-over',
+          color: tool !== 'eraser' ? brushColor(color) : eraseToBackground ? brushColor(backgroundColor) : undefined,
+          colorBackground: brushColor(backgroundColor),
+          symmetry,
+        });
+        if (changed && blendMode) {
+          const bufferContext = buffer.getContext('2d')!,
+            composed = bufferContext.getImageData(0, 0, buffer.width, buffer.height);
+          composed.data.set(compositeBrushBlendLayer(
+            composed.data,
+            target.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data,
+            buffer.width,
+            blendMode,
+          ));
+          bufferContext.putImageData(composed, 0, 0);
+        }
+        // Photoshop confines painting to the active selection (every
+        // symmetry copy is confined by the same layer-space mask).
+        if (changed && selectionMask) confineToSelection(image, buffer, selectionMask);
+      }
+      if (!changed) {
+        dropUnusedExpansion();
+        setNotice('Stroke Path painted nothing: the path lies outside this layer or selection');
+        return;
+      }
+      const asset = addPaintedAsset(buffer, tool !== 'smudge' && !selectionMask ? layer.asset : undefined);
+      const label = STROKE_PATH_TOOL_LABELS[tool];
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? { ...item, asset } : item) }))
+        setNotice(
+          `Path stroked with ${label}${settings.simulatePressure ? ' (simulated pressure)' : ''}` +
+          `${symmetry && symmetry.length > 1 ? ` (${symmetry.length} symmetry copies)` : ''}` +
+          `${plan.limited ? '; spacing widened to stay within the dab limit' : ''}; undo restores the layer`,
+        );
+    } catch (error) {
+      dropUnusedExpansion();
+      setNotice(error instanceof Error ? `Could not stroke the path: ${error.message}` : 'Could not stroke the path');
     }
   };
   const clearActiveLayer = async () => {
@@ -7780,7 +11473,7 @@ export default function Home() {
         locked: false,
         ...(mergeGroupIds.size === 1 ? { groupId: [...mergeGroupIds][0] } : {}),
       };
-      const next = selectedPlan?.ok
+      const replaced = selectedPlan?.ok
         ? applySelectedLayerMerge(f, selectedPlan, merged)
         : (() => {
             const layers = f.layers.slice();
@@ -7800,6 +11493,14 @@ export default function Home() {
               selectedLayerIds: [merged.id],
             };
           })();
+      // A merged base keeps its remaining clipped layers, and a merge inside
+      // one clipping group stays clipped.
+      const next = preserveClippingAfterReplace(
+        f,
+        selectedLayers.map((layer) => layer.id),
+        replaced,
+        merged.id,
+      );
       if (
         commit(next)
       )
@@ -7828,6 +11529,8 @@ export default function Home() {
                 ),
               }
             : {}),
+          // The reference guide is never flattened into pixels; keep it.
+          ...(f.reference ? { reference: f.reference } : {}),
           selectedLayerIds: [flattened.active],
         })
       )
@@ -7837,61 +11540,62 @@ export default function Home() {
     }
   };
   const remove = () => {
-    const f = current(),
-      selected = selectedLayersForFrame(f),
-      ids = new Set(selected.map((layer) => layer.id));
-    if (!selected.length) {
-      setNotice('Select at least one layer before deleting');
+    const f = current();
+    // Shared by the Layer menu, the inspector button and the Layers panel
+    // (row trash button, Delete key, context menu): see layerDragReorder.ts
+    // for the clipping and selection-follow rules.
+    const plan = planLayerDelete(f, selectedIdsForFrame(f));
+    if (!plan.ok) {
+      setNotice(layerDeleteReason(plan.reason));
       return false;
     }
-    if (selected.some((layer) => layerIsLocked(f, layer))) {
-      setNotice('Unlock all selected layers before deleting');
-      return false;
-    }
-    if (selected.length >= f.layers.length) {
-      setNotice('Keep at least one layer in the document');
-      return false;
-    }
-    const layers = f.layers.filter((layer) => !ids.has(layer.id)),
-      active = layers.find((layer) => layer.id === f.active)?.id || layers.at(-1)!.id,
-      selectedLayerIds = selectedIdsForFrame(f).filter((id) => !ids.has(id));
-    const usedGroups = new Set(
-      layers.flatMap((layer) => (layer.groupId ? [layer.groupId] : [])),
-    );
-    if (
-      !commit({
-        ...f,
-        layers,
-        groups: (f.groups || []).filter((group) => usedGroups.has(group.id)),
-        ...(f.artboards
-          ? {
-              artboards: sanitizeArtboardLayerMembership(
-                f.artboards,
-                layers.map((layer) => layer.id),
-              ),
-            }
-          : {}),
-        active,
-        selectedLayerIds,
-      })
-    )
-      return false;
-    setNotice(
-      selected.length === 1
-        ? 'Layer deleted. Undo restores it.'
-        : `${selected.length} layers deleted. Undo restores them.`,
-    );
+    if (!commit(plan.frame)) return false;
+    setNotice(layerDeleteNotice(plan));
     return true;
+  };
+  /**
+   * Layers panel drag-and-drop: one history step per drop. Returns the moved
+   * layer IDs (for the panel's live announcement) or false when refused.
+   */
+  const moveLayersFromPanel = (source: LayerDragSource, target: LayerDropTarget): string[] | false => {
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before editing layers');
+      return false;
+    }
+    const f = current();
+    const plan = planLayerDrop(f, source, target);
+    if (!plan.ok) {
+      if (plan.reason === 'locked') setNotice('Unlock the layers before moving them');
+      else if (plan.reason === 'locked-folder') setNotice('Unlock the folder before changing its layers');
+      else if (plan.reason !== 'no-change' && plan.reason !== 'onto-self')
+        setNotice('Those layers could not be moved there');
+      return false;
+    }
+    if (!commit(plan.frame)) return false;
+    setNotice(layerDropNotice(plan));
+    return plan.movedIds;
   };
   const reorder = (direction: number) => {
     const f = current(),
-      layers = f.layers.slice(),
-      from = layers.findIndex((l) => l.id === f.active),
+      from = f.layers.findIndex((l) => l.id === f.active),
       to = from + direction;
-    if (to < 0 || to >= layers.length || layerIsLocked(f, layers[from])) return;
-    [layers[from], layers[to]] = [layers[to], layers[from]];
-    commit({ ...f, layers });
+    if (to < 0 || to >= f.layers.length || layerIsLocked(f, f.layers[from])) return;
+    // A clipping group base moves with its clipped layers, and a step past
+    // another clipping group jumps the whole group instead of landing inside it.
+    const keys = clippingGroupKeys(f),
+      moving = expandClippingGroupSelection(f, [f.active], keys);
+    if (f.layers.some((layer) => moving.has(layer.id) && layerIsLocked(f, layer))) {
+      setNotice('Unlock the clipped layers before moving their base');
+      return;
+    }
+    const layers = stepLayerRuns(f.layers, moving, direction > 0 ? 1 : -1, keys);
+    if (layers.every((layer, index) => layer === f.layers[index])) return;
+    const { frame: next, released } = preserveClippingAfterReorder(f, { ...f, layers });
+    if (commit(next) && released.length)
+      setNotice(`Clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`);
   };
+  const clippingReleaseNames = (released: readonly Layer[]) =>
+    released.map((layer) => layer.name || 'layer').join(', ');
   const arrangeLayers = (mode: LayerArrangeMode) => {
     const f = current();
     const plan = planLayerArrange(f, mode);
@@ -7899,8 +11603,10 @@ export default function Home() {
       setNotice(layerArrangeReason(plan.reason));
       return false;
     }
-    const next = applyLayerArrange(f, plan);
-    if (next === f) return false;
+    const arranged = applyLayerArrange(f, plan);
+    if (arranged === f) return false;
+    // Clipped layers stay clipped while they remain in their clipping group.
+    const { frame: next, released } = preserveClippingAfterReorder(f, arranged);
     if (!commit(next)) return false;
     const labels: Record<LayerArrangeMode, string> = {
       front: 'Bring to Front',
@@ -7908,50 +11614,278 @@ export default function Home() {
       backward: 'Send Backward',
       back: 'Send to Back',
     };
-    setNotice(`${labels[mode]} applied; undo restores the previous order`);
+    setNotice(
+      released.length
+        ? `${labels[mode]} applied; clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`
+        : `${labels[mode]} applied; undo restores the previous order`,
+    );
     return true;
   };
   const rasterize = async () => {
     const f = current(),
       layer = f.layers.find((l) => l.id === f.active)!;
     if (layerIsLocked(f, layer)) return;
+    // Layer styles stay live on the rasterized layer instead of being baked:
+    // the pixels are rendered without them and the same styles are kept, so
+    // a glow or shadow remains editable (and follows the new pixels' alpha).
+    // The clipping relationship, folder, link and other layer properties are
+    // kept on the new pixels too (see rasterizedLayer).
+    const keptStyles = isNeutralLayerStyles(layer.styles) ? undefined : layer.styles;
     try {
       const image = await renderFrame(
         {
           ...f,
-          layers: [
-            {
-              ...layer,
-              visible: true,
-              opacity: 1,
-              blend: 'source-over',
-              adjustments: { ...neutral },
-            },
-          ],
+          // Bake live filter effects, smart filters and adjustments into the
+          // new pixels, as Photoshop bakes Smart Filters when rasterizing.
+          layers: [rasterizeRenderSource(layer)],
         },
         assets.current,
       );
       if (current() !== f) return;
-      const rasterLayer: Layer = {
-        ...commonLayer(layer.name),
-        id: layer.id,
-        kind: 'raster',
-        asset: addAsset(assets.current, image),
-        opacity: layer.opacity,
-        blend: layer.blend,
-        visible: layer.visible,
-        adjustments: layer.adjustments,
-        groupId: layer.groupId,
-      };
+      const rasterLayer = rasterizedLayer(layer, addAsset(assets.current, image));
       const changed = commit({
         ...f,
         layers: f.layers.map((item) => (item.id === layer.id ? rasterLayer : item)),
       });
       if (changed)
-        setNotice('Layer rasterized. Undo restores editable content.');
+        setNotice(
+          keptStyles
+            ? 'Layer rasterized; layer styles kept editable on the new pixels. Undo restores editable content.'
+            : 'Layer rasterized. Undo restores editable content.',
+        );
     } catch {
       setNotice('Could not rasterize layer');
     }
+  };
+  // Store a plain raster layer at its non-transparent bounding box so sparse
+  // layers only spend their content on the layer pixel budget. The layer
+  // matrix keeps every pixel in place; paint tools expand it again on demand.
+  const trimLayerToContent = async () => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !canTrimRasterLayer(layer)) {
+      setNotice(
+        'Trim Layer to Content needs an unlocked, unrotated paint layer without styles, vector masks, live filters or cleanup edits',
+      );
+      return;
+    }
+    const source = assets.current[layer.asset];
+    try {
+      const image = await decodeAsset(source),
+        buffer = surface(source.w, source.h),
+        context = buffer.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Trim canvas is unavailable');
+      context.drawImage(image, 0, 0);
+      const plan = planLayerTrim(
+        context.getImageData(0, 0, source.w, source.h).data,
+        source.w,
+        source.h,
+        layer.matrix,
+      );
+      if (current() !== f) return;
+      if (!plan) {
+        setNotice('Layer already fits its content');
+        return;
+      }
+      const cropped = surface(plan.crop.width, plan.crop.height);
+      cropped
+        .getContext('2d')!
+        .drawImage(image, -plan.crop.x, -plan.crop.y);
+      const asset = addAsset(assets.current, cropped);
+      if (
+        commit({
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+          ),
+        })
+      )
+        setNotice(
+          plan.empty
+            ? `Empty layer trimmed; ${formatMegapixels(plan.savedPixels)} MP of the layer pixel budget freed`
+            : `Layer trimmed to ${plan.crop.width} × ${plan.crop.height} px; ${formatMegapixels(plan.savedPixels)} MP of the layer pixel budget freed`,
+        );
+    } catch {
+      setNotice('Could not trim layer');
+    }
+  };
+  // A trimmed (or moved) paint layer only stores part of the canvas. Before a
+  // pixel tool writes to it, grow the asset to cover the whole canvas (plus
+  // any pixels already outside it) as its own undoable step, so strokes and
+  // fills never silently stop at the stored bounds.
+  const rasterExpansionTarget = (f: Frame) => {
+    const layer = f.layers.find((item) => item.id === f.active);
+    if (
+      !layer ||
+      layer.kind !== 'raster' ||
+      !layer.visible ||
+      layerIsLocked(f, layer) ||
+      !canExpandRasterLayer(layer)
+    )
+      return null;
+    const source = assets.current[layer.asset];
+    if (!source) return null;
+    const plan = planLayerExpansion(source.w, source.h, layer.matrix, f.w, f.h);
+    return plan ? { layer, source, plan } : null;
+  };
+  /**
+   * Returns false only when the budget refuses the expansion and the press
+   * starts outside the stored pixels, where the tool could not store anything.
+   */
+  const expandRasterLayerForPaint = async (press?: {
+    x: number;
+    y: number;
+  }): Promise<boolean> => {
+    const f = current(),
+      target = rasterExpansionTarget(f);
+    if (!target) return true;
+    const { layer, source, plan } = target;
+    const required =
+      layerPixelUsage(f, assets.current) - source.w * source.h + plan.w * plan.h;
+    if (required > detectProjectLimits().layerPixelBudget) {
+      setNotice(
+        `Layer pixel budget reached: this layer stays ${source.w} × ${source.h} px, so paint outside it is not stored. Merge or trim other layers to paint the whole canvas.`,
+      );
+      if (!press) return true;
+      const local = inversePoint(layer.matrix, press);
+      return Boolean(
+        local &&
+          local.x >= 0 &&
+          local.y >= 0 &&
+          local.x < source.w &&
+          local.y < source.h,
+      );
+    }
+    try {
+      const image = await decodeAsset(source);
+      if (current() !== f) return true;
+      const buffer = surface(plan.w, plan.h);
+      buffer.getContext('2d')!.drawImage(image, plan.offsetX, plan.offsetY);
+      // Outside the drawn layer the new canvas is transparent: only the
+      // tiles under it are read back and hashed.
+      const asset = addAsset(assets.current, buffer, {
+        hint: {
+          base: emptyTiledAsset(plan.w, plan.h),
+          dirty: { x: plan.offsetX, y: plan.offsetY, w: source.w, h: source.h },
+        },
+      });
+      // The expansion is pixel-identical, so it replaces the current history
+      // entry instead of adding one: undo is unaffected and the page does not
+      // reflow (e.g. a growing History list on phones) under the pointer.
+      const expanded = doc.amend(
+        {
+          ...f,
+          layers: f.layers.map((item) =>
+            item.id === layer.id ? { ...item, asset, matrix: plan.matrix } : item,
+          ),
+        },
+        f,
+      );
+      autoTrim.current.recent.clear();
+      if (expanded)
+        autoTrim.current.expansions.set(current(), { layerId: layer.id, before: f, source: [layer.asset, source] });
+    } catch {
+      // Painting continues inside the layer's existing bounds.
+    }
+    return true;
+  };
+  // Automatic layer storage. When a step replaces the pixels of a paint layer
+  // that is stored at its content bounds (a new empty layer, a trimmed or
+  // moved layer, or one just grown for a paint tool), the new pixels are
+  // stored at their bounding box (plus a small margin) in the same commit,
+  // so each stroke stays one undo step and sparse layers cost what they hold. The pixels come from the canvas the
+  // step just encoded, so this is synchronous and cannot race other edits.
+  const autoTrim = useRef({
+    /** History entries grown in place for a paint tool, by frame identity. */
+    expansions: new WeakMap<Frame, { layerId: string; before: Frame; source: [string, Assets[string]] }>(),
+    /** Assets already known to fit their content. */
+    known: new Set<string>(),
+    /** Source canvases of the most recently created assets. */
+    recent: new Map<string, HTMLCanvasElement>(),
+  });
+  const addAsset = (target: Assets, source: HTMLCanvasElement, options?: Parameters<typeof addDocumentAsset>[2]): string => {
+    const id = addDocumentAsset(target, source, options);
+    const recent = autoTrim.current.recent;
+    recent.delete(id);
+    recent.set(id, source);
+    while (recent.size > 4) recent.delete(recent.keys().next().value!);
+    return id;
+  };
+  const storeAtContentBounds = (value: Frame, base: Frame, expandedLayerId?: string): Frame => {
+    const state = autoTrim.current;
+    const ids = autoTrimCandidates(value, base, assets.current, state.known, expandedLayerId);
+    if (!ids.length) return value;
+    const replaced = new Map<string, { asset: string; matrix: Matrix }>();
+    for (const id of ids) {
+      const layer = value.layers.find((item) => item.id === id);
+      if (!layer || layer.kind !== 'raster') continue;
+      const source = state.recent.get(layer.asset),
+        stored = assets.current[layer.asset];
+      if (!source || !stored || source.width !== stored.w || source.height !== stored.h) continue;
+      try {
+        const context = source.getContext('2d');
+        if (!context) continue;
+        // A tiled asset is transparent outside its non-empty tiles, so only
+        // their bounding rectangle is read back (a stroke on a new layer
+        // reads a few tiles instead of the whole canvas).
+        const region = isTiledAsset(stored) ? tiledContentRegion(stored) : undefined;
+        const plan = planLayerTrim(
+          region === undefined
+            ? context.getImageData(0, 0, stored.w, stored.h).data
+            : region
+              ? context.getImageData(region.x, region.y, region.width, region.height).data
+              : [],
+          stored.w,
+          stored.h,
+          layer.matrix,
+          AUTO_TRIM_MARGIN,
+          region,
+        );
+        if (!plan) {
+          state.known.add(layer.asset);
+          continue;
+        }
+        const cropped = surface(plan.crop.width, plan.crop.height);
+        cropped.getContext('2d')!.drawImage(source, -plan.crop.x, -plan.crop.y);
+        const asset = addAsset(assets.current, cropped);
+        state.known.add(asset);
+        replaced.set(id, { asset, matrix: plan.matrix });
+      } catch {
+        // Keep the full asset; storage optimisation is best effort.
+      }
+    }
+    if (!replaced.size) return value;
+    return {
+      ...value,
+      layers: value.layers.map((item) =>
+        replaced.has(item.id) && item.kind === 'raster' ? { ...item, ...replaced.get(item.id)! } : item,
+      ),
+    };
+  };
+  const commit = (value: Frame, replace = false, nextAssets?: Assets): boolean => {
+    if (replace) return commitDocument(value, replace, nextAssets);
+    const previous = current();
+    const expansion = previous ? autoTrim.current.expansions.get(previous) : undefined;
+    const stored = previous ? storeAtContentBounds(value, previous, expansion?.layerId) : value;
+    const committed = commitDocument(stored, false, nextAssets);
+    // Only canvases encoded for this step may be read back for trimming.
+    autoTrim.current.recent.clear();
+    // The entry below was grown in place for this step; restore its
+    // pixel-identical stored-bounds frame so undo returns to the compact layer.
+    if (committed && expansion && previous)
+      doc.restorePrevious(current(), previous, expansion.before, {
+        [expansion.source[0]]: expansion.source[1],
+      });
+    return committed;
+  };
+  // A paint-time expansion whose gesture ended without a commit (cancelled,
+  // or the tool made no change) is restored to its stored bounds.
+  const dropUnusedExpansion = () => {
+    const top = current();
+    const expansion = autoTrim.current.expansions.get(top);
+    if (gesture.current || expansionPointer.current || !expansion) return;
+    // The stored-bounds asset may have been released with the replaced entry.
+    doc.amend(expansion.before, top, 0, { [expansion.source[0]]: expansion.source[1] });
   };
   const applyMatting = () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
@@ -8173,6 +12107,256 @@ export default function Home() {
       if (layerFile.current) layerFile.current.value = '';
     }
   };
+  /**
+   * Files dropped on the editor while a document is open. Browser-decodable
+   * images are placed as new raster layers in one undo step, each centred at
+   * the drop point (or the document centre), directly above the selected
+   * layer (canvas drops) or at the Layers panel's drop line (`target`).
+   * Projects open as projects; PSD/PSB and Shift-drops open as a document,
+   * as before. Unsupported files get a status message.
+   */
+  const dropFiles = async (
+    files: readonly File[],
+    options: { point?: { x: number; y: number }; target?: LayerDropTarget; open?: boolean } = {},
+  ) => {
+    if (!files.length) return;
+    const first = files[0];
+    const firstInfo = describeImportFormat(first.name, first.type);
+    const firstKind = classifyDroppedFile(first.name, first.type, firstInfo.tryDecode, firstInfo.format);
+    if (firstKind === 'project') {
+      await importProject(first);
+      return;
+    }
+    if (options.open || !frame || firstKind === 'document') {
+      await load(first);
+      return;
+    }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before adding image layers');
+      return;
+    }
+    const images: Array<{ file: File; info: ReturnType<typeof describeImportFormat> }> = [];
+    let skipped = 0;
+    for (const item of files) {
+      const info = describeImportFormat(item.name, item.type);
+      if (classifyDroppedFile(item.name, item.type, info.tryDecode, info.format) === 'image')
+        images.push({ file: item, info });
+      else skipped += 1;
+    }
+    if (!images.length) {
+      setNotice(
+        files.length === 1
+          ? `${first.name.slice(0, 80)} cannot be added as a layer. ${firstInfo.disclosure || ''}`.trim()
+          : 'None of the dropped files can be added as layers',
+      );
+      return;
+    }
+    const original = current();
+    if (original.layers.length + images.length > MAX_DOCUMENT_LAYERS) {
+      setNotice(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
+      return;
+    }
+    let next: Frame = original;
+    const added: string[] = [];
+    const nextAssets = { ...assets.current };
+    try {
+      for (const { file: item, info } of images) {
+        if (item.size > 64 * 1024 * 1024) throw new Error(`${item.name} exceeds 64 MB`);
+        const decoded = await decodeImportedRaster(item, info);
+        if (current() !== original)
+          throw new Error('Document changed during import. Please try again.');
+        const layer: Layer = {
+          ...commonLayer(item.name.slice(0, 160)),
+          kind: 'raster',
+          asset: addAsset(nextAssets, decoded),
+          matrix: placementMatrixAt(options.point, decoded.width, decoded.height, original.w, original.h),
+        };
+        // Each file goes above the previous one, so they stack in drop order.
+        next = insertLayerAboveActive(next, layer).frame;
+        added.push(layer.id);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The dropped image could not be opened');
+      return;
+    }
+    if (options.target) {
+      const plan = planLayerDrop(next, { kind: 'layers', ids: added }, options.target);
+      if (plan.ok) next = plan.frame;
+      else if (plan.reason !== 'no-change' && plan.reason !== 'onto-self') {
+        setNotice(
+          plan.reason === 'locked-folder'
+            ? 'Unlock the folder before adding layers to it'
+            : 'The images could not be added at that position',
+        );
+        return;
+      }
+      next = { ...next, active: added.at(-1)!, selectedLayerIds: added };
+    }
+    if (!commit(next, false, nextAssets)) return;
+    const count = added.length === 1 ? 'Image layer added' : `${added.length} image layers added`;
+    setNotice(
+      skipped
+        ? `${count}; ${skipped} unsupported file${skipped === 1 ? '' : 's'} skipped`
+        : `${count}. Undo removes ${added.length === 1 ? 'it' : 'them'}`,
+    );
+  };
+  /**
+   * Paste an image from the operating-system clipboard as a new raster layer
+   * through the asynchronous Clipboard API (Edit → Paste Image from
+   * Clipboard, or the keyboard fallback below). Bytes stay local.
+   */
+  const pasteSystemClipboardImage = async () => {
+    const result = await readClipboardImage(
+      typeof navigator === 'undefined' ? undefined : navigator.clipboard,
+    );
+    if (!result.ok) {
+      setNotice(result.message);
+      return;
+    }
+    await load(clipboardImageFile(result.blob, result.type), true);
+  };
+  // Ctrl/Cmd+V normally produces a native `paste` event, handled by the
+  // document listener below. Some embedded browsers deliver the keydown but no
+  // paste event; if none arrives shortly, read the clipboard asynchronously.
+  const keyboardPasteFallback = useRef<number | undefined>(undefined);
+  const scheduleKeyboardPasteFallback = () => {
+    window.clearTimeout(keyboardPasteFallback.current);
+    keyboardPasteFallback.current = window.setTimeout(() => {
+      keyboardPasteFallback.current = undefined;
+      void pasteSystemClipboardImage();
+    }, 300);
+  };
+  useEffect(() => () => window.clearTimeout(keyboardPasteFallback.current), []);
+  useEffect(() => {
+    // Listen on the document, not the editor root: when focus is on <body>
+    // (fresh load, after a menu or dialog closes) the paste event targets the
+    // body and never reaches a handler on the application element.
+    const onPaste = (event: ClipboardEvent) => {
+      if (isTextEditingTarget(event.target)) return;
+      window.clearTimeout(keyboardPasteFallback.current);
+      keyboardPasteFallback.current = undefined;
+      if (!ready || cloudBusy || recovering || document.querySelector('dialog[open]')) return;
+      // The internal layer clipboard stays authoritative; Ctrl+V already
+      // pasted the copied layer from the keydown shortcut.
+      if (hasClipboard) return;
+      const image = imageFileFromClipboardItems(event.clipboardData?.items);
+      if (!image) {
+        if (event.clipboardData?.types.length)
+          setNotice('The clipboard does not contain an image.');
+        return;
+      }
+      event.preventDefault();
+      void load(clipboardImageFile(image, image.type), true);
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  });
+  const referenceFile = useRef<HTMLInputElement>(null);
+  const referencePixels = useRef<{ asset: string; data: ImageData } | null>(null);
+  const chooseReferenceFile = () => {
+    if (current().reference?.locked) {
+      setNotice('Unlock the reference image before replacing it');
+      return;
+    }
+    referenceFile.current?.click();
+  };
+  /**
+   * Place (or replace) the document's reference image. It is decoded locally,
+   * stored downscaled and kept out of layers, export and the pixel budget.
+   */
+  const placeReference = async (selected?: File) => {
+    const reset = () => {
+      if (referenceFile.current) referenceFile.current.value = '';
+    };
+    const importInfo = selected ? describeImportFormat(selected.name, selected.type) : null;
+    if (!selected || !importInfo?.tryDecode) {
+      setNotice(importInfo?.disclosure || 'Choose a browser-readable image file');
+      reset();
+      return;
+    }
+    if (quickMasking) {
+      setNotice('Exit Quick Mask mode before placing a reference image');
+      reset();
+      return;
+    }
+    const original = current();
+    try {
+      if (selected.size > 64 * 1024 * 1024) throw new Error('Image file exceeds 64 MB');
+      const decoded = await decodeImportedRaster(selected, importInfo);
+      if (current() !== original) throw new Error('Document changed during import. Please try again.');
+      const size = referenceStoredSize(decoded.width, decoded.height);
+      let stored = decoded;
+      if (size.w !== decoded.width || size.h !== decoded.height) {
+        stored = surface(size.w, size.h);
+        const context = stored.getContext('2d')!;
+        context.imageSmoothingQuality = 'high';
+        context.drawImage(decoded, 0, 0, size.w, size.h);
+      }
+      const nextAssets = { ...assets.current };
+      // The overlay shows the reference with an <img>, so keep a data URL.
+      const asset = addAsset(nextAssets, stored, { tiled: false });
+      const previous = original.reference;
+      const reference: ReferenceImage = previous
+        ? { ...previous, asset, name: selected.name.slice(0, 160) }
+        : createReferenceImage(asset, selected.name);
+      if (commit({ ...original, reference }, false, nextAssets))
+        setNotice(
+          `Reference image placed (${size.w} × ${size.h} px); it is a guide only and is not exported`,
+        );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'The reference image could not be opened');
+    } finally {
+      reset();
+    }
+  };
+  const updateReference = (patch: Partial<ReferenceImage>) => {
+    const f = current();
+    if (!f.reference) return;
+    const structural = ['opacity', 'fit', 'asset'].some((key) => key in patch);
+    if (f.reference.locked && structural) {
+      setNotice('Unlock the reference image to change it');
+      return;
+    }
+    commit({ ...f, reference: { ...f.reference, ...patch } });
+  };
+  const removeReference = () => {
+    const f = current();
+    if (!f.reference) return;
+    if (f.reference.locked) {
+      setNotice('Unlock the reference image before removing it');
+      return;
+    }
+    const { reference: _removed, ...rest } = f;
+    if (commit(rest)) setNotice('Reference image removed');
+  };
+  /** Sample the reference bitmap under a document point as #rrggbb. */
+  const sampleReference = async (x: number, y: number): Promise<string | null> => {
+    const f = current();
+    const reference = f.reference;
+    const asset = reference ? assets.current[reference.asset] : undefined;
+    if (!reference || !asset) return null;
+    const point = referenceSourcePixel(reference.fit, f.w, f.h, asset.w, asset.h, x, y);
+    if (!point) return null;
+    if (referencePixels.current?.asset !== reference.asset) {
+      const image = await decodeAsset(asset);
+      const scratch = surface(asset.w, asset.h);
+      const context = scratch.getContext('2d', { willReadFrequently: true })!;
+      context.drawImage(image, 0, 0);
+      referencePixels.current = {
+        asset: reference.asset,
+        data: context.getImageData(0, 0, asset.w, asset.h),
+      };
+    }
+    const { data } = referencePixels.current;
+    const offset = (point.y * data.width + point.x) * 4;
+    if (data.data[offset + 3] === 0) return null;
+    return (
+      '#' +
+      [data.data[offset], data.data[offset + 1], data.data[offset + 2]]
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('')
+    );
+  };
   const importSmartObject = async (
     selected?: File,
     replace = false,
@@ -8290,7 +12474,9 @@ export default function Home() {
       setNotice('Unlock every selected layer before nesting them');
       return;
     }
-    const nested: Frame = {
+    // Links to bases left outside the nested contents are dropped there; a
+    // nested run of clipped layers is clipped outside instead (below).
+    const nested: Frame = sanitizeClippingRelations({
       w: original.w,
       h: original.h,
       ...(original.colorMode ? { colorMode: original.colorMode } : {}),
@@ -8301,7 +12487,7 @@ export default function Home() {
         ? original.active
         : selected[0].id,
       selectedLayerIds: selected.map((layer) => layer.id),
-    };
+    });
     try {
       const rendered = await renderFrame(nested, assets.current);
       if (current() !== original) {
@@ -8324,13 +12510,13 @@ export default function Home() {
         groups = (original.groups || []).filter((group) =>
           original.layers.some((layer) => !selectedIds.has(layer.id) && layer.groupId === group.id),
         );
-      if (commit({
+      if (commit(preserveClippingAfterReplace(original, [...selectedIds], {
         ...original,
         layers: [...layersBefore, nestedLayer, ...layersAfter],
         groups: groups.length ? groups : undefined,
         active: nestedLayer.id,
         selectedLayerIds: [nestedLayer.id],
-      }))
+      }, nestedLayer.id)))
         setNotice('Selected layers nested into an editable Smart Object');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not nest the selected layers');
@@ -8468,12 +12654,9 @@ export default function Home() {
       viewRotation,
     );
   };
+  // Pen pressure 0 is a real pen lift; mouse and zero touch pressure stay full.
   const pressure = (e: React.PointerEvent<HTMLCanvasElement>) =>
-    (e.pointerType === 'pen' || e.pointerType === 'touch') &&
-    e.pressure > 0 &&
-    e.pressure <= 1
-      ? e.pressure
-      : 1;
+    normalizeBrushPressure(e.pointerType, e.pressure);
   /** Apply a canvas-space alpha stroke to a detached mask preview. */
   const refineMaskCanvas = (
     target: HTMLCanvasElement,
@@ -8491,6 +12674,51 @@ export default function Home() {
     image.data.set(result.pixels);
     context.putImageData(image, 0, 0);
     return result.changed;
+  };
+  /**
+   * Apply a mask refinement segment to the gesture's mask buffer, confined to
+   * the selection that was active at pointer-down (Photoshop also confines
+   * layer-mask painting to the selection).
+   */
+  const refineGestureMask = (g: Gesture, stroke: MaskRefinementStroke) => {
+    const target = g.maskBuffer!, confined = g.selectionStroke;
+    if (!confined) return refineMaskCanvas(target, stroke);
+    if (!refineMaskCanvas(confined.raw, stroke)) return false;
+    const xs = stroke.points.map((item) => item.x),
+      ys = stroke.points.map((item) => item.y);
+    return confineStrokeRect(
+      confined,
+      target,
+      brushSegmentRect(
+        { x: Math.min(...xs), y: Math.min(...ys) },
+        { x: Math.max(...xs), y: Math.max(...ys) },
+        brushStampReach(stroke.size),
+        target.width,
+        target.height,
+      ),
+    );
+  };
+  /** Replace the edited path on a path layer or on its vector mask. */
+  const withEditedPath = (layer: Layer, path: PathModel, vectorMask: boolean): Layer =>
+    vectorMask
+      ? { ...layer, vectorMask: 'vectorMask' in layer && layer.vectorMask ? { ...layer.vectorMask, path } : undefined } as Layer
+      : { ...layer, path } as Layer;
+  /**
+   * Path for an in-progress Path Selection or Convert Point drag, or null
+   * while the pointer is still within the click slop of its press point.
+   */
+  const pathToolDragResult = (g: Gesture, pointer: { x: number; y: number }): PathModel | null => {
+    if (!g.pathOrigin || !g.layer) return null;
+    if (Math.hypot(pointer.x - g.start.x, pointer.y - g.start.y) < PATH_TOOL_DRAG_SLOP) return null;
+    const startLocal = inversePoint(g.layer.matrix, g.start);
+    const local = inversePoint(g.layer.matrix, pointer);
+    if (!startLocal || !local) return null;
+    if (g.tool === 'path-select')
+      return translatePath(g.pathOrigin, local.x - startLocal.x, local.y - startLocal.y);
+    if (g.pathIndex === undefined) return null;
+    return g.pathHandle
+      ? movePathHandle(g.pathOrigin, g.pathIndex, g.pathHandle, local.x, local.y)
+      : pullPathNodeHandles(g.pathOrigin, g.pathIndex, local);
   };
   const drawPathOverlay = (
     path: PathModel,
@@ -8570,11 +12798,12 @@ export default function Home() {
     context.setLineDash([]);
     context.restore();
   };
-  const previewPenPath = (g: Gesture) => {
+  /** `pointer` adds the Rubber Band segment from the last anchor to the pointer. */
+  const previewPenPath = (g: Gesture, pointer?: { x: number; y: number }) => {
     const points = g.points || [];
     if (!points.length) return;
     const preview: PathModel = {
-      nodes: points,
+      nodes: rubberBandNodes(points, pointer),
       closed: false,
       fill: false,
       stroke: true,
@@ -8600,8 +12829,8 @@ export default function Home() {
         drawPathOverlay(preview, [1, 0, 0, 1, 0, 0], null, true);
     });
   };
-  const previewCurvaturePath = (g: Gesture) => {
-    const points = g.points || [];
+  const previewCurvaturePath = (g: Gesture, pointer?: { x: number; y: number }) => {
+    const points = pointer && g.points?.length ? appendCurvaturePoint(g.points, pointer) : g.points || [];
     if (points.length < 2) return previewPenPath(g);
     const preview = buildCurvaturePath(points, {
       strokeWidth: Math.max(1, size / 3),
@@ -8619,17 +12848,14 @@ export default function Home() {
       return;
     }
     try {
-      const path = buildFreeformPath(g.points, {
-        strokeWidth: Math.max(1, size / 3),
-        fillColor: color,
-        strokeColor: color,
-      });
+      const style = penPathStyle(penOptions.mode, false, Math.max(1, size / 3), color);
+      const path = validatePath({ ...buildFreeformPath(g.points, style), ...style });
       const added = addLayer({
-        ...commonLayer('Freeform Path ' + g.frame.layers.length),
+        ...commonLayer(penLayerName('freeform-pen', penOptions.mode, g.frame.layers.length)),
         kind: 'path',
         path,
       });
-      if (added) setNotice('Editable freeform path layer added');
+      if (added) setNotice(penLayerNotice('freeform-pen', penOptions.mode));
     } catch {
       setNotice('Could not create a freeform path');
     }
@@ -8641,27 +12867,190 @@ export default function Home() {
       return;
     }
     try {
-      const path = buildCurvaturePath(
-        g.points,
-        {
-          strokeWidth: Math.max(1, size / 3),
-          fillColor: color,
-          strokeColor: color,
-        },
-        closed,
-      );
+      const style = penPathStyle(penOptions.mode, closed, Math.max(1, size / 3), color);
+      const path = validatePath({ ...buildCurvaturePath(g.points, style, closed), ...style });
       const added = addLayer({
-        ...commonLayer('Curvature Path ' + g.frame.layers.length),
+        ...commonLayer(penLayerName('curvature-pen', penOptions.mode, g.frame.layers.length)),
         kind: 'path',
         path,
       });
-      if (added) setNotice('Editable curvature path layer added');
+      if (added) setNotice(penLayerNotice('curvature-pen', penOptions.mode));
     } catch {
       void paint(g.frame);
       setNotice('Could not create a curvature path');
     }
   };
-  const pointerDown = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const typePointer = useRef<TypePointerHandlers | null>(null);
+  const activeTypeLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
+  const typeTool = useTypeTool({
+    tool,
+    current,
+    commit,
+    amend: (value, expected, dropPrevious = 0) => doc.amend(value, expected, dropPrevious),
+    paint,
+    setNotice,
+    addLayer: (layer) => addLayer(layer),
+    selectLayer: (id) => select(id),
+    isBaseFont: (family) => isSelectableFontFamily(family),
+    isLocked: layerIsLocked,
+    applyTextMask: (orientation, layer) => applyTextMask(orientation, layer),
+    // After deliberate type commits, hand the text layer to the Move tool.
+    onCommitted: (outcome) => {
+      if (toolAfterTypeCommit(outcome) !== 'move') return;
+      activateTool('move');
+      const committed = current();
+      revealTextSectionFor(committed.layers.find((layer) => layer.id === committed.active));
+      setNotice('Type committed: drag to move it, double-click or press T to edit');
+    },
+    defaults: {
+      fontFamily,
+      fontSize,
+      color,
+      bold: typeDefaults.bold,
+      textAlign: typeDefaults.textAlign,
+      antiAlias: typeDefaults.antiAlias,
+      starterText: text,
+    },
+    revision,
+    blocked: quickMasking ? 'Exit Quick Mask mode before adding type' : undefined,
+  });
+  const typeSession = typeTool.session;
+  // Glyphs panel (font library) inserts at the type caret during an edit.
+  const typeSessionActive = Boolean(typeSession);
+  useEffect(() => {
+    if (!typeSessionActive) return;
+    return registerTextCaretAdapter({ insertTextAtCaret: typeTool.insertTextAtCaret });
+  }, [typeSessionActive, typeTool.insertTextAtCaret]);
+  const typeSource: TypeView['source'] = typeSession ? 'session' : activeTypeLayer ? 'layer' : 'defaults';
+  const typeLayerView = typeSession?.layer ?? activeTypeLayer;
+  const typeView: TypeView = {
+    source: typeSource,
+    character: typeSession
+      ? (sessionCharacterState(typeSession) as TypeView['character'])
+      : activeTypeLayer
+        ? (commonStyle(activeTypeLayer, 0, activeTypeLayer.text.length) as TypeView['character'])
+        : ({
+            ...baseCharacterStyle({ text: '', color, fontSize, fontFamily, bold: typeDefaults.bold }),
+          } as TypeView['character']),
+    textAlign: typeLayerView?.textAlign ?? typeDefaults.textAlign,
+    antiAlias: typeLayerView ? typeLayerView.antiAlias ?? 'smooth' : typeDefaults.antiAlias,
+    textMode: typeLayerView ? typeLayerView.textMode ?? 'point' : undefined,
+    orientation: typeLayerView?.orientation ?? (tool === 'vertical-text' || tool === 'vertical-text-mask' ? 'vertical' : 'horizontal'),
+    paragraph: normalizeParagraph(typeLayerView?.paragraph),
+    fit: typeLayerView?.fit ?? 'none',
+    direction: normalizeTextLanguage(typeLayerView?.languageOptions).direction,
+    locked: Boolean(!typeSession && activeTypeLayer && frame && layerIsLocked(frame, activeTypeLayer)),
+    editing: Boolean(typeSession),
+    mask: Boolean(typeSession?.mask),
+  };
+  // The sidebar's top Font/Size follow the type being edited, like the Character panel.
+  const textFields = textSidebarFields(typeSource, typeView.character, { fontFamily, fontSize });
+  const typeActions: TypeActions = {
+    character: (patch) => {
+      // Like Photoshop, options-bar changes also become the defaults for new type.
+      if (typeof patch.fontFamily === 'string' && isSelectableFontFamily(patch.fontFamily)) setFontFamily(patch.fontFamily);
+      if (typeof patch.fontSize === 'number') setFontSize(Math.max(16, Math.min(160, Math.round(patch.fontSize))));
+      if (typeof patch.color === 'string') setColor(patch.color);
+      if (patch.fontWeight !== undefined) setTypeDefaults((value) => ({ ...value, bold: (patch.fontWeight ?? 400) >= 600 }));
+      if (typeSource !== 'defaults' && !typeTool.styleCharacters(patch)) setNotice('Unlock the type layer before styling it');
+    },
+    layer: (patch) => {
+      setTypeDefaults((value) => ({
+        ...value,
+        ...(patch.textAlign ? { textAlign: patch.textAlign } : {}),
+        ...(patch.antiAlias ? { antiAlias: patch.antiAlias } : {}),
+      }));
+      if (typeSource !== 'defaults') typeTool.patchTextLayer(patch);
+    },
+    paragraph: (patch) => {
+      if (typeSource !== 'defaults') typeTool.patchParagraph(patch);
+    },
+    direction: (direction) => {
+      if (!typeLayerView) return;
+      typeTool.patchTextLayer({ languageOptions: { ...normalizeTextLanguage(typeLayerView.languageOptions), direction } });
+    },
+    orientation: (orientation) => {
+      if (typeLayerView) typeTool.patchTextLayer({ orientation });
+    },
+    convert: (mode) => {
+      const source = typeLayerView;
+      const layout = source && layoutTextLayer(source);
+      if (!source || !layout) return;
+      const converted = mode === 'point' ? convertToPointText(source, layout) : convertToParagraphText(source, layout);
+      if (typeSession) {
+        typeTool.patchTextLayer(converted);
+        typeTool.select({ anchor: Math.min(typeSession.selection.anchor, converted.text.length), focus: Math.min(typeSession.selection.focus, converted.text.length) });
+      } else if (typeTool.patchTextLayer(converted)) setNotice(mode === 'point' ? 'Converted to point text' : 'Converted to paragraph text');
+    },
+    warp: () => {
+      if (typeSession) typeTool.commitSession();
+      setTextWarp();
+    },
+    commit: () => { typeTool.commitSession('confirm'); },
+    cancel: () => typeTool.cancelSession(),
+    findReplace: () => {
+      if (typeSession) typeTool.commitSession();
+      setTextReplaceOpen(true);
+    },
+    spellcheck: () => {
+      if (typeSession) typeTool.commitSession();
+      setSpellcheckOpen(true);
+    },
+    insert: (value) => { typeTool.insertTextAtCaret(value); },
+    openGlyphs: () => {
+      // The font library's glyph picker, when installed, handles this event
+      // and inserts through `pixelforge:insert-text`.
+      // Open the font library's Glyphs panel; while a type edit is active
+      // its caret is the registered insertion target (see below).
+      setGlyphsOpen(true);
+      return true;
+    },
+    presets: typePresets,
+    savePreset: (name) => {
+      try {
+        const preset = presetFromState(name, typeView.character, typeView.paragraph, typeView.textAlign);
+        const next = upsertTypePreset(typePresets, preset);
+        setTypePresets(next);
+        try { localStorage.setItem(TYPE_PRESETS_STORAGE_KEY, serializeTypePresets(next)); } catch { /* storage unavailable */ }
+        setNotice(`Type preset “${preset.name}” saved on this device`);
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Type preset could not be saved');
+      }
+    },
+    applyPreset: (preset) => {
+      if (typeSource === 'defaults') {
+        setNotice('Select or edit a type layer before applying a preset');
+        return;
+      }
+      typeTool.styleCharacters(preset.character);
+      typeTool.patchTextLayer({ paragraph: preset.paragraph, textAlign: preset.textAlign });
+      setNotice(`Type preset “${preset.name}” applied`);
+    },
+    deletePreset: (name) => {
+      const next = typePresets.filter((preset) => preset.name !== name);
+      setTypePresets(next);
+      try { localStorage.setItem(TYPE_PRESETS_STORAGE_KEY, serializeTypePresets(next)); } catch { /* storage unavailable */ }
+    },
+  };
+  /**
+   * The Text section's Font picker works like Photoshop's options bar: it
+   * styles the active type layer (or the selected characters while editing)
+   * and also becomes the default for new type.
+   */
+  const chooseTextToolFont = (family: string) => {
+    typeActions.character({ fontFamily: family });
+    if (typeView.editing)
+      window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.type-editor-input')?.focus({ preventScroll: true }), 0);
+  };
+  const toggleTypePanel = (panel: 'character' | 'paragraph') => {
+    const open = !typePanelsOpen[panel];
+    setTypePanelsOpen((value) => ({ ...value, [panel]: open }));
+    if (open) revealSidebarSection('text');
+  };
+  const pointerDown = async (
+    e: React.PointerEvent<HTMLCanvasElement>,
+    skipExpansion = false,
+  ): Promise<void> => {
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
       paintSpan.current?.cancel();
@@ -8705,7 +13094,9 @@ export default function Home() {
         if (g.tool === 'curvature-pen') {
           g.points = appendCurvaturePoint(points, bounded);
         } else {
-          points.push(bounded);
+          // Keep the raw vertex; the finished path is clipped exactly to the
+          // canvas, so an off-canvas vertex keeps its edges' true direction.
+          points.push(p);
         }
         g.last = p;
         g.moved = (g.points || points).length > 1;
@@ -8756,19 +13147,15 @@ export default function Home() {
           const path: PathModel = {
             nodes,
             closed: true,
-            fill: true,
-            stroke: true,
-            strokeWidth: Math.max(1, size / 3),
-            fillColor: color,
-            strokeColor: color,
+            ...penPathStyle(penOptions.mode, true, Math.max(1, size / 3), color),
           };
           if (validatePath(path)) {
             const added = addLayer({
-              ...commonLayer('Path ' + g.frame.layers.length),
+              ...commonLayer(penLayerName('pen', penOptions.mode, g.frame.layers.length)),
               kind: 'path',
               path,
             });
-            if (added) setNotice('Editable path layer added');
+            if (added) setNotice(penLayerNotice('pen', penOptions.mode));
           }
         }
       } else {
@@ -8821,28 +13208,17 @@ export default function Home() {
           Math.hypot(activeLayer.matrix[2], activeLayer.matrix[3]),
           0.0001,
         );
-        const path = validatePath(activeLayer.path);
-        const nodeIndex = hitTestPathNode(path, localPath, 12 / scale);
-        if (nodeIndex !== null && (e.altKey || e.shiftKey)) {
-          const next = e.altKey
-            ? removePathNode(path, nodeIndex)
-            : setPathNodeSmooth(
-                path,
-                nodeIndex,
-                !(path.nodes[nodeIndex].inHandle || path.nodes[nodeIndex].outHandle),
-              );
-          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
-            setNotice(e.altKey ? 'Path anchor deleted' : 'Path anchor converted');
+        // Shared with the dedicated Add/Delete Anchor Point and Convert
+        // Point tools (src/pathEditTools.ts). Auto Add/Delete makes an
+        // unmodified click on an anchor delete it and on a segment add one;
+        // a click that edits nothing falls through and starts a new path.
+        const editPath = validatePath(activeLayer.path);
+        const editMode = penAutoEditMode(editPath, localPath, 12 / scale, e, penOptions.autoAddDelete);
+        const edit = editMode ? editPathAnchor(editPath, localPath, 12 / scale, editMode) : null;
+        if (edit && isPathAnchorEdit(edit)) {
+          if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: edit.path } : item) }))
+            setNotice(pathAnchorEditNotice(edit));
           return;
-        }
-        if (!e.altKey && !e.shiftKey) {
-          const hit = nearestPathSegment(path, localPath, 12 / scale);
-          if (hit) {
-            const next = insertPathNode(path, hit.segmentIndex, hit.t);
-            if (commit({ ...f, layers: f.layers.map((item) => item.id === activeLayer.id ? { ...item, path: next } : item) }))
-              setNotice('Path anchor added');
-            return;
-          }
         }
       }
     }
@@ -9008,7 +13384,91 @@ export default function Home() {
       await g.pending;
       return;
     }
-    if (gesture.current || !frame) return;
+    // Option/Alt-click sets the Clone/Healing source, as in Photoshop. It
+    // changes no pixels and creates no history, so it is honoured even while
+    // the previous stroke is still decoding or committing: the next stroke
+    // reads the new anchor, and a stroke already in flight keeps its own.
+    if ((tool === 'clone' || tool === 'heal') && e.altKey && frame) {
+      const f = current(),
+        layer = f.layers.find((item) => item.id === f.active);
+      if (layer?.kind === 'raster') {
+        const p = point(e);
+        chooseCloneSource(inversePoint(layer.matrix, p) || p, layer.matrix);
+        setNotice(
+          `${tool === 'heal' ? 'Healing' : 'Clone'} source set; drag on the image to paint it`,
+        );
+        return;
+      }
+    }
+    // One press at a time: a second press while a stroke is still starting
+    // (its layer growing or its pixels decoding) is ignored rather than
+    // joined to that stroke.
+    if (gesture.current || !frame || (!skipExpansion && expansionPointer.current)) return;
+    gesturePointer.current = e.pointerId;
+    if (
+      !skipExpansion &&
+      !quickMasking &&
+      EXPANDING_PAINT_TOOLS.includes(tool) &&
+      rasterExpansionTarget(current())
+    ) {
+      // Grow a trimmed paint layer before the tool reads its pixels. A quick
+      // tap can be released while the asset decodes, so remember the release
+      // and replay it once the tool has started its gesture.
+      const pending: {
+        pointerId: number;
+        moves: React.PointerEvent<HTMLCanvasElement>[];
+        release?: React.PointerEvent<HTMLCanvasElement>;
+      } = {
+        pointerId: e.pointerId,
+        moves: [],
+      };
+      expansionPointer.current = pending;
+      try {
+        canvas.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // The pointer may already be gone; the release replay handles it.
+      }
+      let proceed = true;
+      const before = canvas.current?.getBoundingClientRect();
+      // A clone/heal press samples the source chosen when it happened, even if
+      // an Alt-click picks a new source while the layer is being grown.
+      const pressSource = cloneSourceRef.current;
+      try {
+        proceed = await expandRasterLayerForPaint(point(e));
+      } finally {
+        expansionPointer.current = null;
+      }
+      if (!proceed) return;
+      // The expansion commit can reflow the page (e.g. on phones), moving the
+      // canvas under the pointer. Replay the press at the same document
+      // point it had when it happened.
+      const after = canvas.current?.getBoundingClientRect();
+      const replay = <T extends { clientX: number; clientY: number }>(event: T): T =>
+        before && after && (before.left !== after.left || before.top !== after.top)
+          ? (Object.create(event, {
+              clientX: { value: event.clientX + after.left - before.left },
+              clientY: { value: event.clientY + after.top - before.top },
+            }) as T)
+          : event;
+      const latestSource = cloneSourceRef.current;
+      cloneSourceRef.current = pressSource;
+      try {
+        // The gesture exists once pointerDown returns its promise; feed it the
+        // moves made while the layer grew before any later live move, so a
+        // fast stroke or gradient drag keeps its whole path.
+        const started = pointerDown(replay(e), true);
+        if (gesture.current && gesturePointer.current === e.pointerId)
+          for (const move of pending.moves) pointerMove(replay(move));
+        await started;
+      } finally {
+        if (latestSource !== pressSource) cloneSourceRef.current = latestSource;
+      }
+      if (pending.release) {
+        await pointerUp(replay(pending.release));
+        dropUnusedExpansion();
+      }
+      return;
+    }
     if (
       quickMasking ||
       [
@@ -9049,9 +13509,19 @@ export default function Home() {
       (layer.kind === 'raster' || layer.kind === 'path' || (isVectorMaskableLayer(layer) && Boolean(layer.vectorMask)))
         ? inversePoint(layer.matrix, p) || p
         : p;
-    canvas.current!.setPointerCapture(e.pointerId);
+    try {
+      canvas.current!.setPointerCapture(e.pointerId);
+    } catch {
+      // A replayed tap (see the trimmed-layer expansion above) has already
+      // released its pointer; the tool still runs at the recorded point.
+    }
     if (tool === 'slice-select') {
-      const selected = sliceAtPoint(f.slices, p.x, p.y);
+      // The selected slice's edges and corners (a few screen pixels either
+      // side) resize it; its interior, or any slice's interior, moves it.
+      const tolerance = (8 * 100) / Math.max(1, viewZoomRef.current);
+      const activeSlice = f.slices?.find((item) => item.id === f.activeSliceId);
+      const activeHandle = activeSlice ? hitTestSliceHandle(activeSlice, p.x, p.y, tolerance) : null;
+      const selected = activeHandle && activeSlice ? { ...activeSlice } : sliceAtPoint(f.slices, p.x, p.y);
       if (!selected) {
         setSlicePreview(null);
         setSlicePreviewMode('draft');
@@ -9065,6 +13535,15 @@ export default function Home() {
       setSliceName(selected.name);
       void paint(current());
       setNotice(`Slice selected: ${selected.name} · ${selected.width} × ${selected.height} px`);
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: current(),
+        moved: false,
+        sliceHandle: activeHandle ?? 'move',
+        sliceOrigin: { ...selected },
+      };
       return;
     }
     if (tool === 'frame') {
@@ -9092,13 +13571,18 @@ export default function Home() {
         );
         return;
       }
-      if (!layer.mask) {
+      // A fresh adjustment layer has no mask: the Adjustment Brush creates
+      // one on its first stroke (empty to paint the adjustment in, full to
+      // paint it out). Mask Brush/Eraser still refine an existing mask only.
+      if (!layer.mask && tool !== 'adjustment-brush') {
         setNotice('Create a layer mask or remove a background before refining');
         return;
       }
+      const adjustmentConceal = tool === 'adjustment-brush' &&
+        (adjustmentBrushMode === 'conceal') !== e.altKey;
       const mode: MaskRefinementMode =
-          tool === 'mask-eraser' ? 'conceal' : 'reveal',
-        maskAsset = assets.current[layer.mask],
+          tool === 'mask-eraser' || adjustmentConceal ? 'conceal' : 'reveal',
+        maskAsset = layer.mask ? assets.current[layer.mask] : undefined,
         initialPoint = {
           x: p.x,
           y: p.y,
@@ -9126,16 +13610,23 @@ export default function Home() {
       gesture.current = g;
       g.pending = (async () => {
         try {
-          const image = await decodeAsset(maskAsset);
-          if (image.naturalWidth !== f.w || image.naturalHeight !== f.h)
+          const image = maskAsset ? await decodeAsset(maskAsset) : undefined;
+          if (image && (image.naturalWidth !== f.w || image.naturalHeight !== f.h))
             throw new Error('Layer mask dimensions do not match the canvas');
           const buffer = surface(f.w, f.h),
             context = buffer.getContext('2d');
           if (!context) throw new Error('Mask refinement canvas is unavailable');
           context.imageSmoothingEnabled = false;
-          context.drawImage(image, 0, 0);
+          if (image) context.drawImage(image, 0, 0);
+          else if (mode === 'conceal') {
+            // New full-reveal mask: a conceal stroke paints the adjustment out.
+            context.fillStyle = '#fff';
+            context.fillRect(0, 0, f.w, f.h);
+          }
+          const selectionMask = await frameSelectionMask(f.selection, f, assets.current);
           if (gesture.current !== g) return;
           g.maskBuffer = buffer;
+          g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
           const queued = (g.queued || [initialPoint]).slice(
             0,
             MASK_REFINEMENT_MAX_POINTS,
@@ -9148,7 +13639,7 @@ export default function Home() {
               pressure: item.pressure,
             })),
           };
-          g.changed = refineMaskCanvas(buffer, g.maskRefinementStroke);
+          g.changed = refineGestureMask(g, g.maskRefinementStroke);
           g.last = queued[queued.length - 1] || p;
           g.queued = undefined;
           g.maskPreviewAsset = crypto.randomUUID();
@@ -9175,6 +13666,81 @@ export default function Home() {
         }
       })();
       await g.pending;
+      return;
+    }
+    if (
+      tool === 'path-select' ||
+      tool === 'add-anchor' ||
+      tool === 'delete-anchor' ||
+      tool === 'convert-point'
+    ) {
+      // Path Selection and the dedicated anchor tools edit the active path
+      // layer or the active layer's vector mask, like Direct Selection.
+      const vectorMaskTarget = isVectorMaskableLayer(layer) ? layer.vectorMask : undefined;
+      const editablePath = vectorMaskTarget?.path || (layer.kind === 'path' ? layer.path : undefined);
+      if (layerIsLocked(f, layer) || !layer.visible || !editablePath) {
+        setNotice(
+          tool === 'path-select'
+            ? 'Select a visible, unlocked path layer or vector-mask layer before selecting a path'
+            : 'Select a visible, unlocked path layer or vector-mask layer before editing anchors',
+        );
+        return;
+      }
+      const localPoint = inversePoint(layer.matrix, p);
+      if (!localPoint) {
+        setNotice('This path transform cannot be edited');
+        return;
+      }
+      const scale = Math.max(
+        Math.hypot(layer.matrix[0], layer.matrix[1]),
+        Math.hypot(layer.matrix[2], layer.matrix[3]),
+        0.0001,
+      );
+      const origin = validatePath(editablePath);
+      const vectorMask = Boolean(vectorMaskTarget);
+      if (tool === 'add-anchor' || tool === 'delete-anchor') {
+        const edit = editPathAnchor(origin, localPoint, 12 / scale, tool === 'add-anchor' ? 'add' : 'delete');
+        if (!isPathAnchorEdit(edit)) {
+          setNotice(edit.reason);
+          return;
+        }
+        const nextLayer = withEditedPath(layer, edit.path, vectorMask);
+        if (commit({ ...f, layers: f.layers.map((item) => item.id === layer.id ? nextLayer : item) }))
+          setNotice(pathAnchorEditNotice(edit, vectorMask));
+        return;
+      }
+      let pathIndex: number | undefined;
+      let pathHandle: PathHandleKind | undefined;
+      if (tool === 'convert-point') {
+        // An anchor wins over a nearby handle: click converts it and a drag
+        // pulls out symmetric handles. Dragging a handle moves it alone.
+        const nodeIndex = hitTestPathNode(origin, localPoint, 12 / scale);
+        const handle = nodeIndex === null ? hitTestPathHandle(origin, localPoint, 10 / scale) : null;
+        if (nodeIndex === null && !handle) {
+          setNotice('Click an anchor to convert it, or drag a handle to break it');
+          return;
+        }
+        pathIndex = nodeIndex ?? handle!.index;
+        pathHandle = handle?.kind;
+      } else if (!hitTestWholePath(origin, localPoint, 10 / scale)) {
+        setNotice('Click on a path to select it');
+        return;
+      }
+      gesture.current = {
+        tool,
+        start: p,
+        last: p,
+        frame: f,
+        layer,
+        pathIndex,
+        pathHandle,
+        pathOrigin: origin,
+        pathVectorMask: vectorMask,
+        moved: false,
+      };
+      drawPathOverlay(origin, layer.matrix, pathIndex ?? null);
+      if (tool === 'path-select')
+        setNotice(vectorMask ? 'Vector mask path selected: drag to move it' : 'Path selected: drag to move it');
       return;
     }
     if (tool === 'direct-select') {
@@ -9219,8 +13785,25 @@ export default function Home() {
       return;
     }
     if (tool === 'zoom') {
-      setZoom((value) => Math.min(140, value + 10));
-      setNotice('Zoomed in');
+      // The Zoom out mode flips the click direction; Alt flips it back.
+      const out = (navigationTools.zoomMode === 'out') !== e.altKey;
+      if (navigationTools.scrubbyZoom) {
+        // Scrubby Zoom: a horizontal drag zooms continuously; a click still steps.
+        gesture.current = {
+          tool,
+          start: p,
+          last: p,
+          frame: f,
+          moved: false,
+          lastClientX: e.clientX,
+          lastClientY: e.clientY,
+          zoomStart: viewZoomRef.current,
+          zoomOut: out,
+        };
+        return;
+      }
+      const next = zoomBy(out ? -1 : 1, { x: e.clientX, y: e.clientY });
+      setNotice(`Zoomed ${out ? 'out' : 'in'} to ${formatViewZoom(next)}`);
       return;
     }
     if (tool === 'rotate-view') {
@@ -9240,17 +13823,80 @@ export default function Home() {
       setNotice('Rotate View: drag around the canvas; use Reset view to restore');
       return;
     }
+    if (tool === 'eyedropper' && current().reference?.sample && current().reference?.visible) {
+      const sampled = await sampleReference(p.x, p.y);
+      if (sampled) {
+        if (e.altKey) setBackgroundColor(sampled);
+        else setColor(sampled);
+        setNotice(e.altKey ? 'Background color sampled from reference image' : 'Color sampled from reference image');
+      } else setNotice('No reference pixel here; reference not sampled');
+      return;
+    }
     if (tool === 'eyedropper') {
-      const pixel = canvas
-        .current!.getContext('2d')!
-        .getImageData(Math.floor(p.x), Math.floor(p.y), 1, 1).data;
-      setColor(
-        '#' +
-          [pixel[0], pixel[1], pixel[2]]
-            .map((value) => value.toString(16).padStart(2, '0'))
-            .join(''),
+      // Sample Size averages a square around the click (alpha-weighted);
+      // Sample chooses the rendered image or the active layer's own pixels.
+      const sampleSize = navigationTools.eyedropperSize;
+      const half = Math.floor(sampleSize / 2);
+      const readSquare = (source: CanvasImageSource, x: number, y: number, width: number, height: number) => {
+        const square = surface(sampleSize, sampleSize),
+          context = square.getContext('2d', { willReadFrequently: true })!;
+        const left = Math.floor(x) - half,
+          top = Math.floor(y) - half;
+        context.drawImage(source, -left, -top);
+        // Pixels beyond the source edge stay transparent and count as clipped.
+        const data = context.getImageData(0, 0, sampleSize, sampleSize).data;
+        const clipLeft = Math.max(0, -left),
+          clipTop = Math.max(0, -top),
+          clipRight = Math.min(sampleSize, width - left),
+          clipBottom = Math.min(sampleSize, height - top);
+        if (clipRight <= clipLeft || clipBottom <= clipTop) return null;
+        const clipped = new Uint8ClampedArray((clipRight - clipLeft) * (clipBottom - clipTop) * 4);
+        for (let row = clipTop; row < clipBottom; row += 1)
+          clipped.set(
+            data.subarray((row * sampleSize + clipLeft) * 4, (row * sampleSize + clipRight) * 4),
+            (row - clipTop) * (clipRight - clipLeft) * 4,
+          );
+        return averageSample(
+          clipped,
+          clipRight - clipLeft,
+          clipBottom - clipTop,
+          half - clipLeft,
+          half - clipTop,
+          sampleSize,
+        );
+      };
+      let sampled: ReturnType<typeof averageSample> | null = null;
+      let from = 'image';
+      if (navigationTools.eyedropperSample === 'current') {
+        if (!isRasterContentLayer(layer) || !assets.current[layer.asset]) {
+          setNotice('Sample: Current Layer needs a raster layer; choose All Layers or a pixel layer');
+          return;
+        }
+        const at = inversePoint(layer.matrix, p);
+        if (!at) {
+          setNotice('This layer transform cannot be sampled');
+          return;
+        }
+        try {
+          const image = await decodeAsset(assets.current[layer.asset]);
+          sampled = readSquare(image, at.x, at.y, image.naturalWidth, image.naturalHeight);
+        } catch {
+          setNotice('Could not read the current layer');
+          return;
+        }
+        from = 'current layer';
+      } else if (canvas.current) sampled = readSquare(canvas.current, p.x, p.y, f.w, f.h);
+      if (!sampled || sampled.a === 0) {
+        setNotice(`No visible pixel to sample on the ${from}`);
+        return;
+      }
+      const hex = rgbHex(sampled);
+      if (e.altKey) setBackgroundColor(hex);
+      else setColor(hex);
+      setNotice(
+        `${e.altKey ? 'Background color' : 'Color'} sampled from ${from}` +
+          `${sampleSize > 1 ? ` (${sampleSize} × ${sampleSize} average)` : ''}`,
       );
-      setNotice('Color sampled from image');
       return;
     }
     if (tool === 'color-sampler') {
@@ -9283,23 +13929,31 @@ export default function Home() {
       return;
     }
     if (tool === 'note') {
-      const text = window.prompt('Note for this image', '');
-      if (text?.trim()) {
-        if (
-          appendMeasurement({
-            id: newMeasurementId(),
-            kind: 'note',
-            x: p.x,
-            y: p.y,
-            text: text.trim().slice(0, 500),
-          })
-        )
-          setNotice('Note added to the draft');
-      } else setNotice('Note cancelled');
+      // In-app editor instead of window.prompt (which can be blocked): a
+      // click on a note opens it, a drag moves it, elsewhere starts a new one.
+      const tolerance = (12 * 100) / Math.max(1, viewZoomRef.current);
+      const hit = [...(f.measurements || [])]
+        .reverse()
+        .find(
+          (item) => item.kind === 'note' && Math.hypot(item.x - p.x, item.y - p.y) <= tolerance,
+        );
+      if (hit) {
+        gesture.current = { tool, start: p, last: p, frame: f, moved: false, noteId: hit.id };
+        return;
+      }
+      setNoteEditor({ x: p.x, y: p.y, text: '', color: navigationTools.noteColor });
+      setNotice('Type the note, then Save');
+      return;
+    }
+    if (tool === 'audio-note') {
+      setAudioDraft({ x: p.x, y: p.y });
+      setNotice('Record or attach audio for this annotation');
       return;
     }
     if (tool === 'count') {
-      const index = nextCountIndex(f.measurements || []);
+      // Markers are numbered per count group and carry the group's colour.
+      const group = navigationTools.countGroup;
+      const index = nextCountIndexInGroup(f.measurements || [], group);
       if (
         appendMeasurement({
           id: newMeasurementId(),
@@ -9307,9 +13961,11 @@ export default function Home() {
           x: p.x,
           y: p.y,
           index,
+          group,
+          color: navigationTools.countColor,
         })
       )
-        setNotice(`Count marker ${index} added`);
+        setNotice(`Count marker ${index} added to ${group}`);
       return;
     }
     if (tool === 'hand') {
@@ -9337,10 +13993,40 @@ export default function Home() {
         const image = await decodeAsset(assets.current[layer.asset]),
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
-        if (!floodFill(buffer, local.x, local.y, color)) {
-          setNotice('No contiguous pixels matched at that point');
+        // Photoshop fills only inside the active selection.
+        const selectionMask = await selectionMaskForLayer(
+          f.selection, f, layer, assets.current, buffer.width, buffer.height,
+        );
+        if (selectionMask && maskCoverageAt(selectionMask, buffer.width, buffer.height, local.x, local.y) === 0) {
+          setNotice('Click inside the selection to fill');
           return;
         }
+        // Tolerance / Contiguous / Sample All Layers (docs/color-region-contract.md).
+        const context = buffer.getContext('2d')!,
+          pixels = context.getImageData(0, 0, buffer.width, buffer.height);
+        let region: Uint8Array | null;
+        if (colorRegion.sampleAllLayers) {
+          const merged = await renderFrame(f, assets.current),
+            mergedPixels = merged.getContext('2d')!.getImageData(0, 0, f.w, f.h).data,
+            frameRegion = colorRegionMask(mergedPixels, f.w, f.h, p.x, p.y, {
+              tolerance: colorTolerance,
+              contiguous: colorRegion.contiguous,
+            });
+          region = frameRegion && frameMaskToLayer(frameRegion, f.w, f.h, layer.matrix, buffer.width, buffer.height);
+        } else
+          region = colorRegionMask(pixels.data, buffer.width, buffer.height, local.x, local.y, {
+            tolerance: colorTolerance,
+            contiguous: colorRegion.contiguous,
+          });
+        const rgb = /^#([a-f\d]{6})$/i.exec(color)?.[1];
+        if (!region || !rgb || !fillMaskedPixels(pixels.data, region, [
+          parseInt(rgb.slice(0, 2), 16), parseInt(rgb.slice(2, 4), 16), parseInt(rgb.slice(4, 6), 16),
+        ])) {
+          setNotice(colorRegion.contiguous ? 'No contiguous pixels matched at that point' : 'No pixels matched that colour');
+          return;
+        }
+        context.putImageData(pixels, 0, 0);
+        if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -9369,10 +14055,19 @@ export default function Home() {
         const image = await decodeAsset(assets.current[layer.asset]),
           buffer = surface(image.naturalWidth, image.naturalHeight);
         buffer.getContext('2d')!.drawImage(image, 0, 0);
+        // Like Fill, Magic Eraser only removes pixels inside the selection.
+        const selectionMask = await selectionMaskForLayer(
+          f.selection, f, layer, assets.current, buffer.width, buffer.height,
+        );
+        if (selectionMask && maskCoverageAt(selectionMask, buffer.width, buffer.height, local.x, local.y) === 0) {
+          setNotice('Click inside the selection to erase');
+          return;
+        }
         if (!eraseMagicRegion(buffer, local.x, local.y, colorTolerance)) {
           setNotice('No contiguous pixels matched at that point');
           return;
         }
+        if (selectionMask) confineToSelection(image, buffer, selectionMask);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -9427,6 +14122,9 @@ export default function Home() {
             1,
             1,
           ).data;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.source = source;
           g.buffer = buffer;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
@@ -9438,18 +14136,12 @@ export default function Home() {
               pointerType: g.pointerType,
             },
           ]) {
-            eraseBackgroundStroke(
-              source,
-              buffer,
-              g.replaceTarget,
-              from.x,
-              from.y,
-              point.x,
-              point.y,
-              localSize(layer.matrix, size),
-              colorTolerance,
-              brushOpacity / 100,
-            );
+            sampledGestureStroke(g, from, point, {
+              kind: 'background-erase',
+              size: localSize(layer.matrix, size),
+              tolerance: colorTolerance,
+              opacity: brushOpacity / 100,
+            });
             from = point;
           }
           g.queued = undefined;
@@ -9485,15 +14177,14 @@ export default function Home() {
         ],
       } as Gesture;
       gesture.current = g;
+      // Strength, mode, tip and symmetry are fixed for the stroke at pointer-down.
+      const settingsAtDown = smudgeSettings,
+        strokeSettings = smudgeStrokeSettings(layer, f);
       g.pending = (async () => {
         try {
           const image = await decodeAsset(assets.current[layer.asset]),
-            source = surface(image.naturalWidth, image.naturalHeight),
-            buffer = surface(image.naturalWidth, image.naturalHeight),
-            sourceContext = source.getContext('2d')!,
-            bufferContext = buffer.getContext('2d')!;
-          sourceContext.drawImage(image, 0, 0);
-          bufferContext.drawImage(image, 0, 0);
+            buffer = surface(image.naturalWidth, image.naturalHeight);
+          buffer.getContext('2d')!.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
           g.selectionMask = await selectionMaskForLayer(
             f.selection,
@@ -9504,19 +14195,25 @@ export default function Home() {
             image.naturalHeight,
           );
           if (gesture.current !== g) return;
-          g.source = source;
+          // Sample All Layers reads the visible composite rendered once now.
+          const sample = settingsAtDown.sampleAllLayers
+            ? await smudgeCompositeSample(f, layer, assets.current, buffer.width, buffer.height, settingsAtDown.ignoreAdjustments)
+            : undefined;
+          if (gesture.current !== g) return;
+          g.smudge = {
+            ...strokeSettings,
+            apply: { ...strokeSettings.apply, sample },
+            stroke: createSmudgeStroke({ size: strokeSettings.tip.size, copies: strokeSettings.symmetry?.length ?? 1 }),
+            last: g.queued?.[0] ?? { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
+          };
           g.buffer = buffer;
-          let from = g.start;
+          const smudge = g.smudge;
           for (const queued of g.queued || []) {
-            const changed = smudgeCanvasSegment(source, buffer, from, queued, {
-              size: localSize(layer.matrix, size),
-              hardness,
-              flow: brushOpacity / 100,
-              selectionMask: g.selectionMask,
-            });
-            from = queued;
+            const changed = smudgeCanvasSegment(buffer, smudge.last, queued, smudge, g.selectionMask);
+            smudge.last = queued;
             g.changed = Boolean(g.changed || changed);
           }
+          g.last = { x: smudge.last.x, y: smudge.last.y };
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
         } catch {
@@ -9560,25 +14257,14 @@ export default function Home() {
           if (gesture.current !== g) return;
           let from = g.start;
           for (const queued of g.queued || []) {
-            const result = applyRetouchStroke(
-              new Uint8ClampedArray(sourceContext.getImageData(0, 0, source.width, source.height).data),
-              new Uint8ClampedArray(bufferContext.getImageData(0, 0, buffer.width, buffer.height).data),
-              {
-                width: buffer.width,
-                height: buffer.height,
-                x1: from.x,
-                y1: from.y,
-                x2: queued.x,
-                y2: queued.y,
-                size: localSize(layer.matrix, size),
-                hardness,
-                flow: brushOpacity / 100,
-                mode: tool,
-                selectionMask: g.selectionMask,
-              },
-            );
-            bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
-            g.changed = Boolean(g.changed || result.changed);
+            const changed = retouchCanvasSegment(source, buffer, from, queued, {
+              size: localSize(layer.matrix, size),
+              hardness,
+              flow: brushOpacity / 100,
+              mode: tool,
+              selectionMask: g.selectionMask,
+            });
+            g.changed = Boolean(g.changed || changed);
             from = queued;
           }
           g.queued = undefined;
@@ -9608,6 +14294,9 @@ export default function Home() {
         moved: false,
         brushPoints: [{ x: local.x, y: local.y, pressure: pressure(e) }],
         queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
+        mixerStates: [],
+        // Paint Symmetry is fixed for the stroke at pointer-down.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
       };
       gesture.current = g;
       g.pending = (async () => {
@@ -9619,15 +14308,21 @@ export default function Home() {
           buffer.getContext('2d')!.drawImage(currentImage, 0, 0);
           let sourceIndex = index.current;
           if (tool === 'history-brush' || tool === 'art-history-brush') {
-            sourceIndex = Math.max(0, Math.min(history.current.length - 1, historySourceIndex ?? index.current));
+            sourceIndex = Math.max(0, Math.min(history.current.length - 1, historySourceIndex ?? 0));
             const sourceFrame = history.current[sourceIndex];
             const sourceLayer = sourceFrame?.layers.find((item) => item.id === layer.id) ||
               (tool === 'history-brush' ? sourceFrame?.layers.find((item) => item.id === sourceFrame.active) : undefined);
             if (tool === 'art-history-brush' && (sourceLayer?.kind !== 'raster' || !sourceLayer.asset))
               throw new Error('Art History source does not contain this raster layer; choose another snapshot');
             if (sourceLayer?.kind === 'raster' && sourceLayer.asset) {
-              const candidate = await decodeAsset(assets.current[sourceLayer.asset]);
-              if (candidate.naturalWidth === currentImage.naturalWidth && candidate.naturalHeight === currentImage.naturalHeight) {
+              const candidate = await decodeAsset(assets.current[sourceLayer.asset]),
+                // Layers stored at their content bounds may sit at different
+                // bounds in the snapshot; align both in document space.
+                offset = historySourceOffset(layer.matrix, sourceLayer.matrix);
+              if (offset) {
+                source.getContext('2d')!.clearRect(0, 0, source.width, source.height);
+                source.getContext('2d')!.drawImage(candidate, offset.x, offset.y);
+              } else if (candidate.naturalWidth === currentImage.naturalWidth && candidate.naturalHeight === currentImage.naturalHeight) {
                 source.getContext('2d')!.clearRect(0, 0, source.width, source.height);
                 source.getContext('2d')!.drawImage(candidate, 0, 0);
               } else if (tool === 'art-history-brush') {
@@ -9644,26 +14339,25 @@ export default function Home() {
           if (gesture.current !== g) return;
           const points = (g.queued || []).map((item) => ({ x: item.x, y: item.y, pressure: item.pressure }));
           g.brushPoints = points;
-          const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
-          const next = tool === 'mixer-brush'
-            ? applyMixerBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
-                ...mixerBrush,
-                size: localSize(layer.matrix, size),
-                hardness,
-              }, g.selectionMask)
-            : tool === 'history-brush'
-            ? applyHistoryBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
-                ...historyBrush,
-                size: localSize(layer.matrix, size),
-                hardness,
-              }, g.selectionMask)
-            : applyArtHistoryBrushPixels(destination, g.sourcePixels, buffer.width, buffer.height, points, {
-                ...artHistoryBrush,
-                size: localSize(layer.matrix, size),
-                hardness,
-              }, g.selectionMask);
-          if (tool === 'art-history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
-          buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          const brushSize = localSize(layer.matrix, size);
+          const retouchOptions =
+            tool === 'mixer-brush'
+              ? { ...mixerBrush, size: brushSize, hardness }
+              : tool === 'history-brush'
+              ? { ...historyBrush, size: brushSize, hardness }
+              : { ...artHistoryBrush, size: brushSize, hardness };
+          if ((g.paintSymmetry?.length ?? 0) > 1) {
+            // Paint Symmetry copies are applied over the whole buffer (#220).
+            const destination = new Uint8ClampedArray(buffer.getContext('2d')!.getImageData(0, 0, buffer.width, buffer.height).data);
+            const next = applySymmetricRetouchBrush(tool, destination, g.sourcePixels, buffer.width, buffer.height, points, retouchOptions, g.selectionMask, g.paintSymmetry, g.mixerStates);
+            if (tool !== 'history-brush') g.changed = next.some((value, pixel) => value !== destination[pixel]);
+            buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, buffer.width, buffer.height), 0, 0);
+          } else {
+            // Without symmetry only the brush's reach is read and written.
+            const changed = mixerHistoryCanvasDabs(tool, g.sourcePixels, buffer, points, retouchOptions, g.selectionMask,
+              g.mixerStates && (g.mixerStates[0] ??= {}));
+            if (tool !== 'history-brush') g.changed = changed;
+          }
           g.last = points.at(-1) || g.last;
           g.queued = undefined;
           void paint(f, { [layer.id]: buffer });
@@ -9779,15 +14473,39 @@ export default function Home() {
             size: localSize(layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
+            type: retouchOptions.spotHealingType,
           },
         };
       gesture.current = g;
-      void paint({
-        ...f,
-        layers: f.layers.map((item) => item.id === layer.id
-          ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
-          : item),
-      });
+      const previewSpotHealing = () => {
+        if (gesture.current !== g) return;
+        void paint({
+          ...f,
+          layers: f.layers.map((item) => item.id === layer.id
+            ? { ...item, spotHealing: [...(item.spotHealing ?? []), g.spotHealingStroke!] }
+            : item),
+        });
+      };
+      if (f.selection) {
+        // Confine the stroke to the selection: capture it before the first
+        // preview so the preview and the committed stroke match.
+        g.selectionPending = true;
+        g.pending = (async () => {
+          try {
+            const selectionMask = await captureSelectionSnapshot(f, layer);
+            g.selectionPending = false;
+            if (selectionMask && g.spotHealingStroke) g.spotHealingStroke.selectionMask = selectionMask;
+          } catch {
+            if (gesture.current === g) gesture.current = null;
+            setNotice('Could not read the selection for Spot Healing');
+            return;
+          }
+          previewSpotHealing();
+        })();
+        await g.pending;
+        return;
+      }
+      previewSpotHealing();
       return;
     }
     if (tool === 'patch') {
@@ -9795,8 +14513,14 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before Patch');
         return;
       }
-      if (!cloneSource) {
-        setCloneSource(local);
+      // Source/Destination: a press inside an active selection drags the
+      // selection as the patch region (decided once the mask is sampled);
+      // otherwise, and always in Brush mode, the click-source-then-paint
+      // brush workflow applies.
+      const regionMode = retouchOptions.patchMode !== 'brush' && f.selection ? retouchOptions.patchMode : undefined;
+      const cloneSource = cloneSourceIn(layer.matrix);
+      if (!cloneSource && !regionMode) {
+        chooseCloneSource(local, layer.matrix);
         setNotice('Patch source set; drag on the image to paint the patch');
         return;
       }
@@ -9809,12 +14533,6 @@ export default function Home() {
       const asset = assets.current[layer.asset],
         x = Math.max(0, Math.min(asset.w - 1, local.x)),
         y = Math.max(0, Math.min(asset.h - 1, local.y)),
-        selectionMask =
-          f.selection?.mask &&
-          assets.current[f.selection.mask]?.w === asset.w &&
-          assets.current[f.selection.mask]?.h === asset.h
-            ? f.selection.mask
-            : undefined,
         g: Gesture = {
           tool,
           start: { x, y },
@@ -9829,19 +14547,61 @@ export default function Home() {
             hardness,
             opacity: brushOpacity / 100,
             sourceOffset: {
-              x: cloneSource.x - x,
-              y: cloneSource.y - y,
+              x: cloneSource ? cloneSource.x - x : 0,
+              y: cloneSource ? cloneSource.y - y : 0,
             },
-            ...(selectionMask ? { selectionMask } : {}),
           },
         };
       gesture.current = g;
-      void paint({
-        ...f,
-        layers: f.layers.map((item) => item.id === layer.id
-          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), g.patchStroke!] }
-          : item),
-      });
+      const previewPatch = () => {
+        if (gesture.current !== g) return;
+        void paint({
+          ...f,
+          layers: f.layers.map((item) => item.id === layer.id
+            ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), g.patchStroke!] }
+            : item),
+        });
+      };
+      if (f.selection) {
+        // Any selection shape is captured in layer space (also for moved or
+        // scaled layers), so replay stays aligned after reload.
+        g.selectionPending = true;
+        g.patchRegionPending = Boolean(regionMode);
+        g.pending = (async () => {
+          try {
+            if (regionMode) {
+              const mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, asset.w, asset.h);
+              if (gesture.current !== g) return;
+              g.patchRegionPending = false;
+              if (mask && mask[Math.floor(y) * asset.w + Math.floor(x)] > 0) {
+                g.patchStroke = {
+                  ...g.patchStroke!,
+                  points: [{ x, y }],
+                  sourceOffset: patchRegionOffset(regionMode, g.start, g.last),
+                  region: regionMode,
+                };
+              } else if (!cloneSource) {
+                gesture.current = null;
+                chooseCloneSource(local, layer.matrix);
+                setNotice('Patch source set; drag on the image to paint the patch');
+                return;
+              }
+            }
+            const selectionMask = await captureSelectionSnapshot(f, layer);
+            g.selectionPending = false;
+            if (selectionMask && g.patchStroke) g.patchStroke.selectionMask = selectionMask;
+            if (g.patchStroke?.region && !selectionMask) throw new Error('Patch region needs a selection');
+          } catch {
+            if (gesture.current === g) gesture.current = null;
+            setNotice('Could not read the selection for Patch');
+            return;
+          }
+          previewPatch();
+        })();
+        await g.pending;
+        return;
+      }
+      previewPatch();
       return;
     }
     if (tool === 'clone' || tool === 'heal') {
@@ -9853,19 +14613,15 @@ export default function Home() {
         setNotice('Select a visible, unlocked raster layer before retouching');
         return;
       }
-      // Match Photoshop's Option/Alt-click source workflow.  A source can be
-      // re-anchored between strokes without switching tools; the click only
-      // updates the source point and must never create a history entry.
-      if (tool === 'clone' && e.altKey) {
-        setCloneSource(local);
+      // Option/Alt-click is handled before the gesture guard above so a
+      // source click is never dropped; a first plain click also sets it.
+      const sourceAnchor = cloneStrokeSource(local, layer.matrix, retouchOptions.cloneAligned);
+      if (!sourceAnchor) {
+        chooseCloneSource(local, layer.matrix);
         setNotice('Clone source set; drag on the image to paint it');
         return;
       }
-      if (!cloneSource) {
-        setCloneSource(local);
-        setNotice('Clone source set; drag on the image to paint it');
-        return;
-      }
+      const cloneSample = retouchOptions.cloneSample;
       const g = {
         tool,
         start: local,
@@ -9875,47 +14631,75 @@ export default function Home() {
         lastPressure: pressure(e),
         pointerType: e.pointerType,
         moved: false,
+        cloneAnchor: sourceAnchor,
+        // Paint Symmetry is fixed for the stroke at pointer-down; each copy
+        // maps its source point through the same transform.
+        paintSymmetry: paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix),
+        spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
         ],
       } as Gesture;
-      const sourceAnchor = cloneSource;
       gesture.current = g;
       g.pending = (async () => {
-        const sourceImage = await decodeAsset(assets.current[layer.asset]),
-          source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
-        source.getContext('2d')!.drawImage(sourceImage, 0, 0);
-        if (gesture.current !== g) return;
-        g.source = source;
-        g.buffer = surface(source.width, source.height);
-        g.buffer.getContext('2d')!.drawImage(source, 0, 0);
-        let from = g.start;
-        for (const point of g.queued || [
-          { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
-        ]) {
-          stampCanvasSegment(g.buffer, from, point, {
-            size: localSize(layer.matrix, size),
-            hardness,
-            opacity: brushOpacity / 100,
-            pointerType: point.pointerType,
-            pressure: point.pressure,
-            pressureSize,
-            pressureOpacity,
-            pressureCurve,
-            spacing: brushSpacing,
-            angle: brushAngle,
-            roundness: brushRoundness,
-            flipX: brushFlipX,
-            flipY: brushFlipY,
-            mode: tool === 'heal' ? 'heal' : 'clone',
-            source,
-            sourceAnchor,
-            destinationAnchor: g.start,
-          });
-          from = point;
+        try {
+          const sourceImage = await decodeAsset(assets.current[layer.asset]),
+            source = surface(sourceImage.naturalWidth, sourceImage.naturalHeight);
+          source.getContext('2d')!.drawImage(sourceImage, 0, 0);
+          if (gesture.current !== g) return;
+          const buffer = surface(source.width, source.height);
+          buffer.getContext('2d')!.drawImage(source, 0, 0);
+          if (cloneSample !== 'current') {
+            // Sample Current & Below / All Layers: read the visible composite
+            // of those layers, rendered once into this layer's pixel space.
+            const composite = await compositeSampleCanvas(
+              f, layer, assets.current, source.width, source.height, cloneSample,
+            );
+            if (gesture.current !== g) return;
+            const sourceContext = source.getContext('2d')!;
+            sourceContext.clearRect(0, 0, source.width, source.height);
+            sourceContext.drawImage(composite, 0, 0);
+          }
+          // Photoshop confines Clone Stamp and Healing Brush to the selection.
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
+          g.buffer = buffer;
+          g.source = source;
+          let from = g.start;
+          for (const point of g.queued || [
+            { ...g.start, pressure: g.lastPressure, pointerType: g.pointerType },
+          ]) {
+            stampGestureSegment(g, from, point, {
+              spacingState: g.spacingState,
+              size: localSize(layer.matrix, size),
+              hardness,
+              opacity: brushOpacity / 100,
+              pointerType: point.pointerType,
+              pressure: point.pressure,
+              pressureSize,
+              pressureOpacity,
+              pressureCurve,
+              spacing: brushSpacing,
+              angle: brushAngle,
+              roundness: brushRoundness,
+              flipX: brushFlipX,
+              flipY: brushFlipY,
+              mode: tool === 'heal' ? 'heal' : 'clone',
+              source,
+              sourceAnchor,
+              destinationAnchor: g.start,
+            });
+            from = point;
+          }
+          g.queued = undefined;
+          void paint(f, { [layer.id]: buffer });
+        } catch {
+          if (gesture.current !== g) return;
+          gesture.current = null;
+          void paint(f);
+          setNotice(`Could not prepare ${tool === 'heal' ? 'Healing' : 'Clone'} stroke`);
         }
-        g.queued = undefined;
-        void paint(f, { [layer.id]: g.buffer });
       })();
       await g.pending;
       return;
@@ -9941,12 +14725,17 @@ export default function Home() {
         pointerType: e.pointerType,
         patternId,
         patternTileSize,
+        // Aligned keeps one canvas-wide tiling; otherwise each stroke
+        // restarts the tile at its own start point.
+        patternAnchor: retouchOptions.patternAligned ? undefined : { x: Math.round(local.x), y: Math.round(local.y) },
         moved: false,
+        spacingState: { started: false, carry: 0 },
         queued: [
           { ...local, pressure: pressure(e), pointerType: e.pointerType },
         ],
       } as Gesture;
       gesture.current = g;
+      const patternImage = retouchOptions.patternImage;
       g.pending = (async () => {
         try {
           const sourceImage = await decodeAsset(assets.current[layer.asset]),
@@ -9956,6 +14745,11 @@ export default function Home() {
             );
           buffer.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
+          g.patternTile = await imagePatternTile(patternImage);
+          if (gesture.current !== g) return;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [
@@ -9966,7 +14760,8 @@ export default function Home() {
             },
           ]) {
             g.changed =
-              patternCanvasSegment(g.buffer, from, point, {
+              patternGestureSegment(g, from, point, {
+                spacingState: g.spacingState,
                 size: localSize(layer.matrix, size),
                 hardness,
                 opacity: brushOpacity / 100,
@@ -9982,6 +14777,9 @@ export default function Home() {
                 flipY: brushFlipY,
                 pattern: g.patternId!,
                 tileSize: g.patternTileSize!,
+                tile: g.patternTile,
+                anchorX: g.patternAnchor?.x,
+                anchorY: g.patternAnchor?.y,
                 foreground: brushColor(color),
                 background: brushColor(backgroundColor),
               }) || Boolean(g.changed);
@@ -10028,14 +14826,17 @@ export default function Home() {
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
           if (gesture.current !== g) return;
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.buffer = buffer;
           let from = g.start;
           for (const point of g.queued || [g.start]) {
-            redEyeCanvasStroke(buffer, from, point, {
+            g.changed = redEyeGestureStroke(g, from, point, {
               radius: localSize(layer.matrix, size) / 2,
               threshold: g.redEyeThreshold ?? 36,
               amount: (g.redEyeAmount ?? 100) / 100,
-            });
+            }) || Boolean(g.changed);
             from = point;
           }
           g.queued = undefined;
@@ -10066,6 +14867,11 @@ export default function Home() {
         frame: f,
         layer,
         moved: false,
+        colorReplace: {
+          colorReplaceMode: retouchOptions.colorReplaceMode,
+          colorReplaceSampling: retouchOptions.colorReplaceSampling,
+          colorReplaceLimits: retouchOptions.colorReplaceLimits,
+        },
       } as Gesture;
       gesture.current = g;
       g.pending = (async () => {
@@ -10077,7 +14883,11 @@ export default function Home() {
             );
           source.getContext('2d')!.drawImage(sourceImage, 0, 0);
           if (gesture.current !== g) return;
-          const sample = source
+          // Background Swatch sampling replaces the background colour;
+          // Once and Continuous start from the pixel under the press.
+          const sample = g.colorReplace?.colorReplaceSampling === 'background'
+            ? [...brushColor(backgroundColor).slice(0, 3), 255]
+            : source
             .getContext('2d')!
             .getImageData(
               Math.max(0, Math.min(source.width - 1, Math.floor(local.x))),
@@ -10085,24 +14895,22 @@ export default function Home() {
               1,
               1,
             ).data;
+          const buffer = surface(source.width, source.height);
+          buffer.getContext('2d')!.drawImage(source, 0, 0);
+          const confinement = await prepareGestureSelection(buffer, f, layer, assets.current);
+          if (gesture.current !== g) return;
+          Object.assign(g, confinement);
           g.source = source;
           g.replaceTarget = [sample[0], sample[1], sample[2], sample[3]];
-          g.buffer = surface(source.width, source.height);
-          g.buffer.getContext('2d')!.drawImage(source, 0, 0);
-          replaceColorStroke(
-            source,
-            g.buffer,
-            g.replaceTarget,
-            local.x,
-            local.y,
-            local.x,
-            local.y,
+          g.buffer = buffer;
+          sampledGestureStroke(g, local, local, {
+            kind: 'replace',
             color,
             size,
-            colorTolerance,
-            brushOpacity / 100,
-          );
-          void paint(f, { [layer.id]: g.buffer });
+            tolerance: colorTolerance,
+            opacity: brushOpacity / 100,
+          });
+          void paint(f, { [layer.id]: buffer });
         } catch {
           gesture.current = null;
           setNotice('Could not prepare color replacement');
@@ -10122,7 +14930,7 @@ export default function Home() {
         );
         return;
       }
-      gesture.current = {
+      const g: Gesture = {
         tool,
         start: local,
         last: local,
@@ -10130,6 +14938,19 @@ export default function Home() {
         layer,
         moved: false,
       };
+      gesture.current = g;
+      // Decode the layer and sample the selection once, in the background, so
+      // the drag can show the gradient live; pointer-up waits for it.
+      g.pending = prepareGradientBase(f, layer).then(
+        (base) => {
+          if (gesture.current !== g) return;
+          g.gradientBase = base;
+          if (g.moved) previewGradient(g);
+        },
+        () => {
+          // The commit path retries the preparation and reports failures.
+        },
+      );
       return;
     }
     if (tool === 'magic-wand') {
@@ -10149,10 +14970,10 @@ export default function Home() {
         sourceAssets = assets.current;
       try {
         const source = await renderFrame(
-            { ...f, layers: [layer] },
+            colorRegion.sampleAllLayers ? f : { ...f, layers: [layer] },
             sourceAssets,
           ),
-          mask = colorSelectMask(source, p.x, p.y);
+          mask = colorSelectMask(source, p.x, p.y, colorTolerance, colorRegion.contiguous);
         if (!isCurrentSelectionOperation(f, frameIndex, workToken)) return;
         const next: Selection = {
           shape: 'rectangle',
@@ -10175,7 +14996,7 @@ export default function Home() {
           frameIndex,
           workToken,
           candidate,
-          'Color selection created from contiguous pixels',
+          `Magic Wand selection created (tolerance ${colorTolerance}${colorRegion.contiguous ? ', contiguous' : ''}${colorRegion.sampleAllLayers ? ', all layers' : ''})`,
         );
       } catch {
         if (isCurrentSelectionOperation(f, frameIndex, workToken))
@@ -10260,23 +15081,10 @@ export default function Home() {
       );
       return;
     }
-    if (tool === 'text') {
-      const added = addLayer({
-        ...commonLayer('Text ' + f.layers.length),
-        kind: 'text',
-        text: text || 'Your text',
-        fontSize,
-        fontFamily,
-        bold: true,
-        color,
-        boxWidth: Math.max(1, f.w - p.x),
-        textAlign: 'left',
-        lineHeight: 1.2,
-        letterSpacing: 0,
-        orientation: 'horizontal',
-        matrix: [1, 0, 0, 1, p.x, p.y],
-      });
-      if (added) setNotice('Editable text layer added');
+    if (isTypeTool(tool)) {
+      // The Type overlay normally owns pointer input; this keeps programmatic
+      // canvas clicks working (point type at the click baseline).
+      typeTool.createAt(p);
       return;
     }
     if (tool === 'select' || tool === 'ellipse-select' || tool === 'lasso') {
@@ -10306,6 +15114,8 @@ export default function Home() {
     }
     if (
       tool === 'rectangle' ||
+      tool === 'rounded-rectangle' ||
+      tool === 'custom-shape' ||
       tool === 'ellipse' ||
       tool === 'line' ||
       tool === 'polygon' ||
@@ -10313,6 +15123,25 @@ export default function Home() {
       tool === 'perspective-crop' ||
       tool === 'slice'
     ) {
+      if (tool === 'perspective-crop' && perspectiveCropPreview) {
+        // Corner handles of the staged quad are dragged directly.
+        const corner = nearestQuadCorner(
+          perspectiveCropPreview.quad,
+          p,
+          (14 * 100) / Math.max(1, viewZoomRef.current),
+        );
+        if (corner !== null) {
+          gesture.current = { tool, start: p, last: p, frame: f, moved: false, quadCorner: corner };
+          setNotice('Perspective crop: drag the corner, release to keep it');
+          return;
+        }
+      }
+      if (tool === 'crop' && cropStraightenArmed) {
+        gesture.current = { tool, start: p, last: p, frame: f, moved: false, cropStraighten: true };
+        setMeasurementPreview({ start: p, end: p });
+        setNotice('Straighten: drag along a line that should be horizontal');
+        return;
+      }
       gesture.current = { tool, start: p, last: p, frame: f, moved: false };
       return;
     }
@@ -10327,6 +15156,10 @@ export default function Home() {
       setNotice('Add a paint layer, or rasterize this layer before painting');
       return;
     }
+    if (tool === 'move' && isBackgroundLayer(f, layer)) {
+      setNotice('The Background layer is position-locked; use Layer > Layer from Background to move it');
+      return;
+    }
     const rasterAsset = layer.kind === 'raster' ? layer.asset : null;
     const g = {
       tool,
@@ -10338,27 +15171,50 @@ export default function Home() {
       lastPressure: pressure(e),
       pointerType: e.pointerType,
       moved: false,
+      spacingState: { started: false, carry: 0 },
       queued: [{ ...local, pressure: pressure(e), pointerType: e.pointerType }],
     } as Gesture;
     gesture.current = g;
     if (tool === 'brush' || tool === 'pencil' || tool === 'eraser') {
+      g.eraseToBackground = tool === 'eraser' && isBackgroundLayer(f, layer);
+      // Paint Symmetry is fixed for the stroke at pointer-down.
+      g.paintSymmetry = paintSymmetryForLayer(paintSymmetry, f.w, f.h, layer.matrix);
+      if (tool === 'brush' && brushStrands.enabled) {
+        g.strands = { settings: brushStrands, points: [{ x: local.x, y: local.y, pressure: pressure(e) }] };
+        scheduleStrandPreview(g);
+      }
       g.pending = (async () => {
         try {
           const image = await decodeAsset(assets.current[rasterAsset!]),
             buffer = surface(image.naturalWidth, image.naturalHeight);
           buffer.getContext('2d')!.drawImage(image, 0, 0);
+          // Every later write goes through stampCanvas / confineStrokeRect,
+          // which report their rectangles for the commit's tile hint.
+          trackCanvasWrites(buffer);
+          g.tileBase = rasterAsset!;
+          // Photoshop confines painting and erasing to the active selection.
+          const selectionMask = f.selection && layer.kind === 'raster'
+            ? await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height)
+            : undefined;
           if (gesture.current !== g) return;
           g.buffer = buffer;
+          g.selectionMask = selectionMask;
+          g.selectionStroke = beginSelectionStroke(buffer, selectionMask);
+          // Brush/Pencil in a non-Normal mode paint on their own stroke buffer.
+          g.blendStroke = beginBrushBlendStroke(buffer, tool, brushBlendMode, g.selectionStroke);
           let from = local;
           let stabilized = local;
-          for (const point of g.queued || [
+          // A Silk strands stroke paints nothing until release.
+          for (const point of g.strands ? [] : g.queued || [
             { ...local, pressure: g.lastPressure, pointerType: g.pointerType },
           ]) {
             const destination = stabilizeBrushPoint(stabilized, point, brushSmoothing);
-            stampCanvasSegment(buffer, from, destination, {
+            stampGestureSegment(g, from, destination, {
+              spacingState: g.spacingState,
               size: localSize(layer.matrix, size),
               hardness: tool === 'pencil' ? 100 : hardness,
               opacity: (brushOpacity / 100) * (brushFlow / 100),
+              strokeOpacity: brushOpacity / 100,
               pointerType: point.pointerType,
               pressure: point.pressure,
               pressureSize: tool !== 'pencil' && pressureSize,
@@ -10366,6 +15222,7 @@ export default function Home() {
               pressureCurve,
               spacing: brushSpacing,
               scatter: brushScatter,
+              dynamics: brushDynamics,
               texture: brushTexture,
               dual: brushDual,
               secondaryPreset: secondaryBrushPreset,
@@ -10376,33 +15233,81 @@ export default function Home() {
               roundness: tool === 'pencil' ? 100 : brushRoundness,
               flipX: brushFlipX,
               flipY: brushFlipY,
-              mode: tool === 'eraser' ? 'destination-out' : 'source-over',
-              color: tool === 'eraser' ? undefined : brushColor(color),
+              mode: tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+              color: tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
+              colorBackground: brushColor(backgroundColor),
             });
             from = destination;
             stabilized = destination;
           }
           g.smoothedLast = stabilized;
           g.queued = undefined;
-          void paint(f, { [layer.id]: buffer });
+          if (!g.strands) void paint(f, { [layer.id]: buffer });
         } catch {
           gesture.current = null;
+          if (g.strands) clearStrandPreview();
           setNotice('Could not prepare paint layer');
         }
       })();
       await g.pending;
     }
   };
-  const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  /**
+   * Whether a move/release belongs to the gesture's press. Click-to-place
+   * tools (lassos and pens) keep one gesture across several presses, which
+   * may each use a new pointer id on touch.
+   */
+  const ownsGesture = (g: Gesture, e: React.PointerEvent<HTMLCanvasElement>) =>
+    MULTI_PRESS_GESTURE_TOOLS.includes(g.tool) ||
+    gesturePointer.current === null ||
+    gesturePointer.current === e.pointerId;
+  /**
+   * Apply the samples the browser coalesced into `e` before `e` itself, as
+   * individual moves marked `intermediate`. Chromium delivers one pointermove
+   * per animation frame and lists the rest in getCoalescedEvents(); a hidden
+   * tab or app pane gets almost no frames, so without this a stroke made
+   * there keeps only a few positions and paints straight chords.
+   */
+  const applyCoalescedSamples = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    for (const sample of precedingCoalescedSamples(e, e.nativeEvent as PointerEvent | undefined))
+      pointerMove(Object.create(e, {
+        clientX: { value: sample.clientX },
+        clientY: { value: sample.clientY },
+        pressure: { value: sample.pressure ?? e.pressure },
+        nativeEvent: { value: sample.source },
+      }) as React.PointerEvent<HTMLCanvasElement>, true);
+  };
+  /**
+   * `intermediate` marks a coalesced sample that a later sample of the same
+   * event follows: it is applied to the stroke, but tools whose preview is a
+   * direct render or a full recomputation leave that to the final sample.
+   */
+  const pointerMove = (e: React.PointerEvent<HTMLCanvasElement>, intermediate = false) => {
     if (quickMaskGesture.current && quickMaskRef.current) {
+      if (!intermediate) applyCoalescedSamples(e);
       const p = point(e),
         g = quickMaskGesture.current;
+      if (!brushSegmentDue(Math.hypot(p.x - g.last.x, p.y - g.last.y), size)) return;
       updateQuickMaskAt(quickMaskRef.current, p.x, p.y, g.selected);
       g.last = p;
       return;
     }
+    if (expansionPointer.current) {
+      if (expansionPointer.current.pointerId === e.pointerId && expansionPointer.current.moves.length < 4096)
+        expansionPointer.current.moves.push(e);
+      return;
+    }
     const g = gesture.current;
-    if (!g) return;
+    if (!g || g.released || !ownsGesture(g, e)) return;
+    // The browser may merge several pointer samples into one move event (one
+    // per animation frame, and almost none while the page is hidden); apply
+    // each of them so fast flicks, pen curves and background strokes keep
+    // their shape. The stroke never depends on how often frames run.
+    if (!intermediate && STROKE_SAMPLING_TOOLS.has(g.tool)) {
+      applyCoalescedSamples(e);
+      // A sample can end or replace the gesture (e.g. a cancelled stroke).
+      if (gesture.current !== g || g.released) return;
+    }
     const p = point(e);
     const local =
       (g.layer?.kind === 'raster' || g.layer?.kind === 'path' || (g.layer && isVectorMaskableLayer(g.layer) && Boolean(g.layer.vectorMask)))
@@ -10410,7 +15315,24 @@ export default function Home() {
         : p;
     g.lastPressure = pressure(e);
     g.pointerType = e.pointerType;
+    // Click-or-drag tools only start a drag after a few screen pixels, so a
+    // jittery tap still counts as a click.
+    if (
+      !g.moved &&
+      CLICK_OR_DRAG_TOOLS.has(g.tool) &&
+      Math.hypot(p.x - g.start.x, p.y - g.start.y) * (viewZoomRef.current / 100) < 3
+    )
+      return;
     g.moved = true;
+    if (g.strands) {
+      // Silk strands: collect the sample and redraw only the overlay preview.
+      const points = g.strands.points;
+      points.push({ x: local.x, y: local.y, pressure: g.lastPressure });
+      if (points.length > BRUSH_STRANDS_MAX_INPUT_POINTS * 2) g.strands.points = thinStrandInput(points);
+      scheduleStrandPreview(g);
+      g.last = local;
+      return;
+    }
     if (
       (g.tool === 'mask-brush' ||
         g.tool === 'mask-eraser' ||
@@ -10429,11 +15351,11 @@ export default function Home() {
           g.maskRefinementStroke.points.length - 1
         ];
         g.maskRefinementStroke.points.push(point);
-        g.changed = refineMaskCanvas(g.maskBuffer, {
+        g.changed = refineGestureMask(g, {
           ...g.maskRefinementStroke,
           points: [from, point],
         }) || Boolean(g.changed);
-        if (g.maskPreviewAsset) {
+        if (g.maskPreviewAsset && !intermediate) {
           setPreviewAsset(assets.current, g.maskPreviewAsset, g.maskBuffer);
           const previewFrame: Frame = {
             ...g.frame,
@@ -10467,10 +15389,27 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
+      // Until the selection snapshot is ready, record points only; the
+      // capture paints the first preview with every point so far.
+      if (g.selectionPending || intermediate) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
           ? { ...item, spotHealing: [...(item.spotHealing ?? []), stroke] }
+          : item),
+      });
+      return;
+    }
+    if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke?.region) {
+      // Selection workflow: the drag moves the patch region.
+      g.last = { x: local.x, y: local.y };
+      g.patchStroke.sourceOffset = patchRegionOffset(g.patchStroke.region, g.start, g.last);
+      if (g.selectionPending || intermediate) return;
+      const stroke = g.patchStroke;
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id
+          ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       });
       return;
@@ -10488,12 +15427,19 @@ export default function Home() {
         stroke.points.push({ x: g.last.x + (x - g.last.x) * t, y: g.last.y + (y - g.last.y) * t });
       }
       g.last = { x, y };
+      if (g.selectionPending || intermediate) return;
       void paint({
         ...g.frame,
         layers: g.frame.layers.map((item) => item.id === g.layer!.id
           ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       });
+      return;
+    }
+    if (g.tool === 'gradient' && g.layer?.kind === 'raster') {
+      g.gradientEnd = local;
+      g.last = local;
+      if (g.gradientBase) previewGradient(g);
       return;
     }
     if (g.tool === 'freeform-pen') {
@@ -10506,7 +15452,7 @@ export default function Home() {
         g.points = next;
         g.last = p;
         g.moved = next.length > 1;
-        previewFreeformPath(g);
+        if (!intermediate) previewFreeformPath(g);
       }
       return;
     }
@@ -10537,16 +15483,70 @@ export default function Home() {
       g.last = p;
       return;
     }
-    if (g.tool === 'ruler') {
+    if (g.tool === 'ruler' || (g.tool === 'crop' && g.cropStraighten)) {
       g.moved = true;
       g.last = p;
       setMeasurementPreview({ start: g.start, end: p });
+      return;
+    }
+    if (g.tool === 'zoom' && g.zoomStart !== undefined) {
+      const dx = e.clientX - (g.lastClientX ?? e.clientX);
+      setZoomAround(scrubbyViewZoom(g.zoomStart, dx), {
+        x: g.lastClientX ?? e.clientX,
+        y: g.lastClientY ?? e.clientY,
+      });
+      return;
+    }
+    if (g.tool === 'note' && g.noteId) {
+      g.last = p;
+      setNoteDrag({
+        id: g.noteId,
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      });
+      return;
+    }
+    if (g.tool === 'slice-select' && g.sliceOrigin && g.sliceHandle) {
+      const next = adjustSliceRect(g.sliceOrigin, g.sliceHandle, p.x - g.start.x, p.y - g.start.y, g.frame.w, g.frame.h);
+      g.last = p;
+      if (
+        next.x === g.sliceOrigin.x && next.y === g.sliceOrigin.y &&
+        next.width === g.sliceOrigin.width && next.height === g.sliceOrigin.height
+      ) return;
+      g.moved = true;
+      setSlicePreview({ frame: g.frame, ...next });
+      return;
+    }
+    if (g.tool === 'perspective-crop' && g.quadCorner !== undefined && perspectiveCropPreview) {
+      const quad = perspectiveCropPreview.quad.map((corner) => ({ ...corner })) as CropQuad;
+      quad[g.quadCorner] = {
+        x: Math.max(0, Math.min(g.frame.w, p.x)),
+        y: Math.max(0, Math.min(g.frame.h, p.y)),
+      };
+      g.last = p;
+      g.moved = true;
+      // A fold or concave drag is ignored; the last convex quad stays staged.
+      try {
+        const next = planPerspectiveCrop(perspectiveCropPreview.frame.w, perspectiveCropPreview.frame.h, { quad });
+        setPerspectiveCropPreview({ frame: perspectiveCropPreview.frame, ...next });
+      } catch {
+        // keep the previous quad
+      }
       return;
     }
     // Holding Shift while dragging a Pen point creates an outgoing cubic
     // handle. Alt mirrors the handle to the incoming side, matching the
     // familiar Photoshop tangent workflow while keeping click-only paths
     // perfectly backward compatible.
+    // Rubber Band: while no button is held, preview the next segment from
+    // the last anchor to the pointer (Pen) or the next smooth curve
+    // (Curvature Pen). Placing anchors still happens on press.
+    if (penOptions.rubberBand && (g.tool === 'pen' || g.tool === 'curvature-pen') && e.buttons === 0 && g.points?.length) {
+      const bounded = { x: Math.max(0, Math.min(g.frame.w, p.x)), y: Math.max(0, Math.min(g.frame.h, p.y)) };
+      if (g.tool === 'curvature-pen') previewCurvaturePath(g, bounded);
+      else previewPenPath(g, bounded);
+      return;
+    }
     if (g.tool === 'pen' && (e.shiftKey || e.altKey) && g.points?.length) {
       const node = g.points[g.points.length - 1];
       node.outHandle = { x: p.x, y: p.y };
@@ -10555,6 +15555,19 @@ export default function Home() {
       g.moved = true;
       g.last = p;
       previewPenPath(g);
+      return;
+    }
+    if ((g.tool === 'path-select' || g.tool === 'convert-point') && g.pathOrigin && g.layer) {
+      const moved = pathToolDragResult(g, p);
+      if (!moved) return;
+      const nextLayer = withEditedPath(g.layer, moved, Boolean(g.pathVectorMask));
+      void paint({
+        ...g.frame,
+        layers: g.frame.layers.map((item) => item.id === g.layer!.id ? nextLayer : item),
+      }).then(() => {
+        if (gesture.current === g) drawPathOverlay(moved, g.layer!.matrix, g.pathIndex ?? null);
+      });
+      g.last = p;
       return;
     }
     if (
@@ -10595,9 +15608,10 @@ export default function Home() {
       (g.tool === 'clone' || g.tool === 'heal') &&
       g.buffer &&
       g.source &&
-      cloneSource
+      g.cloneAnchor
     ) {
-      stampCanvasSegment(g.buffer, g.last, local, {
+      stampGestureSegment(g, g.last, local, {
+        spacingState: g.spacingState,
         size: localSize(g.layer!.matrix, size),
         hardness,
         opacity: brushOpacity / 100,
@@ -10613,16 +15627,17 @@ export default function Home() {
         flipY: brushFlipY,
         mode: g.tool === 'heal' ? 'heal' : 'clone',
         source: g.source,
-        sourceAnchor: cloneSource,
+        sourceAnchor: g.cloneAnchor,
         destinationAnchor: g.start,
       });
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
     if (g.tool === 'pattern-stamp' && g.buffer) {
       g.changed =
-        patternCanvasSegment(g.buffer, g.last, local, {
+        patternGestureSegment(g, g.last, local, {
+          spacingState: g.spacingState,
           size: localSize(g.layer!.matrix, size),
           hardness,
           opacity: brushOpacity / 100,
@@ -10638,20 +15653,23 @@ export default function Home() {
           flipY: brushFlipY,
           pattern: g.patternId!,
           tileSize: g.patternTileSize!,
+          tile: g.patternTile,
+          anchorX: g.patternAnchor?.x,
+          anchorY: g.patternAnchor?.y,
           foreground: brushColor(color),
           background: brushColor(backgroundColor),
         }) || Boolean(g.changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
     if (g.tool === 'red-eye' && g.buffer) {
-      redEyeCanvasStroke(g.buffer, g.last, local, {
+      g.changed = redEyeGestureStroke(g, g.last, local, {
         radius: localSize(g.layer!.matrix, size) / 2,
         threshold: g.redEyeThreshold ?? 36,
         amount: (g.redEyeAmount ?? 100) / 100,
-      });
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      }) || Boolean(g.changed);
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -10665,6 +15683,11 @@ export default function Home() {
           pressure: g.lastPressure,
           pointerType: g.pointerType,
         });
+        g.last = p;
+        return;
+      }
+      // The mask is recomputed from every point; the event's last sample does it.
+      if (intermediate) {
         g.last = p;
         return;
       }
@@ -10711,7 +15734,7 @@ export default function Home() {
       });
       g.selectionBrushMask = result.mask;
       g.changed = Boolean(g.changed || result.changed);
-      selectionBrushPreview(g);
+      if (!intermediate) selectionBrushPreview(g);
       g.last = p;
       return;
     }
@@ -10721,64 +15744,51 @@ export default function Home() {
       g.source &&
       g.replaceTarget
     ) {
-      eraseBackgroundStroke(
-        g.source,
-        g.buffer,
-        g.replaceTarget,
-        g.last.x,
-        g.last.y,
-        local.x,
-        local.y,
-        localSize(g.layer!.matrix, size),
-        colorTolerance,
-        brushOpacity / 100,
-      );
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      sampledGestureStroke(g, g.last, local, {
+        kind: 'background-erase',
+        size: localSize(g.layer!.matrix, size),
+        tolerance: colorTolerance,
+        opacity: brushOpacity / 100,
+      });
+      previewGesture(g);
       g.last = local;
       return;
     }
-    if (g.tool === 'smudge' && !g.buffer) {
+    if (g.tool === 'smudge' && (!g.buffer || !g.smudge)) {
       (g.queued || (g.queued = [])).push({
         ...local,
-        pressure: g.lastPressure,
-        pointerType: g.pointerType,
+        pressure: pressure(e),
+        pointerType: e.pointerType,
       });
+      return;
     }
-    if (g.tool === 'smudge' && g.buffer && g.source) {
-      const changed = smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
-        size: localSize(g.layer!.matrix, size),
-        hardness,
-        flow: brushOpacity / 100,
-        selectionMask: g.selectionMask,
-      });
+    if (g.tool === 'smudge' && g.buffer && g.smudge) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), g.smudge.tip.size)) return;
+      const to = { ...local, pressure: pressure(e), pointerType: e.pointerType },
+        changed = smudgeCanvasSegment(
+          g.buffer,
+          g.smudge.last,
+          to,
+          g.smudge,
+          g.selectionMask,
+        );
       g.changed = Boolean(g.changed || changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      g.smudge.last = to;
+      previewGesture(g);
       g.last = local;
       return;
     }
     if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.source && g.layer) {
-      const sourceContext = g.source.getContext('2d')!,
-        bufferContext = g.buffer.getContext('2d')!,
-        result = applyRetouchStroke(
-          new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
-          new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
-          {
-            width: g.buffer.width,
-            height: g.buffer.height,
-            x1: g.last.x,
-            y1: g.last.y,
-            x2: local.x,
-            y2: local.y,
-            size: localSize(g.layer.matrix, size),
-            hardness,
-            flow: brushOpacity / 100,
-            mode: g.tool,
-            selectionMask: g.selectionMask,
-          },
-        );
-      bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
-      g.changed = Boolean(g.changed || result.changed);
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer.matrix, size))) return;
+      const changed = retouchCanvasSegment(g.source, g.buffer, g.last, local, {
+        size: localSize(g.layer.matrix, size),
+        hardness,
+        flow: brushOpacity / 100,
+        mode: g.tool,
+        selectionMask: g.selectionMask,
+      });
+      g.changed = Boolean(g.changed || changed);
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -10789,29 +15799,37 @@ export default function Home() {
       }
       const nextPoint = { x: local.x, y: local.y, pressure: pressure(e) };
       const spacing = Math.max(1, localSize(g.layer.matrix, size) * 0.35);
-      const segmentPoints = g.tool === 'art-history-brush'
-        ? interpolateArtHistoryPoints(g.last, nextPoint, spacing)
-        : [nextPoint];
-      const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
-      let next: Uint8ClampedArray;
+      const segmentPoints = interpolateBrushStrokePoints(g.last, nextPoint, spacing);
+      const brushSize = localSize(g.layer.matrix, size);
+      let changed: boolean;
       try {
-        next = g.tool === 'mixer-brush'
-          ? applyMixerBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, [nextPoint], {
-              ...mixerBrush,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-            }, g.selectionMask)
-          : g.tool === 'history-brush'
-          ? applyHistoryBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, [nextPoint], {
-              ...historyBrush,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-            }, g.selectionMask)
-          : applyArtHistoryBrushPixels(destination, g.sourcePixels, g.buffer.width, g.buffer.height, segmentPoints, {
-              ...artHistoryBrush,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-            }, g.selectionMask);
+        const retouchOptions =
+          g.tool === 'mixer-brush'
+            ? { ...mixerBrush, size: brushSize, hardness }
+            : g.tool === 'history-brush'
+            ? { ...historyBrush, size: brushSize, hardness }
+            : { ...artHistoryBrush, size: brushSize, hardness };
+        const strokePoints = g.tool === 'history-brush' ? [nextPoint] : segmentPoints;
+        if ((g.paintSymmetry?.length ?? 0) > 1) {
+          // Paint Symmetry copies are applied over the whole buffer (#220).
+          const destination = new Uint8ClampedArray(g.buffer.getContext('2d')!.getImageData(0, 0, g.buffer.width, g.buffer.height).data);
+          const next = applySymmetricRetouchBrush(
+            g.tool,
+            destination,
+            g.sourcePixels,
+            g.buffer.width,
+            g.buffer.height,
+            strokePoints,
+            retouchOptions,
+            g.selectionMask,
+            g.paintSymmetry,
+            g.mixerStates,
+          );
+          changed = g.tool !== 'history-brush' ? next.some((value, pixel) => value !== destination[pixel]) : true;
+          g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+        } else
+          changed = mixerHistoryCanvasDabs(g.tool, g.sourcePixels, g.buffer, strokePoints, retouchOptions, g.selectionMask,
+            g.mixerStates && (g.mixerStates[0] ??= {}));
       } catch (error) {
         if (g.tool !== 'art-history-brush') throw error;
         gesture.current = null;
@@ -10819,12 +15837,11 @@ export default function Home() {
         setNotice(error instanceof Error ? error.message : 'Art History Brush stroke cancelled');
         return;
       }
-      if (g.tool === 'art-history-brush') g.changed = Boolean(g.changed || next.some((value, pixel) => value !== destination[pixel]));
-      g.buffer.getContext('2d')!.putImageData(new ImageData(next as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
+      if (g.tool !== 'history-brush') g.changed = Boolean(g.changed || changed);
       g.brushPoints = [...(g.brushPoints || []), ...segmentPoints];
       g.moved = true;
       g.last = local;
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       return;
     }
     if (g.tool === 'background-eraser' && !g.buffer) {
@@ -10849,6 +15866,7 @@ export default function Home() {
       g.buffer &&
       g.source
     ) {
+      if (!brushSegmentDue(Math.hypot(local.x - g.last.x, local.y - g.last.y), localSize(g.layer!.matrix, size))) return;
       const changed = tonalCanvasSegment(g.source, g.buffer, g.last, local, {
         size: localSize(g.layer!.matrix, size),
         hardness,
@@ -10861,7 +15879,7 @@ export default function Home() {
         selectionMask: g.selectionMask,
       });
       g.changed = Boolean(g.changed || changed);
-      void paint(g.frame, { [g.layer!.id]: g.buffer });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -10893,20 +15911,14 @@ export default function Home() {
       g.replaceTarget &&
       g.layer
     ) {
-      replaceColorStroke(
-        g.source,
-        g.buffer,
-        g.replaceTarget,
-        g.last.x,
-        g.last.y,
-        local.x,
-        local.y,
+      sampledGestureStroke(g, g.last, local, {
+        kind: 'replace',
         color,
         size,
-        colorTolerance,
-        brushOpacity / 100,
-      );
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+        tolerance: colorTolerance,
+        opacity: brushOpacity / 100,
+      });
+      previewGesture(g);
       g.last = local;
       return;
     }
@@ -10927,16 +15939,20 @@ export default function Home() {
     ) {
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
-      stampCanvasSegment(g.buffer, from, destination, {
+      stampGestureSegment(g, from, destination, {
+        spacingState: g.spacingState,
         size: localSize(g.layer.matrix, size),
         hardness: g.tool === 'pencil' ? 100 : hardness,
         opacity: (brushOpacity / 100) * (brushFlow / 100),
+        strokeOpacity: brushOpacity / 100,
         pointerType: g.pointerType,
         pressure: g.lastPressure,
         pressureSize: g.tool !== 'pencil' && pressureSize,
         pressureOpacity: g.tool !== 'pencil' && pressureOpacity,
+        pressureCurve,
         spacing: brushSpacing,
         scatter: brushScatter,
+        dynamics: brushDynamics,
         texture: brushTexture,
         dual: brushDual,
         secondaryPreset: secondaryBrushPreset,
@@ -10947,104 +15963,36 @@ export default function Home() {
         roundness: g.tool === 'pencil' ? 100 : brushRoundness,
         flipX: brushFlipX,
         flipY: brushFlipY,
-        mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
-        color: g.tool === 'eraser' ? undefined : brushColor(color),
+        mode: g.tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+        color: g.tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
+        colorBackground: brushColor(backgroundColor),
       });
-      void paint(g.frame, { [g.layer.id]: g.buffer });
+      previewGesture(g);
       g.smoothedLast = destination;
       g.last = local;
-    } else if (
-      g.tool === 'rectangle' ||
-      g.tool === 'ellipse' ||
-      g.tool === 'line' ||
-      g.tool === 'polygon'
-    ) {
-      const width = Math.abs(p.x - g.start.x),
-        height = Math.abs(p.y - g.start.y);
-      const layer: Layer =
-        g.tool === 'line'
-          ? {
-              ...commonLayer('Line'),
-              kind: 'line',
-              width: Math.max(1, width),
-              height: Math.max(1, height),
-              stroke: Math.max(1, size / 3),
-              color,
-              matrix: [
-                1,
-                0,
-                0,
-                1,
-                Math.min(p.x, g.start.x),
-                Math.min(p.y, g.start.y),
-              ],
-            }
-          : ({
-              ...commonLayer(g.tool === 'polygon' ? 'Polygon' : 'Shape'),
-              kind:
-                g.tool === 'ellipse'
-                  ? 'ellipse'
-                  : g.tool === 'polygon'
-                    ? 'polygon'
-                    : 'rectangle',
-              width: Math.max(1, width),
-              height: Math.max(1, height),
-              stroke: Math.max(1, size / 3),
-              color,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : { fill: false }),
-              matrix: [
-                1,
-                0,
-                0,
-                1,
-                Math.min(p.x, g.start.x),
-                Math.min(p.y, g.start.y),
-              ],
-            } as Layer);
-      const context = canvas.current!.getContext('2d')!;
-      context.save();
-      context.strokeStyle = color;
-      context.lineWidth = Math.max(1, size / 3);
-      context.setLineDash([8, 5]);
-      context.beginPath();
-      if (g.tool === 'line') {
-        context.moveTo(g.start.x, g.start.y);
-        context.lineTo(p.x, p.y);
-      } else if (g.tool === 'polygon') {
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          cx = left + width / 2,
-          cy = top + height / 2,
-          rx = Math.max(1, width / 2),
-          ry = Math.max(1, height / 2);
-        for (let i = 0; i < 5; i += 1) {
-          const angle = -Math.PI / 2 + (i * Math.PI * 2) / 5,
-            x = cx + Math.cos(angle) * rx,
-            y = cy + Math.sin(angle) * ry;
-          if (i === 0) context.moveTo(x, y);
-          else context.lineTo(x, y);
-        }
-        context.closePath();
-      } else if (g.tool === 'ellipse') {
-        context.ellipse(
-          Math.min(p.x, g.start.x) + width / 2,
-          Math.min(p.y, g.start.y) + height / 2,
-          width / 2,
-          height / 2,
-          0,
-          0,
-          Math.PI * 2,
-        );
-      } else
-        context.rect(
-          Math.min(p.x, g.start.x),
-          Math.min(p.y, g.start.y),
-          width,
-          height,
-        );
-      context.stroke();
-      context.restore();
-      void paint({ ...g.frame, layers: [...g.frame.layers, layer] });
+    } else if (isShapeToolId(g.tool)) {
+      // Every shape tool previews the real layer it will create, so Fill,
+      // Stroke and Stroke width show while dragging, plus a dashed drag box.
+      const shapeTool = g.tool;
+      const box = shapeTool === 'line'
+        ? { left: Math.min(p.x, g.start.x), top: Math.min(p.y, g.start.y), width: Math.abs(p.x - g.start.x), height: Math.abs(p.y - g.start.y) }
+        : newShapeDragBox(shapeTool, g.start, p, e);
+      const layer = newShapeLayer(shapeTool, box, 'Shape preview');
+      void paint(layer ? { ...g.frame, layers: [...g.frame.layers, layer] } : g.frame).then(() => {
+        if (gesture.current !== g) return;
+        const context = canvas.current!.getContext('2d')!;
+        context.save();
+        context.strokeStyle = '#fff';
+        context.lineWidth = 1;
+        context.setLineDash([6, 4]);
+        if (shapeTool === 'line') {
+          context.beginPath();
+          context.moveTo(box.left, box.top);
+          context.lineTo(box.left + box.width, box.top + box.height);
+          context.stroke();
+        } else context.strokeRect(box.left, box.top, box.width, box.height);
+        context.restore();
+      });
     } else if (g.tool === 'select' || g.tool === 'ellipse-select') {
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
@@ -11054,10 +16002,7 @@ export default function Home() {
         x.strokeStyle = '#fff';
         x.lineWidth = 2;
         x.setLineDash([8, 5]);
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          width = Math.abs(p.x - g.start.x),
-          height = Math.abs(p.y - g.start.y);
+        const { left, top, width, height } = marqueeRect(g.start, p, marqueeOptions);
         if (g.tool === 'ellipse-select') {
           x.beginPath();
           x.ellipse(
@@ -11076,7 +16021,7 @@ export default function Home() {
     } else if (g.tool === 'lasso') {
       const points = g.points || (g.points = [g.start]);
       if (Math.hypot(p.x - g.last.x, p.y - g.last.y) >= 2) points.push(p);
-      void paint(g.frame).then(() => {
+      if (!intermediate) void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         const x = canvas.current!.getContext('2d')!;
         x.save();
@@ -11112,7 +16057,7 @@ export default function Home() {
         g.moved = true;
         g.last = snapped;
       }
-      void paint(g.frame).then(() => {
+      if (!intermediate) void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         const x = canvas.current!.getContext('2d')!;
         x.save();
@@ -11143,36 +16088,31 @@ export default function Home() {
       });
     } else if (g.tool === 'crop') {
       const c = canvas.current!,
-        x = c.getContext('2d')!;
+        x = c.getContext('2d')!,
+        end = constrainCropEnd(g.start, p, currentCropRatio(g.frame), g.frame.w, g.frame.h);
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
         x.save();
         x.strokeStyle = '#ffffff';
         x.lineWidth = 2;
         x.setLineDash([10, 6]);
-        x.strokeRect(g.start.x, g.start.y, p.x - g.start.x, p.y - g.start.y);
+        x.strokeRect(g.start.x, g.start.y, end.x - g.start.x, end.y - g.start.y);
         x.restore();
       });
     } else if (g.tool === 'perspective-crop') {
       const c = canvas.current!,
         x = c.getContext('2d')!;
+      // A drag stages a plain rectangle; its corners are adjusted afterwards.
+      const quad = rectangleQuad(g.start, p, g.frame.w, g.frame.h);
       void paint(g.frame).then(() => {
         if (gesture.current !== g) return;
-        const left = Math.min(g.start.x, p.x),
-          top = Math.min(g.start.y, p.y),
-          right = Math.max(g.start.x, p.x),
-          bottom = Math.max(g.start.y, p.y),
-          insetX = Math.max(0, (right - left) * 0.08),
-          insetY = Math.max(0, (bottom - top) * 0.08);
         x.save();
         x.strokeStyle = '#ffb099';
         x.lineWidth = 2;
         x.setLineDash([10, 6]);
         x.beginPath();
-        x.moveTo(left + insetX, top);
-        x.lineTo(right - insetX, top + insetY);
-        x.lineTo(right, bottom - insetY);
-        x.lineTo(left, bottom);
+        x.moveTo(quad[0].x, quad[0].y);
+        for (const corner of quad.slice(1)) x.lineTo(corner.x, corner.y);
         x.closePath();
         x.stroke();
         x.restore();
@@ -11205,6 +16145,10 @@ export default function Home() {
     g.last = g.layer?.kind === 'raster' || g.layer?.kind === 'path' ? local : p;
   };
   const pointerUp = async (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (expansionPointer.current?.pointerId === e.pointerId) {
+      expansionPointer.current.release = e;
+      return;
+    }
     const completedPaint = paintSpan.current;
     paintSpan.current = null;
     completedPaint?.finish();
@@ -11232,7 +16176,10 @@ export default function Home() {
       return;
     }
     const g = gesture.current;
-    if (!g) return;
+    if (!g || !ownsGesture(g, e)) return;
+    // Later moves (a hovering pen, the next press of the same mouse) must not
+    // extend this stroke while its commit waits for decoding.
+    if (!MULTI_PRESS_GESTURE_TOOLS.includes(g.tool)) g.released = true;
     if (g.tool === 'polygonal-lasso') {
       if (e.type === 'pointercancel') {
         gesture.current = null;
@@ -11257,8 +16204,8 @@ export default function Home() {
         setNotice('Magnetic Lasso: drag along an edge, release to close');
       } else {
         gesture.current = null;
-        finishPolygonalLasso(g);
-        setNotice('Magnetic selection created');
+        if (commitLassoPolygon(g, 'Magnetic Lasso'))
+          setNotice('Magnetic selection created');
       }
       return;
     }
@@ -11309,16 +16256,21 @@ export default function Home() {
         ? latest.layers.find((layer) => layer.id === g.layer!.id)
         : undefined;
     if (latest !== f || (g.layer && latestLayer !== g.layer)) {
-      if (g.tool === 'ruler') setMeasurementPreview(null);
+      if (g.strands) clearStrandPreview();
+      if (g.tool === 'ruler' || g.cropStraighten) setMeasurementPreview(null);
+      if (g.noteId) setNoteDrag(null);
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(latest);
       setNotice('Gesture cancelled because the document changed');
       return;
     }
     if (e.type === 'pointercancel') {
+      if (g.strands) clearStrandPreview();
       if (g.tool === 'rotate-view')
         setViewRotation(normalizeViewRotation(g.viewRotationStart ?? 0));
-      if (g.tool === 'ruler') setMeasurementPreview(null);
+      if (g.tool === 'ruler' || g.cropStraighten) setMeasurementPreview(null);
+      if (g.noteId) setNoteDrag(null);
+      if (g.sliceOrigin) setSlicePreview({ frame: f, ...g.sliceOrigin });
       discardPreviewAsset(assets.current, g.maskPreviewAsset);
       void paint(current());
       setNotice('Gesture cancelled');
@@ -11326,6 +16278,70 @@ export default function Home() {
     }
     if (g.tool === 'rotate-view') {
       setNotice(`Rotate View: ${normalizeViewRotation(viewRotation)}°`);
+      return;
+    }
+    if (g.tool === 'zoom') {
+      if (g.moved) {
+        setNotice(`Scrubby Zoom: ${formatViewZoom(viewZoomRef.current)}`);
+        return;
+      }
+      const next = zoomBy(g.zoomOut ? -1 : 1, { x: e.clientX, y: e.clientY });
+      setNotice(`Zoomed ${g.zoomOut ? 'out' : 'in'} to ${formatViewZoom(next)}`);
+      return;
+    }
+    if (g.tool === 'note' && g.noteId) {
+      setNoteDrag(null);
+      const note = f.measurements?.find((item) => item.id === g.noteId);
+      if (!note || note.kind !== 'note') return;
+      if (!g.moved) {
+        setNoteEditor({ id: note.id, x: note.x, y: note.y, text: note.text, color: note.color ?? navigationTools.noteColor });
+        setNotice('Note opened: edit, recolour or delete it');
+        return;
+      }
+      const x = Math.max(0, Math.min(f.w, p.x)),
+        y = Math.max(0, Math.min(f.h, p.y));
+      if (
+        commit({
+          ...f,
+          measurements: (f.measurements || []).map((item) => (item.id === note.id ? { ...note, x, y } : item)),
+        })
+      )
+        setNotice('Note moved');
+      return;
+    }
+    if (g.tool === 'slice-select') {
+      if (!g.sliceOrigin || !g.sliceHandle) return;
+      const next = adjustSliceRect(g.sliceOrigin, g.sliceHandle, p.x - g.start.x, p.y - g.start.y, f.w, f.h);
+      const origin = g.sliceOrigin;
+      if (next.x === origin.x && next.y === origin.y && next.width === origin.width && next.height === origin.height)
+        return;
+      if (
+        commit({
+          ...f,
+          slices: (f.slices || []).map((item) => (item.id === origin.id ? { ...item, ...next } : item)),
+          activeSliceId: origin.id,
+        })
+      ) {
+        setSlicePreview({ frame: current(), ...next });
+        setSlicePreviewMode('selected');
+        setNotice(
+          `Slice ${g.sliceHandle === 'move' ? 'moved' : 'resized'}: ${next.name} · ${next.width} × ${next.height} px at ${next.x}, ${next.y}`,
+        );
+      } else setSlicePreview({ frame: f, ...origin });
+      return;
+    }
+    if (g.tool === 'perspective-crop' && g.quadCorner !== undefined) {
+      setNotice('Perspective crop corner moved · press Enter or Apply');
+      return;
+    }
+    if (g.tool === 'crop' && g.cropStraighten) {
+      setMeasurementPreview(null);
+      setCropStraightenArmed(false);
+      if (!g.moved || measurementDistance(g.start, p) < 2) {
+        setNotice('Straighten needs a drag along the horizon');
+        return;
+      }
+      await straightenDocument(f, g.start, p);
       return;
     }
     if (g.tool === 'quick-selection' && g.quickSelectionSource) {
@@ -11397,7 +16413,7 @@ export default function Home() {
             g.maskRefinementStroke.points.length - 1
           ];
           g.maskRefinementStroke.points.push(finalPoint);
-          g.changed = refineMaskCanvas(g.maskBuffer, {
+          g.changed = refineGestureMask(g, {
             ...g.maskRefinementStroke,
             points: [from, finalPoint],
           }) || Boolean(g.changed);
@@ -11428,7 +16444,9 @@ export default function Home() {
       if (changed)
         setNotice(
             g.tool === 'adjustment-brush'
-              ? 'Adjustment Brush applied to the adjustment mask'
+              ? g.maskRefinementStroke.mode === 'reveal'
+                ? 'Adjustment Brush applied to the adjustment mask'
+                : 'Adjustment Brush concealed the adjustment'
               : g.maskRefinementStroke.mode === 'reveal'
                 ? 'Mask Brush revealed masked pixels'
                 : 'Mask Eraser concealed pixels',
@@ -11454,8 +16472,35 @@ export default function Home() {
         })
       )
         setNotice(
-          `Ruler: ${formatMeasurement(pixels, measurementAngle(g.start, p))}`,
+          `Ruler: ${formatMeasurement(pixels, photoshopAngle(g.start, p))}`,
         );
+      return;
+    }
+    if ((g.tool === 'path-select' || g.tool === 'convert-point') && g.pathOrigin && g.layer) {
+      const dragged = pathToolDragResult(g, p);
+      const vectorMask = Boolean(g.pathVectorMask);
+      let next: PathModel | null = dragged;
+      let message = '';
+      if (dragged) {
+        message = g.tool === 'path-select'
+          ? vectorMask ? 'Vector mask path moved' : 'Path moved'
+          : g.pathHandle
+            ? vectorMask ? 'Vector mask handle moved independently' : 'Path handle moved independently'
+            : vectorMask ? 'Vector mask anchor converted to smooth' : 'Path anchor converted to smooth';
+      } else if (g.tool === 'convert-point' && g.pathIndex !== undefined && !g.pathHandle) {
+        const edit = editPathAnchor(g.pathOrigin, g.pathOrigin.nodes[g.pathIndex], 0, 'convert');
+        if (isPathAnchorEdit(edit)) {
+          next = edit.path;
+          message = pathAnchorEditNotice(edit, vectorMask);
+        }
+      }
+      if (!next) {
+        void paint(f);
+        return;
+      }
+      const nextLayer = withEditedPath(g.layer, next, vectorMask);
+      if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? nextLayer : item) }))
+        setNotice(message);
       return;
     }
     if (
@@ -11506,6 +16551,11 @@ export default function Home() {
       })) setNotice('Spot Healing applied nondestructively');
     } else if (g.tool === 'patch' && g.layer?.kind === 'raster' && g.patchStroke) {
       const stroke = g.patchStroke;
+      if (stroke.region && (!g.moved || (!stroke.sourceOffset.x && !stroke.sourceOffset.y))) {
+        void paint(f);
+        setNotice('Drag the selection to where the patch should come from or go');
+        return;
+      }
       if (!g.moved) {
         void paint(f);
         setNotice('Patch needs a drag after setting a source');
@@ -11517,6 +16567,28 @@ export default function Home() {
           ? { ...item, patchStrokes: [...(item.patchStrokes ?? []), stroke] }
           : item),
       })) setNotice('Patch applied nondestructively');
+    } else if (g.tool === 'brush' && g.strands && g.buffer && g.layer) {
+      const strands = buildGestureStrands(g),
+        painted = strands.length > 0 &&
+          paintGestureStrands(g, strands, color, (brushOpacity / 100) * (brushFlow / 100));
+      if (!painted) {
+        clearStrandPreview();
+        void paint(f);
+        setNotice('Silk strands need a longer drag');
+        return;
+      }
+      const asset = addPaintedAsset(g.buffer, g.tileBase),
+        revisionBefore = revisionRef.current;
+      const changed = commit({
+        ...f,
+        layers: f.layers.map((l) =>
+          l.id === g.layer!.id ? ({ ...l, kind: 'raster', asset } as Layer) : l,
+        ),
+      });
+      if (changed) {
+        clearStrandPreviewAfterRender(revisionBefore);
+        setNotice(`Silk strands painted (${strands.length} strand${strands.length === 1 ? '' : 's'})`);
+      } else clearStrandPreview();
     } else if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
       g.buffer &&
@@ -11526,11 +16598,16 @@ export default function Home() {
       g.pointerType = g.pointerType || e.pointerType;
       const from = g.smoothedLast ?? g.last;
       const destination = stabilizeBrushPoint(from, local, brushSmoothing);
-      if (g.moved && (from.x !== destination.x || from.y !== destination.y))
-        stampCanvasSegment(g.buffer, from, destination, {
+      // A deferred first dab (perpendicular-only scatter) is placed now,
+      // using the last segment's direction or both axes for a click.
+      if ((g.moved && (from.x !== destination.x || from.y !== destination.y)) || g.spacingState?.deferredFirst)
+        stampGestureSegment(g, from, destination, {
+          flushDeferred: true,
+          spacingState: g.spacingState,
           size: localSize(g.layer.matrix, size),
           hardness: g.tool === 'pencil' ? 100 : hardness,
           opacity: (brushOpacity / 100) * (brushFlow / 100),
+          strokeOpacity: brushOpacity / 100,
           pointerType: g.pointerType,
           pressure: g.lastPressure,
           pressureSize: g.tool !== 'pencil' && pressureSize,
@@ -11538,6 +16615,7 @@ export default function Home() {
           pressureCurve,
           spacing: brushSpacing,
           scatter: brushScatter,
+          dynamics: brushDynamics,
           texture: brushTexture,
           dual: brushDual,
           secondaryPreset: secondaryBrushPreset,
@@ -11548,11 +16626,12 @@ export default function Home() {
           roundness: g.tool === 'pencil' ? 100 : brushRoundness,
           flipX: brushFlipX,
           flipY: brushFlipY,
-          mode: g.tool === 'eraser' ? 'destination-out' : 'source-over',
-          color: g.tool === 'eraser' ? undefined : brushColor(color),
+          mode: g.tool === 'eraser' && !g.eraseToBackground ? 'destination-out' : 'source-over',
+          color: g.tool !== 'eraser' ? brushColor(color) : g.eraseToBackground ? brushColor(backgroundColor) : undefined,
+          colorBackground: brushColor(backgroundColor),
         });
       g.smoothedLast = destination;
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer, g.tileBase);
       const changed = commit({
         ...f,
         layers: f.layers.map((l) =>
@@ -11596,63 +16675,36 @@ export default function Home() {
               ? 'Mask Brush revealed masked pixels'
               : 'Mask Eraser concealed pixels',
         );
-    } else if (
-      (g.tool === 'rectangle' ||
-        g.tool === 'ellipse' ||
-        g.tool === 'line' ||
-        g.tool === 'polygon') &&
-      g.moved
-    ) {
-      const width = Math.max(1, Math.round(Math.abs(p.x - g.start.x))),
-        height = Math.max(1, Math.round(Math.abs(p.y - g.start.y))),
-        matrix = [
-          1,
-          0,
-          0,
-          1,
-          Math.min(p.x, g.start.x),
-          Math.min(p.y, g.start.y),
-        ] as Matrix;
-      addLayer(
+    } else if (isShapeToolId(g.tool) && g.moved) {
+      addShapeLayer(
+        g.tool,
         g.tool === 'line'
-          ? {
-              ...commonLayer('Line ' + f.layers.length),
-              kind: 'line',
-              width,
-              height,
-              stroke: Math.max(1, size / 3),
-              color,
-              matrix,
-            }
-          : ({
-              ...commonLayer(
-                (g.tool === 'polygon' ? 'Polygon ' : 'Shape ') +
-                  f.layers.length,
-              ),
-              kind:
-                g.tool === 'ellipse'
-                  ? 'ellipse'
-                  : g.tool === 'polygon'
-                    ? 'polygon'
-                    : 'rectangle',
-              width,
-              height,
-              stroke: Math.max(1, size / 3),
-              color,
-              fill: false,
-              ...(g.tool === 'polygon' ? { sides: polygonSides, variant: polygonVariant, innerRadius: polygonInnerRadius } : {}),
-              matrix,
-            } as Layer),
+          ? { left: Math.min(p.x, g.start.x), top: Math.min(p.y, g.start.y), width: Math.abs(p.x - g.start.x), height: Math.abs(p.y - g.start.y) }
+          : newShapeDragBox(g.tool, g.start, p, e),
       );
     } else if (
       (g.tool === 'select' || g.tool === 'ellipse-select') &&
-      g.moved
+      (g.moved || marqueeOptions.style === 'fixed-size')
     ) {
-      const x = Math.max(0, Math.min(g.start.x, p.x)),
-        y = Math.max(0, Math.min(g.start.y, p.y)),
-        w = Math.min(f.w - x, Math.abs(p.x - g.start.x)),
-        h = Math.min(f.h - y, Math.abs(p.y - g.start.y));
-      if (w > 0 && h > 0)
+      // Marquee Style (docs/selection-feather-contract.md): Fixed Size also
+      // places its box on a plain click.
+      const { left, top, width, height } = marqueeRect(g.start, p, marqueeOptions),
+        x = Math.max(0, left),
+        y = Math.max(0, top),
+        w = Math.min(f.w, left + width) - x,
+        h = Math.min(f.h, top + height) - y;
+      const offCanvas = left < 0 || top < 0 || left + width > f.w || top + height > f.h;
+      if (g.tool === 'ellipse-select' && offCanvas && width >= 1 && height >= 1) {
+        // Keep the true ellipse and clip it to the canvas instead of
+        // squashing it into the clamped box.
+        if (
+          commitLassoPolygon(
+            { ...g, points: ellipsePolygon(left, top, width, height) },
+            'Elliptical marquee',
+          )
+        )
+          setNotice('Elliptical selection created (clipped to the canvas)');
+      } else if (w >= 1 && h >= 1)
         mergeSelection({
           shape: g.tool === 'ellipse-select' ? 'ellipse' : 'rectangle',
           x,
@@ -11664,26 +16716,17 @@ export default function Home() {
         });
       else void paint(f);
     } else if (g.tool === 'lasso' && g.moved) {
-      const points = g.points || [];
-      if (points.length >= 3) {
-        const x = Math.max(0, Math.min(...points.map((point) => point.x))),
-          y = Math.max(0, Math.min(...points.map((point) => point.y))),
-          right = Math.min(f.w, Math.max(...points.map((point) => point.x))),
-          bottom = Math.min(f.h, Math.max(...points.map((point) => point.y)));
-        mergeSelection({
-          shape: 'polygon',
-          x,
-          y,
-          w: right - x,
-          h: bottom - y,
-          points,
-          feather: 0,
-          inverted: false,
-        });
-      } else void paint(f);
+      // Too short a drag is treated like a click; otherwise clip to the canvas.
+      if ((g.points?.length ?? 0) >= 3) commitLassoPolygon(g, 'Lasso');
+      else void paint(f);
     } else if (g.tool === 'crop' && g.moved) {
       try {
-        const plan = planRectangularCrop(f.w, f.h, g.start, p);
+        const plan = planRectangularCrop(
+          f.w,
+          f.h,
+          g.start,
+          constrainCropEnd(g.start, p, currentCropRatio(f), f.w, f.h),
+        );
         // Keep the source frame and history untouched until the user confirms
         // the crop.  This makes accidental touch drags recoverable and keeps
         // export/undo semantics identical to every other committed edit.
@@ -11698,29 +16741,46 @@ export default function Home() {
         setNotice('Crop needs at least one pixel inside the image');
       }
     } else if (g.tool === 'perspective-crop' && g.moved) {
+      setPerspectiveClicks([]);
       try {
-        const left = Math.max(0, Math.min(g.start.x, p.x)),
-          top = Math.max(0, Math.min(g.start.y, p.y)),
-          right = Math.min(f.w, Math.max(g.start.x, p.x)),
-          bottom = Math.min(f.h, Math.max(g.start.y, p.y)),
-          insetX = Math.max(1, (right - left) * 0.08),
-          insetY = Math.max(1, (bottom - top) * 0.08),
-          quad: CropQuad = [
-            { x: left + insetX, y: top },
-            { x: right - insetX, y: top + insetY },
-            { x: right, y: bottom - insetY },
-            { x: left, y: bottom },
-          ],
+        // A drag stages an axis-aligned rectangle; drag its corner handles
+        // (or edit the corner fields) to match the perspective.
+        const quad = rectangleQuad(g.start, p, f.w, f.h),
           plan = planPerspectiveCrop(f.w, f.h, { quad });
         perspectiveCropPreviewId.current += 1;
         setPerspectiveCropPreview({ frame: f, ...plan });
         void paint(f);
         setNotice(
-          `Perspective crop preview: ${plan.width} × ${plan.height} px · edit corners or press Enter to apply`,
+          `Perspective crop preview: ${plan.width} × ${plan.height} px · drag the corners, then press Enter to apply`,
         );
       } catch {
         void paint(f);
         setNotice('Perspective crop needs a convex selection inside the image');
+      }
+    } else if (g.tool === 'perspective-crop') {
+      // Four clicks define the corners, in any order.
+      const clicked = [
+        ...perspectiveClicks,
+        { x: Math.max(0, Math.min(f.w, p.x)), y: Math.max(0, Math.min(f.h, p.y)) },
+      ];
+      if (perspectiveCropPreview)
+        setNotice('Drag a corner handle to adjust the crop, or Cancel to start again');
+      else if (clicked.length < 4) {
+        setPerspectiveClicks(clicked);
+        setNotice(`Perspective crop: corner ${clicked.length} of 4 placed`);
+      } else {
+        setPerspectiveClicks([]);
+        try {
+          const plan = planPerspectiveCrop(f.w, f.h, { quad: orderQuadCorners(clicked) });
+          perspectiveCropPreviewId.current += 1;
+          setPerspectiveCropPreview({ frame: f, ...plan });
+          void paint(f);
+          setNotice(
+            `Perspective crop preview: ${plan.width} × ${plan.height} px · drag the corners, then press Enter to apply`,
+          );
+        } catch {
+          setNotice('Those four corners do not form a convex shape; click four new corners');
+        }
       }
     } else if (g.tool === 'slice' && g.moved) {
       try {
@@ -11761,57 +16821,19 @@ export default function Home() {
     } else if (g.tool === 'frame') {
       void paint(f);
       setNotice('Frame needs a drag of at least one pixel');
-    } else if (g.tool === 'gradient' && g.moved && g.layer) {
+    } else if (
+      g.tool === 'gradient' &&
+      g.layer &&
+      (g.moved || g.start.x !== local.x || g.start.y !== local.y)
+    ) {
+      // A release that arrives before any move reached the gesture (or before
+      // the layer and selection were prepared) still commits at its point.
       try {
         if (g.layer.kind !== 'raster') return;
-        const image = await decodeAsset(assets.current[g.layer.asset]),
-          buffer = surface(image.naturalWidth, image.naturalHeight);
-        buffer.getContext('2d')!.drawImage(image, 0, 0);
-        const context = buffer.getContext('2d')!,
-          gradient = gradientMode === 'radial'
-            ? context.createRadialGradient(
-              g.start.x,
-              g.start.y,
-              0,
-              g.start.x,
-              g.start.y,
-              Math.max(1, Math.hypot(local.x - g.start.x, local.y - g.start.y)),
-            )
-            : context.createLinearGradient(
-              g.start.x,
-              g.start.y,
-              local.x,
-              local.y,
-            );
-        const endColor = gradientEnd === 'background' ? backgroundColor : '#ffffff00';
-        const midpointStop = gradientMidpoint === 'none'
-          ? 0.5
-          : Math.max(0.01, Math.min(0.99, gradientMidpointPosition / 100));
-        const startColor = gradientReverse ? endColor : color,
-          finalColor = gradientReverse ? color : endColor;
-        if (gradientMode === 'reflected') {
-          gradient.addColorStop(0, color);
-          gradient.addColorStop(midpointStop, gradientMidpoint === 'none' ? endColor : gradientMidpoint);
-          gradient.addColorStop(1, color);
-        } else {
-          gradient.addColorStop(0, startColor);
-          const authoredStops = normalizeGradientStops(gradientStops);
-          if (authoredStops.length > 0) {
-            for (const stop of authoredStops) gradient.addColorStop(stop.position / 100, stop.color);
-          } else if (gradientMidpoint !== 'none') {
-            gradient.addColorStop(midpointStop, gradientMidpoint);
-          }
-          gradient.addColorStop(1, finalColor);
-        }
-        context.fillStyle = gradient;
-        context.fillRect(0, 0, buffer.width, buffer.height);
-        if (gradientNoise > 0 || gradientDither > 0) {
-          const imageData = context.getImageData(0, 0, buffer.width, buffer.height);
-          let pixels = applyGradientNoise(imageData.data, buffer.width, buffer.height, gradientNoise);
-          pixels = applyGradientDither(pixels, buffer.width, buffer.height, gradientDither);
-          imageData.data.set(pixels);
-          context.putImageData(imageData, 0, 0);
-        }
+        // The live preview prepared the decoded layer and selection at
+        // pointer-down; the commit renders the same pixels for the release point.
+        const base = g.gradientBase ?? await prepareGradientBase(f, g.layer);
+        const buffer = renderGradientBuffer(base, g.start, local);
         const asset = addAsset(assets.current, buffer);
         if (
           commit({
@@ -11825,6 +16847,9 @@ export default function Home() {
       } catch {
         setNotice('Could not apply gradient');
       }
+    } else if (g.tool === 'gradient') {
+      void paint(f);
+      setNotice('Gradient: drag from the start point to the end point');
     } else if (
       (g.tool === 'mixer-brush' || g.tool === 'history-brush' || g.tool === 'art-history-brush') &&
       g.buffer &&
@@ -11835,15 +16860,21 @@ export default function Home() {
         setNotice('No Art History Brush change');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      // No paint under the stroke to carry (or nothing moved): no history step.
+      if (g.tool === 'mixer-brush' && !g.changed) {
+        void paint(f);
+        setNotice('No Mixer Brush change: drag across painted pixels to mix them');
+        return;
+      }
+      const asset = addPaintedAsset(g.buffer);
       if (commit({
         ...f,
         layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item),
       })) {
         const label = g.tool === 'mixer-brush' ? 'Mixer Brush stroke applied' :
           g.tool === 'history-brush'
-            ? `History Brush restored source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : index.current + 1}`
-            : `Art History Brush applied from source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : index.current + 1}`;
+            ? `History Brush restored source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : 1}`
+            : `Art History Brush applied from source ${typeof g.historySourceIndex === 'number' ? g.historySourceIndex + 1 : 1}`;
         setNotice(label);
       }
     } else if (
@@ -11851,7 +16882,7 @@ export default function Home() {
       g.buffer &&
       g.layer
     ) {
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -11866,7 +16897,8 @@ export default function Home() {
     } else if (g.tool === 'pattern-stamp' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
         g.changed =
-          patternCanvasSegment(g.buffer, g.last, local, {
+          patternGestureSegment(g, g.last, local, {
+            spacingState: g.spacingState,
             size: localSize(g.layer.matrix, size),
             hardness,
             opacity: brushOpacity / 100,
@@ -11882,6 +16914,9 @@ export default function Home() {
             flipY: brushFlipY,
             pattern: g.patternId!,
             tileSize: g.patternTileSize!,
+            tile: g.patternTile,
+            anchorX: g.patternAnchor?.x,
+            anchorY: g.patternAnchor?.y,
             foreground: brushColor(color),
             background: brushColor(backgroundColor),
           }) || Boolean(g.changed);
@@ -11890,7 +16925,7 @@ export default function Home() {
         setNotice('No Pattern Stamp change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -11954,12 +16989,18 @@ export default function Home() {
         setNotice('Selection Brush selection created');
     } else if (g.tool === 'red-eye' && g.buffer && g.layer) {
       if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
-        redEyeCanvasStroke(g.buffer, g.last, local, {
+        g.changed = redEyeGestureStroke(g, g.last, local, {
           radius: localSize(g.layer.matrix, size) / 2,
           threshold: g.redEyeThreshold ?? 36,
           amount: (g.redEyeAmount ?? 100) / 100,
-        });
-      const asset = addAsset(assets.current, g.buffer);
+        }) || Boolean(g.changed);
+      // Nothing matched the red-eye test: no pixels, no history step.
+      if (!g.changed) {
+        void paint(f);
+        setNotice('No red-eye pixels found under the brush');
+        return;
+      }
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -11976,19 +17017,13 @@ export default function Home() {
         g.replaceTarget &&
         (g.last.x !== local.x || g.last.y !== local.y)
       )
-        eraseBackgroundStroke(
-          g.source,
-          g.buffer,
-          g.replaceTarget,
-          g.last.x,
-          g.last.y,
-          local.x,
-          local.y,
-          localSize(g.layer.matrix, size),
-          colorTolerance,
-          brushOpacity / 100,
-        );
-      const asset = addAsset(assets.current, g.buffer);
+        sampledGestureStroke(g, g.last, local, {
+          kind: 'background-erase',
+          size: localSize(g.layer.matrix, size),
+          tolerance: colorTolerance,
+          opacity: brushOpacity / 100,
+        });
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12000,20 +17035,22 @@ export default function Home() {
         setNotice('Background Eraser stroke applied');
     } else if (g.tool === 'smudge' && g.buffer && g.layer) {
       let changed = Boolean(g.changed);
-      if (g.moved && g.source && (g.last.x !== local.x || g.last.y !== local.y))
+      if (g.moved && g.smudge && (g.smudge.last.x !== local.x || g.smudge.last.y !== local.y))
         changed =
-          smudgeCanvasSegment(g.source, g.buffer, g.last, local, {
-            size: localSize(g.layer.matrix, size),
-            hardness,
-            flow: brushOpacity / 100,
-            selectionMask: g.selectionMask,
-          }) || changed;
+          smudgeCanvasSegment(
+            g.buffer,
+            g.smudge.last,
+            // A pen reports zero pressure on release; keep the last pressure.
+            { ...local, pressure: g.smudge.last.pressure, pointerType: g.smudge.last.pointerType },
+            g.smudge,
+            g.selectionMask,
+          ) || changed;
       if (!changed) {
         void paint(f);
         setNotice('No Smudge change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12025,35 +17062,20 @@ export default function Home() {
         setNotice('Smudge stroke applied');
     } else if ((g.tool === 'blur' || g.tool === 'sharpen') && g.buffer && g.layer && g.source) {
       let changed = Boolean(g.changed);
-      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y)) {
-        const sourceContext = g.source.getContext('2d')!,
-          bufferContext = g.buffer.getContext('2d')!,
-          result = applyRetouchStroke(
-            new Uint8ClampedArray(sourceContext.getImageData(0, 0, g.source.width, g.source.height).data),
-            new Uint8ClampedArray(bufferContext.getImageData(0, 0, g.buffer.width, g.buffer.height).data),
-            {
-              width: g.buffer.width,
-              height: g.buffer.height,
-              x1: g.last.x,
-              y1: g.last.y,
-              x2: local.x,
-              y2: local.y,
-              size: localSize(g.layer.matrix, size),
-              hardness,
-              flow: brushOpacity / 100,
-              mode: g.tool,
-              selectionMask: g.selectionMask,
-            },
-          );
-        bufferContext.putImageData(new ImageData(result.pixels as unknown as Uint8ClampedArray<ArrayBuffer>, g.buffer.width, g.buffer.height), 0, 0);
-        changed = result.changed || changed;
-      }
+      if (g.moved && (g.last.x !== local.x || g.last.y !== local.y))
+        changed = retouchCanvasSegment(g.source, g.buffer, g.last, local, {
+          size: localSize(g.layer.matrix, size),
+          hardness,
+          flow: brushOpacity / 100,
+          mode: g.tool,
+          selectionMask: g.selectionMask,
+        }) || changed;
       if (!changed) {
         void paint(f);
         setNotice(`No ${g.tool === 'blur' ? 'Blur' : 'Sharpen'} change applied`);
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (commit({ ...f, layers: f.layers.map((item) => item.id === g.layer!.id ? { ...item, asset } : item) }))
         setNotice(`${g.tool === 'blur' ? 'Blur' : 'Sharpen'} stroke applied`);
     } else if (
@@ -12080,7 +17102,7 @@ export default function Home() {
         setNotice('No tonal change applied');
         return;
       }
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12093,7 +17115,7 @@ export default function Home() {
           `${g.tool === 'sponge' ? 'Sponge' : g.tool === 'dodge' ? 'Dodge' : 'Burn'} stroke applied`,
         );
     } else if (g.tool === 'color-replace' && g.buffer && g.layer) {
-      const asset = addAsset(assets.current, g.buffer);
+      const asset = addPaintedAsset(g.buffer);
       if (
         commit({
           ...f,
@@ -12108,6 +17130,16 @@ export default function Home() {
     } else void paint(f);
   };
   const doubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Double-clicking type with the Move tool switches to the Type tool and
+    // edits it, as in Photoshop.
+    if (tool === 'move' && !gesture.current && !quickMasking) {
+      const hit = typeTool.hitTextLayer(point(e));
+      if (hit) {
+        activateTool(hit.layer.orientation === 'vertical' ? 'vertical-text' : 'text');
+        typeTool.editLayer(hit.layer.id, { anchor: hit.offset, focus: hit.offset });
+        return;
+      }
+    }
     const g = gesture.current;
     if (g?.tool !== 'polygonal-lasso') return;
     // Double-clicking the final vertex is the desktop equivalent of clicking
@@ -12200,9 +17232,26 @@ export default function Home() {
     setNotice('Rotate View reset');
   };
   const fitToScreen = () => {
-      setZoom(72);
-      stage.current?.scrollTo({ left: 0, top: 0, behavior: 'smooth' });
-      setNotice('Fit to screen');
+      const next = fitZoom();
+      setNotice(`Fit to screen (${formatViewZoom(next)})`);
+    },
+    fillScreen = () => {
+      const element = stage.current;
+      if (!element || !frame) return;
+      const style = window.getComputedStyle(element);
+      const next = setZoomAround(
+        fillViewZoom({
+          imageWidth: frame.w,
+          imageHeight: frame.h,
+          stageWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+          stageHeight: element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+        }),
+      );
+      setNotice(`Fill screen (${formatViewZoom(next)})`);
+    },
+    actualPixels = () => {
+      setZoomAround(100);
+      setNotice('Actual size (100%)');
     },
     openFile = () => file.current?.click();
   const setWorkspaceScreenMode = (next: ScreenMode) => {
@@ -12308,6 +17357,8 @@ export default function Home() {
           gesture.current?.tool === 'freeform-pen' ||
           gesture.current?.tool === 'curvature-pen' ||
           gesture.current?.tool === 'direct-select' ||
+          gesture.current?.tool === 'path-select' ||
+          gesture.current?.tool === 'convert-point' ||
           gesture.current?.tool === 'selection-brush' ||
           gesture.current?.tool === 'quick-selection' ||
           gesture.current?.tool === 'patch')
@@ -12420,6 +17471,15 @@ export default function Home() {
         return;
       }
       if (gesture.current) return;
+      // F6 or Ctrl/Cmd+. jumps into the active tool's sidebar options.
+      if (
+        (e.key === 'F6' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) ||
+        ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === '.')
+      ) {
+        e.preventDefault();
+        focusToolOptionsRef.current();
+        return;
+      }
       if (e.key === 'Escape' && screenMode !== 'standard') {
         e.preventDefault();
         setWorkspaceScreenMode('standard');
@@ -12442,12 +17502,22 @@ export default function Home() {
         else setNotice('Exit Quick Mask mode before changing the document');
         return;
       }
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        !command && !e.altKey && !e.defaultPrevented &&
+        !quickMasking && !gesture.current && current().selection &&
+        !(e.target instanceof Element && e.target.closest('[role="menu"], [role="dialog"], dialog'))
+      ) {
+        e.preventDefault();
+        void clearSelectedLayerPixels();
+        return;
+      }
       const customTool = Object.entries(toolShortcutBindings).find(([, binding]) =>
         toolShortcutMatches(binding, e),
       )?.[0] as Tool | undefined;
       if (customTool) {
         e.preventDefault();
-        setTool(customTool);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(customTool));
         setNotice(toolSelectionNotice(customTool, TOOLS.find((item) => item.id === customTool)?.label || customTool));
         return;
       }
@@ -12461,19 +17531,49 @@ export default function Home() {
           return;
         }
         e.preventDefault();
-        runCommandRef.current?.(customCommand);
+        withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(customCommand));
         return;
       }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
-        void fillActiveLayer();
+        openEditFill();
         return;
       }
       if (command) {
         const k = e.key.toLowerCase();
+        // Photoshop-style Arrange: Ctrl+] / Ctrl+[ step the selected layers,
+        // Ctrl+Shift+] / Ctrl+Shift+[ send them to the front / back.
+        if (!e.altKey && (e.code === 'BracketRight' || e.code === 'BracketLeft')) {
+          e.preventDefault();
+          const forward = e.code === 'BracketRight';
+          arrangeLayers(forward ? (e.shiftKey ? 'front' : 'forward') : e.shiftKey ? 'back' : 'backward');
+          return;
+        }
         if (k === 'l' && e.shiftKey && command) {
           e.preventDefault();
           void autoCorrect('tone');
+          return;
+        }
+        // Ctrl/Cmd+0 fits, Ctrl/Cmd+1 shows 100% and Ctrl/Cmd +/- step the
+        // zoom; preventDefault keeps the browser's own page zoom out of it.
+        if (!e.altKey && !e.shiftKey && (e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) {
+          e.preventDefault();
+          fitToScreen();
+          return;
+        }
+        if (!e.altKey && !e.shiftKey && (e.key === '1' || e.code === 'Digit1' || e.code === 'Numpad1')) {
+          e.preventDefault();
+          actualPixels();
+          return;
+        }
+        if (!e.altKey && (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd')) {
+          e.preventDefault();
+          zoomBy(1);
+          return;
+        }
+        if (!e.altKey && (e.key === '-' || e.code === 'NumpadSubtract')) {
+          e.preventDefault();
+          zoomBy(-1);
           return;
         }
         const browserImagePaste = k === 'v' && !e.shiftKey && !hasClipboard;
@@ -12530,6 +17630,7 @@ export default function Home() {
         }
         if (k === 'x' && !e.shiftKey) cutLayer();
         if (k === 'v' && !e.shiftKey && hasClipboard) pasteLayer();
+        if (browserImagePaste) scheduleKeyboardPasteFallback();
         if (k === 't') beginLayerTransform();
         return;
       }
@@ -12540,7 +17641,7 @@ export default function Home() {
       }
       if (e.key.toLowerCase() === 'q') {
         e.preventDefault();
-        toggleQuickMask();
+        withSidebarTrigger('shortcut', 'keyboard', toggleQuickMaskFromUser);
         return;
       }
       if (e.key.toLowerCase() === 'x') {
@@ -12550,9 +17651,8 @@ export default function Home() {
       }
       if (e.key === '[' || e.key === ']') {
         e.preventDefault();
-        setSize((value) =>
-          Math.max(2, Math.min(100, value + (e.key === ']' ? 2 : -2))),
-        );
+        const direction = e.key === ']' ? 1 : -1;
+        setSize((value) => stepBrushSize(value, direction));
         return;
       }
       if (e.altKey) return;
@@ -12565,7 +17665,7 @@ export default function Home() {
         const next = e.shiftKey
           ? (tool === 'rotate-view' ? lastRFamilyTool.current : tool)
           : 'rotate-view';
-        setTool(next as Tool);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next as Tool));
         setNotice(
           toolSelectionNotice(
             next as Tool,
@@ -12583,7 +17683,7 @@ export default function Home() {
           group[
             (index < 0 ? 0 : index + direction + group.length) % group.length
           ];
-        setTool(next);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next));
         setNotice(
           toolSelectionNotice(
             next,
@@ -12595,7 +17695,7 @@ export default function Home() {
       const alias = TOOL_ALIASES[lower];
       if (alias) {
         e.preventDefault();
-        setTool(alias);
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(alias));
         setNotice(
           toolSelectionNotice(
             alias,
@@ -12610,15 +17710,15 @@ export default function Home() {
       }
       if (e.key === '1') {
         e.preventDefault();
-        setZoom(100);
+        setZoomAround(100);
       }
       if (e.key === '+' || e.key === '=') {
         e.preventDefault();
-        setZoom((v) => Math.min(140, v + 10));
+        zoomBy(1);
       }
       if (e.key === '-') {
         e.preventDefault();
-        setZoom((v) => Math.max(20, v - 10));
+        zoomBy(-1);
       }
     };
     window.addEventListener('keydown', key);
@@ -12667,6 +17767,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -12695,12 +17796,15 @@ export default function Home() {
     else if (command === 'trim') setTrimming(true);
     else if (command === 'reveal-all') return revealAll();
     else if (command === 'project-save') void exportProject();
+    else if (command === 'project-save-as') void exportProject(true);
+    else if (command === 'reference-place') chooseReferenceFile();
     else if (command === 'file-info') setFileInfoOpen(true);
     else if (command === 'batch-export')
       setBatchExporting({
         history: history.current.slice(),
         assets: { ...assets.current },
         name,
+        documentMetadata: { ...metadata },
       });
     else if (command === 'batch-images') {
       batchActionRef.current = undefined;
@@ -12711,6 +17815,7 @@ export default function Home() {
     else if (command === 'project-open') projectFile.current?.click();
     else if (command === 'new-white') newDocument(false);
     else if (command === 'new-transparent') newDocument(true);
+    else if (command === 'new-document') setNewDocumentOpen(true);
     else if (command === 'open') openFile();
     else if (command === 'png') download('png');
     else if (command === 'jpg') download('jpeg');
@@ -12731,6 +17836,7 @@ export default function Home() {
     else if (command === 'update-text-layers') return setUpdateTextLayersOpen(true);
     else if (command === 'spellcheck') return setSpellcheckOpen(true);
     else if (command === 'missing-fonts') return setMissingFontsOpen(true);
+    else if (command === 'glyphs') return setGlyphsOpen(true);
     else if (command === 'color-settings') return setColorSettingsOpen(true);
     else if (command === 'assign-profile') return setColorProfileOperation('assign');
     else if (command === 'convert-profile') return setColorProfileOperation('convert');
@@ -12748,13 +17854,27 @@ export default function Home() {
     else if (command === 'copy-merged') return copyMerged();
     else if (command === 'cut-layer') cutLayer();
     else if (command === 'paste-layer') pasteLayer();
+    else if (command === 'paste-clipboard-image') void pasteSystemClipboardImage();
     else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
-    else if (command === 'fill-layer') return fillActiveLayer();
+    else if (command === 'fill-layer') openEditFill();
     else if (command === 'stroke-selection') return strokeSelection();
+    else if (command === 'stroke-path-brush') openStrokePathDialog();
     else if (command === 'new-layer') addPaint();
     else if (command === 'new-fill-layer') setFillLayerDialog(true);
     else if (command === 'new-adjustment-layer') addAdjustmentLayer();
+    else if (command === 'layer-from-background') {
+      const f = current(),
+        layer = f.layers.find((item) => item.id === f.active);
+      if (!layer || layer.kind !== 'raster' || layer.background !== true)
+        setNotice('The selected layer is not a Background layer');
+      else if (commit({
+        ...f,
+        layers: f.layers.map((item) =>
+          item.id === layer.id ? { ...layerFromBackground(item), name: item.name === 'Background' ? 'Layer 0' : item.name } : item),
+      }))
+        setNotice('Background converted to a normal layer; it can now move and erase to transparency');
+    }
     else if (command === 'new-smart-object') chooseSmartObjectFile(false);
     else if (command === 'nest-smart-object') return nestSelectedAsSmartObject();
     else if (command === 'replace-smart-object') chooseSmartObjectFile(true);
@@ -12766,6 +17886,7 @@ export default function Home() {
     else if (command === 'save-default-type-styles') return saveDefaultTypeStyles();
     else if (command === 'load-default-type-styles') return loadDefaultTypeStyles();
     else if (command === 'rasterize-layer') return rasterize();
+    else if (command === 'trim-layer') return trimLayerToContent();
     else if (command === 'matting') return applyMatting();
     else if (command === 'duplicate-layer') duplicate();
     else if (command === 'delete-layer') remove();
@@ -12797,18 +17918,18 @@ export default function Home() {
     else if (command === 'combine-shapes-intersect') return combineSelectedShapes('intersect');
     else if (command === 'combine-shapes-exclude') return combineSelectedShapes('exclude');
     else if (command === 'patch-tool') {
-      setTool('patch');
-      setCloneSource(null);
+      activateTool('patch');
+      clearCloneSource();
       setNotice('Patch tool selected; click a source, then drag a destination');
     } else if (command === 'mixer-brush-tool') {
-      setTool('mixer-brush');
+      activateTool('mixer-brush');
       setNotice('Mixer Brush selected; drag to blend the immutable source snapshot');
     } else if (command === 'history-brush-tool') {
-      setTool('history-brush');
-      setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
+      activateTool('history-brush');
+      setNotice(`History Brush selected; source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}`);
     } else if (command === 'art-history-brush-tool') {
-      setTool('art-history-brush');
-      setNotice(`Art History Brush selected; local painterly source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}`);
+      activateTool('art-history-brush');
+      setNotice(`Art History Brush selected; local painterly source snapshot ${typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}`);
     } else if (command === 'set-history-source') {
       setHistorySourceIndex(index.current);
       setNotice(`History Brush source set to snapshot ${index.current + 1}`);
@@ -12819,10 +17940,10 @@ export default function Home() {
     } else if (command === 'content-aware-scale') {
       await applyContentAwareScale();
     } else if (command === 'open-type') {
-      setTool('text');
+      activateTool('text');
       setNotice('OpenType controls are available in the selected text layer inspector');
     } else if (command === 'text-tool') {
-      setTool('text');
+      activateTool('text');
       setNotice('Text tool selected');
     } else if (command === 'text-align-left') alignText('left');
     else if (command === 'text-align-center') alignText('center');
@@ -12833,6 +17954,18 @@ export default function Home() {
       setTextOrientation('vertical');
     else if (command === 'language-options') setLanguageOptionsOpen(true);
     else if (command === 'text-warp') setTextWarp();
+    else if (command === 'type-panels') {
+      setTypePanelsOpen({ character: true, paragraph: true });
+      if (!isTypeTool(tool)) activateTool('text');
+      else revealSidebarSection('text');
+    }
+    else if (command.startsWith('type-aa-')) {
+      const antiAlias = command.slice('type-aa-'.length) as TextAntiAlias;
+      setTypeDefaults((value) => ({ ...value, antiAlias }));
+      if (typeTool.patchTextLayer({ antiAlias })) setNotice(`Anti-aliasing: ${antiAlias}`);
+    }
+    else if (command === 'type-convert-point' || command === 'type-convert-paragraph')
+      typeActions.convert(command === 'type-convert-point' ? 'point' : 'paragraph');
     else if (command === 'text-on-path') setTextOnPath();
     else if (command === 'font-preview-size') {
       const next = nextFontPreviewSize(fontPreviewSize);
@@ -12858,27 +17991,31 @@ export default function Home() {
     else if (command === 'select-all-layers') selectAllLayers();
     else if (command === 'deselect-layers') deselectLayers();
     else if (command === 'find-layers') {
+      openSidebarFor('layers', true);
       const input = document.getElementById('find-layers');
       if (input instanceof HTMLInputElement) {
-        input.focus();
+        // The reveal scrolls; focusing without scrolling avoids a second jump.
+        input.focus(revealCommandSection('find-layers', input) ? { preventScroll: true } : undefined);
         input.select();
         setNotice('Find layers focused; search by name, type, group or state');
       }
     }
     else if (command === 'rename-layer') {
+      openSidebarFor('layer-properties', true);
       const input = document.getElementById('layer-name');
       if (input instanceof HTMLInputElement) {
-        input.focus();
+        input.focus(revealCommandSection('rename-layer', input) ? { preventScroll: true } : undefined);
         input.select();
         setNotice('Layer name focused; enter a new name');
       }
     }
     else if (command === 'layer-style') {
+      openSidebarFor('layer-styles', true);
       const input = document.querySelector<HTMLInputElement>(
         'input[aria-label="Enable outline"]',
       );
       if (input) {
-        input.focus();
+        input.focus(revealCommandSection('layer-style', input) ? { preventScroll: true } : undefined);
         setNotice('Layer Style controls focused');
       }
     }
@@ -12887,11 +18024,14 @@ export default function Home() {
     else if (command === 'reselect') reselect();
     else if (command === 'invert-selection') invertSelection();
     else if (command === 'similar-selection') await applySimilarSelection();
-    else if (command === 'quick-mask') toggleQuickMask();
+    else if (command === 'quick-mask') toggleQuickMaskFromUser();
     else if (command === 'save-selection') {
-      saveCurrentSelection();
-      exportSelection();
-    } else if (command === 'load-selection') selectionFile.current?.click();
+      // Store a named selection in the document (the Saved selections panel
+      // lists it); downloading a file is the separate command below.
+      if (current().selection) setSaveSelectionOpen(true);
+      else setNotice('Create a selection before saving it');
+    } else if (command === 'download-selection') exportSelection();
+    else if (command === 'load-selection') selectionFile.current?.click();
     else if (command === 'transform-selection') {
       if (current().selection) setSelectionTransforming(true);
       else setNotice('Create a selection before transforming it');
@@ -12952,22 +18092,32 @@ export default function Home() {
     else if (command === 'release-clipping-mask') releaseClippingMask();
     else if (command === 'reset') resetAdjustments();
     else if (command === 'image-mode') toggleImageMode();
-    else if (command === 'levels')
-      setNotice('Levels controls are available in Adjust selected layer');
-    else if (command === 'hue-saturation')
+    else if (command === 'levels') {
+        setNotice('Levels controls are available in Adjust selected layer');
+      revealCommandSection('levels');
+    }
+    else if (command === 'hue-saturation') {
       setNotice(
         'Hue/Saturation controls are available in Adjust selected layer',
       );
-    else if (command === 'curves')
-      setNotice('Curves controls are available in Adjust selected layer');
-    else if (command === 'color-balance')
+      revealCommandSection('hue-saturation');
+    }
+    else if (command === 'curves') {
+        setNotice('Curves controls are available in Adjust selected layer');
+      revealCommandSection('curves');
+    }
+    else if (command === 'color-balance') {
       setNotice(
         'Color Balance controls are available in Adjust selected layer',
       );
-    else if (command === 'sharpen-noise')
+      revealCommandSection('color-balance');
+    }
+    else if (command === 'sharpen-noise') {
       setNotice(
         'Sharpen and Noise controls are available in Adjust selected layer',
       );
+      revealCommandSection('sharpen-noise');
+    }
     else if (command === 'auto-tone') return autoCorrect('tone');
     else if (command === 'auto-contrast') return autoCorrect('contrast');
     else if (command === 'auto-color') return autoCorrect('color');
@@ -13091,6 +18241,8 @@ export default function Home() {
       chooseFilterEffect('adaptive-wide-angle', 'Adaptive Wide Angle (local approximation)');
     else if (command === 'filter-lens-flare')
       chooseFilterEffect('lens-flare', 'Lens Flare (local approximation)');
+    else if (command === 'filter-light-rays')
+      chooseFilterEffect('light-rays', 'Light Rays (local approximation)');
     else if (command === 'filter-vanishing-point') return applyPerspectiveWarp('Vanishing Point');
     else if (command === 'filter-displace')
       chooseFilterEffect('displace', 'Displace (procedural local approximation)');
@@ -13112,20 +18264,20 @@ export default function Home() {
       chooseFilterEffect('zigzag', 'ZigZag (radial local approximation)');
     else if (command === 'crop') {
       if (slicePreview) cancelSlicePreview();
-      setTool('crop');
+      activateTool('crop');
       setNotice('Drag on the image to crop');
     } else if (command === 'perspective-crop') {
-      setTool('perspective-crop');
+      activateTool('perspective-crop');
       setNotice('Drag on the image to define a perspective crop');
     } else if (command === 'slice') {
       if (cropPreview) cancelCropPreview();
       if (perspectiveCropPreview) cancelPerspectiveCropPreview();
-      setTool('slice');
-      setCloneSource(null);
+      activateTool('slice');
+      clearCloneSource();
       setNotice('Drag on the image to select a slice');
     } else if (command === 'slice-select') {
-      setTool('slice-select');
-      setCloneSource(null);
+      activateTool('slice-select');
+      clearCloneSource();
       setNotice(
         current().slices?.length
           ? 'Click a saved slice to select and edit it'
@@ -13133,8 +18285,8 @@ export default function Home() {
       );
     } else if (command === 'frame') {
       if (slicePreview) cancelSlicePreview();
-      setTool('frame');
-      setCloneSource(null);
+      activateTool('frame');
+      clearCloneSource();
       setNotice('Drag on the image to define an independent artboard');
     } else if (command === 'rotate-left') return transform('left');
     else if (command === 'rotate-right') return transform('right');
@@ -13153,10 +18305,10 @@ export default function Home() {
     else if (command === 'screen-full-menu')
       setWorkspaceScreenMode('full-menu');
     else if (command === 'screen-full') setWorkspaceScreenMode('full');
-    else if (command === 'zoom-in') setZoom((v) => Math.min(140, v + 10));
-    else if (command === 'zoom-out') setZoom((v) => Math.max(20, v - 10));
+    else if (command === 'zoom-in') zoomBy(1);
+    else if (command === 'zoom-out') zoomBy(-1);
     else if (command === 'fit') fitToScreen();
-    else if (command === 'actual') setZoom(100);
+    else if (command === 'actual') actualPixels();
   };
   const runActionRecipe = async (id: string) => {
     const action = actions.find((candidate) => candidate.id === id);
@@ -13218,6 +18370,7 @@ export default function Home() {
         'fit',
         'actual',
         'project-save',
+        'project-save-as',
         'screen-standard',
         'screen-full-menu',
         'screen-full',
@@ -13269,11 +18422,15 @@ export default function Home() {
       case 'cut-layer':
         return !layer || locked || frame.layers.length <= 1;
       case 'paste-layer':
-        return !hasClipboard || frame.layers.length >= 32;
+        return !hasClipboard || frame.layers.length >= MAX_DOCUMENT_LAYERS;
+      case 'paste-clipboard-image':
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'paste-special':
-        return !hasClipboard || frame.layers.length >= 32;
+        return !hasClipboard || frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'new-layer':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
+      case 'trim-layer':
+        return !layer || locked || !canTrimRasterLayer(layer);
       case 'clear-layer':
       case 'fill-layer':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
@@ -13284,7 +18441,7 @@ export default function Home() {
             const candidate = frame.layers.find((item) => item.id === id);
             return !candidate || layerIsLocked(frame, candidate);
           }) ||
-          frame.layers.length + selectedIdsForFrame(frame).length > 32
+          frame.layers.length + selectedIdsForFrame(frame).length > MAX_DOCUMENT_LAYERS
         );
       case 'link-smart-objects':
         return (
@@ -13324,7 +18481,7 @@ export default function Home() {
             const candidate = frame.layers.find((item) => item.id === id);
             return !candidate || Boolean(candidate.groupId) || layerIsLocked(frame, candidate);
           }) ||
-          (frame.groups || []).length >= 32
+          (frame.groups || []).length >= MAX_DOCUMENT_GROUPS
         );
       case 'ungroup-layer':
         return (
@@ -13368,7 +18525,7 @@ export default function Home() {
       case 'prompt-to-edit':
         return !layer || !layer.visible || locked;
       case 'generate-image':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'invert-layer-mask':
       case 'toggle-layer-mask':
       case 'remove-layer-mask':
@@ -13453,6 +18610,7 @@ export default function Home() {
       case 'filter-tree':
       case 'filter-clouds':
       case 'filter-lens-flare':
+      case 'filter-light-rays':
       case 'filter-picture-frame':
       case 'filter-fibers':
       case 'filter-difference-clouds':
@@ -13496,6 +18654,7 @@ export default function Home() {
       case 'quick-mask':
         return !frame;
       case 'save-selection':
+      case 'download-selection':
         return !frame.selection;
       case 'load-selection':
         return !frame;
@@ -13510,7 +18669,7 @@ export default function Home() {
       case 'transform-selection':
         return !frame.selection;
       case 'create-work-path':
-        return !frame.selection || frame.layers.length >= 32;
+        return !frame.selection || frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'define-custom-path':
         return !layer || layer.kind !== 'path' || locked;
       case 'update-custom-path':
@@ -13570,6 +18729,9 @@ export default function Home() {
         return !frame.selection;
       case 'stroke-selection':
         return !frame.selection || !layer || layer.kind !== 'raster' || locked || !layer.visible;
+      case 'stroke-path-brush':
+        return !frame.layers.some((item) => item.kind === 'path') ||
+          !frame.layers.some((item) => item.kind === 'raster' && item.visible && !layerIsLocked(frame, item));
       case 'hide-layer':
         return !layer || Boolean(groupForLayer(frame, layer)?.locked);
       case 'lock-layers':
@@ -13588,6 +18750,16 @@ export default function Home() {
           return !planSelectedLayerMerge(frame).ok;
         return !planLayerMerge(frame).ok;
       }
+      case 'type-aa-none':
+      case 'type-aa-sharp':
+      case 'type-aa-crisp':
+      case 'type-aa-strong':
+      case 'type-aa-smooth':
+        return !layer || layer.kind !== 'text' || locked;
+      case 'type-convert-point':
+        return !layer || layer.kind !== 'text' || locked || (layer.textMode ?? 'point') === 'point';
+      case 'type-convert-paragraph':
+        return !layer || layer.kind !== 'text' || locked || layer.textMode === 'paragraph' || layer.orientation === 'vertical';
       case 'text-align-left':
       case 'text-align-center':
       case 'text-align-right':
@@ -13604,7 +18776,7 @@ export default function Home() {
       case 'text-on-path':
         return !layer || layer.kind !== 'text' || locked || !frame.layers.some((candidate) => candidate.kind === 'path');
       case 'paste-lorem':
-        return frame.layers.length >= 32;
+        return frame.layers.length >= MAX_DOCUMENT_LAYERS;
       case 'convert-to-shape':
         return !layer || layer.kind !== 'text' || locked || !layer.visible;
       case 'rasterize-type':
@@ -13672,10 +18844,134 @@ export default function Home() {
       gesture.current = null;
       void paint(current());
     }
-    setTool(id);
-    setCloneSource(null);
+    activateTool(id);
+    clearCloneSource();
     closeToolFlyout();
     setNotice(toolSelectionNotice(id, label));
+  };
+  // Tool presets (docs/tool-presets-contract.md). Settings only: applying a
+  // preset or resetting options never changes the document or its history.
+  const toolSettingValues: ToolSettingValues = {
+    color, backgroundColor, size, hardness, brushOpacity, brushBlendMode, brushPreset,
+    spacing: brushSpacing, brushSmoothing, brushScatter, brushDynamics, brushTexture, brushDual,
+    brushBristle, brushWetEdges, brushBuildUp, brushFlow, angle: brushAngle, roundness: brushRoundness,
+    flipX: brushFlipX, flipY: brushFlipY, pressureSize, pressureOpacity, pressureCurve,
+    secondaryBrushPreset, paintSymmetry, patternId, patternTileSize, redEyeThreshold, redEyeAmount,
+    colorTolerance, tonalExposure, tonalRange, spongeMode, spongeVibrance, mixerBrush, historyBrush,
+    artHistoryBrush, gradientMode, gradientEnd, gradientMidpoint, gradientMidpointPosition,
+    gradientReverse, gradientDither, gradientNoise, gradientBlend, gradientOpacity, gradientStops,
+    polygonVariant, polygonSides, polygonInnerRadius, text, fontFamily, fontSize, fontPreviewSize,
+    selectionOperation,
+  };
+  const toolSettingSetters: { [K in ToolSettingKey]: (value: ToolSettingValues[K]) => void } = {
+    color: setColor, backgroundColor: setBackgroundColor, size: (value) => setSize(clampBrushSize(value)),
+    hardness: setHardness, brushOpacity: setBrushOpacity, brushBlendMode: setBrushBlendMode,
+    brushPreset: setBrushPreset, spacing: setBrushSpacing, brushSmoothing: setBrushSmoothing,
+    brushScatter: setBrushScatter, brushDynamics: setBrushDynamics, brushTexture: setBrushTexture,
+    brushDual: setBrushDual, brushBristle: setBrushBristle, brushWetEdges: setBrushWetEdges,
+    brushBuildUp: setBrushBuildUp, brushFlow: setBrushFlow, angle: setBrushAngle,
+    roundness: setBrushRoundness, flipX: setBrushFlipX, flipY: setBrushFlipY,
+    pressureSize: setPressureSize, pressureOpacity: setPressureOpacity, pressureCurve: setPressureCurve,
+    secondaryBrushPreset: setSecondaryBrushPreset, paintSymmetry: setPaintSymmetry, patternId: setPatternId,
+    patternTileSize: setPatternTileSize, redEyeThreshold: setRedEyeThreshold, redEyeAmount: setRedEyeAmount,
+    colorTolerance: setColorTolerance, tonalExposure: setTonalExposure, tonalRange: setTonalRange,
+    spongeMode: setSpongeMode, spongeVibrance: setSpongeVibrance, mixerBrush: setMixerBrush,
+    historyBrush: setHistoryBrush, artHistoryBrush: setArtHistoryBrush, gradientMode: setGradientMode,
+    gradientEnd: setGradientEnd, gradientMidpoint: setGradientMidpoint,
+    gradientMidpointPosition: setGradientMidpointPosition, gradientReverse: setGradientReverse,
+    gradientDither: setGradientDither, gradientNoise: setGradientNoise, gradientBlend: setGradientBlend,
+    gradientOpacity: setGradientOpacity, gradientStops: setGradientStops, polygonVariant: setPolygonVariant,
+    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius, text: setText,
+    fontFamily: setFontFamily, fontSize: setFontSize, fontPreviewSize: setFontPreviewSize,
+    selectionOperation: setSelectionOperation,
+  };
+  const applyToolSettingValues = (values: Partial<ToolSettingValues>) => {
+    for (const key of Object.keys(values) as ToolSettingKey[]) {
+      const value = values[key];
+      if (value !== undefined) (toolSettingSetters[key] as (next: unknown) => void)(value);
+    }
+  };
+  const presetTool = isPresetTool(tool) ? tool : undefined;
+  const appliedToolPreset = presetTool
+    ? toolPresets.find((preset) => preset.id === appliedToolPresets[presetTool])
+    : undefined;
+  const appliedToolPresetModified = appliedToolPreset ? !toolPresetMatches(appliedToolPreset, toolSettingValues) : false;
+  const applyToolPreset = (preset: ToolPreset) => {
+    if (preset.tool !== tool) selectToolbarTool(preset.tool, PRESET_TOOL_LABELS[preset.tool]);
+    applyToolSettingValues(resolveToolPresetSettings(preset));
+    setAppliedToolPresets((current) => ({ ...current, [preset.tool]: preset.id }));
+    setNotice(`Tool preset “${preset.label}” applied to ${PRESET_TOOL_LABELS[preset.tool]}`);
+  };
+  /** Update the library and persist it; storage failures are reported, never fatal. */
+  const commitToolPresets = (next: ToolPreset[], message: string) => {
+    setToolPresets(next);
+    setNotice(
+      writeStoredToolPresets(browserPresetStorage(), next)
+        ? message
+        : `${message} (not stored: device storage is unavailable or full)`,
+    );
+  };
+  const saveToolPreset = (label: string, include: ToolPresetInclude) => {
+    if (!presetTool) return;
+    try {
+      const preset = createToolPreset(crypto.randomUUID(), label, presetTool, toolSettingValues, include);
+      commitToolPresets(addToolPreset(toolPresets, preset), `Tool preset “${preset.label}” saved on this device`);
+      setAppliedToolPresets((current) => ({ ...current, [presetTool]: preset.id }));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool preset could not be saved');
+    }
+  };
+  const runToolPresetEdit = (edit: () => ToolPreset[], message: string) => {
+    try {
+      commitToolPresets(edit(), message);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool preset could not be changed');
+    }
+  };
+  const toolPresetLabel = (id: string) => toolPresets.find((preset) => preset.id === id)?.label ?? 'preset';
+  const deleteToolPresetById = (id: string) => {
+    const label = toolPresetLabel(id);
+    if (!window.confirm(`Delete the tool preset “${label}” from this device?`)) return;
+    runToolPresetEdit(() => deleteToolPreset(toolPresets, id), `Tool preset “${label}” deleted`);
+  };
+  const updateToolPresetById = (id: string) => {
+    const preset = toolPresets.find((item) => item.id === id);
+    if (!preset || preset.tool !== tool) return;
+    runToolPresetEdit(() => updateToolPreset(toolPresets, id, toolSettingValues), `Tool preset “${preset.label}” updated from the current options`);
+    setAppliedToolPresets((current) => ({ ...current, [preset.tool]: preset.id }));
+  };
+  const exportToolPresetFile = () => {
+    downloadBlob(new Blob([exportToolPresets(toolPresets)], { type: 'application/json' }), 'pixelforge-tool-presets.json');
+    setNotice(`${toolPresets.length} tool preset${toolPresets.length === 1 ? '' : 's'} exported as pixelforge-tool-presets.json`);
+  };
+  const importToolPresetFile = async (file: File) => {
+    try {
+      if (file.size > TOOL_PRESET_IMPORT_MAX_BYTES) throw new Error('The tool preset file is too large (512 KB maximum)');
+      const { presets, rejected } = parseToolPresetImport(await file.text());
+      const merged = mergeImportedToolPresets(toolPresets, presets, () => crypto.randomUUID());
+      commitToolPresets(
+        merged.presets,
+        `Imported ${merged.added} tool preset${merged.added === 1 ? '' : 's'}` +
+          (rejected ? `; ${rejected} invalid skipped` : '') +
+          (merged.skipped ? `; ${merged.skipped} over the limit skipped` : ''),
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Tool presets could not be imported');
+    }
+  };
+  const resetCurrentTool = () => {
+    if (!presetTool) return;
+    const label = PRESET_TOOL_LABELS[presetTool];
+    if (!window.confirm(`Reset ${label} options to their defaults? Options shared with related tools reset too.`)) return;
+    applyToolSettingValues(toolDefaultSettings(presetTool));
+    setAppliedToolPresets((current) => ({ ...current, [presetTool]: undefined }));
+    setNotice(`${label} options reset to defaults`);
+  };
+  const resetAllTools = () => {
+    if (!window.confirm('Reset the options of every tool to their defaults? Saved presets and colours are kept.')) return;
+    applyToolSettingValues(allToolDefaultSettings());
+    setAppliedToolPresets({});
+    setNotice('All tool options reset to defaults');
   };
   const beginToolHold = (id: Tool, button: HTMLButtonElement) => {
     stopToolHold();
@@ -13737,6 +19033,54 @@ export default function Home() {
     hints: findSpellingHints(layer.text),
   }));
   const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
+  const openLayerImageFile = () => layerFile.current?.click();
+  /** One Layers panel slice (docs/contextual-sidebar-contract.md). */
+  const renderLayersPanel = (current: Frame, part: LayersPanelPart, pixelUsage?: number) => (
+    <LayersPanel
+      frame={current}
+      part={part}
+      pixelUsage={pixelUsage}
+      select={selectLayerFromPanel}
+      selectAll={selectAllLayers}
+      deselectLayers={deselectLayers}
+      isolateLayers={isolateLayers}
+      edit={editLayerFromPanel}
+      add={addPaint}
+      addAdjustment={addAdjustmentLayer}
+      addSmartObject={() => chooseSmartObjectFile(false)}
+      nestSelectedAsSmartObject={() => void nestSelectedAsSmartObject()}
+      replaceSmartObject={() => chooseSmartObjectFile(true)}
+      duplicate={duplicate}
+      remove={remove}
+      reorder={reorder}
+      arrange={arrangeLayers}
+      moveLayers={moveLayersFromPanel}
+      setLayerSelection={setLayerSelection}
+      dropFiles={(files, target) => void dropFiles(files, { target })}
+      groupActive={groupActiveLayer}
+      ungroupActive={ungroupActiveLayer}
+      editGroup={editGroup}
+      align={alignActiveLayer}
+      distribute={distributeGroupLayers}
+      rasterize={() => void rasterize()}
+      importImage={openLayerImageFile}
+      createMask={createMaskFromSelection}
+      invertMask={invertLayerMask}
+      toggleMask={toggleLayerMask}
+      clearMask={clearMask}
+      createVectorMask={createVectorMask}
+      invertVectorMask={invertVectorMask}
+      toggleVectorMask={toggleVectorMask}
+      clearVectorMask={clearVectorMask}
+      createClipping={createClippingMask}
+      releaseClipping={releaseClippingMask}
+      clearSelection={() => setSelection(undefined)}
+      invertSelection={invertSelection}
+      selectionOperation={selectionOperation}
+      setSelectionOperation={setSelectionOperation}
+      setSelectionFeather={setSelectionFeather}
+    />
+  );
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <main
@@ -13746,33 +19090,49 @@ export default function Home() {
       data-testid="editor-shell"
       data-screen-mode={screenMode}
       aria-busy={!ready || doc.rendering}
+      // Only the initial load dims the editor. Renders (every stroke preview,
+      // click and commit) keep aria-busy for assistive technology and tests,
+      // but must never change what is on screen: dimming the shell on
+      // aria-busy made the whole page flash on each click.
+      data-loading={ready ? 'false' : 'true'}
       inert={!ready || cloudBusy || recovering}
       tabIndex={-1}
       onDragOver={(e) => {
+        if (!Array.from(e.dataTransfer.types).includes('Files')) return;
         e.preventDefault();
-        setDrag(true);
+        // Shift (or no open document) opens the file as a new document, as
+        // before; otherwise images are placed as layers.
+        const mode = !frame || e.shiftKey ? 'open' : 'layer';
+        e.dataTransfer.dropEffect = 'copy';
+        if (drag !== mode) setDrag(mode);
       }}
-      onDragLeave={() => setDrag(false)}
+      onDragLeave={(e) => {
+        // Only clear when the pointer leaves the editor, not a child element.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(false);
+      }}
       onDrop={(e) => {
         e.preventDefault();
         setDrag(false);
-        void load(e.dataTransfer.files[0]);
-      }}
-      onPaste={(e) => {
-        // Keep the internal layer clipboard authoritative when it exists. If
-        // it does not, accept an image item from the browser/OS clipboard as
-        // a new editable raster layer. Text and unsupported clipboard types
-        // remain untouched so native editing controls keep their behavior.
-        if (hasClipboard) return;
-        const image = Array.from(e.clipboardData.items).find((item) =>
-          item.kind === 'file' && item.type.startsWith('image/'),
-        );
-        const file = image?.getAsFile();
-        if (!file) return;
-        e.preventDefault();
-        void load(file, true);
+        const files = Array.from(e.dataTransfer.files);
+        if (!files.length) return;
+        // The Layers panel handles drops at its own drop line.
+        if ((e.target as Element).closest?.('[data-file-drop-zone="layers"]') && frame && !e.shiftKey) return;
+        const target = e.target as Node;
+        const onCanvas = Boolean(canvas.current && (canvas.current === target || canvas.current.contains(target)));
+        void dropFiles(files, {
+          open: e.shiftKey,
+          point: onCanvas && frame ? point(e) : undefined,
+        });
       }}
     >
+      <input
+        ref={referenceFile}
+        data-testid="reference-input"
+        className="hidden"
+        type="file"
+        accept="image/*,.svg,.svgz,.heic,.heif,.tif,.tiff,.psd,.psb,.pdf"
+        onChange={(event) => void placeReference(event.target.files?.[0])}
+      />
       <input
         ref={layerFile}
         data-testid="layer-input"
@@ -13865,6 +19225,9 @@ export default function Home() {
           apply={applyGenerateImage}
         />
       )}
+      {newDocumentOpen && (
+        <NewDocumentDialog close={() => setNewDocumentOpen(false)} apply={createDocument} />
+      )}
       {canvasSizing && (
         <CanvasSizeDialog
           width={canvasSizing.width}
@@ -13896,6 +19259,43 @@ export default function Home() {
           mode={selectionRefineValue}
           close={() => setSelectionRefining(null)}
           apply={(radius) => void applySelectionRefinement(radius)}
+        />
+      )}
+      {strokePathDialog && frame && (
+        <StrokePathDialog
+          paths={frame.layers.filter((item) => item.kind === 'path').reverse().map((item) => ({ id: item.id, name: item.name }))}
+          targets={frame.layers
+            .filter((item) => item.kind === 'raster' && item.visible && !layerIsLocked(frame, item))
+            .reverse()
+            .map((item) => ({ id: item.id, name: item.name }))}
+          initial={strokePathSettings}
+          initialPathLayerId={strokePathDialog.pathLayerId}
+          initialTargetLayerId={strokePathDialog.targetLayerId}
+          close={() => setStrokePathDialog(null)}
+          apply={(request) => void strokePathWithBrush(request)}
+        />
+      )}
+      {saveSelectionOpen && frame?.selection && (
+        <SaveSelectionDialog
+          initialName={savedSelectionName}
+          existingNames={(frame.savedSelections?.selections || []).map((entry) => entry.name)}
+          close={() => setSaveSelectionOpen(false)}
+          save={(name) => {
+            setSaveSelectionOpen(false);
+            saveCurrentSelection(name);
+          }}
+        />
+      )}
+      {editFillOpen && frame && (
+        <EditFillDialog
+          foreground={color}
+          background={backgroundColor}
+          hasSelection={Boolean(frame.selection)}
+          close={() => setEditFillOpen(false)}
+          apply={(options) => {
+            setEditFillOpen(false);
+            void fillActiveLayer(options);
+          }}
         />
       )}
       {selectionFeathering && (
@@ -13986,7 +19386,7 @@ export default function Home() {
           close={() => setCommandSearchOpen(false)}
           run={(command) => {
             setCommandSearchOpen(false);
-            void runCommand(command as Command);
+            withSidebarTrigger('command-search', 'unknown', () => void runCommand(command as Command));
           }}
         />
       )}
@@ -14025,7 +19425,7 @@ export default function Home() {
           close={() => setFilterGalleryOpen(false)}
           apply={(command) => {
             setFilterGalleryOpen(false);
-            void runCommand(command as Command);
+            withSidebarTrigger('dialog', 'unknown', () => void runCommand(command as Command));
           }}
         />
       )}
@@ -14040,7 +19440,7 @@ export default function Home() {
           close={() => setAdjustmentsOpen(false)}
           choose={(command: AdjustmentCommand) => {
             setAdjustmentsOpen(false);
-            void runCommand(command);
+            withSidebarTrigger('dialog', 'unknown', () => void runCommand(command));
           }}
         />
       )}
@@ -14099,7 +19499,7 @@ export default function Home() {
       )}
       {updateTextLayersOpen && (
         <UpdateTextLayersDialog
-          initialFont={textLayers[0]?.fontFamily && FONTS.includes(textLayers[0].fontFamily as (typeof FONTS)[number]) ? textLayers[0].fontFamily as (typeof FONTS)[number] : 'Arial'}
+          initialFont={textLayers[0]?.fontFamily && isSelectableFontFamily(textLayers[0].fontFamily) ? textLayers[0].fontFamily : 'Arial'}
           initialSize={textLayers[0]?.fontSize ?? fontSize}
           count={textLayers.length}
           close={() => setUpdateTextLayersOpen(false)}
@@ -14118,7 +19518,16 @@ export default function Home() {
         <SpellcheckDialog layers={spellcheckLayers} close={() => setSpellcheckOpen(false)} />
       )}
       {missingFontsOpen && (
-        <MissingFontsDialog families={FONTS} close={() => setMissingFontsOpen(false)} />
+        <MissingFontsDialog families={[...new Set([...FONTS, ...textLayers.map((layer) => layer.fontFamily)])]} close={() => setMissingFontsOpen(false)} />
+      )}
+      {glyphsOpen && (
+        <Suspense fallback={null}>
+          <GlyphsPanel
+            currentFamily={activeTextLayer?.fontFamily ?? fontFamily}
+            close={() => setGlyphsOpen(false)}
+            onInsert={(glyph, family, mode) => void insertGlyph(glyph, family, mode)}
+          />
+        </Suspense>
       )}
       {menuSettingsOpen && (
         <MenuSettingsDialog
@@ -14275,9 +19684,13 @@ export default function Home() {
                             ? 'Planned for a later roadmap stage'
                             : undefined
                         }
-                        onClick={() => {
+                        onClick={(event) => {
                           setActiveMenu(null);
-                          void runCommand(item.command);
+                          withSidebarTrigger(
+                            'menu',
+                            event.detail === 0 ? 'keyboard' : 'pointer',
+                            () => void runCommand(item.command),
+                          );
                         }}
                       >
                         <span>{item.label}</span>
@@ -14313,8 +19726,8 @@ export default function Home() {
           <button className="export" onClick={() => download()}>
             <Download /> Export
           </button>
-          <ReleaseStatus />
-          <AccountMenu member={member} checking={checking} />
+          <ReleaseStatus onReload={() => void reloadForNewVersion()} />
+          <AccountMenu member={member} checking={checking} unavailable={signInUnavailable} retry={retrySignIn} />
         </div>
       </header>
       <section className="docbar">
@@ -14403,14 +19816,18 @@ export default function Home() {
                         onKeyDown={(event) =>
                           openToolFlyoutFromKeyboard(event, id)
                         }
-                        onClick={() => {
+                        onClick={(event) => {
                           if (toolHoldOpened.current) {
                             // Releasing a long press opens the flyout without
                             // immediately selecting the parent tool.
                             toolHoldOpened.current = false;
                             return;
                           }
-                          selectToolbarTool(id, label);
+                          withSidebarTrigger(
+                            'toolbar',
+                            event.detail === 0 ? 'keyboard' : 'pointer',
+                            () => selectToolbarTool(id, label),
+                          );
                         }}
                         aria-label={`${label} tool`}
                         aria-pressed={tool === id}
@@ -14421,15 +19838,11 @@ export default function Home() {
                               toolFlyoutAnchor?.dataset.toolId === id
                             : undefined
                         }
-                        title={
-                          flyout
-                            ? `${label} (${key}) · press and hold for subtools`
-                            : `${label} (${key})`
-                        }
+                        title={`${label}${id === 'frame' ? ' (artboard)' : ''}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
                       >
-                        <Icon />
+                        <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
-                        <kbd>{key}</kbd>
+                        {key && <kbd>{key}</kbd>}
                         {subtools.length > 1 && (
                           <span
                             className="tool-subtool-arrow"
@@ -14470,7 +19883,9 @@ export default function Home() {
                                 (candidate) => candidate.id === subtoolId,
                               );
                               if (subtool)
-                                selectToolbarTool(subtool.id, subtool.label);
+                                withSidebarTrigger('flyout', 'unknown', () =>
+                                  selectToolbarTool(subtool.id, subtool.label),
+                                );
                             }}
                             onClose={closeToolFlyout}
                           />
@@ -14486,7 +19901,13 @@ export default function Home() {
             className={
               quickMasking ? 'active quick-mask-tool' : 'quick-mask-tool'
             }
-            onClick={toggleQuickMask}
+            onClick={(event) =>
+              withSidebarTrigger(
+                'toolbar',
+                event.detail === 0 ? 'keyboard' : 'pointer',
+                toggleQuickMaskFromUser,
+              )
+            }
             aria-label="Quick Mask mode"
             aria-pressed={quickMasking}
             title="Quick Mask mode (Q)"
@@ -14517,17 +19938,33 @@ export default function Home() {
             <small>Background</small>
           </label>
         </aside>
+        {/* The zoom pill sits on this non-scrolling shell so it stays pinned to
+            the visible stage while the canvas scrolls (audit B-03). */}
+        <div className="stage-shell">
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
+          {isTypeTool(tool) && (
+            <TypeOptionsBar
+              view={typeView}
+              actions={typeActions}
+              fonts={ALL_FONT_FAMILIES}
+              panelOpen={typePanelsOpen}
+              onTogglePanel={toggleTypePanel}
+            />
+          )}
           {saveStatus === LOCAL_CONFLICT && (
             <div role="alert" className="draft-conflict">
               {LOCAL_CONFLICT}
             </div>
           )}
           {drag && (
-            <div className="drop">
+            <div className="drop" data-testid="drop-overlay" data-mode={drag}>
               <ImagePlus />
-              <b>Drop your photo here</b>
-              <span>JPG, PNG, WEBP and more</span>
+              <b>{drag === 'layer' ? 'Drop to add as layer' : 'Drop to open'}</b>
+              <span>
+                {drag === 'layer'
+                  ? 'Images are placed above the selected layer · hold Shift to open instead'
+                  : 'JPG, PNG, WEBP and more'}
+              </span>
             </div>
           )}
           {cropPreview && (
@@ -14551,116 +19988,6 @@ export default function Home() {
                 type="button"
                 data-testid="crop-cancel"
                 onClick={cancelCropPreview}
-              >
-                Cancel
-              </button>
-            </fieldset>
-          )}
-          {perspectiveCropPreview && (
-            <fieldset
-              className="crop-preview-controls perspective-crop-controls"
-              aria-label="Perspective crop controls"
-              data-testid="perspective-crop-controls"
-            >
-              <span>
-                Perspective crop · {perspectiveCropPreview.width} ×{' '}
-                {perspectiveCropPreview.height} px
-              </span>
-              <div className="perspective-crop-fields">
-                {(
-                  [
-                    'Top left',
-                    'Top right',
-                    'Bottom right',
-                    'Bottom left',
-                  ] as const
-                ).map((label, index) => (
-                    <span key={label}>
-                      <label>
-                        {label} X
-                        <input
-                          aria-label={`${label} X`}
-                          type="number"
-                          min="0"
-                          max={perspectiveCropPreview.frame.w}
-                          value={Math.round(perspectiveCropPreview.quad[index].x)}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            if (!Number.isFinite(value)) return;
-                          const quad = perspectiveCropPreview.quad.map(
-                            (point) => ({ ...point }),
-                          ) as CropQuad;
-                            quad[index] = { ...quad[index], x: value };
-                            updatePerspectiveCropPreview({ quad });
-                          }}
-                        />
-                      </label>
-                      <label>
-                        {label} Y
-                        <input
-                          aria-label={`${label} Y`}
-                          type="number"
-                          min="0"
-                          max={perspectiveCropPreview.frame.h}
-                          value={Math.round(perspectiveCropPreview.quad[index].y)}
-                          onChange={(event) => {
-                            const value = Number(event.target.value);
-                            if (!Number.isFinite(value)) return;
-                          const quad = perspectiveCropPreview.quad.map(
-                            (point) => ({ ...point }),
-                          ) as CropQuad;
-                            quad[index] = { ...quad[index], y: value };
-                            updatePerspectiveCropPreview({ quad });
-                          }}
-                        />
-                      </label>
-                    </span>
-                ))}
-                <label>
-                  Output width
-                  <input
-                    aria-label="Perspective output width"
-                    type="number"
-                    min="1"
-                    max="16000"
-                    value={perspectiveCropPreview.width}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value))
-                        updatePerspectiveCropPreview({ width: value });
-                    }}
-                  />
-                </label>
-                <label>
-                  Output height
-                  <input
-                    aria-label="Perspective output height"
-                    type="number"
-                    min="1"
-                    max="16000"
-                    value={perspectiveCropPreview.height}
-                    onChange={(event) => {
-                      const value = Number(event.target.value);
-                      if (Number.isFinite(value))
-                        updatePerspectiveCropPreview({ height: value });
-                    }}
-                  />
-                </label>
-              </div>
-              <button
-                type="button"
-                data-testid="perspective-crop-apply"
-                disabled={perspectiveCropApplying}
-                onClick={() => void applyPerspectiveCropPreview()}
-              >
-                {perspectiveCropApplying
-                  ? 'Applying…'
-                  : 'Apply perspective crop'}
-              </button>
-              <button
-                type="button"
-                data-testid="perspective-crop-cancel"
-                onClick={cancelPerspectiveCropPreview}
               >
                 Cancel
               </button>
@@ -14762,92 +20089,135 @@ export default function Home() {
               </button>
             </fieldset>
           )}
-          {frame?.artboards?.length ? (
-            <fieldset className="artboard-controls" aria-label="Artboard controls" data-testid="artboard-controls">
-              <label>
-                <span>Active artboard</span>
-                <select
-                  aria-label="Active artboard"
-                  value={frame.activeArtboardId || frame.artboards[0].id}
-                  onChange={(event) => selectArtboard(event.target.value)}
-                >
-                  {frame.artboards.map((item) => (
-                    <option key={item.id} value={item.id} disabled={!item.visible}>
-                      {item.name} ({item.w} × {item.h} px)
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="artboard-visibility-list" aria-label="Artboard visibility">
-                {frame.artboards.map((item) => (
-                  <label key={item.id} className="artboard-visibility-option">
-                    <input
-                      type="checkbox"
-                      aria-label={`Show ${item.name} artboard`}
-                      checked={item.visible}
-                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
-                    />
-                    <span>{item.name}</span>
-                  </label>
-                ))}
-              </div>
-              <label>
-                <span>Fit active layer</span>
-                <select
-                  aria-label="Artboard fit mode"
-                  defaultValue="cover"
-                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
-                >
-                  <option value="cover">Cover</option>
-                  <option value="contain">Contain</option>
-                  <option value="stretch">Stretch</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                data-testid="artboard-fit-active"
-                onClick={() => fitActiveLayerToArtboard('cover')}
-              >
-                Fit active layer to artboard
-              </button>
-              <button
-                type="button"
-                data-testid="artboard-replace-fit"
-                disabled={
-                  !frame.active ||
-                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
-                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
-                }
-                onClick={() => chooseSmartObjectFile(true, true)}
-              >
-                Replace smart object and fit
-              </button>
-              <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
-            </fieldset>
-          ) : null}
+          {audioPlayer.element}
+          {tool === 'audio-note' && audioDraft && frame && (
+            <AudioRecordPanel
+              key={`${audioDraft.x},${audioDraft.y}`}
+              existing={referencedAudioClips(history.current, audioClips.current)}
+              defaultLabel={nextAudioNoteLabel(frame.measurements)}
+              onCommit={commitAudioAnnotation}
+              onCancel={() => {
+                setAudioDraft(null);
+                setNotice('Audio annotation cancelled');
+              }}
+            />
+          )}
           <div
             className="canvas-wrap"
             data-testid="canvas-wrap"
             style={{
-              width: `${zoom}%`,
+              width: `${((frame?.w ?? 1200) * viewZoom) / 100}px`,
               transform: `rotate(${normalizeViewRotation(viewRotation)}deg)`,
               transformOrigin: 'center center',
             }}
             data-artboard-count={frame?.artboards?.length ?? 0}
             data-active-artboard={frame?.activeArtboardId ?? ''}
             data-view-rotation={normalizeViewRotation(viewRotation)}
+            data-view-zoom={viewZoom}
+            data-pixelated={viewZoom >= 200 ? 'true' : 'false'}
           >
             <canvas
               ref={canvas}
               data-testid="editor-canvas"
               data-rendering={doc.rendering ? 'true' : 'false'}
-              onPointerDown={(e) => void pointerDown(e)}
-              onPointerMove={pointerMove}
-              onPointerUp={(e) => void pointerUp(e)}
-              onPointerCancel={(e) => void pointerUp(e)}
+              onPointerDown={(e) => {
+                if (typePointer.current) typePointer.current.down(e);
+                else void pointerDown(e);
+              }}
+              onPointerMove={(e) => {
+                if (typePointer.current) typePointer.current.move(e);
+                else pointerMove(e);
+              }}
+              onPointerUp={(e) => {
+                if (typePointer.current) typePointer.current.up(e);
+                else void pointerUp(e).then(dropUnusedExpansion);
+              }}
+              onPointerCancel={(e) => {
+                if (typePointer.current) typePointer.current.up(e);
+                else void pointerUp(e).then(dropUnusedExpansion);
+              }}
               onDoubleClick={doubleClick}
               className={`tool-${tool}`}
             />
+            {frame && (
+              <TypeEditorOverlay
+                typeTool={typeTool}
+                frameWidth={frame.w}
+                frameHeight={frame.h}
+                toCanvas={point}
+                active={isTypeTool(tool) && !quickMasking}
+                registerHandlers={(handlers) => { typePointer.current = handlers; }}
+              />
+            )}
+            {frame && (
+              <AudioAnnotationMarkers
+                frame={frame}
+                items={audioAnnotations(frame)}
+                pending={tool === 'audio-note' ? audioDraft : null}
+                interactive={tool === 'audio-note'}
+                playing={audioPlayer.playing}
+                toFrame={point}
+                onToggle={toggleAudioNote}
+                onMove={moveAudioNote}
+                onDelete={deleteAudioNote}
+              />
+            )}
+            {frame && cloneSource && (tool === 'clone' || tool === 'heal')
+              ? (() => {
+                  // The source is stored in the layer placement it was picked
+                  // in; show it where the next stroke will sample on the canvas.
+                  const [a, b, c, d, e, f] = cloneSource.matrix,
+                    x = a * cloneSource.x + c * cloneSource.y + e,
+                    y = b * cloneSource.x + d * cloneSource.y + f,
+                    arm = Math.max(10, Math.max(frame.w, frame.h) / 60);
+                  return (
+                    <svg
+                      className="clone-source-overlay"
+                      data-testid="clone-source-marker"
+                      data-x={Math.round(x)}
+                      data-y={Math.round(y)}
+                      viewBox={`0 0 ${frame.w} ${frame.h}`}
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <circle cx={x} cy={y} r={arm * 0.6} />
+                      <line x1={x - arm} y1={y} x2={x + arm} y2={y} />
+                      <line x1={x} y1={y - arm} x2={x} y2={y + arm} />
+                    </svg>
+                  );
+                })()
+              : null}
+            {frame?.selection &&
+              selectionOutlineState?.selection === frame.selection &&
+              !selectionOutlineState.outline.empty &&
+              !quickMasking && (
+              <svg
+                className="selection-outline"
+                data-testid="selection-outline"
+                data-segments={selectionOutlineState.outline.segments}
+                data-step={selectionOutlineState.outline.step}
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path className="selection-outline-base" d={selectionOutlineState.outline.path} />
+                <path className="selection-outline-ants" d={selectionOutlineState.outline.path} />
+              </svg>
+            )}
+            {frame?.reference?.visible && isPngAsset(assets.current[frame.reference.asset]) && (
+              <img
+                className="reference-overlay"
+                data-testid="reference-overlay"
+                src={(assets.current[frame.reference.asset] as PngAsset).url}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                style={{
+                  opacity: frame.reference.opacity,
+                  objectFit: referenceObjectFit(frame.reference.fit),
+                }}
+              />
+            )}
             {quickMasking && (
               <canvas
                 ref={quickMaskOverlayCanvas}
@@ -14856,6 +20226,89 @@ export default function Home() {
                 aria-hidden="true"
               />
             )}
+            {frame && tool === 'brush' && brushStrands.enabled && (
+              <canvas
+                ref={strandOverlay}
+                className="strand-preview-overlay"
+                data-testid="strand-preview-overlay"
+                data-strands="0"
+                aria-hidden="true"
+                style={{ mixBlendMode: strandPreviewBlend(brushBlendMode) }}
+              />
+            )}
+            {frame && (paintSymmetryAppliesToTool(tool) || tool === 'smudge') && (
+              <PaintSymmetryOverlay
+                value={paintSymmetry}
+                onChange={setPaintSymmetry}
+                canvasWidth={frame.w}
+                canvasHeight={frame.h}
+                toCanvas={point}
+              />
+            )}
+            {(() => {
+              // On-canvas centre handle for centred filters. Dragging previews
+              // locally and commits one undoable edit on release; arrow keys
+              // nudge by one layer pixel (Shift: ten), Home recentres.
+              if (
+                !frame ||
+                !active ||
+                !isRasterContentLayer(active) ||
+                !active.visible ||
+                !isCenteredFilter(filterEffects.type)
+              )
+                return null;
+              const asset = assets.current[active.asset];
+              if (!asset) return null;
+              const center = filterCenterDrag ?? {
+                centerX: filterEffects.centerX,
+                centerY: filterEffects.centerY,
+              };
+              const at = filterCenterToFrame(active.matrix, asset.w, asset.h, center.centerX, center.centerY);
+              const fromPointer = (event: React.PointerEvent<HTMLButtonElement>) =>
+                filterCenterFromFrame(active.matrix, asset.w, asset.h, point(event));
+              const commitCenter = (next: { centerX: number; centerY: number }) => {
+                if (next.centerX !== filterEffects.centerX || next.centerY !== filterEffects.centerY)
+                  setFilterEffects(next);
+              };
+              return (
+                <div className="filter-center-overlay" data-testid="filter-center-overlay">
+                  <button
+                    type="button"
+                    className="filter-center-handle"
+                    data-testid="filter-center-handle"
+                    data-center-x={center.centerX}
+                    data-center-y={center.centerY}
+                    style={{ left: `${(at.x / frame.w) * 100}%`, top: `${(at.y / frame.h) * 100}%` }}
+                    aria-label={`Filter center ${filterCenterPercent(center.centerX)}% across, ${filterCenterPercent(center.centerY)}% down. Drag, or use arrow keys to move one pixel, Shift for ten, Home to recenter.`}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      event.currentTarget.setPointerCapture?.(event.pointerId);
+                      const next = fromPointer(event);
+                      if (next) setFilterCenterDrag(next);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!filterCenterDrag) return;
+                      const next = fromPointer(event);
+                      if (next) setFilterCenterDrag(next);
+                    }}
+                    onPointerUp={(event) => {
+                      if (!filterCenterDrag) return;
+                      const next = fromPointer(event) ?? filterCenterDrag;
+                      setFilterCenterDrag(null);
+                      commitCenter(next);
+                    }}
+                    onPointerCancel={() => setFilterCenterDrag(null)}
+                    onKeyDown={(event) => {
+                      const next = nudgeFilterCenter(center, asset.w, asset.h, event.key, event.shiftKey);
+                      if (!next) return;
+                      event.preventDefault();
+                      commitCenter(next);
+                    }}
+                  />
+                </div>
+              );
+            })()}
             {frame && (frame.measurements?.length || measurementPreview) ? (
               <svg
                 className="measurement-overlay"
@@ -14890,24 +20343,42 @@ export default function Home() {
                           y2={item.end.y}
                         />
                         <text x={labelX} y={labelY}>
-                          {formatMeasurement(item.pixels, item.angle)}
+                          {formatMeasurement(item.pixels, photoshopAngle(item.start, item.end))}
                         </text>
                       </g>
                     );
                   }
-                  if (item.kind === 'note')
+                  // Audio markers are interactive HTML (AudioAnnotationMarkers).
+                  if (item.kind === 'audio') return null;
+                  if (item.kind === 'note') {
+                    const at = noteDrag?.id === item.id ? noteDrag : item;
                     return (
-                      <g key={item.id} className="measurement-note">
-                        <circle cx={item.x} cy={item.y} r="7" />
-                        <text x={item.x + 11} y={item.y + 4}>
+                      <g
+                        key={item.id}
+                        className="measurement-note"
+                        data-testid="note-marker"
+                        data-note-id={item.id}
+                        data-x={Math.round(at.x)}
+                        data-y={Math.round(at.y)}
+                      >
+                        <circle cx={at.x} cy={at.y} r="7" style={item.color ? { fill: item.color } : undefined} />
+                        <text x={at.x + 11} y={at.y + 4}>
                           {item.text}
                         </text>
                       </g>
                     );
+                  }
+                  // Count label size is a view option; the circle scales with it.
+                  const countSize = navigationTools.countLabelSize;
                   return (
-                    <g key={item.id} className="measurement-count">
-                      <circle cx={item.x} cy={item.y} r="11" />
-                      <text x={item.x} y={item.y + 4}>
+                    <g key={item.id} className="measurement-count" data-group={countGroupOf(item)}>
+                      <circle
+                        cx={item.x}
+                        cy={item.y}
+                        r={Math.round(countSize * 0.92)}
+                        style={item.color ? { fill: item.color } : undefined}
+                      />
+                      <text x={item.x} y={item.y + countSize / 3} style={{ fontSize: `${countSize}px` }}>
                         {item.index}
                       </text>
                     </g>
@@ -14939,7 +20410,7 @@ export default function Home() {
                           measurementPreview.start,
                           measurementPreview.end,
                         ),
-                        measurementAngle(
+                        photoshopAngle(
                           measurementPreview.start,
                           measurementPreview.end,
                         ),
@@ -14994,34 +20465,31 @@ export default function Home() {
                   width={cropPreview.width}
                   height={cropPreview.height}
                 />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left + cropPreview.width / 3}
-                  y1={cropPreview.top}
-                  x2={cropPreview.left + cropPreview.width / 3}
-                  y2={cropPreview.top + cropPreview.height}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left + (cropPreview.width * 2) / 3}
-                  y1={cropPreview.top}
-                  x2={cropPreview.left + (cropPreview.width * 2) / 3}
-                  y2={cropPreview.top + cropPreview.height}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left}
-                  y1={cropPreview.top + cropPreview.height / 3}
-                  x2={cropPreview.left + cropPreview.width}
-                  y2={cropPreview.top + cropPreview.height / 3}
-                />
-                <line
-                  className="crop-preview-guide"
-                  x1={cropPreview.left}
-                  y1={cropPreview.top + (cropPreview.height * 2) / 3}
-                  x2={cropPreview.left + cropPreview.width}
-                  y2={cropPreview.top + (cropPreview.height * 2) / 3}
-                />
+                {(() => {
+                  // Overlay option: rule of thirds, an 8 × 8 grid, or none.
+                  const parts = navigationTools.cropOverlay === 'grid' ? 8 : navigationTools.cropOverlay === 'thirds' ? 3 : 0;
+                  return Array.from({ length: Math.max(0, parts - 1) }, (_, index) => {
+                    const t = (index + 1) / parts;
+                    return (
+                      <Fragment key={index}>
+                        <line
+                          className="crop-preview-guide"
+                          x1={cropPreview.left + cropPreview.width * t}
+                          y1={cropPreview.top}
+                          x2={cropPreview.left + cropPreview.width * t}
+                          y2={cropPreview.top + cropPreview.height}
+                        />
+                        <line
+                          className="crop-preview-guide"
+                          x1={cropPreview.left}
+                          y1={cropPreview.top + cropPreview.height * t}
+                          x2={cropPreview.left + cropPreview.width}
+                          y2={cropPreview.top + cropPreview.height * t}
+                        />
+                      </Fragment>
+                    );
+                  });
+                })()}
               </svg>
             )}
             {perspectiveCropPreview && (
@@ -15053,6 +20521,81 @@ export default function Home() {
                   />
                 ))}
               </svg>
+            )}
+            {frame && perspectiveClicks.length > 0 && !perspectiveCropPreview && (
+              <svg
+                className="crop-preview-overlay perspective-crop-overlay"
+                data-testid="perspective-crop-clicks"
+                viewBox={`0 0 ${frame.w} ${frame.h}`}
+                preserveAspectRatio="none"
+                aria-label={`Perspective crop: ${perspectiveClicks.length} of 4 corners placed`}
+              >
+                <polyline
+                  className="perspective-crop-border"
+                  points={perspectiveClicks.map((corner) => `${corner.x},${corner.y}`).join(' ')}
+                />
+                {perspectiveClicks.map((corner, index) => (
+                  <circle key={index} className="perspective-crop-handle" cx={corner.x} cy={corner.y} r="7" />
+                ))}
+              </svg>
+            )}
+            {frame && noteEditor && (
+              <form
+                className="note-editor"
+                aria-label={noteEditor.id ? 'Edit note' : 'New note'}
+                data-testid="note-editor"
+                data-side={noteEditor.x > frame.w * 0.6 ? 'left' : 'right'}
+                style={{ left: `${(noteEditor.x / frame.w) * 100}%`, top: `${(noteEditor.y / frame.h) * 100}%` }}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveNoteEditor();
+                }}
+              >
+                <textarea
+                  aria-label="Note text"
+                  ref={noteTextRef}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setNoteEditor(null);
+                      setNotice('Note cancelled');
+                    } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                      event.preventDefault();
+                      saveNoteEditor();
+                    }
+                  }}
+                  rows={3}
+                  maxLength={500}
+                  value={noteEditor.text}
+                  onChange={(event) => setNoteEditor({ ...noteEditor, text: event.target.value })}
+                />
+                <div className="note-editor-actions">
+                  <input
+                    type="color"
+                    aria-label="Note marker color"
+                    value={noteEditor.color}
+                    onChange={(event) => setNoteEditor({ ...noteEditor, color: event.target.value })}
+                  />
+                  {noteEditor.id && (
+                    <button type="button" onClick={() => deleteNote(noteEditor.id!)}>
+                      Delete
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNoteEditor(null);
+                      setNotice('Note cancelled');
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="primary">
+                    Save
+                  </button>
+                </div>
+              </form>
             )}
             {slicePreview && (
               <svg
@@ -15163,137 +20706,127 @@ export default function Home() {
               </svg>
             )}
           </div>
-          <div className="zoom">
+        </section>
+          <div className="zoom" data-testid="zoom-control">
             <button
               aria-label="Zoom out"
-              onClick={() => setZoom(Math.max(20, zoom - 10))}
+              onClick={() => zoomBy(-1)}
             >
               <ZoomOut />
             </button>
             <input
               aria-label="Zoom"
               type="range"
-              min="20"
-              max="140"
-              value={zoom}
-              onChange={(e) => setZoom(+e.target.value)}
+              min="0"
+              max={ZOOM_STEPS.length - 1}
+              step="1"
+              value={nearestZoomStepIndex(viewZoom)}
+              aria-valuetext={formatViewZoom(viewZoom)}
+              onChange={(e) => setZoomAround(ZOOM_STEPS[+e.target.value] ?? 100)}
             />
-            <span>{zoom}%</span>
+            <span data-testid="zoom-level">{formatViewZoom(viewZoom)}</span>
             <button
               aria-label="Zoom in"
-              onClick={() => setZoom(Math.min(140, zoom + 10))}
+              onClick={() => zoomBy(1)}
             >
               <ZoomIn />
             </button>
           </div>
-        </section>
-        <aside className="inspector">
-          {frame && (
-            <LayersPanel
-              frame={frame}
-              select={select}
-              selectAll={selectAllLayers}
-              deselectLayers={deselectLayers}
-              isolateLayers={isolateLayers}
-              edit={editLayer}
-              add={addPaint}
-              addAdjustment={addAdjustmentLayer}
-              addSmartObject={() => chooseSmartObjectFile(false)}
-              nestSelectedAsSmartObject={() => void nestSelectedAsSmartObject()}
-              replaceSmartObject={() => chooseSmartObjectFile(true)}
-              duplicate={duplicate}
-              remove={remove}
-              reorder={reorder}
-              arrange={arrangeLayers}
-              groupActive={groupActiveLayer}
-              ungroupActive={ungroupActiveLayer}
-              editGroup={editGroup}
-              align={alignActiveLayer}
-              distribute={distributeGroupLayers}
-              rasterize={() => void rasterize()}
-              importImage={() => layerFile.current?.click()}
-              createMask={createMaskFromSelection}
-              invertMask={invertLayerMask}
-              toggleMask={toggleLayerMask}
-              clearMask={clearMask}
-              createVectorMask={createVectorMask}
-              invertVectorMask={invertVectorMask}
-              toggleVectorMask={toggleVectorMask}
-              clearVectorMask={clearVectorMask}
-              createClipping={createClippingMask}
-              releaseClipping={releaseClippingMask}
-              clearSelection={() => setSelection(undefined)}
-              invertSelection={invertSelection}
-              selectionOperation={selectionOperation}
-              setSelectionOperation={setSelectionOperation}
-              setSelectionFeather={setSelectionFeather}
-            />
-          )}
-          {frame && (
-            <HistoryPanel
-              history={history.current}
-              currentIndex={index.current}
-              restore={(targetIndex) => {
-                const distance = targetIndex - index.current;
-                if (!distance) return;
-                travel(distance);
-                setNotice(`History step ${targetIndex + 1} restored`);
-              }}
-            />
-          )}
-          {frame && (
-            <section
-              className="panel saved-selections-panel"
-              aria-label="Saved selections"
-            >
-              <Title icon={Bookmark} text="Saved selections" />
-              <label className="layer-field">
-                Selection name
-                <input
-                  aria-label="Saved selection name"
-                  maxLength={160}
-                  value={savedSelectionName}
-                  onChange={(event) =>
-                    setSavedSelectionName(event.target.value)
-                  }
-                />
-              </label>
-              <div className="layer-actions">
-                <button
-                  onClick={() => saveCurrentSelection()}
-                  disabled={!frame.selection}
+          {/* Pinned to the visible stage like the zoom pill; hidden while a
+              crop, slice or frame preview bar or the type bar uses that spot. */}
+          {frame?.artboards?.length && !cropPreview && !slicePreview && !framePreview && !isTypeTool(tool) ? (
+            <fieldset className="artboard-controls" aria-label="Artboard controls" data-testid="artboard-controls">
+              <label>
+                <span>Active artboard</span>
+                <select
+                  aria-label="Active artboard"
+                  value={frame.activeArtboardId || frame.artboards[0].id}
+                  onChange={(event) => selectArtboard(event.target.value)}
                 >
-                  Save selection
-                </button>
-                <button onClick={exportSelection} disabled={!frame.selection}>
-                  Download selection file
-                </button>
-              </div>
-              <div className="saved-selection-list">
-                {(frame.savedSelections?.selections || []).map((entry) => (
-                  <div className="saved-selection-row" key={entry.id}>
-                    <span>{entry.name}</span>
-                    <button onClick={() => loadSavedSelection(entry.id)}>
-                      Load
-                    </button>
-                    <button onClick={() => renameSavedSelection(entry.id)}>
-                      Rename
-                    </button>
-                    <button onClick={() => deleteSavedSelection(entry.id)}>
-                      Delete
-                    </button>
-                  </div>
+                  {frame.artboards.map((item) => (
+                    <option key={item.id} value={item.id} disabled={!item.visible}>
+                      {item.name} ({item.w} × {item.h} px)
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="artboard-visibility-list" aria-label="Artboard visibility">
+                {frame.artboards.map((item) => (
+                  <label key={item.id} className="artboard-visibility-option">
+                    <input
+                      type="checkbox"
+                      aria-label={`Show ${item.name} artboard`}
+                      checked={item.visible}
+                      onChange={(event) => updateArtboardVisibility(item.id, event.target.checked)}
+                    />
+                    <span>{item.name}</span>
+                  </label>
                 ))}
-                {!frame.savedSelections?.selections.length && (
-                  <small>No saved selections yet.</small>
-                )}
               </div>
-            </section>
-          )}
+              <label>
+                <span>Fit active layer</span>
+                <select
+                  aria-label="Artboard fit mode"
+                  defaultValue="cover"
+                  onChange={(event) => fitActiveLayerToArtboard(event.target.value as FrameFit)}
+                >
+                  <option value="cover">Cover</option>
+                  <option value="contain">Contain</option>
+                  <option value="stretch">Stretch</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                data-testid="artboard-fit-active"
+                onClick={() => fitActiveLayerToArtboard('cover')}
+              >
+                Fit active layer to artboard
+              </button>
+              <button
+                type="button"
+                data-testid="artboard-replace-fit"
+                disabled={
+                  !frame.active ||
+                  frame.layers.find((layer) => layer.id === frame.active)?.kind !== 'smart-object' ||
+                  Boolean(frame.layers.find((layer) => layer.id === frame.active)?.locked)
+                }
+                onClick={() => chooseSmartObjectFile(true, true)}
+              >
+                Replace smart object and fit
+              </button>
+              <span data-testid="artboard-render-note">Export renders the selected artboard layer tree independently.</span>
+            </fieldset>
+          ) : null}
+        </div>
+        <aside
+          className="inspector"
+          ref={inspectorRef}
+          aria-label="Properties"
+          data-sheet-open={propertiesSheetOpen ? 'true' : 'false'}
+          data-sidebar-tool={tool}
+          data-sidebar-panel={openSidebarPanel ?? ''}
+        >
+          {/* Contextual sidebar: docs/contextual-sidebar-contract.md. On phones
+              the sidebar is a bottom sheet whose handle collapses it. */}
+          <div className="inspector-sheet-bar" data-sidebar-sticky="top">
+            <button
+              type="button"
+              className="inspector-sheet-handle"
+              aria-expanded={propertiesSheetOpen}
+              aria-controls="inspector-sheet-body"
+              onClick={() => setPropertiesSheetOpen((open) => !open)}
+            >
+              <span className="inspector-sheet-grip" aria-hidden="true" />
+              <span>Properties</span>
+              <small>{activeToolLabel}</small>
+            </button>
+          </div>
+          <div id="inspector-sheet-body" className="inspector-body" hidden={!propertiesSheetOpen}>
           {quickMasking && quickMask && (
             <section
               className="panel quick-mask-panel"
               aria-label="Quick Mask options"
+              data-sidebar-section="quick-mask"
             >
               <Title
                 icon={Bookmark}
@@ -15301,7 +20834,7 @@ export default function Home() {
                 action="Exit"
                 onClick={exitQuickMask}
               />
-              <label>
+              <label className="check-row">
                 <input
                   type="checkbox"
                   checked={quickMaskReveal}
@@ -15315,16 +20848,1751 @@ export default function Home() {
               </p>
             </section>
           )}
-          <section className="panel">
-            <Title
-              icon={WandSparkles}
-              text="Adjust selected layer"
-              action="Reset"
-              onClick={() => {
-                resetAdjustments();
-                setNotice('Adjustments reset');
-              }}
-            />
+          <section
+            ref={toolOptionsAreaRef}
+            className="sidebar-tool-area"
+            aria-label={`${activeToolLabel} tool options`}
+            data-testid="tool-options-area"
+            tabIndex={-1}
+          >
+            {/* Perspective Crop corners are edited here, docked off the canvas so
+                the panel never covers a corner handle (audit B-06). */}
+          {perspectiveCropPreview && (
+            <fieldset
+              className="panel perspective-crop-controls"
+              aria-label="Perspective crop controls"
+              data-testid="perspective-crop-controls"
+            >
+              <span>
+                Perspective crop · {perspectiveCropPreview.width} ×{' '}
+                {perspectiveCropPreview.height} px
+              </span>
+              <div className="perspective-crop-fields">
+                {(
+                  [
+                    'Top left',
+                    'Top right',
+                    'Bottom right',
+                    'Bottom left',
+                  ] as const
+                ).map((label, index) => (
+                    <span key={label}>
+                      <label>
+                        {label} X
+                        <input
+                          aria-label={`${label} X`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.w}
+                          value={Math.round(perspectiveCropPreview.quad[index].x)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
+                            quad[index] = { ...quad[index], x: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                      <label>
+                        {label} Y
+                        <input
+                          aria-label={`${label} Y`}
+                          type="number"
+                          min="0"
+                          max={perspectiveCropPreview.frame.h}
+                          value={Math.round(perspectiveCropPreview.quad[index].y)}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (!Number.isFinite(value)) return;
+                          const quad = perspectiveCropPreview.quad.map(
+                            (point) => ({ ...point }),
+                          ) as CropQuad;
+                            quad[index] = { ...quad[index], y: value };
+                            updatePerspectiveCropPreview({ quad });
+                          }}
+                        />
+                      </label>
+                    </span>
+                ))}
+                <label>
+                  Output width
+                  <input
+                    aria-label="Perspective output width"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.width}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ width: value });
+                    }}
+                  />
+                </label>
+                <label>
+                  Output height
+                  <input
+                    aria-label="Perspective output height"
+                    type="number"
+                    min="1"
+                    max="16000"
+                    value={perspectiveCropPreview.height}
+                    onChange={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isFinite(value))
+                        updatePerspectiveCropPreview({ height: value });
+                    }}
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                data-testid="perspective-crop-apply"
+                disabled={perspectiveCropApplying}
+                onClick={() => void applyPerspectiveCropPreview()}
+              >
+                {perspectiveCropApplying
+                  ? 'Applying…'
+                  : 'Apply perspective crop'}
+              </button>
+              <button
+                type="button"
+                data-testid="perspective-crop-cancel"
+                onClick={cancelPerspectiveCropPreview}
+              >
+                Cancel
+              </button>
+            </fieldset>
+          )}
+            {/* Tool presets (#233) sit above the active tool's options. */}
+            {presetTool && (
+              <ToolPresetsControl
+                tool={presetTool}
+                presets={toolPresets}
+                appliedId={appliedToolPreset?.id}
+                modified={appliedToolPresetModified}
+                onApply={applyToolPreset}
+                onSave={saveToolPreset}
+                onRename={(id, label) =>
+                  runToolPresetEdit(() => renameToolPreset(toolPresets, id, label), `Tool preset renamed to “${label.trim().slice(0, 80)}”`)
+                }
+                onDuplicate={(id) =>
+                  runToolPresetEdit(() => duplicateToolPreset(toolPresets, id, crypto.randomUUID()), `Tool preset “${toolPresetLabel(id)}” duplicated`)
+                }
+                onDelete={deleteToolPresetById}
+                onUpdate={updateToolPresetById}
+                onMove={(id, direction, visibleIds) =>
+                  commitToolPresets(moveToolPreset(toolPresets, id, direction, visibleIds), `Tool preset “${toolPresetLabel(id)}” moved`)
+                }
+                onMoveTo={(id, targetId) =>
+                  commitToolPresets(
+                    moveToolPresetTo(toolPresets, id, toolPresets.findIndex((preset) => preset.id === targetId)),
+                    `Tool preset “${toolPresetLabel(id)}” moved`,
+                  )
+                }
+                onExport={exportToolPresetFile}
+                onImport={(file) => void importToolPresetFile(file)}
+                onResetTool={resetCurrentTool}
+                onResetAll={resetAllTools}
+              />
+            )}
+            {toolAreaSectionsFor(tool, { textLayerSelected: Boolean(activeTypeLayer) }).map((section) => (
+              <Fragment key={section}>
+          {section === 'rotate-view' && (
+            <SidebarSection
+              id="rotate-view"
+              testId="view-rotation-controls"
+              icon={RotateCw}
+              title="Rotate View"
+              collapsed={collapsedSections.has('rotate-view')}
+              onToggle={toggleSidebarSection}
+            >
+              <output data-testid="view-rotation-value" aria-live="polite">
+                {normalizeViewRotation(viewRotation)}°
+              </output>
+              <div className="transform">
+                <button type="button" aria-label="Rotate view left 15 degrees" onClick={() => rotateViewBy(-15)}>
+                  <RotateCcw />
+                </button>
+                <button type="button" aria-label="Rotate view right 15 degrees" onClick={() => rotateViewBy(15)}>
+                  <RotateCw />
+                </button>
+                <button type="button" className="secondary view-reset" aria-label="Reset view rotation" onClick={resetViewRotation}>
+                  Reset view
+                </button>
+              </div>
+              <p className="adjust-note">Rotate View changes only the canvas viewport. Document pixels, layers and exports stay unchanged.</p>
+            </SidebarSection>
+          )}
+          {section === 'layer-alignment' && frame && (
+            <section className="panel layers-part-panel" aria-label="Align to canvas">
+              {renderLayersPanel(frame, 'alignment')}
+            </section>
+          )}
+          {section === 'tool-options' && (
+            <SidebarSection
+              id="tool-options"
+              icon={Brush}
+              title={NAMED_OPTION_TOOLS.has(tool) ? `${activeToolLabel} options` : 'Tool options'}
+              collapsed={collapsedSections.has('tool-options')}
+              onToggle={toggleSidebarSection}
+            >
+              {NAMED_OPTION_TOOLS.has(tool) && renderNavigationToolOptions()}
+              {tool === 'audio-note' && (
+                <AudioAnnotationList
+                  items={audioAnnotations(frame)}
+                  usedBytes={audioClipBytes(referencedAudioClips(history.current, audioClips.current))}
+                  playing={audioPlayer.playing}
+                  onToggle={toggleAudioNote}
+                  onDelete={deleteAudioNote}
+                />
+              )}
+              {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient type</span>
+                  <select
+                    aria-label="Gradient type"
+                    value={gradientMode}
+                    onChange={(event) => setGradientMode(event.target.value as GradientType)}
+                  >
+                    <option value="linear">Linear</option>
+                    <option value="radial">Radial</option>
+                    <option value="angle">Angle</option>
+                    <option value="reflected">Reflected</option>
+                    <option value="diamond">Diamond</option>
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <div className="select-row">
+                  <label>
+                    <input
+                      aria-label="Gradient midpoint enabled"
+                      type="checkbox"
+                      checked={gradientMidpoint !== 'none'}
+                      onChange={(event) => setGradientMidpoint(event.target.checked ? '#ffffff' : 'none')}
+                    />
+                    <span>Midpoint colour</span>
+                  </label>
+                  <input
+                    aria-label="Gradient midpoint colour"
+                    type="color"
+                    value={gradientMidpoint === 'none' ? '#ffffff' : gradientMidpoint}
+                    disabled={gradientMidpoint === 'none'}
+                    onChange={(event) => setGradientMidpoint(event.target.value)}
+                  />
+                </div>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Midpoint position"
+                  value={gradientMidpointPosition}
+                  min={1}
+                  max={99}
+                  set={setGradientMidpointPosition}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && gradientMode !== 'reflected' && (
+                <div className="gradient-stops" aria-label="Gradient colour stops">
+                  <div className="select-row">
+                    <span>Additional stops</span>
+                    <button
+                      type="button"
+                      disabled={gradientStops.length >= MAX_GRADIENT_STOPS}
+                      onClick={() => {
+                        const used = new Set(gradientStops.map((stop) => stop.position));
+                        const position = [25, 50, 75].find((candidate) => !used.has(candidate)) ??
+                          Math.max(1, Math.min(99, 10 + gradientStops.length * 13));
+                        setGradientStops(normalizeGradientStops([
+                          ...gradientStops,
+                          { position, color: '#ffffff' },
+                        ]));
+                        setGradientMidpoint('none');
+                      }}
+                    >
+                      Add stop
+                    </button>
+                  </div>
+                  {gradientStops.map((stop, stopIndex) => (
+                    <div className="select-row" key={`${stop.position}-${stopIndex}`}>
+                      <input
+                        aria-label={`Gradient stop ${stopIndex + 1} position`}
+                        type="number"
+                        min={1}
+                        max={99}
+                        value={stop.position}
+                        onChange={(event) => {
+                          const position = Math.max(1, Math.min(99, Math.round(Number(event.target.value) || 1)));
+                          const next = gradientStops.map((item, index) => index === stopIndex ? { ...item, position } : item);
+                          setGradientStops(normalizeGradientStops(next));
+                        }}
+                      />
+                      <input
+                        aria-label={`Gradient stop ${stopIndex + 1} colour`}
+                        type="color"
+                        value={stop.color}
+                        onChange={(event) => setGradientStops(gradientStops.map((item, index) =>
+                          index === stopIndex ? { ...item, color: event.target.value } : item))}
+                      />
+                      <button
+                        type="button"
+                        aria-label={`Remove gradient stop ${stopIndex + 1}`}
+                        onClick={() => setGradientStops(gradientStops.filter((_, index) => index !== stopIndex))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient end</span>
+                  <select
+                    aria-label="Gradient end"
+                    value={gradientEnd}
+                    onChange={(event) => setGradientEnd(event.target.value as 'transparent' | 'background')}
+                  >
+                    <option value="transparent">Transparent</option>
+                    <option value="background">Background colour</option>
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <label className="select-row">
+                  <span>Gradient mode</span>
+                  <select
+                    aria-label="Gradient mode"
+                    value={gradientBlend}
+                    onChange={(event) => setGradientBlend(normalizeGradientBlendMode(event.target.value))}
+                  >
+                    {GRADIENT_BLEND_MODES.map((mode) => (
+                      <option key={mode} value={mode}>{GRADIENT_BLEND_LABELS[mode]}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Gradient opacity"
+                  value={gradientOpacity}
+                  min={1}
+                  max={100}
+                  set={setGradientOpacity}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <p className="adjust-note">
+                  Normal paints over existing pixels, so a second gradient builds on the first;
+                  Replace discards the layer’s pixels (inside any selection). Blend modes combine
+                  the gradient with what is already painted.
+                </p>
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Dither"
+                  value={gradientDither}
+                  min={0}
+                  max={100}
+                  set={setGradientDither}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <Slider
+                  label="Noise"
+                  value={gradientNoise}
+                  min={0}
+                  max={100}
+                  set={setGradientNoise}
+                  suffix="%"
+                />
+              )}
+              {tool === 'gradient' && (
+                <label className="check-row">
+                  <input
+                    aria-label="Reverse gradient"
+                    type="checkbox"
+                    checked={gradientReverse}
+                    onChange={(event) => setGradientReverse(event.target.checked)}
+                  />
+                  Reverse gradient
+                </label>
+              )}
+              {(tool === 'rectangle' || tool === 'ellipse' || tool === 'line' || tool === 'polygon') && customShapePresets.length > 0 && (
+                <label className="select-row">
+                  <span>Saved shape preset</span>
+                  <select
+                    aria-label="Saved shape preset"
+                    value={selectedCustomShapePresetId}
+                    onChange={(event) => {
+                      const preset = customShapePresets.find((item) => item.id === event.target.value);
+                      if (preset) applyCustomShapePreset(preset);
+                      else setSelectedCustomShapePresetId('');
+                    }}
+                  >
+                    <option value="">Choose saved preset</option>
+                    {customShapePresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label} ({preset.kind})</option>
+                    ))}
+                  </select>
+                  <button type="button" className="secondary" disabled={!selectedCustomShapePresetId} onClick={removeCustomShapePreset}>
+                    Remove
+                  </button>
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && (
+                <p className="adjust-note" data-testid="path-tool-hint">{PATH_TOOL_HINTS[tool as PathOptionTool]}</p>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('mode') && (
+                <label className="select-row">
+                  <span>Pen mode</span>
+                  <select
+                    aria-label="Pen mode"
+                    value={penOptions.mode}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, mode: event.target.value === 'path' ? 'path' : 'shape' }))}
+                  >
+                    <option value="shape">Shape (filled layer)</option>
+                    <option value="path">Path (work path, no fill)</option>
+                  </select>
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('autoAddDelete') && (
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={penOptions.autoAddDelete}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, autoAddDelete: event.target.checked }))}
+                  />
+                  Auto Add/Delete
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('rubberBand') && (
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={penOptions.rubberBand}
+                    onChange={(event) => setPenOptions((value) => ({ ...value, rubberBand: event.target.checked }))}
+                  />
+                  Rubber Band
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && customPathPresets.length > 0 && (
+                <label className="select-row">
+                  <span>Saved path preset</span>
+                  <select
+                    aria-label="Saved path preset"
+                    value={selectedCustomPathPresetId}
+                    onChange={(event) => {
+                      const preset = customPathPresets.find((item) => item.id === event.target.value);
+                      if (preset) applyCustomPathPreset(preset);
+                      else setSelectedCustomPathPresetId('');
+                    }}
+                  >
+                    <option value="">Choose saved preset</option>
+                    {customPathPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.label}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={removeCustomPathPreset}>
+                    Remove
+                  </button>
+                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={updateCustomPathPreset}>
+                    Update
+                  </button>
+                </label>
+              )}
+              {PATH_TOOL_OPTION_TOOLS.includes(tool) && (
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={!frame?.layers.some((item) => item.kind === 'path')}
+                  onClick={openStrokePathDialog}
+                >
+                  Stroke Path with Brush…
+                </button>
+              )}
+              {tool === 'rounded-rectangle' && (
+                <Slider
+                  label="Corner radius"
+                  value={shapeCornerRadius}
+                  min={0}
+                  max={500}
+                  set={setShapeCornerRadius}
+                  suffix=" px"
+                />
+              )}
+              {tool === 'rounded-rectangle' && (
+                <p className="adjust-note">
+                  The radius is clamped to half the shorter side and stays editable in Layer
+                  properties. Shift draws a square; Alt draws from the centre.
+                </p>
+              )}
+              {tool === 'custom-shape' && (
+                <fieldset className="custom-shape-picker">
+                  <legend>Custom shape</legend>
+                  <div className="custom-shape-grid" role="radiogroup" aria-label="Custom shape">
+                    {CUSTOM_SHAPE_LIBRARY.map((entry) => (
+                      <label
+                        key={entry.id}
+                        title={entry.label}
+                        className={customShapeId === entry.id ? 'selected' : undefined}
+                      >
+                        <input
+                          type="radio"
+                          name="custom-shape-choice"
+                          value={entry.id}
+                          aria-label={entry.label}
+                          checked={customShapeId === entry.id}
+                          onChange={() => setCustomShapeId(entry.id)}
+                        />
+                        <svg viewBox="-1 -1 26 26" aria-hidden="true" focusable="false">
+                          <path d={customShapeThumbnailPath(entry.id)} fillRule={entry.fillRule} />
+                        </svg>
+                      </label>
+                    ))}
+                  </div>
+                  {customPathPresets.length > 0 && (
+                    <label className="select-row">
+                      <span>Saved path as shape</span>
+                      <select
+                        aria-label="Saved path as custom shape"
+                        value={customShapePathPreset() ? customShapeId : ''}
+                        onChange={(event) =>
+                          setCustomShapeId(event.target.value || DEFAULT_CUSTOM_SHAPE_ID)
+                        }
+                      >
+                        <option value="">Built-in library</option>
+                        {customPathPresets.map((preset) => (
+                          <option key={preset.id} value={`${PATH_PRESET_SHAPE_PREFIX}${preset.id}`}>{preset.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <p className="adjust-note">
+                    Drag to draw {customShapeLabel()} as an editable path with the Fill and Stroke
+                    options below. Shift keeps its proportions; Alt draws from the centre.
+                  </p>
+                </fieldset>
+              )}
+              {tool === 'polygon' && (
+                <label className="select-row">
+                  <span>Polygon variant</span>
+                  <select
+                    aria-label="Polygon variant"
+                    value={polygonVariant}
+                    onChange={(event) => setPolygonVariant(event.target.value as ParametricShapeVariant)}
+                  >
+                    <option value="polygon">Polygon</option>
+                    <option value="triangle">Triangle</option>
+                    <option value="star">Star</option>
+                  </select>
+                </label>
+              )}
+              {tool === 'polygon' && polygonVariant !== 'triangle' && (
+                <Slider
+                  label="Polygon sides"
+                  value={polygonSides}
+                  min={3}
+                  max={32}
+                  set={setPolygonSides}
+                  suffix=""
+                />
+              )}
+              {tool === 'polygon' && polygonVariant === 'star' && (
+                <Slider
+                  label="Star inner radius"
+                  value={Math.round(polygonInnerRadius * 100)}
+                  min={10}
+                  max={90}
+                  set={(value) => setPolygonInnerRadius(value / 100)}
+                  suffix="%"
+                />
+              )}
+              {isShapeToolId(tool) && (
+                <fieldset className="shape-appearance" aria-label="Shape fill and stroke">
+                  {tool !== 'line' && shapePaintRow('fill')}
+                  {shapePaintRow('stroke')}
+                  <Slider
+                    label="Stroke width"
+                    value={shapeAppearance.strokeWidth}
+                    min={1}
+                    max={SHAPE_STROKE_WIDTH_MAX}
+                    set={(strokeWidth) => setShapeAppearance((value) => ({ ...value, strokeWidth }))}
+                    suffix=" px"
+                  />
+                  <div className="select-row shape-create-row">
+                    <span>New</span>
+                    <input
+                      type="number"
+                      aria-label="New shape width"
+                      min={1}
+                      max={SHAPE_CREATE_MAX}
+                      value={shapeAppearance.createWidth}
+                      onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, createWidth: Number(event.target.value) || value.createWidth }))}
+                    />
+                    <span aria-hidden="true">×</span>
+                    <input
+                      type="number"
+                      aria-label="New shape height"
+                      min={1}
+                      max={SHAPE_CREATE_MAX}
+                      value={shapeAppearance.createHeight}
+                      onChange={(event) => setShapeAppearance((value) => normalizeShapeAppearance({ ...value, createHeight: Number(event.target.value) || value.createHeight }))}
+                    />
+                    <button type="button" className="secondary" onClick={createNumericShape}>Create</button>
+                  </div>
+                  <p className="adjust-note">
+                    {tool === 'line'
+                      ? 'Lines use the Stroke colour (the foreground colour when Stroke is None) at the Stroke width.'
+                      : 'Default: filled with the foreground colour, no stroke. Create adds a shape of this size centred on the canvas.'}
+                  </p>
+                </fieldset>
+              )}
+              {tool !== 'magic-eraser' && tool !== 'fill' && tool !== 'magic-wand' && !isShapeToolId(tool) && !NAMED_OPTION_TOOLS.has(tool) &&
+                (!PATH_TOOL_OPTION_TOOLS.includes(tool) || pathToolOptions(tool as PathOptionTool, penOptions.mode).includes('strokeWidth')) && (
+                <BrushSizeControl value={size} set={setSize} />
+              )}
+              {(tool === 'magic-wand' || tool === 'fill') && (
+                <>
+                <Slider
+                  label="Color tolerance"
+                  value={colorTolerance}
+                  min={0}
+                  max={255}
+                  set={setColorTolerance}
+                  suffix=""
+                />
+                <div className="select-row color-region-options" data-testid="color-region-options">
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Contiguous"
+                      checked={colorRegion.contiguous}
+                      onChange={(event) => setColorRegion((value) => ({ ...value, contiguous: event.target.checked }))}
+                    />
+                    <span>Contiguous</span>
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label="Sample All Layers"
+                      checked={colorRegion.sampleAllLayers}
+                      onChange={(event) => setColorRegion((value) => ({ ...value, sampleAllLayers: event.target.checked }))}
+                    />
+                    <span>Sample All Layers</span>
+                  </label>
+                </div>
+                </>
+              )}
+              {(tool === 'brush' ||
+                tool === 'pencil' ||
+                tool === 'color-replace' ||
+                tool === 'eraser' ||
+                tool === 'background-eraser' ||
+                tool === 'magic-eraser' ||
+                tool === 'mask-brush' ||
+                tool === 'mask-eraser' ||
+                tool === 'adjustment-brush' ||
+                tool === 'dodge' ||
+                tool === 'burn' ||
+                tool === 'sponge' ||
+                tool === 'smudge' ||
+                tool === 'blur' ||
+                tool === 'sharpen' ||
+                tool === 'clone' ||
+                tool === 'heal' ||
+                tool === 'spot-heal' ||
+                tool === 'patch' ||
+                tool === 'red-eye' ||
+                tool === 'pattern-stamp' ||
+                tool === 'mixer-brush' ||
+                tool === 'history-brush' ||
+                tool === 'art-history-brush' ||
+                tool === 'selection-brush' ||
+                tool === 'quick-selection') && (
+                <>
+                  {(tool === 'brush' || tool === 'pencil') && (
+                    <>
+                      <label className="select-row">
+                        <span>Brush preset</span>
+                        <select
+                          aria-label="Brush preset"
+                          value={brushPreset}
+                          onChange={(event) =>
+                            applyBrushPreset(event.target.value as BrushPresetId)
+                          }
+                        >
+                          {BRUSH_PRESETS.map((preset) => (
+                            <option key={preset.id} value={preset.id}>
+                              {preset.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <BrushPresetLibraryControls
+                        builtIns={BUILT_IN_BRUSH_PRESETS}
+                        saved={customBrushPresets}
+                        selectedId={selectedBrushLibraryId}
+                        onSelect={selectBrushLibraryPreset}
+                        onSave={defineBrushPreset}
+                        onRename={renameBrushLibraryPreset}
+                        onDelete={deleteBrushLibraryPreset}
+                      />
+                    </>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+                    <label className="select-row">
+                      <span>Secondary brush tip</span>
+                      <select
+                        aria-label="Secondary brush tip"
+                        value={secondaryBrushPreset}
+                        onChange={(event) => setSecondaryBrushPreset(normalizeSecondaryBrushPreset(event.target.value))}
+                      >
+                        <option value="none">None</option>
+                        {BRUSH_PRESETS.map((preset) => (
+                          <option key={`secondary-${preset.id}`} value={preset.id}>
+                            {preset.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {paintSymmetryAppliesToTool(tool) && frame && (
+                    <PaintSymmetryControls
+                      value={paintSymmetry}
+                      onChange={setPaintSymmetry}
+                      canvasWidth={frame.w}
+                      canvasHeight={frame.h}
+                    />
+                  )}
+                  {tool !== 'pencil' &&
+                    tool !== 'color-replace' &&
+                    tool !== 'magic-eraser' &&
+                    tool !== 'red-eye' && (
+                      <Slider
+                        label="Hardness"
+                        value={hardness}
+                        min={0}
+                        max={100}
+                        set={setHardness}
+                        suffix="%"
+                      />
+                    )}
+                  {tool === 'spot-heal' && (
+                    <>
+                      <label className="select-row">
+                        <span>Type</span>
+                        <select
+                          aria-label="Spot Healing type"
+                          value={retouchOptions.spotHealingType}
+                          onChange={(event) => setRetouchOption('spotHealingType', event.target.value as SpotHealingType)}
+                        >
+                          <option value="content-aware">Content-Aware</option>
+                          <option value="texture">Create Texture</option>
+                          <option value="proximity">Proximity Match</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        {retouchOptions.spotHealingType === 'content-aware'
+                          ? 'Content-Aware interpolates the pixels around the whole stroke across it, so gradients continue. '
+                          : retouchOptions.spotHealingType === 'texture'
+                            ? 'Create Texture fills with the surrounding tone plus fine detail borrowed from a nearby area. '
+                            : 'Proximity Match takes the median of a ring just outside each brush position. '}
+                        Each type samples a bounded local context ring (a local
+                        approximation); the source and alpha channel stay unchanged.
+                        Use Remove Background for edge-connected backdrop removal.
+                      </p>
+                    </>
+                  )}
+                  {(tool === 'blur' || tool === 'sharpen') && (
+                    <p className="adjust-note">
+                      {tool === 'blur'
+                        ? 'Blurs pixels under the brush using a bounded local average.'
+                        : 'Sharpens local luminance detail with a bounded source-safe high-pass brush.'}
+                      {' '}Source pixels remain immutable and each stroke is undoable; use Filter for full-layer effects.
+                    </p>
+                  )}
+                  {tool === 'patch' && (
+                    <>
+                      <label className="select-row">
+                        <span>Patch</span>
+                        <select
+                          aria-label="Patch mode"
+                          value={retouchOptions.patchMode}
+                          onChange={(event) => setRetouchOption('patchMode', event.target.value as PatchMode)}
+                        >
+                          <option value="source">Source</option>
+                          <option value="destination">Destination</option>
+                          <option value="brush">Brush</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        {retouchOptions.patchMode === 'source'
+                          ? 'Drag inside a selection to the area that should replace it; the patch is tone-matched to its surroundings. '
+                          : retouchOptions.patchMode === 'destination'
+                            ? 'Drag inside a selection to copy it to where you release. '
+                            : ''}
+                        Click a source area, then drag over a destination
+                        {retouchOptions.patchMode === 'brush' ? '' : ' to patch outside a selection'}.
+                        Patch keeps the source asset and alpha channel unchanged.
+                      </p>
+                    </>
+                  )}
+                  {(tool === 'mask-brush' ||
+                    tool === 'mask-eraser' ||
+                    tool === 'adjustment-brush') && (
+                    <p className="adjust-note">
+                      {tool === 'adjustment-brush'
+                        ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable. Without a mask, the first Reveal stroke limits the adjustment to the painted area and the first Conceal stroke removes it there. Alt-drag uses the other mode.'
+                        : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
+                    </p>
+                  )}
+                  {tool === 'adjustment-brush' && (
+                    <label className="select-row">
+                      <span>Paint</span>
+                      <select
+                        aria-label="Adjustment Brush mode"
+                        title="Reveal paints the adjustment in; Conceal paints it out (Alt-drag uses the other mode)"
+                        value={adjustmentBrushMode}
+                        onChange={(event) => setAdjustmentBrushMode(event.target.value === 'conceal' ? 'conceal' : 'reveal')}
+                      >
+                        <option value="reveal">Reveal adjustment</option>
+                        <option value="conceal">Conceal adjustment</option>
+                      </select>
+                    </label>
+                  )}
+                  {(tool === 'brush' || tool === 'pencil') && (
+                    <label className="select-row">
+                      <span>Mode</span>
+                      <select
+                        aria-label="Brush mode"
+                        title="Blend mode for each stroke; dabs within one stroke never blend with each other"
+                        value={brushBlendMode}
+                        onChange={(event) => setBrushBlendMode(normalizeBrushBlendMode(event.target.value))}
+                      >
+                        {BRUSH_BLEND_MODE_GROUPS.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.modes.map((item) => (
+                              <option key={item.value} value={item.value}>{item.label}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {tool === 'smudge' && (
+                    <>
+                      <SmudgeToolOptions
+                        Slider={Slider}
+                        value={smudgeSettings}
+                        onChange={setSmudgeSettings}
+                        pressureSize={pressureSize}
+                        setPressureSize={setPressureSize}
+                        angle={brushAngle}
+                        setAngle={setBrushAngle}
+                        roundness={brushRoundness}
+                        setRoundness={setBrushRoundness}
+                        scatter={brushScatter}
+                        setScatter={setBrushScatter}
+                        dynamics={brushDynamics}
+                        setDynamics={setBrushDynamics}
+                        bristle={brushBristle}
+                        setBristle={setBrushBristle}
+                        texture={brushTexture}
+                        setTexture={setBrushTexture}
+                      />
+                      <BrushPresetLibraryControls
+                        builtIns={BUILT_IN_BRUSH_PRESETS}
+                        saved={customBrushPresets}
+                        selectedId={selectedBrushLibraryId}
+                        onSelect={selectBrushLibraryPreset}
+                        onSave={defineBrushPreset}
+                        onRename={renameBrushLibraryPreset}
+                        onDelete={deleteBrushLibraryPreset}
+                      />
+                      {frame && (
+                        <PaintSymmetryControls
+                          value={paintSymmetry}
+                          onChange={setPaintSymmetry}
+                          canvasWidth={frame.w}
+                          canvasHeight={frame.h}
+                        />
+                      )}
+                    </>
+                  )}
+                  {tool !== 'magic-eraser' && tool !== 'red-eye' && tool !== 'smudge' && (
+                    <Slider
+                      label={
+                        tool === 'dodge' ||
+                        tool === 'burn' ||
+                        tool === 'sponge' ||
+                        tool === 'blur' ||
+                        tool === 'sharpen'
+                          ? 'Flow'
+                          : 'Opacity'
+                      }
+                      value={brushOpacity}
+                      min={1}
+                      max={100}
+                      set={setBrushOpacity}
+                      suffix="%"
+                    />
+                  )}
+                  {(tool === 'brush' ||
+                    tool === 'pencil' ||
+                    tool === 'eraser' ||
+                    tool === 'clone' ||
+                    tool === 'heal' ||
+                    tool === 'pattern-stamp') && (
+                    <>
+                      <Slider
+                        label="Spacing"
+                        value={brushSpacing}
+                        min={BRUSH_SPACING_MIN}
+                        max={BRUSH_SPACING_MAX}
+                        set={setBrushSpacing}
+                        suffix="%"
+                      />
+                      {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
+                        <>
+                          <Slider
+                            label="Smoothing"
+                            value={brushSmoothing}
+                            min={0}
+                            max={100}
+                            set={setBrushSmoothing}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Scatter"
+                            value={brushScatter}
+                            min={0}
+                            max={BRUSH_SCATTER_MAX}
+                            set={setBrushScatter}
+                            suffix="%"
+                          />
+                          <label className="check-row">
+                            <input
+                              aria-label="Scatter both axes"
+                              type="checkbox"
+                              checked={brushDynamics.scatterBothAxes}
+                              onChange={(event) => {
+                                const scatterBothAxes = event.target.checked;
+                                setBrushDynamics((current) => ({ ...current, scatterBothAxes }));
+                              }}
+                            />
+                            Scatter both axes
+                          </label>
+                          <Slider
+                            label="Count"
+                            value={brushDynamics.count}
+                            min={BRUSH_COUNT_MIN}
+                            max={BRUSH_COUNT_MAX}
+                            set={(count) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, count }))}
+                            suffix=""
+                          />
+                          {tool === 'brush' && (
+                            <fieldset className="strand-controls" aria-label="Silk strands options" data-testid="strand-controls">
+                              <label className="check-row">
+                                <input
+                                  aria-label="Silk strands"
+                                  type="checkbox"
+                                  checked={brushStrands.enabled}
+                                  onChange={(event) => {
+                                    const enabled = event.target.checked;
+                                    setBrushStrands((current) => ({ ...current, enabled }));
+                                  }}
+                                />
+                                Silk strands
+                              </label>
+                              {brushStrands.enabled && (
+                                <>
+                                  <p className="adjust-note" data-testid="strand-note">
+                                    One drag paints a twisting ribbon of fine strands. Size sets the ribbon width;
+                                    Strand thickness (scaled by pen pressure) sets each strand. The strands are previewed
+                                    while you drag and painted on release. A bounded local approximation, not a smoke
+                                    simulation.
+                                  </p>
+                                  <Slider
+                                    label="Strands"
+                                    value={brushStrands.count}
+                                    min={BRUSH_STRANDS_COUNT_MIN}
+                                    max={BRUSH_STRANDS_COUNT_MAX}
+                                    suffix=""
+                                    set={(count) => setBrushStrands((current) => normalizeBrushStrands({ ...current, count }))}
+                                  />
+                                  <Slider
+                                    label="Strand thickness"
+                                    value={brushStrands.thickness}
+                                    min={BRUSH_STRANDS_THICKNESS_MIN}
+                                    max={BRUSH_STRANDS_THICKNESS_MAX}
+                                    step={0.5}
+                                    suffix=" px"
+                                    set={(thickness) => setBrushStrands((current) => normalizeBrushStrands({ ...current, thickness }))}
+                                  />
+                                  <Slider
+                                    label="Twists"
+                                    value={brushStrands.twists}
+                                    min={0}
+                                    max={BRUSH_STRANDS_TWISTS_MAX}
+                                    step={0.5}
+                                    suffix=" per stroke"
+                                    set={(twists) => setBrushStrands((current) => normalizeBrushStrands({ ...current, twists }))}
+                                  />
+                                  <Slider
+                                    label="Wobble"
+                                    value={brushStrands.wobble}
+                                    min={0}
+                                    max={100}
+                                    set={(wobble) => setBrushStrands((current) => normalizeBrushStrands({ ...current, wobble }))}
+                                  />
+                                  <Slider
+                                    label="Strand opacity jitter"
+                                    value={brushStrands.opacityJitter}
+                                    min={0}
+                                    max={100}
+                                    set={(opacityJitter) =>
+                                      setBrushStrands((current) => normalizeBrushStrands({ ...current, opacityJitter }))}
+                                  />
+                                  <div className="strand-seed-row">
+                                    <label className="select-row">
+                                      <span>Seed</span>
+                                      <input
+                                        aria-label="Strand seed"
+                                        type="number"
+                                        inputMode="numeric"
+                                        min={0}
+                                        max={BRUSH_STRANDS_SEED_MAX}
+                                        step={1}
+                                        value={brushStrands.seed}
+                                        onChange={(event) => {
+                                          const seed = Number(event.target.value);
+                                          if (event.target.value !== '' && Number.isFinite(seed))
+                                            setBrushStrands((current) => normalizeBrushStrands({ ...current, seed }));
+                                        }}
+                                      />
+                                    </label>
+                                    <button
+                                      type="button"
+                                      title="Pick a new random seed for the next stroke"
+                                      onClick={() =>
+                                        setBrushStrands((current) =>
+                                          normalizeBrushStrands({
+                                            ...current,
+                                            seed: (current.seed + 1 + Math.floor(Math.random() * BRUSH_STRANDS_SEED_MAX)) %
+                                              (BRUSH_STRANDS_SEED_MAX + 1),
+                                          }))}
+                                    >
+                                      New seed
+                                    </button>
+                                  </div>
+                                </>
+                              )}
+                            </fieldset>
+                          )}
+                          <Slider
+                            label="Count jitter"
+                            value={brushDynamics.countJitter}
+                            min={0}
+                            max={100}
+                            set={(countJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, countJitter }))}
+                          />
+                          <Slider
+                            label="Size jitter"
+                            value={brushDynamics.sizeJitter}
+                            min={0}
+                            max={100}
+                            set={(sizeJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, sizeJitter }))}
+                          />
+                          <Slider
+                            label="Angle jitter"
+                            value={brushDynamics.angleJitter}
+                            min={0}
+                            max={100}
+                            set={(angleJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, angleJitter }))}
+                          />
+                          <Slider
+                            label="Opacity jitter"
+                            value={brushDynamics.opacityJitter}
+                            min={0}
+                            max={100}
+                            set={(opacityJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, opacityJitter }))}
+                          />
+                          {(tool === 'brush' || tool === 'pencil') && (
+                            <>
+                              <Slider
+                                label="Hue jitter"
+                                value={brushDynamics.hueJitter}
+                                min={0}
+                                max={100}
+                                set={(hueJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, hueJitter }))}
+                              />
+                              <Slider
+                                label="Saturation jitter"
+                                value={brushDynamics.saturationJitter}
+                                min={0}
+                                max={100}
+                                set={(saturationJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, saturationJitter }))}
+                              />
+                              <Slider
+                                label="Brightness jitter"
+                                value={brushDynamics.brightnessJitter}
+                                min={0}
+                                max={100}
+                                set={(brightnessJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, brightnessJitter }))}
+                              />
+                              <Slider
+                                label="Foreground/background jitter"
+                                value={brushDynamics.colorMixJitter}
+                                min={0}
+                                max={100}
+                                set={(colorMixJitter) => setBrushDynamics((current) => normalizeBrushDynamics({ ...current, colorMixJitter }))}
+                              />
+                            </>
+                          )}
+                          <Slider
+                            label="Texture"
+                            value={brushTexture}
+                            min={0}
+                            max={100}
+                            set={setBrushTexture}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Dual brush"
+                            value={brushDual}
+                            min={0}
+                            max={100}
+                            set={setBrushDual}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Bristle"
+                            value={brushBristle}
+                            min={0}
+                            max={100}
+                            set={setBrushBristle}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Wet edges"
+                            value={brushWetEdges}
+                            min={0}
+                            max={100}
+                            set={setBrushWetEdges}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Build-up"
+                            value={brushBuildUp}
+                            min={0}
+                            max={100}
+                            set={setBrushBuildUp}
+                            suffix="%"
+                          />
+                          <Slider
+                            label="Flow"
+                            value={brushFlow}
+                            min={1}
+                            max={100}
+                            set={setBrushFlow}
+                            suffix="%"
+                          />
+                        </>
+                      )}
+                      <Slider
+                        label="Angle"
+                        value={brushAngle}
+                        min={-180}
+                        max={180}
+                        set={setBrushAngle}
+                        suffix="°"
+                      />
+                      <Slider
+                        label="Roundness"
+                        value={brushRoundness}
+                        min={1}
+                        max={100}
+                        set={setBrushRoundness}
+                        suffix="%"
+                      />
+                      <label className="check-row">
+                        <input
+                          aria-label="Flip tip horizontal"
+                          type="checkbox"
+                          checked={brushFlipX}
+                          onChange={(event) => setBrushFlipX(event.target.checked)}
+                        />
+                        Flip tip horizontal
+                      </label>
+                      <label className="check-row">
+                        <input
+                          aria-label="Flip tip vertical"
+                          type="checkbox"
+                          checked={brushFlipY}
+                          onChange={(event) => setBrushFlipY(event.target.checked)}
+                        />
+                        Flip tip vertical
+                      </label>
+                      <p className="adjust-note">
+                        Tip settings apply to future local dabs. Advanced
+                        Dual brush and Bristle are deterministic local opacity
+                        dynamics; Wet edges and Build-up are deterministic local
+                        opacity approximations, while full physical tip
+                        simulation and wet-media buildup remain staged. Scatter is a deterministic local
+                        stamp offset (up to 1,000% of the diameter; perpendicular to the stroke unless
+                        both axes is on). Count places several dabs per spacing step; jitter varies each
+                        dab deterministically, so replaying a stroke gives the same pixels.
+                      </p>
+                    </>
+                  )}
+                  {tool !== 'pencil' &&
+                    tool !== 'color-replace' &&
+                    tool !== 'magic-eraser' &&
+                    tool !== 'dodge' &&
+                    tool !== 'burn' &&
+                    tool !== 'sponge' &&
+                    tool !== 'smudge' &&
+                    tool !== 'red-eye' &&
+                    tool !== 'spot-heal' &&
+                    tool !== 'patch' &&
+                    tool !== 'mask-brush' &&
+                    tool !== 'mask-eraser' &&
+                    tool !== 'adjustment-brush' &&
+                    tool !== 'quick-selection' && (
+                      <>
+                        <label className="check-row">
+                          <input
+                            aria-label="Pressure affects size"
+                            type="checkbox"
+                            checked={pressureSize}
+                            onChange={(event) =>
+                              setPressureSize(event.target.checked)
+                            }
+                          />
+                          Pressure affects size
+                        </label>
+                        <label className="check-row">
+                          <input
+                            aria-label="Pressure affects opacity"
+                            type="checkbox"
+                            checked={pressureOpacity}
+                            onChange={(event) =>
+                              setPressureOpacity(event.target.checked)
+                            }
+                          />
+                          Pressure affects opacity
+                        </label>
+                        <p className="adjust-note">
+                          Pressure mapping is off by default. Pen and touch
+                          inputs use full size and opacity until each option is
+                          enabled. With an option on, near-zero pen pressure is a
+                          pen lift and paints nothing; mouse input always paints
+                          at full pressure.
+                        </p>
+                      </>
+                    )}
+                  {(tool === 'brush' ||
+                    tool === 'pencil' ||
+                    tool === 'eraser' ||
+                    tool === 'clone' ||
+                    tool === 'heal' ||
+                    tool === 'pattern-stamp' ||
+                    tool === 'smudge') && (
+                    <label className="select-row">
+                      <span>Pressure curve</span>
+                      <select
+                        aria-label="Pressure curve"
+                        value={pressureCurve}
+                        onChange={(event) =>
+                          setPressureCurve(normalizeBrushPressureCurve(event.target.value))
+                        }
+                      >
+                        {BRUSH_PRESSURE_CURVES.map((curve) => (
+                          <option key={curve} value={curve}>
+                            {curve === 'linear'
+                              ? 'Linear'
+                              : curve === 'soft'
+                                ? 'Soft (more response)'
+                                : 'Firm (less response)'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {(tool === 'color-replace' ||
+                    tool === 'background-eraser' ||
+                    tool === 'magic-eraser' ||
+                    tool === 'quick-selection') && (
+                    <Slider
+                      label="Color tolerance"
+                      value={colorTolerance}
+                      min={0}
+                      max={255}
+                      set={setColorTolerance}
+                      suffix=""
+                    />
+                  )}
+                  {tool === 'color-replace' && (
+                    <>
+                      <label className="select-row">
+                        <span>Mode</span>
+                        <select
+                          aria-label="Color Replace mode"
+                          value={retouchOptions.colorReplaceMode}
+                          onChange={(event) => setRetouchOption('colorReplaceMode', event.target.value as ColorReplaceMode)}
+                        >
+                          <option value="color">Color</option>
+                          <option value="hue">Hue</option>
+                          <option value="saturation">Saturation</option>
+                          <option value="luminosity">Luminosity</option>
+                          <option value="normal">Normal</option>
+                        </select>
+                      </label>
+                      <label className="select-row">
+                        <span>Sampling</span>
+                        <select
+                          aria-label="Color Replace sampling"
+                          value={retouchOptions.colorReplaceSampling}
+                          onChange={(event) => setRetouchOption('colorReplaceSampling', event.target.value as ColorReplaceSampling)}
+                        >
+                          <option value="continuous">Continuous</option>
+                          <option value="once">Once</option>
+                          <option value="background">Background Swatch</option>
+                        </select>
+                      </label>
+                      <label className="select-row">
+                        <span>Limits</span>
+                        <select
+                          aria-label="Color Replace limits"
+                          value={retouchOptions.colorReplaceLimits}
+                          onChange={(event) => setRetouchOption('colorReplaceLimits', event.target.value as ColorReplaceLimits)}
+                        >
+                          <option value="contiguous">Contiguous</option>
+                          <option value="discontiguous">Discontiguous</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
+                  {(tool === 'dodge' || tool === 'burn') && (
+                    <>
+                      <Slider
+                        label="Exposure"
+                        value={tonalExposure}
+                        min={1}
+                        max={100}
+                        set={setTonalExposure}
+                        suffix="%"
+                      />
+                      <label className="select-row">
+                        <span>Range</span>
+                        <select
+                          aria-label="Tonal range"
+                          value={tonalRange}
+                          onChange={(event) =>
+                            setTonalRange(event.target.value as TonalRange)
+                          }
+                        >
+                          <option value="shadows">Shadows</option>
+                          <option value="midtones">Midtones</option>
+                          <option value="highlights">Highlights</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
+                  {tool === 'sponge' && (
+                    <>
+                      <Slider
+                        label="Vibrance"
+                        value={spongeVibrance}
+                        min={1}
+                        max={100}
+                        set={setSpongeVibrance}
+                        suffix="%"
+                      />
+                      <label className="select-row">
+                        <span>Mode</span>
+                        <select
+                          aria-label="Sponge mode"
+                          value={spongeMode}
+                          onChange={(event) =>
+                            setSpongeMode(event.target.value as SpongeMode)
+                          }
+                        >
+                          <option value="saturate">Saturate</option>
+                          <option value="desaturate">Desaturate</option>
+                        </select>
+                      </label>
+                    </>
+                  )}
+                  {tool === 'mixer-brush' && (
+                    <>
+                      <Slider label="Wet" value={mixerBrush.wet} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, wet: value }))} suffix="%" />
+                      <Slider label="Load" value={mixerBrush.load} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, load: value }))} suffix="%" />
+                      <Slider label="Mix" value={mixerBrush.mix} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, mix: value }))} suffix="%" />
+                      <Slider label="Flow" value={mixerBrush.flow} min={1} max={100} set={(value) => setMixerBrush((current) => ({ ...current, flow: value }))} suffix="%" />
+                      <p className="adjust-note">Mixer Brush blends an immutable source snapshot with the active raster. Wet-media buildup, bristle scattering and canvas rotation are intentionally bounded for predictable local drafts.</p>
+                    </>
+                  )}
+                  {tool === 'history-brush' && (
+                    <>
+                      <Slider label="History opacity" value={historyBrush.opacity} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, opacity: value }))} suffix="%" />
+                      <Slider label="History flow" value={historyBrush.flow} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, flow: value }))} suffix="%" />
+                      <label className="select-row">
+                        <span>History source</span>
+                        <select aria-label="History source" value={String(historySourceIndex ?? 0)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
+                          {historySourceLabels(history.current).map((label, snapshot) => <option key={snapshot} value={snapshot}>{label}</option>)}
+                        </select>
+                      </label>
+                      <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
+                      <p className="adjust-note">Source snapshot: {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1} of {history.current.length}. Restore is painted through the brush and remains undoable; discarded snapshots cannot be recovered.</p>
+                    </>
+                  )}
+                  {tool === 'art-history-brush' && (
+                    <>
+                      <Slider label="Art History opacity" value={artHistoryBrush.opacity} min={1} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, opacity: value }))} suffix="%" />
+                      <Slider label="Art History flow" value={artHistoryBrush.flow} min={1} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, flow: value }))} suffix="%" />
+                      <Slider label="Style area" value={artHistoryBrush.style} min={1} max={24} set={(value) => setArtHistoryBrush((current) => ({ ...current, style: value }))} suffix="px" />
+                      <Slider label="Fidelity" value={artHistoryBrush.fidelity} min={0} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, fidelity: value }))} suffix="%" />
+                      <label className="select-row">
+                        <span>Art History source</span>
+                        <select aria-label="Art History source" value={String(historySourceIndex ?? 0)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
+                          {historySourceLabels(history.current).map((label, snapshot) => <option key={snapshot} value={snapshot}>{label}</option>)}
+                        </select>
+                      </label>
+                      <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`Art History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
+                      <p className="adjust-note">Local deterministic painterly approximation from snapshot {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : 1}. Source pixels remain immutable and the committed stroke is undoable; bristle and wet-media dynamics are staged.</p>
+                    </>
+                  )}
+                  {tool === 'pattern-stamp' && (
+                    <>
+                      <label className="select-row">
+                        <span>Pattern</span>
+                        <select
+                          aria-label="Pattern source"
+                          value={activeImagePattern ? `image:${activeImagePattern.id}` : patternId}
+                          onChange={(event) => {
+                            const value = event.target.value;
+                            if (value.startsWith('image:')) setRetouchOption('patternImage', value.slice(6));
+                            else {
+                              setPatternId(value as PatternId);
+                              setRetouchOption('patternImage', null);
+                            }
+                          }}
+                        >
+                          {PATTERN_IDS.map((id) => (
+                            <option key={id} value={id}>
+                              {id[0].toUpperCase() + id.slice(1)}
+                            </option>
+                          ))}
+                          {imagePatterns.map((pattern) => (
+                            <option key={pattern.id} value={`image:${pattern.id}`}>
+                              {pattern.label} ({pattern.width}×{pattern.height})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={!frame?.selection}
+                        onClick={() => void definePatternFromSelection()}
+                      >
+                        Define pattern from selection
+                      </button>
+                      <label className="check-row">
+                        <input
+                          aria-label="Pattern aligned"
+                          type="checkbox"
+                          checked={retouchOptions.patternAligned}
+                          onChange={(event) => setRetouchOption('patternAligned', event.target.checked)}
+                        />
+                        Aligned
+                      </label>
+                      {customPatternPresets.length > 0 && (
+                        <label className="select-row">
+                          <span>Saved pattern</span>
+                          <select
+                            aria-label="Saved pattern"
+                            defaultValue=""
+                            onChange={(event) => {
+                              const preset = customPatternPresets.find((item) => item.id === event.target.value);
+                              if (preset) applyCustomPatternPreset(preset);
+                            }}
+                          >
+                            <option value="">Choose saved pattern</option>
+                            {customPatternPresets.map((preset) => (
+                              <option key={preset.id} value={preset.id}>{preset.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      <Slider
+                        label="Tile size"
+                        value={patternTileSize}
+                        min={4}
+                        max={128}
+                        set={setPatternTileSize}
+                        suffix="px"
+                      />
+                      <p className="adjust-note">
+                        {activeImagePattern
+                          ? 'Pattern Stamp repeats the pixels captured from a selection (at most 128 px per side).'
+                          : 'Pattern Stamp generates a bounded local tile from the foreground/background wells.'}
+                        {' '}No source image leaves this device.
+                      </p>
+                    </>
+                  )}
+                  {(tool === 'clone' || tool === 'heal') && (
+                    <>
+                      <label className="check-row">
+                        <input
+                          aria-label="Clone aligned"
+                          type="checkbox"
+                          checked={retouchOptions.cloneAligned}
+                          onChange={(event) => setRetouchOption('cloneAligned', event.target.checked)}
+                        />
+                        Aligned
+                      </label>
+                      <label className="select-row">
+                        <span>Sample</span>
+                        <select
+                          aria-label="Clone sample"
+                          value={retouchOptions.cloneSample}
+                          onChange={(event) => setRetouchOption('cloneSample', event.target.value as CloneSample)}
+                        >
+                          <option value="current">Current Layer</option>
+                          <option value="below">Current &amp; Below</option>
+                          <option value="all">All Layers</option>
+                        </select>
+                      </label>
+                      <p className="adjust-note">
+                        Option/Alt-click the canvas to set or re-anchor the
+                        source point. Aligned keeps the source offset between
+                        strokes; otherwise each stroke starts again at the source
+                        point. The source pixels stay unchanged until you commit
+                        the stroke.
+                      </p>
+                    </>
+                  )}
+                  {tool === 'selection-brush' && (
+                    <p className="adjust-note">
+                      Paint an editable alpha selection. Use Selection mode below
+                      for replace, add, subtract or intersect;
+                      the source pixels remain unchanged.
+                    </p>
+                  )}
+                  {tool === 'quick-selection' && (
+                    <p className="adjust-note">
+                      Grows a local connected colour selection from brush samples.
+                      Strong colour edges stop the flood; no semantic object model or upload is used.
+                    </p>
+                  )}
+                  {tool === 'red-eye' && (
+                    <>
+                      <Slider
+                        label="Red threshold"
+                        value={redEyeThreshold}
+                        min={0}
+                        max={255}
+                        set={setRedEyeThreshold}
+                        suffix=""
+                      />
+                      <Slider
+                        label="Correction amount"
+                        value={redEyeAmount}
+                        min={0}
+                        max={100}
+                        set={setRedEyeAmount}
+                        suffix="%"
+                      />
+                      <p className="adjust-note">
+                        Corrects conservative red-dominant pixels locally. It
+                        preserves transparency and stays on this device.
+                      </p>
+                    </>
+                  )}
+                </>
+              )}
+            </SidebarSection>
+          )}
+          {section === 'text' && (
+            <SidebarSection
+              id="text"
+              icon={Type}
+              title="Text"
+              collapsed={collapsedSections.has('text')}
+              onToggle={toggleSidebarSection}
+            >
+              <p className="adjust-note">
+                Click to add point type, drag to draw a paragraph box, or click existing type to edit it.
+              </p>
+              <label className="select-row"><span>New type text</span>
+                <input
+                  aria-label="Text content"
+                  className="text-input"
+                  value={text}
+                  maxLength={10000}
+                  placeholder="Empty: start typing"
+                  onChange={(e) => setText(e.target.value)}
+                />
+              </label>
+              <div className="select-row font-select-row" data-type-keep=""><span>Font</span><FontFamilySelect label="Text tool font" value={textFields.fontFamily} disabled={typeView.locked} onChange={chooseTextToolFont} optionStyle={(font) => ({ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) })} /></div>
+              <p className="adjust-note" data-testid="font-control-note">
+                Font sets the font for new type and restyles the selected type layer (or the selected
+                characters while editing).
+              </p>
+              <button type="button" className="text-input" onClick={() => setGlyphsOpen(true)}>Glyphs, icons &amp; symbols…</button>
+              {/* The check covers the new-type font, so it shows only while the picker shows that font. */}
+              {fontAvailability === 'fallback' && textFields.fontFamily === fontFamily && (
+                <output data-testid="font-fallback-warning" className="adjust-note">
+                  “{fontFamily}” is unavailable; browser fallback rendering is active.
+                </output>
+              )}
+              <label className="select-row"><span>Preview</span><select aria-label="Font preview size" className="text-input" value={fontPreviewSize} onChange={(event) => setFontPreviewSize(normalizeFontPreviewSize(event.target.value))}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
+              {/* data-type-keep: changing these mid-edit styles the selected characters instead of committing. */}
+              <div data-type-keep="">
+                <Slider
+                  label="Size"
+                  value={textFields.fontSize}
+                  min={textFields.sizeMin}
+                  max={textFields.sizeMax}
+                  set={(size) => (textFields.target === 'type' ? typeActions.character({ fontSize: size }) : setFontSize(size))}
+                  suffix={textFields.sizeMixed ? 'px (mixed)' : 'px'}
+                />
+              </div>
+              <TypePanels
+                view={typeView}
+                actions={typeActions}
+                fonts={ALL_FONT_FAMILIES}
+                open={typePanelsOpen}
+                onOpenChange={(panel, open) => setTypePanelsOpen((value) => (value[panel] === open ? value : { ...value, [panel]: open }))}
+              />
+            </SidebarSection>
+          )}
+          {section === 'selection-options' && frame && (
+            <section className="panel layers-part-panel" aria-label="Selection options">
+              {(MARQUEE_TOOLS.includes(tool) || tool === 'lasso' || tool === 'polygonal-lasso' || tool === 'magnetic-lasso') && (
+                <div className="layer-actions marquee-options" data-testid="marquee-options">
+                  {tool !== 'row-select' && tool !== 'column-select' && (
+                    <Slider
+                      label="Feather (new selections)"
+                      value={marqueeOptions.feather}
+                      min={0}
+                      max={MARQUEE_FEATHER_MAX}
+                      set={(feather) => setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, feather }))}
+                      suffix="px"
+                    />
+                  )}
+                  {(tool === 'select' || tool === 'ellipse-select') && (
+                    <>
+                      <label className="select-row">
+                        <span>Style</span>
+                        <select
+                          aria-label="Marquee style"
+                          value={marqueeOptions.style}
+                          onChange={(event) =>
+                            setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, style: event.target.value as MarqueeStyle }))
+                          }
+                        >
+                          <option value="normal">Normal</option>
+                          <option value="fixed-ratio">Fixed Ratio</option>
+                          <option value="fixed-size">Fixed Size</option>
+                        </select>
+                      </label>
+                      {marqueeOptions.style !== 'normal' && (
+                        <div className="select-row marquee-size">
+                          {(['width', 'height'] as const).map((side) => (
+                            <label key={side}>
+                              <span>{side === 'width' ? 'W' : 'H'}</span>
+                              <input
+                                type="number"
+                                min={1}
+                                max={30000}
+                                aria-label={`Marquee ${marqueeOptions.style === 'fixed-size' ? 'size' : 'ratio'} ${side}`}
+                                value={marqueeOptions[side]}
+                                onChange={(event) =>
+                                  setMarqueeOptions((value) => normalizeMarqueeOptions({ ...value, [side]: Number(event.target.value) }))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+              {renderLayersPanel(frame, 'selection')}
+            </section>
+          )}
+              </Fragment>
+            ))}
+            {toolAreaSectionsFor(tool, { textLayerSelected: Boolean(activeTypeLayer) }).length === 0 && (
+              <p className="panel sidebar-tool-empty" data-testid="tool-options-empty">
+                <b>{activeToolLabel}</b> has no sidebar options; its controls are on the canvas or in the toolbar.
+              </p>
+            )}
+          </section>
+          {frame && renderLayersPanel(frame, 'layers', layerPixelUsage(frame, assets.current))}
+          <fieldset className="sidebar-panel-strip" data-testid="sidebar-panel-strip">
+            <legend className="sr-only">More panels</legend>
+            {SIDEBAR_PANEL_IDS.map((panel) => {
+              const Icon = SIDEBAR_PANEL_ICONS[panel];
+              const expanded = openSidebarPanel === panel;
+              return (
+                <button
+                  key={panel}
+                  type="button"
+                  className="sidebar-panel-tab"
+                  data-sidebar-panel-toggle={panel}
+                  aria-label={`${SIDEBAR_PANELS[panel].label} panel`}
+                  title={SIDEBAR_PANELS[panel].label}
+                  aria-expanded={expanded}
+                  aria-controls={expanded ? 'sidebar-open-panel' : undefined}
+                  onClick={() => chooseSidebarPanel(togglePanel(openSidebarPanel, panel))}
+                >
+                  <Icon aria-hidden="true" />
+                  <span>{SIDEBAR_PANELS[panel].short}</span>
+                </button>
+              );
+            })}
+          </fieldset>
+          {openSidebarPanel && (
+          // Not a landmark of its own: the sections inside are the named
+          // regions, so their names stay unique (docs/contextual-sidebar-contract.md).
+          <div
+            id="sidebar-open-panel"
+            className="sidebar-open-panel"
+            data-sidebar-open-panel={openSidebarPanel}
+          >
+          {!frame && !PANELS_WITHOUT_DOCUMENT.has(openSidebarPanel) && (
+            <p className="panel sidebar-tool-empty">Open an image to use this panel.</p>
+          )}
+          {openSidebarPanel === 'layer-details' && frame && (
+            <section className="panel layers-part-panel" aria-label="Layer details">
+              {renderLayersPanel(frame, 'details')}
+            </section>
+          )}
+          {openSidebarPanel === 'adjustments' && (
+          <SidebarSection
+            id="adjustments"
+            icon={WandSparkles}
+            title="Adjust selected layer"
+            action="Reset"
+            onAction={() => {
+              resetAdjustments();
+              setNotice('Adjustments reset');
+            }}
+            collapsed={collapsedSections.has('adjustments')}
+            onToggle={toggleSidebarSection}
+          >
             <Slider
               label="Brightness"
               value={brightness}
@@ -15425,43 +22693,48 @@ export default function Home() {
               label="Levels output black"
               value={levelsOutputBlack}
               min={0}
-              max={254}
-              set={(value) =>
-                setLevelsOutputBlack(Math.min(value, levelsOutputWhite - 1))
-              }
+              max={255}
+              // Output black above output white inverts the tones.
+              set={setLevelsOutputBlack}
               suffix=""
             />
             <Slider
               label="Levels output white"
               value={levelsOutputWhite}
-              min={1}
+              min={0}
               max={255}
-              set={(value) =>
-                setLevelsOutputWhite(Math.max(value, levelsOutputBlack + 1))
-              }
+              set={setLevelsOutputWhite}
               suffix=""
             />
             <div className="adjustment-subtitle">Curves (nondestructive)</div>
-            <CurveEditor
-              label="RGB"
-              points={curves.rgb}
-              onChange={(points) => setCurve('rgb', points)}
-            />
-            <CurveEditor
-              label="Red"
-              points={curves.red}
-              onChange={(points) => setCurve('red', points)}
-            />
-            <CurveEditor
-              label="Green"
-              points={curves.green}
-              onChange={(points) => setCurve('green', points)}
-            />
-            <CurveEditor
-              label="Blue"
-              points={curves.blue}
-              onChange={(points) => setCurve('blue', points)}
-            />
+            <label className="check-row">
+              <input
+                aria-label="Smooth curve interpolation"
+                type="checkbox"
+                checked={curveInterpolation(curves) === 'monotone'}
+                onChange={(event) =>
+                  setCurveInterpolation(
+                    event.target.checked ? 'monotone' : 'linear',
+                  )
+                }
+              />
+              Smooth curve interpolation
+            </label>
+            {(['rgb', 'red', 'green', 'blue'] as const).map((channel) => (
+              <CurveEditor
+                key={channel}
+                label={
+                  channel === 'rgb'
+                    ? 'RGB'
+                    : channel[0].toUpperCase() + channel.slice(1)
+                }
+                points={curves[channel]}
+                interpolation={curveInterpolation(curves)}
+                onChange={(points, options) =>
+                  setCurve(channel, points, options)
+                }
+              />
+            ))}
             <div className="adjustment-subtitle">Color Balance</div>
             <Slider
               label="Shadows cyan/red"
@@ -15607,898 +22880,16 @@ export default function Home() {
               uses a bounded unsharp mask and Noise is deterministic, all
               without changing source pixels.
             </p>
-          </section>
-          {tool === 'rotate-view' && (
-            <section className="panel" data-testid="view-rotation-controls">
-              <Title icon={RotateCw} text="Rotate View" />
-              <output data-testid="view-rotation-value" aria-live="polite">
-                {normalizeViewRotation(viewRotation)}°
-              </output>
-              <div className="transform">
-                <button type="button" aria-label="Rotate view left 15 degrees" onClick={() => rotateViewBy(-15)}>
-                  <RotateCcw />
-                </button>
-                <button type="button" aria-label="Rotate view right 15 degrees" onClick={() => rotateViewBy(15)}>
-                  <RotateCw />
-                </button>
-                <button type="button" className="secondary" aria-label="Reset view rotation" onClick={resetViewRotation}>
-                  Reset view
-                </button>
-              </div>
-              <p className="adjust-note">Rotate View changes only the canvas viewport. Document pixels, layers and exports stay unchanged.</p>
-            </section>
+          </SidebarSection>
           )}
-          <section className="panel">
-            <Title icon={Crop} text="Transform" />
-            <div className="transform">
-              <button
-                aria-label="Rotate left"
-                onClick={() => transform('left')}
-              >
-                <RotateCcw />
-              </button>
-              <button
-                aria-label="Rotate right"
-                onClick={() => transform('right')}
-              >
-                <RotateCw />
-              </button>
-              <button
-                aria-label="Flip horizontal"
-                onClick={() => transform('h')}
-              >
-                <FlipHorizontal2 />
-              </button>
-              <button aria-label="Flip vertical" onClick={() => transform('v')}>
-                <FlipVertical2 />
-              </button>
-            </div>
-          </section>
-          {(tool === 'brush' ||
-            tool === 'pencil' ||
-            tool === 'color-replace' ||
-            tool === 'eraser' ||
-            tool === 'background-eraser' ||
-            tool === 'magic-eraser' ||
-            tool === 'mask-brush' ||
-            tool === 'mask-eraser' ||
-            tool === 'adjustment-brush' ||
-            tool === 'dodge' ||
-            tool === 'burn' ||
-            tool === 'sponge' ||
-            tool === 'smudge' ||
-            tool === 'blur' ||
-            tool === 'sharpen' ||
-            tool === 'clone' ||
-            tool === 'heal' ||
-            tool === 'spot-heal' ||
-            tool === 'patch' ||
-            tool === 'red-eye' ||
-            tool === 'pattern-stamp' ||
-            tool === 'mixer-brush' ||
-            tool === 'history-brush' ||
-            tool === 'art-history-brush' ||
-            tool === 'selection-brush' ||
-            tool === 'quick-selection' ||
-            tool === 'gradient' ||
-            tool === 'rectangle' ||
-            tool === 'ellipse' ||
-            tool === 'line' ||
-            tool === 'polygon' ||
-            tool === 'pen' ||
-            tool === 'freeform-pen' ||
-            tool === 'curvature-pen' ||
-            tool === 'direct-select') && (
-            <section className="panel">
-              <Title icon={Brush} text="Tool options" />
-              {tool === 'gradient' && (
-                <label className="select-row">
-                  <span>Gradient type</span>
-                  <select
-                    aria-label="Gradient type"
-                    value={gradientMode}
-                    onChange={(event) => setGradientMode(event.target.value as 'linear' | 'radial' | 'reflected')}
-                  >
-                    <option value="linear">Linear</option>
-                    <option value="radial">Radial</option>
-                    <option value="reflected">Reflected</option>
-                  </select>
-                </label>
-              )}
-              {tool === 'gradient' && (
-                <div className="select-row">
-                  <label>
-                    <input
-                      aria-label="Gradient midpoint enabled"
-                      type="checkbox"
-                      checked={gradientMidpoint !== 'none'}
-                      onChange={(event) => setGradientMidpoint(event.target.checked ? '#ffffff' : 'none')}
-                    />
-                    <span>Midpoint colour</span>
-                  </label>
-                  <input
-                    aria-label="Gradient midpoint colour"
-                    type="color"
-                    value={gradientMidpoint === 'none' ? '#ffffff' : gradientMidpoint}
-                    disabled={gradientMidpoint === 'none'}
-                    onChange={(event) => setGradientMidpoint(event.target.value)}
-                  />
-                </div>
-              )}
-              {tool === 'gradient' && (
-                <Slider
-                  label="Midpoint position"
-                  value={gradientMidpointPosition}
-                  min={1}
-                  max={99}
-                  set={setGradientMidpointPosition}
-                  suffix="%"
-                />
-              )}
-              {tool === 'gradient' && gradientMode !== 'reflected' && (
-                <div className="gradient-stops" aria-label="Gradient colour stops">
-                  <div className="select-row">
-                    <span>Additional stops</span>
-                    <button
-                      type="button"
-                      disabled={gradientStops.length >= MAX_GRADIENT_STOPS}
-                      onClick={() => {
-                        const used = new Set(gradientStops.map((stop) => stop.position));
-                        const position = [25, 50, 75].find((candidate) => !used.has(candidate)) ??
-                          Math.max(1, Math.min(99, 10 + gradientStops.length * 13));
-                        setGradientStops(normalizeGradientStops([
-                          ...gradientStops,
-                          { position, color: '#ffffff' },
-                        ]));
-                        setGradientMidpoint('none');
-                      }}
-                    >
-                      Add stop
-                    </button>
-                  </div>
-                  {gradientStops.map((stop, stopIndex) => (
-                    <div className="select-row" key={`${stop.position}-${stopIndex}`}>
-                      <input
-                        aria-label={`Gradient stop ${stopIndex + 1} position`}
-                        type="number"
-                        min={1}
-                        max={99}
-                        value={stop.position}
-                        onChange={(event) => {
-                          const position = Math.max(1, Math.min(99, Math.round(Number(event.target.value) || 1)));
-                          const next = gradientStops.map((item, index) => index === stopIndex ? { ...item, position } : item);
-                          setGradientStops(normalizeGradientStops(next));
-                        }}
-                      />
-                      <input
-                        aria-label={`Gradient stop ${stopIndex + 1} colour`}
-                        type="color"
-                        value={stop.color}
-                        onChange={(event) => setGradientStops(gradientStops.map((item, index) =>
-                          index === stopIndex ? { ...item, color: event.target.value } : item))}
-                      />
-                      <button
-                        type="button"
-                        aria-label={`Remove gradient stop ${stopIndex + 1}`}
-                        onClick={() => setGradientStops(gradientStops.filter((_, index) => index !== stopIndex))}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {tool === 'gradient' && (
-                <label className="select-row">
-                  <span>Gradient end</span>
-                  <select
-                    aria-label="Gradient end"
-                    value={gradientEnd}
-                    onChange={(event) => setGradientEnd(event.target.value as 'transparent' | 'background')}
-                  >
-                    <option value="transparent">Transparent</option>
-                    <option value="background">Background colour</option>
-                  </select>
-                </label>
-              )}
-              {tool === 'gradient' && (
-                <Slider
-                  label="Dither"
-                  value={gradientDither}
-                  min={0}
-                  max={100}
-                  set={setGradientDither}
-                  suffix="%"
-                />
-              )}
-              {tool === 'gradient' && (
-                <Slider
-                  label="Noise"
-                  value={gradientNoise}
-                  min={0}
-                  max={100}
-                  set={setGradientNoise}
-                  suffix="%"
-                />
-              )}
-              {tool === 'gradient' && (
-                <label className="check-row">
-                  <input
-                    aria-label="Reverse gradient"
-                    type="checkbox"
-                    checked={gradientReverse}
-                    onChange={(event) => setGradientReverse(event.target.checked)}
-                  />
-                  Reverse gradient
-                </label>
-              )}
-              {(tool === 'rectangle' || tool === 'ellipse' || tool === 'line' || tool === 'polygon') && customShapePresets.length > 0 && (
-                <label className="select-row">
-                  <span>Saved shape preset</span>
-                  <select
-                    aria-label="Saved shape preset"
-                    value={selectedCustomShapePresetId}
-                    onChange={(event) => {
-                      const preset = customShapePresets.find((item) => item.id === event.target.value);
-                      if (preset) applyCustomShapePreset(preset);
-                      else setSelectedCustomShapePresetId('');
-                    }}
-                  >
-                    <option value="">Choose saved preset</option>
-                    {customShapePresets.map((preset) => (
-                      <option key={preset.id} value={preset.id}>{preset.label} ({preset.kind})</option>
-                    ))}
-                  </select>
-                  <button type="button" className="secondary" disabled={!selectedCustomShapePresetId} onClick={removeCustomShapePreset}>
-                    Remove
-                  </button>
-                </label>
-              )}
-              {(tool === 'pen' || tool === 'freeform-pen' || tool === 'curvature-pen' || tool === 'direct-select') && customPathPresets.length > 0 && (
-                <label className="select-row">
-                  <span>Saved path preset</span>
-                  <select
-                    aria-label="Saved path preset"
-                    value={selectedCustomPathPresetId}
-                    onChange={(event) => {
-                      const preset = customPathPresets.find((item) => item.id === event.target.value);
-                      if (preset) applyCustomPathPreset(preset);
-                      else setSelectedCustomPathPresetId('');
-                    }}
-                  >
-                    <option value="">Choose saved preset</option>
-                    {customPathPresets.map((preset) => (
-                      <option key={preset.id} value={preset.id}>{preset.label}</option>
-                    ))}
-                  </select>
-                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={removeCustomPathPreset}>
-                    Remove
-                  </button>
-                  <button type="button" className="secondary" disabled={!selectedCustomPathPresetId} onClick={updateCustomPathPreset}>
-                    Update
-                  </button>
-                </label>
-              )}
-              {tool === 'polygon' && (
-                <label className="select-row">
-                  <span>Polygon variant</span>
-                  <select
-                    aria-label="Polygon variant"
-                    value={polygonVariant}
-                    onChange={(event) => setPolygonVariant(event.target.value as ParametricShapeVariant)}
-                  >
-                    <option value="polygon">Polygon</option>
-                    <option value="triangle">Triangle</option>
-                    <option value="star">Star</option>
-                  </select>
-                </label>
-              )}
-              {tool === 'polygon' && polygonVariant !== 'triangle' && (
-                <Slider
-                  label="Polygon sides"
-                  value={polygonSides}
-                  min={3}
-                  max={32}
-                  set={setPolygonSides}
-                  suffix=""
-                />
-              )}
-              {tool === 'polygon' && polygonVariant === 'star' && (
-                <Slider
-                  label="Star inner radius"
-                  value={Math.round(polygonInnerRadius * 100)}
-                  min={10}
-                  max={90}
-                  set={(value) => setPolygonInnerRadius(value / 100)}
-                  suffix="%"
-                />
-              )}
-              {tool !== 'magic-eraser' && (
-                <Slider
-                  label="Size"
-                  value={size}
-                  min={2}
-                  max={100}
-                  set={setSize}
-                  suffix="px"
-                />
-              )}
-              {(tool === 'brush' ||
-                tool === 'pencil' ||
-                tool === 'color-replace' ||
-                tool === 'eraser' ||
-                tool === 'background-eraser' ||
-                tool === 'magic-eraser' ||
-                tool === 'mask-brush' ||
-                tool === 'mask-eraser' ||
-                tool === 'adjustment-brush' ||
-                tool === 'dodge' ||
-                tool === 'burn' ||
-                tool === 'sponge' ||
-                tool === 'smudge' ||
-                tool === 'blur' ||
-                tool === 'sharpen' ||
-                tool === 'clone' ||
-                tool === 'heal' ||
-                tool === 'spot-heal' ||
-                tool === 'patch' ||
-                tool === 'red-eye' ||
-                tool === 'pattern-stamp' ||
-                tool === 'mixer-brush' ||
-                tool === 'history-brush' ||
-                tool === 'art-history-brush' ||
-                tool === 'selection-brush' ||
-                tool === 'quick-selection') && (
-                <>
-                  {(tool === 'brush' || tool === 'pencil') && (
-                    <>
-                      <label className="select-row">
-                        <span>Brush preset</span>
-                        <select
-                          aria-label="Brush preset"
-                          value={brushPreset}
-                          onChange={(event) =>
-                            applyBrushPreset(event.target.value as BrushPresetId)
-                          }
-                        >
-                          {BRUSH_PRESETS.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {customBrushPresets.length > 0 && (
-                        <label className="select-row">
-                          <span>Saved brush preset</span>
-                          <select
-                            aria-label="Saved brush preset"
-                            defaultValue=""
-                            onChange={(event) => {
-                              const preset = customBrushPresets.find((item) => item.id === event.target.value);
-                              if (preset) applyCustomBrushPreset(preset);
-                            }}
-                          >
-                            <option value="">Choose saved preset</option>
-                            {customBrushPresets.map((preset) => (
-                              <option key={preset.id} value={preset.id}>
-                                {preset.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-                    </>
-                  )}
-                  {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
-                    <label className="select-row">
-                      <span>Secondary brush tip</span>
-                      <select
-                        aria-label="Secondary brush tip"
-                        value={secondaryBrushPreset}
-                        onChange={(event) => setSecondaryBrushPreset(normalizeSecondaryBrushPreset(event.target.value))}
-                      >
-                        <option value="none">None</option>
-                        {BRUSH_PRESETS.map((preset) => (
-                          <option key={`secondary-${preset.id}`} value={preset.id}>
-                            {preset.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  {tool !== 'pencil' &&
-                    tool !== 'color-replace' &&
-                    tool !== 'magic-eraser' &&
-                    tool !== 'red-eye' && (
-                      <Slider
-                        label="Hardness"
-                        value={hardness}
-                        min={0}
-                        max={100}
-                        set={setHardness}
-                        suffix="%"
-                      />
-                    )}
-                  {tool === 'spot-heal' && (
-                    <p className="adjust-note">
-                      Samples a bounded local context ring and keeps the
-                      source and alpha channel unchanged. Use Remove Background
-                      for edge-connected backdrop removal.
-                    </p>
-                  )}
-                  {(tool === 'blur' || tool === 'sharpen') && (
-                    <p className="adjust-note">
-                      {tool === 'blur'
-                        ? 'Blurs pixels under the brush using a bounded local average.'
-                        : 'Sharpens local luminance detail with a bounded source-safe high-pass brush.'}
-                      {' '}Source pixels remain immutable and each stroke is undoable; use Filter for full-layer effects.
-                    </p>
-                  )}
-                  {tool === 'patch' && (
-                    <p className="adjust-note">
-                      Click a source area, then drag over a destination. Patch
-                      copies a bounded local neighbourhood while keeping the
-                      source asset and alpha channel unchanged.
-                    </p>
-                  )}
-                  {(tool === 'mask-brush' ||
-                    tool === 'mask-eraser' ||
-                    tool === 'adjustment-brush') && (
-                    <p className="adjust-note">
-                      {tool === 'adjustment-brush'
-                        ? 'Paints the selected adjustment layer mask in canvas space; the adjustment remains nondestructive and each stroke is undoable.'
-                        : 'Refines the existing layer mask in canvas space. Mask Brush reveals masked pixels and Mask Eraser conceals them; the source raster remains untouched and each stroke is undoable.'}
-                    </p>
-                  )}
-                  {tool !== 'magic-eraser' && tool !== 'red-eye' && (
-                    <Slider
-                      label={
-                        tool === 'dodge' ||
-                        tool === 'burn' ||
-                        tool === 'sponge' ||
-                        tool === 'smudge' ||
-                        tool === 'blur' ||
-                        tool === 'sharpen'
-                          ? 'Flow'
-                          : 'Opacity'
-                      }
-                      value={brushOpacity}
-                      min={1}
-                      max={100}
-                      set={setBrushOpacity}
-                      suffix="%"
-                    />
-                  )}
-                  {(tool === 'brush' ||
-                    tool === 'pencil' ||
-                    tool === 'eraser' ||
-                    tool === 'clone' ||
-                    tool === 'heal' ||
-                    tool === 'pattern-stamp') && (
-                    <>
-                      <Slider
-                        label="Spacing"
-                        value={brushSpacing}
-                        min={1}
-                        max={100}
-                        set={setBrushSpacing}
-                        suffix="%"
-                      />
-                      {(tool === 'brush' || tool === 'pencil' || tool === 'eraser') && (
-                        <>
-                          <Slider
-                            label="Smoothing"
-                            value={brushSmoothing}
-                            min={0}
-                            max={100}
-                            set={setBrushSmoothing}
-                            suffix="%"
-                          />
-                          <Slider
-                            label="Scatter"
-                            value={brushScatter}
-                            min={0}
-                            max={100}
-                            set={setBrushScatter}
-                            suffix="%"
-                          />
-                          <Slider
-                            label="Texture"
-                            value={brushTexture}
-                            min={0}
-                            max={100}
-                            set={setBrushTexture}
-                            suffix="%"
-                          />
-                          <Slider
-                            label="Dual brush"
-                            value={brushDual}
-                            min={0}
-                            max={100}
-                            set={setBrushDual}
-                            suffix="%"
-                          />
-                          <Slider
-                            label="Bristle"
-                            value={brushBristle}
-                            min={0}
-                            max={100}
-                            set={setBrushBristle}
-                            suffix="%"
-                          />
-                          <Slider
-                            label="Wet edges"
-                            value={brushWetEdges}
-                            min={0}
-                            max={100}
-                            set={setBrushWetEdges}
-                            suffix="%"
-                          />
-                          <Slider
-                            label="Build-up"
-                            value={brushBuildUp}
-                            min={0}
-                            max={100}
-                            set={setBrushBuildUp}
-                            suffix="%"
-                          />
-                          <Slider
-                            label="Flow"
-                            value={brushFlow}
-                            min={1}
-                            max={100}
-                            set={setBrushFlow}
-                            suffix="%"
-                          />
-                        </>
-                      )}
-                      <Slider
-                        label="Angle"
-                        value={brushAngle}
-                        min={-180}
-                        max={180}
-                        set={setBrushAngle}
-                        suffix="°"
-                      />
-                      <Slider
-                        label="Roundness"
-                        value={brushRoundness}
-                        min={1}
-                        max={100}
-                        set={setBrushRoundness}
-                        suffix="%"
-                      />
-                      <label className="check-row">
-                        <input
-                          aria-label="Flip tip horizontal"
-                          type="checkbox"
-                          checked={brushFlipX}
-                          onChange={(event) => setBrushFlipX(event.target.checked)}
-                        />
-                        Flip tip horizontal
-                      </label>
-                      <label className="check-row">
-                        <input
-                          aria-label="Flip tip vertical"
-                          type="checkbox"
-                          checked={brushFlipY}
-                          onChange={(event) => setBrushFlipY(event.target.checked)}
-                        />
-                        Flip tip vertical
-                      </label>
-                      <p className="adjust-note">
-                        Tip settings apply to future local dabs. Advanced
-                        Dual brush and Bristle are deterministic local opacity
-                        dynamics; Wet edges and Build-up are deterministic local
-                        opacity approximations, while full physical tip
-                        simulation and wet-media buildup remain staged. Scatter is a deterministic local
-                        stamp offset.
-                      </p>
-                    </>
-                  )}
-                  {tool !== 'pencil' &&
-                    tool !== 'color-replace' &&
-                    tool !== 'magic-eraser' &&
-                    tool !== 'dodge' &&
-                    tool !== 'burn' &&
-                    tool !== 'sponge' &&
-                    tool !== 'smudge' &&
-                    tool !== 'red-eye' &&
-                    tool !== 'spot-heal' &&
-                    tool !== 'patch' &&
-                    tool !== 'mask-brush' &&
-                    tool !== 'mask-eraser' &&
-                    tool !== 'adjustment-brush' &&
-                    tool !== 'quick-selection' && (
-                      <>
-                        <label className="check-row">
-                          <input
-                            aria-label="Pressure affects size"
-                            type="checkbox"
-                            checked={pressureSize}
-                            onChange={(event) =>
-                              setPressureSize(event.target.checked)
-                            }
-                          />
-                          Pressure affects size
-                        </label>
-                        <label className="check-row">
-                          <input
-                            aria-label="Pressure affects opacity"
-                            type="checkbox"
-                            checked={pressureOpacity}
-                            onChange={(event) =>
-                              setPressureOpacity(event.target.checked)
-                            }
-                          />
-                          Pressure affects opacity
-                        </label>
-                        <p className="adjust-note">
-                          Pressure mapping is off by default. Pen and touch
-                          inputs use full size and opacity until each option is
-                          enabled.
-                        </p>
-                      </>
-                    )}
-                  {(tool === 'brush' ||
-                    tool === 'pencil' ||
-                    tool === 'eraser' ||
-                    tool === 'clone' ||
-                    tool === 'heal' ||
-                    tool === 'pattern-stamp') && (
-                    <label className="select-row">
-                      <span>Pressure curve</span>
-                      <select
-                        aria-label="Pressure curve"
-                        value={pressureCurve}
-                        onChange={(event) =>
-                          setPressureCurve(normalizeBrushPressureCurve(event.target.value))
-                        }
-                      >
-                        {BRUSH_PRESSURE_CURVES.map((curve) => (
-                          <option key={curve} value={curve}>
-                            {curve === 'linear'
-                              ? 'Linear'
-                              : curve === 'soft'
-                                ? 'Soft (more response)'
-                                : 'Firm (less response)'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  {(tool === 'color-replace' ||
-                    tool === 'background-eraser' ||
-                    tool === 'magic-eraser' ||
-                    tool === 'quick-selection') && (
-                    <Slider
-                      label="Color tolerance"
-                      value={colorTolerance}
-                      min={0}
-                      max={255}
-                      set={setColorTolerance}
-                      suffix=""
-                    />
-                  )}
-                  {(tool === 'dodge' || tool === 'burn') && (
-                    <>
-                      <Slider
-                        label="Exposure"
-                        value={tonalExposure}
-                        min={1}
-                        max={100}
-                        set={setTonalExposure}
-                        suffix="%"
-                      />
-                      <label className="select-row">
-                        <span>Range</span>
-                        <select
-                          aria-label="Tonal range"
-                          value={tonalRange}
-                          onChange={(event) =>
-                            setTonalRange(event.target.value as TonalRange)
-                          }
-                        >
-                          <option value="shadows">Shadows</option>
-                          <option value="midtones">Midtones</option>
-                          <option value="highlights">Highlights</option>
-                        </select>
-                      </label>
-                    </>
-                  )}
-                  {tool === 'sponge' && (
-                    <>
-                      <Slider
-                        label="Vibrance"
-                        value={spongeVibrance}
-                        min={1}
-                        max={100}
-                        set={setSpongeVibrance}
-                        suffix="%"
-                      />
-                      <label className="select-row">
-                        <span>Mode</span>
-                        <select
-                          aria-label="Sponge mode"
-                          value={spongeMode}
-                          onChange={(event) =>
-                            setSpongeMode(event.target.value as SpongeMode)
-                          }
-                        >
-                          <option value="saturate">Saturate</option>
-                          <option value="desaturate">Desaturate</option>
-                        </select>
-                      </label>
-                    </>
-                  )}
-                  {tool === 'mixer-brush' && (
-                    <>
-                      <Slider label="Wet" value={mixerBrush.wet} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, wet: value }))} suffix="%" />
-                      <Slider label="Load" value={mixerBrush.load} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, load: value }))} suffix="%" />
-                      <Slider label="Mix" value={mixerBrush.mix} min={0} max={100} set={(value) => setMixerBrush((current) => ({ ...current, mix: value }))} suffix="%" />
-                      <Slider label="Flow" value={mixerBrush.flow} min={1} max={100} set={(value) => setMixerBrush((current) => ({ ...current, flow: value }))} suffix="%" />
-                      <p className="adjust-note">Mixer Brush blends an immutable source snapshot with the active raster. Wet-media buildup, bristle scattering and canvas rotation are intentionally bounded for predictable local drafts.</p>
-                    </>
-                  )}
-                  {tool === 'history-brush' && (
-                    <>
-                      <Slider label="History opacity" value={historyBrush.opacity} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, opacity: value }))} suffix="%" />
-                      <Slider label="History flow" value={historyBrush.flow} min={1} max={100} set={(value) => setHistoryBrush((current) => ({ ...current, flow: value }))} suffix="%" />
-                      <label className="select-row">
-                        <span>History source</span>
-                        <select aria-label="History source" value={String(historySourceIndex ?? index.current)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
-                          {history.current.map((_, snapshot) => <option key={snapshot} value={snapshot}>Snapshot {snapshot + 1}</option>)}
-                        </select>
-                      </label>
-                      <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
-                      <p className="adjust-note">Source snapshot: {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1} of {history.current.length}. Restore is painted through the brush and remains undoable; discarded snapshots cannot be recovered.</p>
-                    </>
-                  )}
-                  {tool === 'art-history-brush' && (
-                    <>
-                      <Slider label="Art History opacity" value={artHistoryBrush.opacity} min={1} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, opacity: value }))} suffix="%" />
-                      <Slider label="Art History flow" value={artHistoryBrush.flow} min={1} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, flow: value }))} suffix="%" />
-                      <Slider label="Style area" value={artHistoryBrush.style} min={1} max={24} set={(value) => setArtHistoryBrush((current) => ({ ...current, style: value }))} suffix="px" />
-                      <Slider label="Fidelity" value={artHistoryBrush.fidelity} min={0} max={100} set={(value) => setArtHistoryBrush((current) => ({ ...current, fidelity: value }))} suffix="%" />
-                      <label className="select-row">
-                        <span>Art History source</span>
-                        <select aria-label="Art History source" value={String(historySourceIndex ?? index.current)} onChange={(event) => setHistorySourceIndex(Number(event.target.value))}>
-                          {history.current.map((_, snapshot) => <option key={snapshot} value={snapshot}>Snapshot {snapshot + 1}</option>)}
-                        </select>
-                      </label>
-                      <button type="button" className="secondary" onClick={() => { setHistorySourceIndex(index.current); setNotice(`Art History Brush source set to snapshot ${index.current + 1}`); }}>Set source to current snapshot</button>
-                      <p className="adjust-note">Local deterministic painterly approximation from snapshot {typeof historySourceIndex === 'number' ? historySourceIndex + 1 : index.current + 1}. Source pixels remain immutable and the committed stroke is undoable; bristle and wet-media dynamics are staged.</p>
-                    </>
-                  )}
-                  {tool === 'pattern-stamp' && (
-                    <>
-                      <label className="select-row">
-                        <span>Pattern</span>
-                        <select
-                          aria-label="Pattern source"
-                          value={patternId}
-                          onChange={(event) =>
-                            setPatternId(event.target.value as PatternId)
-                          }
-                        >
-                          {PATTERN_IDS.map((id) => (
-                            <option key={id} value={id}>
-                              {id[0].toUpperCase() + id.slice(1)}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {customPatternPresets.length > 0 && (
-                        <label className="select-row">
-                          <span>Saved pattern</span>
-                          <select
-                            aria-label="Saved pattern"
-                            defaultValue=""
-                            onChange={(event) => {
-                              const preset = customPatternPresets.find((item) => item.id === event.target.value);
-                              if (preset) applyCustomPatternPreset(preset);
-                            }}
-                          >
-                            <option value="">Choose saved pattern</option>
-                            {customPatternPresets.map((preset) => (
-                              <option key={preset.id} value={preset.id}>{preset.label}</option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-                      <Slider
-                        label="Tile size"
-                        value={patternTileSize}
-                        min={4}
-                        max={128}
-                        set={setPatternTileSize}
-                        suffix="px"
-                      />
-                      <p className="adjust-note">
-                        Pattern Stamp generates a bounded local tile from the
-                        foreground/background wells. No source image leaves this
-                        device.
-                      </p>
-                    </>
-                  )}
-                  {(tool === 'clone' || tool === 'heal') && (
-                    <p className="adjust-note">
-                      Option/Alt-click the canvas to set or re-anchor the
-                      source point. Drag to paint with a fixed source offset;
-                      the source pixels stay unchanged until you commit the
-                      stroke.
-                    </p>
-                  )}
-                  {tool === 'selection-brush' && (
-                    <p className="adjust-note">
-                      Paint an editable alpha selection. Use Selection mode in
-                      the Layers panel for replace, add, subtract or intersect;
-                      the source pixels remain unchanged.
-                    </p>
-                  )}
-                  {tool === 'quick-selection' && (
-                    <p className="adjust-note">
-                      Grows a local connected colour selection from brush samples.
-                      Strong colour edges stop the flood; no semantic object model or upload is used.
-                    </p>
-                  )}
-                  {tool === 'red-eye' && (
-                    <>
-                      <Slider
-                        label="Red threshold"
-                        value={redEyeThreshold}
-                        min={0}
-                        max={255}
-                        set={setRedEyeThreshold}
-                        suffix=""
-                      />
-                      <Slider
-                        label="Correction amount"
-                        value={redEyeAmount}
-                        min={0}
-                        max={100}
-                        set={setRedEyeAmount}
-                        suffix="%"
-                      />
-                      <p className="adjust-note">
-                        Corrects conservative red-dominant pixels locally. It
-                        preserves transparency and stays on this device.
-                      </p>
-                    </>
-                  )}
-                </>
-              )}
-            </section>
-          )}
-          {tool === 'text' && (
-            <section className="panel">
-              <Title icon={Type} text="Text" />
-              <input
-                aria-label="Text content"
-                className="text-input"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-              />
-              <label className="select-row"><span>Font</span><select aria-label="Text tool font" className="text-input" value={fontFamily} onChange={(event) => setFontFamily(event.target.value as (typeof FONTS)[number])}>{FONTS.map((font) => <option key={font} value={font} style={{ fontFamily: font, fontSize: fontPreviewPixels(fontPreviewSize) }}>{font}</option>)}</select></label>
-              {fontAvailability === 'fallback' && (
-                <output data-testid="font-fallback-warning" className="adjust-note">
-                  “{fontFamily}” is unavailable; browser fallback rendering is active.
-                </output>
-              )}
-              <label className="select-row"><span>Preview</span><select aria-label="Font preview size" className="text-input" value={fontPreviewSize} onChange={(event) => setFontPreviewSize(normalizeFontPreviewSize(event.target.value))}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
-              <Slider
-                label="Size"
-                value={fontSize}
-                min={16}
-                max={160}
-                set={setFontSize}
-                suffix="px"
-              />
-            </section>
-          )}
-          <section className="panel">
-            <Title icon={Sparkles} text="Quick filters" />
+          {openSidebarPanel === 'filters' && (<>
+          <SidebarSection
+            id="quick-filters"
+            icon={Sparkles}
+            title="Quick filters"
+            collapsed={collapsedSections.has('quick-filters')}
+            onToggle={toggleSidebarSection}
+          >
             <div className="filters">
               {FILTERS.map(([label, value, first, second]) => (
                 <button
@@ -16516,14 +22907,25 @@ export default function Home() {
                 </button>
               ))}
             </div>
-          </section>
-          <section className="panel" aria-label="Filter effects">
-            <Title
-              icon={Sparkles}
-              text="Filter effects"
-              action="Clear"
-              onClick={() => chooseFilterEffect('none', 'Filter effect')}
-            />
+          </SidebarSection>
+          <SidebarSection
+            id="filter-effects"
+            icon={Sparkles}
+            title="Filter effects"
+            action="Clear"
+            onAction={() => chooseFilterEffect('none', 'Filter effect')}
+            collapsed={collapsedSections.has('filter-effects')}
+            onToggle={toggleSidebarSection}
+          >
+            {filterStackEditIndex !== null && (
+              <p className="adjust-note filter-stack-editing" data-testid="filter-stack-editing">
+                Editing stacked filter {filterStackEditIndex + 1}.{' '}
+                {filterTypeLabel(filterEffects.type)}. Each change is one undo step.{' '}
+                <button type="button" onClick={() => setFilterStackEdit(null)}>
+                  Done
+                </button>
+              </p>
+            )}
             <select
               className="text-input"
               aria-label="Filter effect"
@@ -16533,6 +22935,7 @@ export default function Home() {
                   event.target.value as FilterEffectType,
                   event.target.options[event.target.selectedIndex]?.text ||
                     'Filter effect',
+                  { switchInPlace: true },
                 )
               }
             >
@@ -16635,10 +23038,15 @@ export default function Home() {
               <p>Bounded seeded recursive branch and leaf approximation. Branch count, leafiness, origin and seed remain editable; Photoshop&apos;s exact botanical generator and foreground/background controls remain planned.</p>
             )}
             {filterEffects.type === 'clouds' && (
-              <p>Seeded multi-octave value-noise overlay. Scale, amount and seed remain editable; Photoshop foreground/background cloud synthesis and turbulence controls remain planned.</p>
+              <p>{filterEffects.cloudRender
+                ? 'Seeded multi-octave clouds mixed from the foreground and background colours. Colours, size, fill, amount and seed remain editable; Photoshop turbulence controls and exact noise remain planned.'
+                : 'Seeded multi-octave grayscale overlay from an older project. Re-apply Render → Clouds for colour clouds.'}</p>
             )}
             {filterEffects.type === 'lens-correction' && (
               <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
+            )}
+            {filterEffects.type === 'light-rays' && (
+              <p>Seeded local light-ray approximation: generated rays or Starburst spikes, or radial streaks of the layer&apos;s own bright pixels, around an editable centre. It is a bounded local render, not a physical light simulation.</p>
             )}
             {filterEffects.type === 'lens-flare' && (
               <p>Deterministic local flare approximation with a source-aligned glow, star streak and seeded ghost rings. Brightness, size, centre, angle and seed remain editable; camera-specific lens profiles and spectral calibration remain planned.</p>
@@ -16842,11 +23250,18 @@ export default function Home() {
                 {(filterEffects.type === 'path-blur' || filterEffects.type === 'spin-blur' || filterEffects.type === 'field-blur') && (
                   <BlurGalleryControls effect={filterEffects} change={setFilterEffects} />
                 )}
+                {filterEffects.type === 'light-rays' && (
+                  <LightRaysControls
+                    effect={filterEffects}
+                    change={setFilterEffects}
+                    layerSize={isRasterContentLayer(active) && assets.current[active.asset] ? { w: assets.current[active.asset].w, h: assets.current[active.asset].h } : undefined}
+                  />
+                )}
             {filterEffects.type === 'picture-frame' && (
               <p>Bounded seeded inner frame with editable width, amount and seed. Frame styles, foreground/background controls and geometric canvas expansion remain planned.</p>
             )}
             {filterEffects.type === 'difference-clouds' && (
-              <p>Seeded multi-octave monochrome cloud field difference-blended with the source. Cloud scale, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
+              <p>The same smooth multi-octave clouds as Render &gt; Clouds, in black to white, difference-blended with the layer; transparent pixels count as black, so an empty layer becomes the clouds. Cloud size, amount and seed remain editable; Photoshop&apos;s foreground/background colour controls, exact noise and wrap-around remain planned.</p>
             )}
                 {filterEffects.type === 'neural-enhance' && (
                   <>
@@ -16871,7 +23286,7 @@ export default function Home() {
                     set={(value) => setFilterEffects({ threshold: value })}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && <Slider
+                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && filterEffects.type !== 'difference-clouds' && <Slider
                   label={
                     filterEffects.type === 'fibers'
                       ? 'Fiber scale'
@@ -16907,8 +23322,6 @@ export default function Home() {
                           ? 'Fragment offset'
                       : filterEffects.type === 'picture-frame'
                           ? 'Frame width'
-                      : filterEffects.type === 'difference-clouds'
-                          ? 'Cloud scale'
                       : filterEffects.type === 'flame'
                           ? 'Flame detail'
                       : filterEffects.type === 'radial-blur'
@@ -16979,44 +23392,56 @@ export default function Home() {
                   <>
                     <Slider
                       label="Pinch center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Pinch center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
                 )}
                 {filterEffects.type === 'liquify' && (
                   <>
-                    <Slider label="Liquify center X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
-                    <Slider label="Liquify center Y" value={Math.round(filterEffects.centerY * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
+                    <label className="select-row">
+                      <span>Liquify mode</span>
+                      <select
+                        aria-label="Liquify mode"
+                        value={filterEffects.liquifyMode ?? 'twist'}
+                        onChange={(event) => setFilterEffects({ liquifyMode: event.target.value as 'twist' | 'push' | 'bloat' })}
+                      >
+                        <option value="twist">Twist</option>
+                        <option value="push">Push</option>
+                        <option value="bloat">Bloat</option>
+                      </select>
+                    </label>
+                    <Slider label="Liquify center X" value={filterCenterPercent(filterEffects.centerX)} min={0} max={100} set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })} suffix="%" />
+                    <Slider label="Liquify center Y" value={filterCenterPercent(filterEffects.centerY)} min={0} max={100} set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })} suffix="%" />
                   </>
                 )}
                 {filterEffects.type === 'ripple' && (
                   <>
                     <Slider
                       label="Ripple center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Ripple center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17025,18 +23450,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Spherize center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Spherize center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17056,18 +23481,18 @@ export default function Home() {
                     </label>
                     <Slider
                       label="Correction centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Correction centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17077,18 +23502,18 @@ export default function Home() {
                     <p>Bounded anisotropic wide-angle correction with editable line-preservation biases. The authored centre stays fixed and transparent padding remains untouched; Photoshop constraint drawing and camera calibration remain staged.</p>
                     <Slider
                       label="Correction centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Correction centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -17113,18 +23538,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Flare centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Flare centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -17171,18 +23596,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Focal centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Focal centre Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17204,18 +23629,18 @@ export default function Home() {
                     )}
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center X' : 'Blur center X'}
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label={filterEffects.type === 'spin-blur' ? 'Spin center Y' : 'Blur center Y'}
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17224,18 +23649,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Path center X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Path center Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                   </>
@@ -17244,18 +23669,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Focus centre X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Focus height"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
@@ -17385,6 +23810,45 @@ export default function Home() {
                 {filterEffects.type === 'tree' && (
               <p>Bounded seeded recursive branch and leaf approximation. Branch count, leafiness, origin and seed remain editable; Photoshop&apos;s exact botanical generator and foreground/background controls remain planned.</p>
             )}
+            {filterEffects.type === 'clouds' && filterEffects.cloudRender && (
+              <>
+                <label className="layer-field">
+                  Cloud foreground colour
+                  <input
+                    aria-label="Cloud foreground colour"
+                    type="color"
+                    value={filterEffects.cloudRender.foreground}
+                    onChange={(event) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, foreground: event.target.value } })}
+                  />
+                </label>
+                <label className="layer-field">
+                  Cloud background colour
+                  <input
+                    aria-label="Cloud background colour"
+                    type="color"
+                    value={filterEffects.cloudRender.background}
+                    onChange={(event) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, background: event.target.value } })}
+                  />
+                </label>
+                <Slider
+                  label="Cloud size"
+                  value={filterEffects.cloudRender.scale}
+                  min={MIN_CLOUD_RENDER_SCALE}
+                  max={MAX_CLOUD_RENDER_SCALE}
+                  set={(value) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, scale: Math.round(value) } })}
+                  suffix="px"
+                />
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label="Fill transparent pixels"
+                    checked={filterEffects.cloudRender.fill}
+                    onChange={(event) => setFilterEffects({ cloudRender: { ...filterEffects.cloudRender!, fill: event.target.checked } })}
+                  />
+                  Fill transparent pixels
+                </label>
+              </>
+            )}
             {filterEffects.type === 'clouds' && (
                   <label className="slider">
                     <span>
@@ -17406,6 +23870,16 @@ export default function Home() {
                       }}
                     />
                   </label>
+                )}
+                {filterEffects.type === 'difference-clouds' && (
+                  <Slider
+                    label="Cloud size"
+                    value={differenceCloudScale(filterEffects)}
+                    min={MIN_CLOUD_RENDER_SCALE}
+                    max={MAX_CLOUD_RENDER_SCALE}
+                    set={(value) => setFilterEffects({ cloudScale: Math.round(value) })}
+                    suffix="px"
+                  />
                 )}
                 {filterEffects.type === 'difference-clouds' && (
                   <label className="slider">
@@ -17433,18 +23907,18 @@ export default function Home() {
                   <>
                     <Slider
                       label="Flame origin X"
-                      value={Math.round(filterEffects.centerX * 100)}
+                      value={filterCenterPercent(filterEffects.centerX)}
                       min={0}
                       max={100}
-                      set={(value) => setFilterEffects({ centerX: value / 100 })}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <Slider
                       label="Flame origin Y"
-                      value={Math.round(filterEffects.centerY * 100)}
+                      value={filterCenterPercent(filterEffects.centerY)}
                       min={20}
                       max={95}
-                      set={(value) => setFilterEffects({ centerY: value / 100 })}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
                       suffix="%"
                     />
                     <label className="slider">
@@ -17471,8 +23945,8 @@ export default function Home() {
                 )}
                 {filterEffects.type === 'tree' && (
                   <>
-                    <Slider label="Tree origin X" value={Math.round(filterEffects.centerX * 100)} min={0} max={100} set={(value) => setFilterEffects({ centerX: value / 100 })} suffix="%" />
-                    <Slider label="Tree origin Y" value={Math.round(filterEffects.centerY * 100)} min={20} max={98} set={(value) => setFilterEffects({ centerY: value / 100 })} suffix="%" />
+                    <Slider label="Tree origin X" value={filterCenterPercent(filterEffects.centerX)} min={0} max={100} set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })} suffix="%" />
+                    <Slider label="Tree origin Y" value={filterCenterPercent(filterEffects.centerY)} min={20} max={98} set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })} suffix="%" />
                     <Slider label="Branch count" value={filterEffects.tree?.branches ?? 5} min={2} max={8} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), branches: value } })} />
                     <Slider label="Leafiness" value={filterEffects.tree?.leafiness ?? 55} min={0} max={100} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), leafiness: value } })} suffix="%" />
                     <label className="slider"><span><b>Tree seed (0–4294967295)</b><output>{filterEffects.seed}</output></span><input className="text-input tree-seed-input" aria-label="Tree seed" type="number" min={0} max={0xffffffff} step={1} value={filterEffects.seed} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) setFilterEffects({ seed: value }); }} /></label>
@@ -17509,14 +23983,333 @@ export default function Home() {
                     </label>
                   </>
                 )}
+                {(filterEffects.type === 'twirl' || filterEffects.type === 'polar-coordinates') && (
+                  <>
+                    <Slider
+                      label={filterEffects.type === 'twirl' ? 'Twirl center X' : 'Polar center X'}
+                      value={filterCenterPercent(filterEffects.centerX)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })}
+                      suffix="%"
+                    />
+                    <Slider
+                      label={filterEffects.type === 'twirl' ? 'Twirl center Y' : 'Polar center Y'}
+                      value={filterCenterPercent(filterEffects.centerY)}
+                      min={0}
+                      max={100}
+                      set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })}
+                      suffix="%"
+                    />
+                  </>
+                )}
+                {isCenteredFilter(filterEffects.type) && active && isRasterContentLayer(active) && assets.current[active.asset] && (() => {
+                  // Exact, sub-pixel centre entry in layer pixels; the sliders
+                  // above stay in whole percent for quick keyboard steps.
+                  const { w, h } = assets.current[active.asset];
+                  const field = (axis: 'x' | 'y') => {
+                    const span = Math.max(0, (axis === 'x' ? w : h) - 1);
+                    const fraction = axis === 'x' ? filterEffects.centerX : filterEffects.centerY;
+                    return (
+                      <label className="slider">
+                        <span>
+                          <b>{`Filter center ${axis.toUpperCase()} (px)`}</b>
+                          <output>{`${filterCenterPercent(fraction)}%`}</output>
+                        </span>
+                        <input
+                          className="text-input"
+                          aria-label={`Filter center ${axis.toUpperCase()} in pixels`}
+                          type="number"
+                          min={0}
+                          max={span}
+                          step={0.1}
+                          value={Math.round(fraction * span * 10) / 10}
+                          onChange={(event) => {
+                            const value = Number(event.target.value);
+                            if (event.target.value === '' || !Number.isFinite(value) || !span) return;
+                            const next = filterCenterFromPercent((Math.min(span, Math.max(0, value)) / span) * 100);
+                            setFilterEffects(axis === 'x' ? { centerX: next } : { centerY: next });
+                          }}
+                        />
+                      </label>
+                    );
+                  };
+                  return (
+                    <>
+                      {field('x')}
+                      {field('y')}
+                      <p className="adjust-note">
+                        Drag the crosshair on the canvas to place the center,
+                        or focus it and use the arrow keys (Shift moves ten
+                        pixels, Home recenters).
+                      </p>
+                    </>
+                  );
+                })()}
                 <p className="adjust-note">
                   This effect stays editable in the project and is applied to
                   the rendered layer. The original asset remains unchanged.
                 </p>
               </>
             )}
-          </section>
-          <section className="panel cloud-panel">
+            {active && isRasterContentLayer(active) && (() => {
+              const entries = filterStackEntries;
+              const liveNeutral = isNeutralFilterEffects(effectiveFilterEffects(liveFilterEffects));
+              /** Keep the edited entry selected when the stack is reordered or trimmed. */
+              const trackEdit = (
+                change: Parameters<typeof trackedSmartFilterIndex>[1],
+              ) => {
+                if (filterStackEditIndex === null) return;
+                const next = trackedSmartFilterIndex(filterStackEditIndex, change);
+                setFilterStackEdit(next === null ? null : { layerId: active.id, index: next });
+              };
+              return (
+                <fieldset className="filter-stack" aria-label="Filter stack">
+                  <button
+                    type="button"
+                    disabled={liveNeutral || entries.length >= SMART_FILTER_MAX}
+                    onClick={convertForSmartFilters}
+                  >
+                    Add filter to stack ({entries.length}/{SMART_FILTER_MAX})
+                  </button>
+                  {entries.length > 0 && (
+                    <>
+                      <p className="adjust-note">
+                        Stacked filters render first, in this order, then the
+                        filter above. Choose another filter to stack it too.
+                      </p>
+                      <ol aria-label="Stacked filters">
+                        {entries.map(({ effect, enabled }, index) => {
+                          const name = `${index + 1}. ${filterTypeLabel(effect.type)}`;
+                          const editing = filterStackEditIndex === index;
+                          return (
+                            <li
+                              key={`${index}-${effect.type}`}
+                              data-enabled={enabled ? 'true' : 'false'}
+                              data-editing={editing ? 'true' : undefined}
+                            >
+                              <span title={name}>{name}</span>
+                              <button
+                                type="button"
+                                aria-pressed={editing}
+                                aria-label={`${editing ? 'Stop editing' : 'Edit'} stacked filter ${name}`}
+                                title={editing ? 'Done editing' : 'Edit parameters'}
+                                onClick={() => {
+                                  setFilterStackEdit(editing ? null : { layerId: active.id, index });
+                                  setNotice(
+                                    editing
+                                      ? 'Filter effects controls edit the live filter again'
+                                      : `Filter effects controls now edit stacked filter ${name}`,
+                                  );
+                                }}
+                              >
+                                <SlidersHorizontal size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-pressed={enabled}
+                                aria-label={`${enabled ? 'Hide' : 'Show'} stacked filter ${name}`}
+                                title={enabled ? 'Hide' : 'Show'}
+                                onClick={() =>
+                                  editSmartFilterStack(
+                                    (stack) => setSmartFilterEnabled(stack, index, !enabled),
+                                    `${filterTypeLabel(effect.type)} ${enabled ? 'hidden' : 'shown'} in the filter stack`,
+                                  )
+                                }
+                              >
+                                {enabled ? <Eye size={15} /> : <EyeOff size={15} />}
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Apply stacked filter ${name} earlier`}
+                                title="Apply earlier"
+                                disabled={index === 0}
+                                onClick={() => {
+                                  if (editSmartFilterStack(
+                                    (stack) => moveSmartFilter(stack, index, -1),
+                                    `${filterTypeLabel(effect.type)} now applies earlier`,
+                                  ))
+                                    trackEdit({ kind: 'move', index, offset: -1, length: entries.length });
+                                }}
+                              >
+                                <ArrowUp size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Apply stacked filter ${name} later`}
+                                title="Apply later"
+                                disabled={index === entries.length - 1}
+                                onClick={() => {
+                                  if (editSmartFilterStack(
+                                    (stack) => moveSmartFilter(stack, index, 1),
+                                    `${filterTypeLabel(effect.type)} now applies later`,
+                                  ))
+                                    trackEdit({ kind: 'move', index, offset: 1, length: entries.length });
+                                }}
+                              >
+                                <ArrowDown size={15} />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Remove stacked filter ${name}`}
+                                title="Remove"
+                                onClick={() => {
+                                  if (editSmartFilterStack(
+                                    (stack) => removeSmartFilter(stack, index),
+                                    `${filterTypeLabel(effect.type)} removed from the filter stack; undo restores it`,
+                                  ))
+                                    trackEdit({ kind: 'remove', index });
+                                }}
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ol>
+                    </>
+                  )}
+                </fieldset>
+              );
+            })()}
+          </SidebarSection>
+          </>)}
+          {openSidebarPanel === 'layer-styles' && frame && (
+            <section className="panel layers-part-panel" aria-label="Layer styles">
+              {renderLayersPanel(frame, 'styles')}
+            </section>
+          )}
+          {openSidebarPanel === 'history' && frame && (
+            <div data-sidebar-section="history">
+            <HistoryPanel
+              history={history.current}
+              currentIndex={index.current}
+              persisted={persistedHistory}
+              budget={historyBudget}
+              restore={(targetIndex) => {
+                const distance = targetIndex - index.current;
+                if (!distance) return;
+                travel(distance);
+                setNotice(`History step ${targetIndex + 1} restored`);
+              }}
+            />
+            </div>
+          )}
+          {openSidebarPanel === 'saved-selections' && frame && (
+            <SidebarSection
+              id="saved-selections"
+              className="saved-selections-panel"
+              icon={Bookmark}
+              title="Saved selections"
+              collapsed={collapsedSections.has('saved-selections')}
+              onToggle={toggleSidebarSection}
+            >
+              <label className="layer-field">
+                Selection name
+                <input
+                  aria-label="Saved selection name"
+                  maxLength={160}
+                  value={savedSelectionName}
+                  onChange={(event) =>
+                    setSavedSelectionName(event.target.value)
+                  }
+                />
+              </label>
+              <div className="layer-actions">
+                <button
+                  onClick={() => saveCurrentSelection()}
+                  disabled={!frame.selection}
+                >
+                  Save selection
+                </button>
+                <button onClick={exportSelection} disabled={!frame.selection}>
+                  Download selection file
+                </button>
+              </div>
+              <div className="saved-selection-list">
+                {(frame.savedSelections?.selections || []).map((entry) => (
+                  <div className="saved-selection-row" key={entry.id}>
+                    <span>{entry.name}</span>
+                    <button
+                      aria-label={`Load selection ${entry.name}`}
+                      onClick={() => loadSavedSelection(entry.id)}
+                    >
+                      Load
+                    </button>
+                    <button
+                      aria-label={`Rename selection ${entry.name}`}
+                      onClick={() => renameSavedSelection(entry.id)}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      aria-label={`Delete selection ${entry.name}`}
+                      onClick={() => deleteSavedSelection(entry.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+                {!frame.savedSelections?.selections.length && (
+                  <small>No saved selections yet.</small>
+                )}
+              </div>
+            </SidebarSection>
+          )}
+          {openSidebarPanel === 'transform' && (
+          <SidebarSection
+            id="transform"
+            icon={Crop}
+            title="Transform"
+            collapsed={collapsedSections.has('transform')}
+            onToggle={toggleSidebarSection}
+          >
+            <div className="transform">
+              <button
+                aria-label="Rotate left"
+                onClick={() => transform('left')}
+              >
+                <RotateCcw />
+              </button>
+              <button
+                aria-label="Rotate right"
+                onClick={() => transform('right')}
+              >
+                <RotateCw />
+              </button>
+              <button
+                aria-label="Flip horizontal"
+                onClick={() => transform('h')}
+              >
+                <FlipHorizontal2 />
+              </button>
+              <button aria-label="Flip vertical" onClick={() => transform('v')}>
+                <FlipVertical2 />
+              </button>
+            </div>
+          </SidebarSection>
+          )}
+          {openSidebarPanel === 'reference' && frame && (
+            <div data-sidebar-section="reference">
+            <ReferencePanel
+              reference={frame.reference}
+              size={
+                frame.reference && assets.current[frame.reference.asset]
+                  ? {
+                      w: assets.current[frame.reference.asset].w,
+                      h: assets.current[frame.reference.asset].h,
+                    }
+                  : undefined
+              }
+              disabled={quickMasking}
+              choose={chooseReferenceFile}
+              update={updateReference}
+              remove={removeReference}
+            />
+            </div>
+          )}
+          {openSidebarPanel === 'projects' && (
+          <section className="panel cloud-panel" aria-label="My projects" data-sidebar-section="cloud-projects">
             <h3>My projects</h3>
             {member ? (
               <>
@@ -17565,14 +24358,24 @@ export default function Home() {
             )}
             <p aria-live="polite">{cloudMessage}</p>
           </section>
+          )}
+          </div>
+          )}
+          </div>
         </aside>
+        <div
+          ref={sidebarAnnouncerRef}
+          className="sr-only"
+          aria-live="polite"
+          data-testid="sidebar-autoscroll-announcer"
+        />
       </div>
       <footer>
         <span>
           <i />
           {notice}
         </span>
-        <span>{tool[0].toUpperCase() + tool.slice(1)} tool</span>
+        <span>{activeToolLabel} tool</span>
         <output
           aria-label="Render status"
           data-testid="render-status"
@@ -17592,7 +24395,7 @@ export default function Home() {
           data-tiled-cache-evictions={tiledTelemetry?.cacheStats?.evictions ?? 0}
           aria-live="polite"
         >
-          {doc.rendering
+          {renderStatusBusy
             ? `Rendering… ${renderProgress?.completed ?? 0}/${renderProgress?.total ?? 0} layers`
             : 'Render ready'}
         </output>
@@ -17667,5 +24470,126 @@ function Slider({
         onChange={(e) => set(+e.target.value)}
       />
     </label>
+  );
+}
+
+/**
+ * Whole-number field that keeps the typed text while it is being edited and
+ * only passes valid values in [min, max] on; blur restores the last value.
+ */
+function IntegerField({
+  label,
+  value,
+  min,
+  max,
+  set,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  set: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      aria-label={label}
+      min={min}
+      max={max}
+      step={1}
+      value={draft ?? String(value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const parsed = Number(event.target.value);
+        if (event.target.value.trim() !== '' && Number.isInteger(parsed) && parsed >= min && parsed <= max) set(parsed);
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
+
+/**
+ * Shared painting-tool Size: an exact numeric field (labelled "Size") plus a
+ * perceptual logarithmic slider so 1–5,000 px stays usable on one track.
+ * Arrow/Page keys on the slider use the same proportional steps as `[`/`]`.
+ */
+function BrushSizeControl({
+  value,
+  set,
+}: {
+  value: number;
+  set: (n: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commitDraft = (text: string) => {
+    const parsed = Number(text);
+    if (text.trim() !== '' && Number.isFinite(parsed)) set(clampBrushSize(parsed, value));
+    setDraft(null);
+  };
+  return (
+    <div className="slider brush-size-control">
+      <span>
+        <b>Size</b>
+        <span className="brush-size-value">
+          <input
+            aria-label="Size"
+            className="text-input brush-size-input"
+            type="number"
+            inputMode="numeric"
+            min={BRUSH_SIZE_MIN}
+            max={BRUSH_SIZE_MAX}
+            step={1}
+            value={draft ?? String(value)}
+            onChange={(e) => {
+              const text = e.target.value,
+                parsed = Number(text);
+              // Commit in-range values immediately so typing "800" paints
+              // at 800 px; keep partial/out-of-range text until blur/Enter.
+              if (text.trim() !== '' && Number.isFinite(parsed) && parsed >= BRUSH_SIZE_MIN && parsed <= BRUSH_SIZE_MAX) {
+                set(clampBrushSize(parsed, value));
+                setDraft(Number.isInteger(parsed) ? null : text);
+              } else setDraft(text);
+            }}
+            onBlur={(e) => commitDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitDraft(e.currentTarget.value);
+              else if (e.key === 'Escape') setDraft(null);
+            }}
+          />
+          <output aria-hidden="true">px</output>
+        </span>
+      </span>
+      <input
+        aria-label="Size slider"
+        aria-valuetext={brushSizeValueText(value)}
+        className="brush-size-range"
+        type="range"
+        min={0}
+        max={BRUSH_SIZE_SLIDER_STEPS}
+        step={1}
+        value={brushSizeToSliderPosition(value)}
+        onChange={(e) => set(sliderPositionToBrushSize(+e.target.value))}
+        onKeyDown={(e) => {
+          const direction =
+            e.key === 'ArrowUp' || e.key === 'ArrowRight' || e.key === 'PageUp'
+              ? 1
+              : e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'PageDown'
+                ? -1
+                : 0;
+          if (e.key === 'Home' || e.key === 'End') {
+            e.preventDefault();
+            set(e.key === 'Home' ? BRUSH_SIZE_MIN : BRUSH_SIZE_MAX);
+            return;
+          }
+          if (!direction) return;
+          e.preventDefault();
+          let next = stepBrushSize(value, direction as 1 | -1);
+          if (e.key === 'PageUp' || e.key === 'PageDown')
+            for (let i = 0; i < 4; i += 1) next = stepBrushSize(next, direction as 1 | -1);
+          set(next);
+        }}
+      />
+    </div>
   );
 }

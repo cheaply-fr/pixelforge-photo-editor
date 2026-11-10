@@ -1,0 +1,327 @@
+import { referencedAssets, type Assets, type Frame } from './document.ts';
+import { MAX_PROJECT_ASSETS, PROJECT_ASSET_BYTES_CEILING } from './projectLimits.ts';
+import { assetStorageUnits, uniqueAssetBytes } from './tiledAssets.ts';
+
+/**
+ * Undo/redo history capacity.
+ *
+ * History snapshots are immutable `Frame`s that reference shared PNG assets by
+ * id. Raster edits add a new asset per step, so the asset bytes — not the frame
+ * count — decide how far back a large document can be undone. Both undo steps
+ * (before the current index) and redo steps (after it) share one budget.
+ *
+ * Small assets are `data:image/png;base64,…` strings. Browsers store these
+ * ASCII strings one byte per character, so `url.length` is the retained heap
+ * cost of each asset (the decoded PNG is 3/4 of that). Large assets are grids
+ * of content-addressed PNG tile Blobs shared between history steps
+ * (tiled-layer-assets-contract.md); each distinct tile costs the base64
+ * length of its PNG. Budgets below are in those bytes and count each legacy
+ * asset id and each distinct tile once.
+ */
+export const MIB = 1024 * 1024;
+/** Maximum number of history states (undo + current + redo) kept in memory. */
+export const HISTORY_MAX_STEPS = 240;
+/** Retained history image data on capable desktops (≥ 8 GB hint, not mobile). */
+export const HISTORY_DESKTOP_BYTES = 320 * MIB;
+/** Retained history image data on phones/tablets or 3–4 GB devices. */
+export const HISTORY_STANDARD_BYTES = 128 * MIB;
+/** Retained history image data on ≤ 2 GB devices. */
+export const HISTORY_LOW_MEMORY_BYTES = 96 * MIB;
+/**
+ * Hard per-document limit: the current frame alone may not reference more
+ * image data than this. It matches the draft / portable project ceiling, so a
+ * document that can be edited can also be saved; edits are additionally
+ * bounded by the device budget in `projectLimits.ts`.
+ */
+export const DOCUMENT_MAX_ASSET_BYTES = PROJECT_ASSET_BYTES_CEILING;
+/**
+ * Local drafts keep at most this many history states. This is the draft
+ * schema limit `validateDraft` enforces for drafts, portable projects and
+ * cloud documents (and that older deployed builds still enforce on load).
+ */
+export const DRAFT_HISTORY_MAX_STEPS = 24;
+/**
+ * Referenced image data a persisted history window may use. The current frame
+ * is always persisted, even when it alone is larger (up to the 1 GiB
+ * `validateDraft` ceiling in `projectLimits.ts`); older steps beyond this
+ * budget stay in memory only. Format 3 drafts store each
+ * asset once by content hash and write only new ones, so a full window costs
+ * one new asset record per edit rather than a whole-history rewrite; frame
+ * JSON lives in the manifest, which no longer has a 64 MB payload limit.
+ */
+export const DRAFT_HISTORY_MAX_BYTES = 64 * MIB;
+/** Distinct assets a draft may reference (`validateDraft` / asset-ref limit). */
+export const DRAFT_HISTORY_MAX_ASSETS = MAX_PROJECT_ASSETS;
+
+export type HistoryBudgetTier = 'desktop' | 'standard' | 'low-memory';
+export type HistoryBudget = {
+  tier: HistoryBudgetTier;
+  maxSteps: number;
+  maxBytes: number;
+};
+export type HistoryDeviceHints = {
+  deviceMemory?: number;
+  mobile?: boolean;
+};
+
+const finitePositive = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+/**
+ * Pick the history byte budget from coarse, never-persisted browser hints.
+ * Unknown desktop memory gets the desktop budget (Safari/Firefox omit the
+ * hint); mobile is always capped at the standard tier.
+ */
+export function historyBudgetForDevice(hints: HistoryDeviceHints = {}): HistoryBudget {
+  const memory = finitePositive(hints.deviceMemory) ? hints.deviceMemory : undefined;
+  if (memory !== undefined && memory <= 2)
+    return { tier: 'low-memory', maxSteps: HISTORY_MAX_STEPS, maxBytes: HISTORY_LOW_MEMORY_BYTES };
+  if (hints.mobile === true || (memory !== undefined && memory <= 4))
+    return { tier: 'standard', maxSteps: HISTORY_MAX_STEPS, maxBytes: HISTORY_STANDARD_BYTES };
+  return { tier: 'desktop', maxSteps: HISTORY_MAX_STEPS, maxBytes: HISTORY_DESKTOP_BYTES };
+}
+
+export function detectHistoryBudget(): HistoryBudget {
+  if (typeof navigator === 'undefined') return historyBudgetForDevice();
+  const browser = navigator as Navigator & { deviceMemory?: number };
+  return historyBudgetForDevice({
+    deviceMemory: browser.deviceMemory,
+    mobile: /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || ''),
+  });
+}
+
+/** Retained bytes of one asset (data-URL length, or its distinct tiles). */
+export function assetBytes(asset: unknown): number {
+  let total = 0;
+  for (const [, bytes] of assetStorageUnits('', asset)) total += bytes;
+  return total;
+}
+
+/** Distinct-asset bytes referenced by a set of frames (shared tiles once). */
+export function historyAssetBytes(history: readonly Frame[], assets: Assets): number {
+  return uniqueAssetBytes(referencedAssets(history as Frame[], assets));
+}
+
+export const formatMiB = (bytes: number) => `${Math.ceil(bytes / MIB)} MB`;
+
+type Window = { start: number; end: number };
+
+/**
+ * Shared window accounting: tracks distinct storage units (legacy asset ids
+ * and tile keys) across a contiguous frame range with reference counts, so
+ * growing or shrinking it is O(frame). The asset count limit still counts
+ * distinct asset ids, as `validateDraft` does.
+ */
+function windowAccounting(history: readonly Frame[], assets: Assets, flattened = false) {
+  const perFrame = history.map((frame) => {
+    const used = referencedAssets([frame], assets);
+    const units = new Map<string, number>();
+    for (const [id, asset] of Object.entries(used))
+      if (flattened) units.set(`asset:${id}`, assetBytes(asset));
+      else for (const [unit, bytes] of assetStorageUnits(id, asset)) units.set(unit, bytes);
+    return { ids: Object.keys(used), units: [...units] };
+  });
+  const unitCounts = new Map<string, number>();
+  const idCounts = new Map<string, number>();
+  let bytes = 0;
+  const bump = (counts: Map<string, number>, key: string, delta: number) => {
+    const count = (counts.get(key) || 0) + delta;
+    if (count <= 0) counts.delete(key);
+    else counts.set(key, count);
+    return count;
+  };
+  return {
+    get bytes() {
+      return bytes;
+    },
+    add(i: number) {
+      for (const [unit, size] of perFrame[i].units) if (bump(unitCounts, unit, 1) === 1) bytes += size;
+      for (const id of perFrame[i].ids) bump(idCounts, id, 1);
+    },
+    remove(i: number) {
+      for (const [unit, size] of perFrame[i].units)
+        if (unitCounts.has(unit) && bump(unitCounts, unit, -1) === 0) bytes -= size;
+      for (const id of perFrame[i].ids) if (idCounts.has(id)) bump(idCounts, id, -1);
+    },
+    /** Bytes the window would cost if frame `i` were added (without adding). */
+    costWith(i: number) {
+      let next = bytes;
+      for (const [unit, size] of perFrame[i].units) if (!unitCounts.get(unit)) next += size;
+      return next;
+    },
+    /** Distinct assets the window would reference if frame `i` were added. */
+    assetsWith(i: number) {
+      let next = idCounts.size;
+      for (const id of perFrame[i].ids) if (!idCounts.get(id)) next += 1;
+      return next;
+    },
+  };
+}
+
+export type TrimmedHistory = {
+  history: Frame[];
+  index: number;
+  /** Distinct retained image bytes after trimming. */
+  bytes: number;
+  /** Bytes referenced by the current frame alone. */
+  currentBytes: number;
+  droppedUndo: number;
+  droppedRedo: number;
+};
+
+/**
+ * Trim a history stack to `budget`. The current frame is always kept. Oldest
+ * undo states go first; redo states are dropped (farthest first) only when
+ * every undo state is already gone and the budget is still exceeded.
+ */
+export function trimHistoryToBudget(
+  history: readonly Frame[],
+  index: number,
+  assets: Assets,
+  budget: Pick<HistoryBudget, 'maxSteps' | 'maxBytes'>,
+): TrimmedHistory {
+  if (!history.length || !Number.isInteger(index) || index < 0 || index >= history.length)
+    throw new Error('Cannot trim an invalid history position');
+  const maxSteps = Math.max(1, Math.floor(budget.maxSteps));
+  const account = windowAccounting(history, assets);
+  for (let i = 0; i < history.length; i += 1) account.add(i);
+  const window: Window = { start: 0, end: history.length - 1 };
+  const over = () => window.end - window.start + 1 > maxSteps || account.bytes > budget.maxBytes;
+  while (over() && window.start < index) account.remove(window.start++);
+  while (over() && window.end > index) account.remove(window.end--);
+  const currentBytes = historyAssetBytes([history[index]], assets);
+  return {
+    history: history.slice(window.start, window.end + 1),
+    index: index - window.start,
+    bytes: account.bytes,
+    currentBytes,
+    droppedUndo: window.start,
+    droppedRedo: history.length - 1 - window.end,
+  };
+}
+
+export type PersistLimits = {
+  maxSteps?: number;
+  maxBytes?: number;
+  maxAssets?: number;
+  /**
+   * Count every asset at its full size, as interchange that flattens tiled
+   * assets to one PNG each (portable bundle v3, cloud) will store it, instead
+   * of counting shared tiles once as drafts do.
+   */
+  flattened?: boolean;
+};
+
+export type PersistedHistoryWindow = {
+  /** Inclusive range of in-memory history indexes that are persisted. */
+  start: number;
+  end: number;
+  /** Distinct referenced asset bytes of the persisted window. */
+  bytes: number;
+  /** In-memory states that are not persisted (memory-only). */
+  omittedUndo: number;
+  omittedRedo: number;
+};
+
+
+/**
+ * Choose the contiguous history range a local save should persist: always the
+ * current frame, then neighbouring states alternating undo/redo (nearest
+ * first) while the draft step and byte limits allow. When one side cannot fit
+ * the other side keeps growing.
+ */
+export function selectPersistedHistory(
+  history: readonly Frame[],
+  index: number,
+  assets: Assets,
+  limits: PersistLimits = {},
+): PersistedHistoryWindow {
+  if (!history.length || !Number.isInteger(index) || index < 0 || index >= history.length)
+    throw new Error('Cannot persist an invalid history position');
+  const maxSteps = Math.max(1, Math.floor(limits.maxSteps ?? DRAFT_HISTORY_MAX_STEPS));
+  const maxBytes = limits.maxBytes ?? DRAFT_HISTORY_MAX_BYTES;
+  const maxAssets = limits.maxAssets ?? DRAFT_HISTORY_MAX_ASSETS;
+  const account = windowAccounting(history, assets, limits.flattened === true);
+  account.add(index);
+  let start = index,
+    end = index,
+    undoOpen = start > 0,
+    redoOpen = end < history.length - 1,
+    preferUndo = true;
+  while ((undoOpen || redoOpen) && end - start + 1 < maxSteps) {
+    const takeUndo: boolean = undoOpen && (preferUndo || !redoOpen);
+    const candidate: number = takeUndo ? start - 1 : end + 1;
+    if (account.costWith(candidate) <= maxBytes && account.assetsWith(candidate) <= maxAssets) {
+      account.add(candidate);
+      if (takeUndo) start = candidate;
+      else end = candidate;
+      undoOpen = undoOpen && start > 0;
+      redoOpen = redoOpen && end < history.length - 1;
+    } else if (takeUndo) undoOpen = false;
+    else redoOpen = false;
+    preferUndo = !takeUndo;
+  }
+  return {
+    start,
+    end,
+    bytes: account.bytes,
+    omittedUndo: start,
+    omittedRedo: history.length - 1 - end,
+  };
+}
+
+type PersistableDraft = {
+  history: Frame[];
+  index: number;
+  assets: Assets;
+  settings: { historySourceIndex?: number };
+};
+
+/**
+ * Restrict a draft-shaped value to its persisted history window, re-basing
+ * the index, assets and History Brush source. Returns the original object
+ * when the whole history already fits.
+ */
+export function persistableHistoryDraft<T extends PersistableDraft>(
+  value: T,
+  limits?: PersistLimits,
+): { draft: T; window: PersistedHistoryWindow } {
+  const window = selectPersistedHistory(value.history, value.index, value.assets, limits);
+  const source = value.settings.historySourceIndex;
+  const remapped =
+    typeof source === 'number' && source >= window.start && source <= window.end
+      ? source - window.start
+      : undefined;
+  if (!window.omittedUndo && !window.omittedRedo && remapped === source)
+    return { draft: value, window };
+  const history = value.history.slice(window.start, window.end + 1);
+  const settings = { ...value.settings };
+  if (remapped === undefined) delete settings.historySourceIndex;
+  else settings.historySourceIndex = remapped;
+  return {
+    draft: {
+      ...value,
+      history,
+      index: value.index - window.start,
+      assets: referencedAssets(history, value.assets),
+      settings,
+    },
+    window,
+  };
+}
+
+/** Plain-language summary of which states survive a reload. */
+export function persistedHistoryNote(
+  length: number,
+  persisted: PersistedHistoryWindow | null | undefined,
+): string | undefined {
+  if (!persisted || persisted.end >= length) return undefined;
+  const omitted = persisted.omittedUndo + persisted.omittedRedo;
+  if (!omitted) return undefined;
+  const parts = [];
+  if (persisted.omittedUndo)
+    parts.push(`${persisted.omittedUndo} older step${persisted.omittedUndo === 1 ? '' : 's'}`);
+  if (persisted.omittedRedo)
+    parts.push(`${persisted.omittedRedo} redo step${persisted.omittedRedo === 1 ? '' : 's'}`);
+  return `Steps ${persisted.start + 1}–${persisted.end + 1} are saved on this device; ${parts.join(' and ')} stay in memory only and are not restored after reload.`;
+}

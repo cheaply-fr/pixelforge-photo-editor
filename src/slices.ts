@@ -56,6 +56,72 @@ export function sliceAtPoint(
   return undefined;
 }
 
+/** Part of a selected slice a Slice Select drag grabs. */
+export type SliceHandle = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+type SliceBounds = Pick<SliceRect, 'x' | 'y' | 'width' | 'height'>;
+
+/**
+ * Hit-test a slice: corners first, then edges (both within `tolerance`
+ * canvas pixels of the border), then the interior (move). Null outside.
+ */
+export function hitTestSliceHandle(
+  slice: SliceBounds,
+  x: number,
+  y: number,
+  tolerance: number,
+): SliceHandle | null {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const t = Math.max(0, tolerance);
+  const left = slice.x,
+    top = slice.y,
+    right = slice.x + slice.width,
+    bottom = slice.y + slice.height;
+  if (x < left - t || x > right + t || y < top - t || y > bottom + t) return null;
+  // Keep the interior reachable on tiny slices: edges never take more than a third.
+  const tx = Math.min(t, slice.width / 3),
+    ty = Math.min(t, slice.height / 3);
+  const nearLeft = x <= left + tx,
+    nearRight = x >= right - tx,
+    nearTop = y <= top + ty,
+    nearBottom = y >= bottom - ty;
+  const vertical = nearTop ? 'n' : nearBottom ? 's' : '';
+  const horizontal = nearLeft ? 'w' : nearRight ? 'e' : '';
+  const handle = `${vertical}${horizontal}`;
+  if (handle) return handle as SliceHandle;
+  return 'move';
+}
+
+/**
+ * Move or resize a slice by a canvas-pixel drag delta. Results are whole
+ * pixels, at least 1 × 1 and kept inside the canvas; a move keeps the size.
+ */
+export function adjustSliceRect<T extends SliceBounds>(
+  slice: T,
+  handle: SliceHandle,
+  dx: number,
+  dy: number,
+  canvasWidth: number,
+  canvasHeight: number,
+): T {
+  const rx = Math.round(Number.isFinite(dx) ? dx : 0),
+    ry = Math.round(Number.isFinite(dy) ? dy : 0);
+  if (handle === 'move') {
+    const x = Math.max(0, Math.min(canvasWidth - slice.width, slice.x + rx)),
+      y = Math.max(0, Math.min(canvasHeight - slice.height, slice.y + ry));
+    return { ...slice, x, y };
+  }
+  let left = slice.x,
+    top = slice.y,
+    right = slice.x + slice.width,
+    bottom = slice.y + slice.height;
+  if (handle.includes('w')) left = Math.max(0, Math.min(right - 1, left + rx));
+  if (handle.includes('e')) right = Math.min(canvasWidth, Math.max(left + 1, right + rx));
+  if (handle.includes('n')) top = Math.max(0, Math.min(bottom - 1, top + ry));
+  if (handle.includes('s')) bottom = Math.min(canvasHeight, Math.max(top + 1, bottom + ry));
+  return { ...slice, x: left, y: top, width: right - left, height: bottom - top };
+}
+
 /** Return a cloned, validated collection for safe persistence. */
 export function cloneDocumentSlices(slices: readonly SliceRect[] | undefined): SliceRect[] | undefined {
   return slices?.map((slice) => ({ ...slice }));

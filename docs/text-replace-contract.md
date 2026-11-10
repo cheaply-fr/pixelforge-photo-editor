@@ -12,3 +12,9 @@ An unmatched term does not create history. The text remains in the existing
 versioned draft and portable project export, and browser acceptance verifies
 the menu state, dialog controls, editable replacement, and project round trip
 on desktop and mobile.
+
+Styled type: when a layer has versioned character-style runs (see
+[`type-tool-contract.md`](./type-tool-contract.md)), each replacement takes
+the style of the text it replaces and run lengths are rebased so they always
+sum to the new text length. Replacement text is inserted literally (`$&` and
+similar patterns are not expanded).

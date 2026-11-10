@@ -40,7 +40,7 @@ test('Edit > Copy Merged copies the rendered composition into the layer clipboar
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Paste Layer/ }).click();
-  await expect(page.getByRole('heading', { name: /Layers 2 \/ 32/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Layers 2 \/ 512/ })).toBeVisible();
 
   const project = await downloadProject(page);
   const frame = project.history[project.index];

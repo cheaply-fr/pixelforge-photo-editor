@@ -76,3 +76,17 @@ test('filter Action parameters retain Neural Filters controls without source dat
     neuralEnhance: { luminance: 52, color: 38, texture: 56 },
   });
 });
+
+test('colour clouds settings are recorded for Action replay', async () => {
+  const { filterActionParameters } = await import('../src/filterActionParameters.ts');
+  const { effectiveFilterEffects } = await import('../src/filterEffects.ts');
+  const cloudRender = { foreground: '#e08a30', background: '#080c28', scale: 662, fill: true };
+  const recorded = filterActionParameters({ type: 'clouds', amount: 90, radius: 16, seed: 5, cloudRender });
+  const extra = JSON.parse(recorded.filterExtra);
+  assert.deepEqual(extra.cloudRender, cloudRender);
+  // Replay normalises the recorded extra back into the same effect.
+  const replayed = effectiveFilterEffects({ ...extra, type: 'clouds', amount: 90, radius: 16, seed: 5 });
+  assert.deepEqual(replayed.cloudRender, cloudRender);
+  // Legacy grayscale clouds record nothing extra.
+  assert.equal(JSON.parse(filterActionParameters({ type: 'clouds', amount: 90, radius: 16 }).filterExtra).cloudRender, undefined);
+});

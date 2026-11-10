@@ -4,8 +4,8 @@
  * clipping, alpha compositing and clone masks can be tested without a DOM.
  */
 import { bristleCoverage, normalizeBrushBristle } from './brushBristle.ts';
-import { wetEdgesOpacity } from './brushWetEdges.ts';
-import { buildUpOpacity } from './brushBuildUp.ts';
+import { normalizeBrushWetEdges, wetEdgesOpacity } from './brushWetEdges.ts';
+import { buildUpOpacity, normalizeBrushBuildUp } from './brushBuildUp.ts';
 import {
   mapBrushPressure,
   normalizeBrushPressureCurve,
@@ -43,6 +43,14 @@ export type BrushTipSettings = {
   flipY?: boolean;
 };
 export const BRUSH_DEFAULT_SPACING = 25;
+/** Dab spacing bounds, as a percentage of the brush diameter (1,000% = sparse stamps). */
+export const BRUSH_SPACING_MIN = 1;
+export const BRUSH_SPACING_MAX = 1000;
+/**
+ * Normalized pen pressure at or below this value is a pen lift: when a
+ * pressure mapping is enabled the dab paints nothing.
+ */
+export const BRUSH_PEN_LIFT_PRESSURE = 0.01;
 export const BRUSH_DEFAULT_ANGLE = 0;
 export const BRUSH_DEFAULT_ROUNDNESS = 100;
 export type BrushStampSettings = BrushPressureSettings & {
@@ -74,6 +82,8 @@ export type ResolvedBrushStamp = {
   flipX: boolean;
   flipY: boolean;
   bristle: number;
+  /** True when enabled pressure mapping saw a pen lift (near-zero pressure); opacity is then 0. */
+  lifted: boolean;
 };
 export type StampBounds = { left: number; top: number; right: number; bottom: number };
 export type RadialMask = {
@@ -147,7 +157,7 @@ export function validBrushTipSettings(value: unknown): value is BrushTipSettings
   const candidate = value as BrushTipSettings;
   return (
     (candidate.spacing === undefined ||
-      (finite(candidate.spacing) && candidate.spacing >= 1 && candidate.spacing <= 100)) &&
+      (finite(candidate.spacing) && candidate.spacing >= BRUSH_SPACING_MIN && candidate.spacing <= BRUSH_SPACING_MAX)) &&
     (candidate.angle === undefined ||
       (finite(candidate.angle) && candidate.angle >= -180 && candidate.angle <= 180)) &&
     (candidate.roundness === undefined ||
@@ -167,11 +177,23 @@ export function effectiveBrushTipSettings(value: BrushTipSettings | undefined): 
   };
 }
 
-/** Match PointerEvent behavior: mouse and missing/zero touch pressure use a deterministic full-pressure fallback. */
+/**
+ * Match PointerEvent behavior: mouse and missing/out-of-range pressure use a
+ * deterministic full-pressure fallback. Touch pressure 0 also means full
+ * pressure (many touch screens report 0 when they cannot sense force), but a
+ * pen reading of 0 is real: the nib is lifting off the surface.
+ */
 export function normalizeBrushPressure(pointerType: string | undefined, pressure: number | undefined): number {
-  return (pointerType === 'pen' || pointerType === 'touch') && finite(pressure) && pressure > 0 && pressure <= 1
+  if (pointerType === 'pen' && finite(pressure) && pressure >= 0 && pressure <= 1) return pressure;
+  return pointerType === 'touch' && finite(pressure) && pressure > 0 && pressure <= 1
     ? pressure
     : 1;
+}
+
+/** Whether a normalized pressure is a pen lift for the enabled pressure mappings. */
+export function isBrushPenLift(pressure: number, settings: BrushPressureSettings | undefined): boolean {
+  const flags = effectiveBrushPressureSettings(settings);
+  return (flags.pressureSize || flags.pressureOpacity) && finite(pressure) && pressure <= BRUSH_PEN_LIFT_PRESSURE;
 }
 
 export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushStamp {
@@ -189,7 +211,8 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
     bristle = normalizeBrushBristle(settings.bristle),
     response = mapBrushPressure(pressure, flags.pressureCurve),
     size = settings.size * (flags.pressureSize ? response : 1),
-    opacity = settings.opacity * (flags.pressureOpacity ? response : 1);
+    lifted = isBrushPenLift(pressure, flags),
+    opacity = lifted ? 0 : settings.opacity * (flags.pressureOpacity ? response : 1);
   return {
     pressure,
     size: Math.max(0.0001, size),
@@ -199,6 +222,7 @@ export function resolveBrushStamp(settings: BrushStampSettings): ResolvedBrushSt
     ...flags,
     ...tip,
     bristle,
+    lifted,
   };
 }
 
@@ -264,36 +288,60 @@ export function radialStampMask(request: RadialStampRequest): RadialMask {
     height = Math.max(0, bounds.bottom - bounds.top),
     data = new Uint8ClampedArray(width * height),
     scale = stamp.opacity * 255;
+  // Hoist every per-stamp constant out of the pixel loop. The arithmetic below
+  // mirrors `brushCoverage`/`radialCoverage` exactly; it only avoids repeated
+  // validation and trigonometry so multi-thousand-pixel dabs stay interactive.
+  const radius = stamp.radius,
+    radians = (stamp.angle * Math.PI) / 180,
+    cos = Math.cos(radians),
+    sin = Math.sin(radians),
+    verticalScale = stamp.roundness / 100,
+    hard = stamp.hardness >= 100,
+    softRadius = radius * (1 - stamp.hardness / 100),
+    plateau = radius - softRadius,
+    softDivisor = Math.max(0.0000001, softRadius),
+    bristle = normalizeBrushBristle(request.bristle ?? 0),
+    wet = normalizeBrushWetEdges(request.wetEdges ?? 0),
+    buildUpAmount = normalizeBrushBuildUp(request.buildUp ?? 0),
+    needsCentreDistance = wet !== 0 || buildUpAmount !== 0,
+    // Every tip is inscribed in the circle of `radius`, so pixels outside a
+    // slightly widened circle have zero coverage and can be skipped per row.
+    spanRadiusSquared = (radius + 1) * (radius + 1),
+    centreX = request.x,
+    centreY = request.y,
+    flipX = stamp.flipX,
+    flipY = stamp.flipY;
   for (let py = bounds.top; py < bounds.bottom; py += 1) {
-    for (let px = bounds.left; px < bounds.right; px += 1) {
-      const coverage = brushCoverage(
-        px - request.x,
-        py - request.y,
-        stamp.radius,
-        stamp.hardness,
-        stamp.roundness,
-        stamp.angle,
-        stamp.flipX,
-        stamp.flipY,
-      );
-      const filament = bristleCoverage(
-        px - request.x,
-        py - request.y,
-        stamp.radius,
-        request.bristle ?? 0,
-      );
-      const wetEdges = wetEdgesOpacity(
-        Math.hypot(px - request.x, py - request.y),
-        stamp.radius,
-        request.wetEdges ?? 0,
-      );
-      const buildUp = buildUpOpacity(
-        Math.hypot(px - request.x, py - request.y),
-        stamp.radius,
-        request.buildUp ?? 0,
-      );
-      if (coverage > 0 && filament > 0)
-        data[(py - bounds.top) * width + (px - bounds.left)] = Math.round(coverage * filament * wetEdges * buildUp * scale);
+    const dy = py - centreY,
+      rowReach = spanRadiusSquared - dy * dy;
+    if (rowReach < 0) continue;
+    const reach = Math.sqrt(rowReach),
+      rowLeft = Math.max(bounds.left, Math.floor(centreX - reach)),
+      rowRight = Math.min(bounds.right, Math.ceil(centreX + reach) + 1),
+      rowOffset = (py - bounds.top) * width - bounds.left;
+    for (let px = rowLeft; px < rowRight; px += 1) {
+      const dx = px - centreX;
+      let localX = dx * cos + dy * sin,
+        localY = -dx * sin + dy * cos;
+      if (flipX) localX = -localX;
+      if (flipY) localY = -localY;
+      const scaledY = localY / verticalScale,
+        distance = Math.sqrt(localX * localX + scaledY * scaledY);
+      if (distance > radius) continue;
+      const coverage = hard || distance <= plateau
+        ? 1
+        : clamp((radius - distance) / softDivisor, 0, 1);
+      if (coverage <= 0) continue;
+      const filament = bristle === 0 ? 1 : bristleCoverage(dx, dy, radius, bristle);
+      if (filament <= 0) continue;
+      let wetEdges = 1,
+        buildUp = 1;
+      if (needsCentreDistance) {
+        const centreDistance = Math.hypot(dx, dy);
+        if (wet !== 0) wetEdges = wetEdgesOpacity(centreDistance, radius, wet);
+        if (buildUpAmount !== 0) buildUp = buildUpOpacity(centreDistance, radius, buildUpAmount);
+      }
+      data[rowOffset + px] = Math.round(coverage * filament * wetEdges * buildUp * scale);
     }
   }
   return { width, height, data, bounds, stamp };
@@ -301,7 +349,9 @@ export function radialStampMask(request: RadialStampRequest): RadialMask {
 
 function assertPixels(value: ArrayLike<number>, width: number, height: number, label: string, bounds?: StampBounds): void {
   if (value.length !== width * height * 4) throw new Error(`${label} must contain RGBA data for every pixel`);
-  if (!bounds) return;
+  // Clamped byte arrays can only hold integer channels 0…255, so the per-pixel
+  // scan is redundant for them (and costs seconds on multi-thousand-pixel dabs).
+  if (!bounds || value instanceof Uint8ClampedArray) return;
   for (let py = bounds.top; py < bounds.bottom; py += 1)
     for (let px = bounds.left; px < bounds.right; px += 1) {
       const offset = (py * width + px) * 4;
@@ -351,14 +401,151 @@ function destinationOut(destination: Uint8ClampedArray, offset: number, alpha: n
   return true;
 }
 
+/** Edge length of the lazily allocated tiles of a `BrushStrokeBuffer`. */
+export const BRUSH_STROKE_TILE = 64;
+const STROKE_TILE_SHIFT = 6;
+type BrushStrokeTile = {
+  /** Stroke coverage 0..1 (0 = this pixel has not been touched by the stroke). */
+  coverage: Float32Array;
+  /** Accumulated (straight) stroke colour. */
+  color: Uint8ClampedArray;
+  /** The destination pixel as it was before the stroke first touched it. */
+  base: Uint8ClampedArray;
+};
+
+/**
+ * Per-stroke coverage buffer that makes Opacity a per-stroke ceiling. Dabs
+ * accumulate stroke coverage `s` (each dab adds `e·(1 − s)`, where `e` is the
+ * dab's flow-scaled alpha divided by the ceiling); the destination is always
+ * recomposited from the pixel it held before the stroke, at `ceiling · s`.
+ * A long Opacity 50 % / Flow 100 % stroke therefore stays at 50 % instead of
+ * compounding every overlapping dab. Tiles are allocated only where the
+ * stroke paints, so memory follows the painted area, not the canvas size.
+ */
+export class BrushStrokeBuffer {
+  readonly width: number;
+  readonly height: number;
+  /** Stroke opacity ceiling, 0..1. */
+  readonly ceiling: number;
+  private readonly tilesX: number;
+  private readonly tiles = new Map<number, BrushStrokeTile>();
+  private lastKey = -1;
+  private lastTile: BrushStrokeTile | undefined;
+
+  constructor(width: number, height: number, ceiling: number) {
+    assertDimensions(width, height);
+    if (!finite(ceiling) || ceiling < 0 || ceiling > 1) throw new Error('Brush stroke opacity must be between 0 and 1');
+    this.width = width;
+    this.height = height;
+    this.ceiling = ceiling;
+    this.tilesX = Math.ceil(width / BRUSH_STROKE_TILE);
+  }
+
+  /** Number of allocated tiles (memory follows the painted area). */
+  get tileCount(): number {
+    return this.tiles.size;
+  }
+
+  /** Stroke coverage (0..1) at a pixel, 0 where the stroke has not painted. */
+  coverageAt(x: number, y: number): number {
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= this.width || y >= this.height) return 0;
+    const tile = this.tiles.get((y >> STROKE_TILE_SHIFT) * this.tilesX + (x >> STROKE_TILE_SHIFT));
+    return tile ? tile.coverage[(y & (BRUSH_STROKE_TILE - 1)) * BRUSH_STROKE_TILE + (x & (BRUSH_STROKE_TILE - 1))] : 0;
+  }
+
+  /**
+   * Add one dab's alpha at a pixel and rewrite `destination[offset…]` from
+   * the pre-stroke pixel. `alpha` is the dab's flow-scaled alpha (≤ the
+   * ceiling); `color` is the dab colour with its own alpha (clone/heal
+   * samples may be translucent). `erase` removes alpha instead of painting
+   * and `factor` scales the final alpha (Healing's bounded blend).
+   */
+  accumulate(
+    destination: Uint8ClampedArray,
+    offset: number,
+    x: number,
+    y: number,
+    red: number,
+    green: number,
+    blue: number,
+    colorAlpha: number,
+    alpha: number,
+    erase: boolean,
+    factor = 1,
+  ): boolean {
+    if (x < 0 || y < 0 || x >= this.width || y >= this.height || this.ceiling <= 0) return false;
+    const key = (y >> STROKE_TILE_SHIFT) * this.tilesX + (x >> STROKE_TILE_SHIFT);
+    let tile = key === this.lastKey ? this.lastTile : this.tiles.get(key);
+    if (!tile) {
+      const area = BRUSH_STROKE_TILE * BRUSH_STROKE_TILE;
+      tile = { coverage: new Float32Array(area), color: new Uint8ClampedArray(area * 3), base: new Uint8ClampedArray(area * 4) };
+      this.tiles.set(key, tile);
+    }
+    this.lastKey = key;
+    this.lastTile = tile;
+    const index = (y & (BRUSH_STROKE_TILE - 1)) * BRUSH_STROKE_TILE + (x & (BRUSH_STROKE_TILE - 1)),
+      before = tile.coverage[index],
+      dab = clamp(alpha / this.ceiling, 0, 1) * clamp(colorAlpha / 255, 0, 1);
+    if (dab <= 0) return false;
+    const base = tile.base, baseOffset = index * 4;
+    if (before === 0)
+      for (let channel = 0; channel < 4; channel += 1) base[baseOffset + channel] = destination[offset + channel];
+    const after = before + dab * (1 - before),
+      colorOffset = index * 3,
+      strokeColor = tile.color;
+    tile.coverage[index] = after;
+    if (!erase) {
+      const keep = before * (1 - dab);
+      strokeColor[colorOffset] = Math.round((red * dab + strokeColor[colorOffset] * keep) / after);
+      strokeColor[colorOffset + 1] = Math.round((green * dab + strokeColor[colorOffset + 1] * keep) / after);
+      strokeColor[colorOffset + 2] = Math.round((blue * dab + strokeColor[colorOffset + 2] * keep) / after);
+    }
+    const strokeAlpha = clamp(this.ceiling * after * factor, 0, 1),
+      baseAlpha = base[baseOffset + 3] / 255;
+    let r: number, g: number, b: number, a: number;
+    if (erase) {
+      a = Math.round(base[baseOffset + 3] * (1 - strokeAlpha));
+      r = a === 0 ? 0 : base[baseOffset];
+      g = a === 0 ? 0 : base[baseOffset + 1];
+      b = a === 0 ? 0 : base[baseOffset + 2];
+    } else {
+      const inverse = 1 - strokeAlpha, outputAlpha = strokeAlpha + baseAlpha * inverse;
+      if (outputAlpha <= 0) {
+        r = base[baseOffset];
+        g = base[baseOffset + 1];
+        b = base[baseOffset + 2];
+        a = base[baseOffset + 3];
+      } else {
+        r = Math.round((strokeColor[colorOffset] * strokeAlpha + base[baseOffset] * baseAlpha * inverse) / outputAlpha);
+        g = Math.round((strokeColor[colorOffset + 1] * strokeAlpha + base[baseOffset + 1] * baseAlpha * inverse) / outputAlpha);
+        b = Math.round((strokeColor[colorOffset + 2] * strokeAlpha + base[baseOffset + 2] * baseAlpha * inverse) / outputAlpha);
+        a = Math.round(outputAlpha * 255);
+      }
+    }
+    const changed = destination[offset] !== r || destination[offset + 1] !== g ||
+      destination[offset + 2] !== b || destination[offset + 3] !== a;
+    destination[offset] = r;
+    destination[offset + 1] = g;
+    destination[offset + 2] = b;
+    destination[offset + 3] = a;
+    return changed;
+  }
+}
+
+/** A stroke buffer plus the canvas position of the local destination region. */
+export type BrushStrokeTarget = { buffer: BrushStrokeBuffer; originX: number; originY: number };
+
 /**
  * Apply a radial stamp in-place and return its reusable mask. Clone/heal use
  * source pixels with source-over compositing; callers can also consume the
- * returned mask to build a nondestructive source/mask layer.
+ * returned mask to build a nondestructive source/mask layer. With a `stroke`
+ * target the dab accumulates into that per-stroke buffer instead, so the
+ * stroke never exceeds the buffer's opacity ceiling.
  */
 export function applyRadialStamp(
   destination: Uint8ClampedArray,
   request: ApplyRadialStampRequest,
+  stroke?: BrushStrokeTarget,
 ): AppliedRadialStamp {
   assertDimensions(request.width, request.height);
   if (!BRUSH_MODES.includes(request.mode)) throw new Error('Brush mode is invalid');
@@ -388,19 +575,89 @@ export function applyRadialStamp(
   const healFactor = request.mode === 'heal' ? request.healingOpacity ?? 0.65 : 1;
   if (!finite(healFactor) || healFactor < 0 || healFactor > 1) throw new Error('Healing opacity is invalid');
   let changed = false;
-  for (let py = radial.bounds.top; py < radial.bounds.bottom; py += 1) {
-    for (let px = radial.bounds.left; px < radial.bounds.right; px += 1) {
-      const alpha = radial.data[(py - radial.bounds.top) * radial.width + (px - radial.bounds.left)] / 255;
-      if (alpha <= 0) continue;
-      const offset = (py * request.width + px) * 4;
-      if (request.mode === 'destination-out') changed = destinationOut(destination, offset, alpha) || changed;
-      else if (request.mode === 'source-over') changed = sourceOver(destination, offset, request.color!, alpha) || changed;
+  // Hoist request fields: callers often pass large spread option objects, and
+  // re-reading them per pixel dominates multi-thousand-pixel dabs.
+  const mode = request.mode,
+    canvasWidth = request.width,
+    canvasHeight = request.height,
+    centreX = request.x,
+    centreY = request.y,
+    color = request.color!,
+    source = request.source,
+    mask = radial.data,
+    maskWidth = radial.width,
+    { top, bottom, left, right } = radial.bounds;
+  if (stroke) {
+    const buffer = stroke.buffer, originX = stroke.originX, originY = stroke.originY,
+      erase = mode === 'destination-out';
+    for (let py = top; py < bottom; py += 1) {
+      const maskRow = (py - top) * maskWidth - left,
+        destinationRow = py * canvasWidth;
+      for (let px = left; px < right; px += 1) {
+        const coverage = mask[maskRow + px];
+        if (coverage === 0) continue;
+        const offset = (destinationRow + px) * 4;
+        if (mode === 'source-over' || erase) {
+          changed = buffer.accumulate(destination, offset, px + originX, py + originY,
+            erase ? 0 : color[0], erase ? 0 : color[1], erase ? 0 : color[2], erase ? 255 : color[3],
+            coverage / 255, erase) || changed;
+          continue;
+        }
+        const sx = Math.round(sourceX + px - centreX),
+          sy = Math.round(sourceY + py - centreY);
+        if (sx < 0 || sy < 0 || sx >= canvasWidth || sy >= canvasHeight) continue;
+        const sourceOffset = (sy * canvasWidth + sx) * 4;
+        changed = buffer.accumulate(destination, offset, px + originX, py + originY,
+          source![sourceOffset], source![sourceOffset + 1], source![sourceOffset + 2], source![sourceOffset + 3],
+          coverage / 255, false, healFactor) || changed;
+      }
+    }
+    return { ...radial, changed, mask: radial.data };
+  }
+  if (mode === 'source-over') {
+    // Inline `sourceOver` with a per-coverage alpha table (masks hold only 256
+    // distinct values); the arithmetic is identical to the helper.
+    const sourceAlphaByCoverage = new Float64Array(256);
+    for (let coverage = 1; coverage < 256; coverage += 1)
+      sourceAlphaByCoverage[coverage] = clamp((color[3] / 255) * (coverage / 255), 0, 1);
+    const red = color[0], green = color[1], blue = color[2];
+    for (let py = top; py < bottom; py += 1) {
+      const maskRow = (py - top) * maskWidth - left,
+        destinationRow = py * canvasWidth;
+      for (let px = left; px < right; px += 1) {
+        const coverage = mask[maskRow + px];
+        if (coverage === 0) continue;
+        const sourceAlpha = sourceAlphaByCoverage[coverage];
+        if (sourceAlpha <= 0) continue;
+        const offset = (destinationRow + px) * 4,
+          destinationAlpha = destination[offset + 3] / 255,
+          inverse = 1 - sourceAlpha,
+          outputAlpha = sourceAlpha + destinationAlpha * inverse;
+        if (outputAlpha <= 0) continue;
+        destination[offset] = Math.round((red * sourceAlpha + destination[offset] * destinationAlpha * inverse) / outputAlpha);
+        destination[offset + 1] = Math.round((green * sourceAlpha + destination[offset + 1] * destinationAlpha * inverse) / outputAlpha);
+        destination[offset + 2] = Math.round((blue * sourceAlpha + destination[offset + 2] * destinationAlpha * inverse) / outputAlpha);
+        destination[offset + 3] = Math.round(outputAlpha * 255);
+        changed = true;
+      }
+    }
+    return { ...radial, changed, mask: radial.data };
+  }
+  for (let py = top; py < bottom; py += 1) {
+    const maskRow = (py - top) * maskWidth - left,
+      destinationRow = py * canvasWidth;
+    for (let px = left; px < right; px += 1) {
+      const coverage = mask[maskRow + px];
+      if (coverage === 0) continue;
+      const alpha = coverage / 255,
+        offset = (destinationRow + px) * 4;
+      if (mode === 'destination-out') changed = destinationOut(destination, offset, alpha) || changed;
       else {
-        const sx = Math.round(sourceX + px - request.x),
-          sy = Math.round(sourceY + py - request.y);
-        if (sx < 0 || sy < 0 || sx >= request.width || sy >= request.height) continue;
-        const sourceOffset = (sy * request.width + sx) * 4,
-          sourceColor: BrushColor = [request.source![sourceOffset], request.source![sourceOffset + 1], request.source![sourceOffset + 2], request.source![sourceOffset + 3]];
+        const sx = Math.round(sourceX + px - centreX),
+          sy = Math.round(sourceY + py - centreY);
+        if (sx < 0 || sy < 0 || sx >= canvasWidth || sy >= canvasHeight) continue;
+        const sourceOffset = (sy * canvasWidth + sx) * 4,
+          sourceColor: BrushColor = [source![sourceOffset], source![sourceOffset + 1], source![sourceOffset + 2], source![sourceOffset + 3]];
         changed = sourceOver(destination, offset, sourceColor, alpha * healFactor) || changed;
       }
     }
