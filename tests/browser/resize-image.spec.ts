@@ -24,7 +24,7 @@ const beforeEachEditor = async (page: Page) => {
 
 const openResize = async (page: Page) => {
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Resize image…', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Image Size…/ }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('heading', { name: 'Image Size', exact: true })).toBeVisible();
@@ -122,6 +122,16 @@ test('Image Size opens from the menu with safe defaults and a responsive dialog'
   expect(viewport).not.toBeNull();
   expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width);
   expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height);
+});
+
+test('Image menu exposes one canonical resize command', async ({ page }) => {
+  await page.getByRole('button', { name: 'Image', exact: true }).click();
+  await expect(
+    page.getByRole('menuitem', { name: /^Image Size…/ }),
+  ).toHaveCount(1);
+  await expect(
+    page.getByRole('menuitem', { name: 'Resize image…', exact: true }),
+  ).toHaveCount(0);
 });
 
 test('locked dimensions preserve aspect ratio while unlocked dimensions stay independent', async ({

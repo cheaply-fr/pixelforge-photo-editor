@@ -148,7 +148,7 @@ test('1. Move and Free Transform change the active layer and remain undoable', a
 
 test('2. Crop and Resize update dimensions, persist, and undo independently', async ({ page }) => {
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Resize image…', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Image Size…/ }).click();
   await page.getByLabel('Width (px)', { exact: true }).fill('1000');
   await page.getByRole('button', { name: 'Apply resize', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1000');

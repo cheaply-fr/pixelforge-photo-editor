@@ -543,7 +543,7 @@ test('layer position, blending and visibility produce exact composite pixels', a
   await page.getByLabel('Visible', { exact: true }).uncheck();
   await expect.poll(read).toEqual([0, 0, 255, 255, 0, 0, 255, 255]);
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Resize image…' }).click();
+  await page.getByRole('menuitem', { name: /^Image Size…/ }).click();
   await page.getByLabel('Width (px)', { exact: true }).fill('1');
   await page.getByRole('button', { name: 'Apply resize' }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1');
@@ -790,7 +790,7 @@ test('rectangular selection creates a nondestructive raster mask and survives re
   expect(exported.value.assets[layer.mask].w).toBe(frame.w);
   expect(exported.value.assets[layer.mask].h).toBe(frame.h);
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Resize image…' }).click();
+  await page.getByRole('menuitem', { name: /^Image Size…/ }).click();
   await page.getByLabel('Width (px)', { exact: true }).fill('720');
   await page.getByLabel('Height (px)', { exact: true }).fill('480');
   await page.getByRole('button', { name: 'Apply resize' }).click();
