@@ -586,7 +586,7 @@ test('exact resizing and project file round-trip retain pixels, dimensions and u
   );
   await page.getByLabel('Document name').fill('Portable project');
   await page.getByRole('button', { name: 'Image', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Resize image…' }).click();
+  await page.getByRole('menuitem', { name: /^Image Size…/ }).click();
   await page.getByLabel('Width (px)', { exact: true }).fill('720');
   await expect(page.getByLabel('Height (px)', { exact: true })).toHaveValue(
     '480',
