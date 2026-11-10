@@ -130,6 +130,8 @@
 .layer-row b { display:block; max-width:170px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .layer-row small { display:block; font-size:10px; color:#afb8c8; margin-top:3px; }
 .layer-type { font-size:22px; width:24px; text-align:center; }
+.layer-type.layer-thumbnail { flex:none; display:grid; place-items:center; width:28px; height:28px; font-size:18px; }
+.layer-thumbnail img { display:block; max-width:28px; max-height:28px; width:auto; height:auto; border:1px solid #3a4456; border-radius:3px; background:#fff; background-image:linear-gradient(45deg,#cfd5df 25%,transparent 25%,transparent 75%,#cfd5df 75%),linear-gradient(45deg,#cfd5df 25%,transparent 25%,transparent 75%,#cfd5df 75%); background-size:8px 8px; background-position:0 0,4px 4px; pointer-events:none; }
 .group-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:5px; padding:5px 7px; border:1px solid #4c3e69; border-radius:6px; background:#2b2539; }
 .group-row.selected { border-color:#a88bdf; }
 .group-toggle { min-width:0; display:flex; align-items:center; gap:6px; border:0; background:transparent; color:#e4d9ff; text-align:left; font-size:11px; }

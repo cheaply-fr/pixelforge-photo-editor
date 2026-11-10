@@ -369,6 +369,90 @@ export function compositeCheckpointTargets(
   return [...targets].filter(usable).sort((a, b) => a - b);
 }
 
+/** Fewest layers above the edited one worth a cached "above" composite. */
+export const COMPOSITE_SUFFIX_MIN_LAYERS = 2;
+/**
+ * Smallest canvas (pixels) that keeps an "above" composite. Flattening the
+ * layers above first changes Canvas's 8-bit rounding order, so the screen can
+ * differ from a sequential render by a level or two per channel. Below this
+ * size a full recomposite is fast and renders stay bit-identical.
+ */
+export const COMPOSITE_SUFFIX_MIN_PIXELS = 4_000_000;
+
+/**
+ * Where the cached composite of the layers *above* the edited layer starts,
+ * or -1 when none applies. While a low layer is painted, the layers above it
+ * do not change, so they can be flattened once onto a transparent surface
+ * and drawn over each new result instead of being re-rendered per stroke.
+ *
+ * That is only exact when every layer in the cached range composites onto
+ * the result with plain source-over and never reads the pixels beneath it
+ * (`independent`: no adjustment layer, no other blend mode, no layer style
+ * pass with its own blend mode). Source-over is associative, so
+ * `top over (middle over bottom)` equals `(top over middle) over bottom`.
+ * A layer that does read the backdrop moves the start above it; layers
+ * between the edited layer and the start are still rendered every time.
+ *
+ * The edited layer is the first live override, else the active layer. A
+ * folder is one compositing unit, so an edited member puts the start above
+ * its whole folder, a folder in the range must itself use source-over, and
+ * the range never splits a folder. A clipped layer needs its base inside the
+ * range too, because it is drawn through that base's alpha.
+ */
+export function compositeSuffixStart(
+  frame: {
+    layers: readonly { id: string; groupId?: string; clippingTo?: string }[];
+    groups?: readonly { id: string; blend?: string }[];
+    active?: string;
+  },
+  options: {
+    overrides?: Readonly<Record<string, unknown>>;
+    /** True when an ungrouped layer never reads the pixels beneath it. */
+    independent: (index: number) => boolean;
+    minLayers?: number;
+  },
+): number {
+  const layers = frame.layers,
+    count = layers.length;
+  let target = -1;
+  const overrides = options.overrides;
+  if (overrides) target = layers.findIndex((layer) => Object.hasOwn(overrides, layer.id));
+  if (target < 0) target = layers.findIndex((layer) => layer.id === frame.active);
+  if (target < 0) return -1;
+  const indexById = new Map(layers.map((layer, index) => [layer.id, index]));
+  const groups = new Map((frame.groups || []).map((group) => [group.id, group]));
+  const span = new Map<string, { first: number; last: number }>();
+  for (const [index, layer] of layers.entries())
+    if (layer.groupId) {
+      const current = span.get(layer.groupId);
+      if (current) current.last = index;
+      else span.set(layer.groupId, { first: index, last: index });
+    }
+  let start = target + 1;
+  const targetGroup = layers[target].groupId;
+  if (targetGroup) start = Math.max(start, span.get(targetGroup)!.last + 1);
+  // Raise the start past every blocking layer until nothing above it blocks.
+  for (let guard = 0; guard <= count && start < count; guard += 1) {
+    let next = start;
+    for (let index = start; index < count; index += 1) {
+      const layer = layers[index];
+      if (layer.groupId) {
+        const range = span.get(layer.groupId)!;
+        const group = groups.get(layer.groupId);
+        if (range.first < start || !group || (group.blend ?? 'source-over') !== 'source-over')
+          next = Math.max(next, range.last + 1);
+        continue;
+      }
+      const base = layer.clippingTo === undefined ? undefined : indexById.get(layer.clippingTo);
+      if (!options.independent(index) || (layer.clippingTo !== undefined && (base === undefined || base < start)))
+        next = Math.max(next, index + 1);
+    }
+    if (next === start) break;
+    start = next;
+  }
+  return count - start >= (options.minLayers ?? COMPOSITE_SUFFIX_MIN_LAYERS) ? start : -1;
+}
+
 /** Byte budget and count cap for one render context's prefix snapshots. */
 export type CompositeSnapshotBudget = { bytes: number; maxSnapshots: number };
 
@@ -418,6 +502,7 @@ export class CompositeCache<S = unknown> {
   private entries: Entry<S>[] = [];
   private final: { key: string; w: number; h: number; surface: S } | undefined;
   private previous: { w: number; h: number; keys: readonly string[] } | undefined;
+  private suffix: { w: number; h: number; start: number; keys: string[]; surface: S } | undefined;
   private tick = 0;
   readonly budget: CompositeSnapshotBudget;
   hits = 0;
@@ -425,15 +510,86 @@ export class CompositeCache<S = unknown> {
   finalHits = 0;
   /** Layers the latest outermost render took from a snapshot (0: none). */
   lastReusedLayers = 0;
+  suffixHits = 0;
+  suffixMisses = 0;
+  /** Layers the latest outermost render took from the "above" composite (0: none). */
+  lastSuffixLayers = 0;
 
   /** Without a budget one snapshot is kept, as before multiple checkpoints. */
   constructor(budget: CompositeSnapshotBudget = SINGLE_SNAPSHOT) {
     this.budget = budget;
   }
 
-  /** Snapshots kept at this frame size. */
+  /**
+   * Prefix snapshots kept at this frame size. A retained "above" composite
+   * takes one of the budget's surfaces.
+   */
   capacity(w: number, h: number): number {
-    return compositeSnapshotCapacity(w, h, this.budget);
+    const total = compositeSnapshotCapacity(w, h, this.budget);
+    return this.suffix && this.suffix.w === w && this.suffix.h === h ? Math.max(1, total - 1) : total;
+  }
+
+  /**
+   * Whether an "above" composite is kept at this frame size: a canvas of at
+   * least COMPOSITE_SUFFIX_MIN_PIXELS and a budget holding at least two
+   * frame-sized surfaces, so one prefix snapshot remains.
+   */
+  suffixAllowed(w: number, h: number): boolean {
+    const pixels = Math.max(1, Math.trunc(w)) * Math.max(1, Math.trunc(h));
+    return (
+      pixels >= COMPOSITE_SUFFIX_MIN_PIXELS &&
+      this.budget.bytes >= 2 * pixels * 4 &&
+      compositeSnapshotCapacity(w, h, this.budget) >= 2
+    );
+  }
+
+  /**
+   * The cached composite of layers `start..` when it holds exactly these
+   * layer keys (`keys` is the whole frame's key list).
+   */
+  matchSuffix(w: number, h: number, start: number, keys: readonly string[]): S | undefined {
+    const suffix = this.suffix;
+    if (
+      !suffix ||
+      suffix.w !== w ||
+      suffix.h !== h ||
+      suffix.start !== start ||
+      suffix.keys.length !== keys.length - start ||
+      suffix.keys.some((key, index) => key !== keys[start + index])
+    ) {
+      if (suffix) this.suffixMisses += 1;
+      return undefined;
+    }
+    this.suffixHits += 1;
+    return suffix.surface;
+  }
+
+  /**
+   * Remove the retained "above" composite and return its surface for the
+   * next one to be drawn into (undefined at another size or when none is
+   * kept). The entry is dropped first, so a render cancelled half-way can
+   * never leave a partly drawn surface behind a valid key.
+   */
+  takeSuffixSurface(w: number, h: number): S | undefined {
+    const suffix = this.suffix;
+    this.suffix = undefined;
+    return suffix && suffix.w === w && suffix.h === h ? suffix.surface : undefined;
+  }
+
+  storeSuffix(suffix: { w: number; h: number; start: number; keys: readonly string[]; surface: S }): void {
+    this.suffix = { ...suffix, keys: [...suffix.keys] };
+    // The suffix took one surface of the budget: drop the extra prefix snapshot.
+    while (this.entries.length > this.capacity(suffix.w, suffix.h)) {
+      const victim = this.victim(suffix.w, suffix.h);
+      if (!victim) break;
+      this.entries.splice(this.entries.indexOf(victim), 1);
+    }
+  }
+
+  /** The retained "above" composite (diagnostics and tests). */
+  get retainedSuffix(): { start: number; layers: number; w: number; h: number } | undefined {
+    const suffix = this.suffix;
+    return suffix ? { start: suffix.start, layers: suffix.keys.length, w: suffix.w, h: suffix.h } : undefined;
   }
 
   /**
@@ -577,6 +733,7 @@ export class CompositeCache<S = unknown> {
     this.entries = [];
     this.final = undefined;
     this.previous = undefined;
+    this.suffix = undefined;
   }
 
   /** The highest retained snapshot (diagnostics and tests). */
@@ -598,7 +755,13 @@ export class CompositeCache<S = unknown> {
  * frame-space results came from their cache, and how many layers (from the
  * bottom) came from a prefix snapshot.
  */
-export type CompositeReuse = { final: boolean; clippedHits?: number; reusedLayers?: number };
+export type CompositeReuse = {
+  final: boolean;
+  clippedHits?: number;
+  reusedLayers?: number;
+  /** Layers drawn from the cached composite above the edited layer. */
+  suffixLayers?: number;
+};
 
 const optionalCount = (value: unknown) =>
   value === undefined || (Number.isSafeInteger(value) && (value as number) >= 0);
@@ -610,7 +773,8 @@ export function validCompositeReuse(value: unknown): value is CompositeReuse {
     !Array.isArray(value) &&
     typeof (value as Record<string, unknown>).final === 'boolean' &&
     optionalCount((value as Record<string, unknown>).clippedHits) &&
-    optionalCount((value as Record<string, unknown>).reusedLayers)
+    optionalCount((value as Record<string, unknown>).reusedLayers) &&
+    optionalCount((value as Record<string, unknown>).suffixLayers)
   );
 }
 
@@ -622,7 +786,12 @@ export function markCompositeReuse(reuse: CompositeReuse): void {
   try {
     if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
       performance.mark('pixelforge.composite-cache', {
-        detail: { final: reuse.final, clippedHits: reuse.clippedHits ?? 0, reusedLayers: reuse.reusedLayers ?? 0 },
+        detail: {
+          final: reuse.final,
+          clippedHits: reuse.clippedHits ?? 0,
+          reusedLayers: reuse.reusedLayers ?? 0,
+          suffixLayers: reuse.suffixLayers ?? 0,
+        },
       });
   } catch {
     // Diagnostics must never affect rendering.

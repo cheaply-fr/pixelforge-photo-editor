@@ -323,6 +323,7 @@ export async function renderFrameWithWorker(
         final: mainThreadCompositeCache.finalHits > finalHitsBefore,
         clippedHits: sharedClippedLayerCache().stats().hits - clippedHitsBefore,
         reusedLayers: mainThreadCompositeCache.lastReusedLayers,
+        suffixLayers: mainThreadCompositeCache.lastSuffixLayers,
       });
     return image;
   };

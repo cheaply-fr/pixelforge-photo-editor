@@ -22,6 +22,9 @@ import {
   Unlink2,
 } from 'lucide-react';
 import FontFamilySelect from './FontFamilySelect';
+import { layerOpacityChange, layerOpacityPercent } from './layerOpacity';
+import LayerThumbnail from './LayerThumbnail';
+import type { AnyAsset } from './tiledAssets';
 import {
   TEXT_ALIGNS,
   TEXT_ORIENTATIONS,
@@ -88,7 +91,9 @@ type Props = {
   selectAll: () => void;
   deselectLayers: () => void;
   isolateLayers: () => void;
-  edit: (patch: Partial<Layer>) => void;
+  edit: (patch: Partial<Layer>) => boolean | void;
+  /** Current document assets, for the rows' lazily drawn thumbnails. */
+  thumbnailAssets?: () => Readonly<Record<string, AnyAsset | undefined>>;
   add: () => void;
   addAdjustment: () => void;
   addSmartObject: () => void;
@@ -211,6 +216,7 @@ export default function LayersPanel({
   selectionOperation,
   setSelectionOperation,
   setSelectionFeather,
+  thumbnailAssets,
   part = 'layers',
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -280,6 +286,53 @@ export default function LayersPanel({
       ? [frame.active]
       : frame.selectedLayerIds
     ).filter((id) => frame.layers.some((item) => item.id === id)),
+  );
+  // Layer opacity: the slider and its "Opacity N%" label both show the
+  // layer's stored opacity. Values set from script reach the native listener
+  // even when React's onChange misses them (src/layerOpacity.ts).
+  const opacityPercent = layerOpacityPercent(layer.opacity);
+  const requestedOpacity = useRef<{ id: string; value: number } | null>(null);
+  useEffect(() => {
+    requestedOpacity.current = null;
+  }, [layer.id, layer.opacity]);
+  const applyOpacity = (raw: unknown) => {
+    const value = layerOpacityChange(raw, layer, requestedOpacity.current);
+    if (value === undefined) return;
+    requestedOpacity.current = { id: layer.id, value };
+    if (edit({ opacity: value / 100 }) === false) requestedOpacity.current = null;
+  };
+  const applyOpacityRef = useRef(applyOpacity);
+  useEffect(() => {
+    applyOpacityRef.current = applyOpacity;
+  });
+  const opacityInput = useRef<HTMLInputElement>(null);
+  const opacityListener = useRef<{ input: HTMLInputElement; sync: () => void } | null>(null);
+  // The slider element can be re-created (another layer, a remounted
+  // section): after every render, make sure the live one has the listener.
+  useEffect(() => {
+    const input = opacityInput.current,
+      attached = opacityListener.current;
+    if (attached?.input === input) return;
+    if (attached) {
+      attached.input.removeEventListener('input', attached.sync);
+      attached.input.removeEventListener('change', attached.sync);
+      opacityListener.current = null;
+    }
+    if (!input) return;
+    const sync = () => applyOpacityRef.current(input.value);
+    input.addEventListener('input', sync);
+    input.addEventListener('change', sync);
+    opacityListener.current = { input, sync };
+  });
+  useEffect(
+    () => () => {
+      const attached = opacityListener.current;
+      if (!attached) return;
+      attached.input.removeEventListener('input', attached.sync);
+      attached.input.removeEventListener('change', attached.sync);
+      opacityListener.current = null;
+    },
+    [],
   );
   const styles = effectiveLayerStyles(layer.styles);
   const arrangeDisabled = (mode: LayerArrangeMode) =>
@@ -718,23 +771,28 @@ export default function LayersPanel({
             {clippedTo ? `Clipped to ${clippedTo.name || 'Untitled layer'}; ` : ''}
             {layerStackDescription(frame, item.id)}
           </span>
-          <span className="layer-type">
-            {item.kind === 'text'
-              ? 'T'
-              : item.kind === 'raster'
-                ? '▧'
-                : item.kind === 'smart-object'
-                  ? '◈'
-                : item.kind === 'adjustment'
-                  ? '◐'
-                : item.kind === 'line'
-                  ? '╱'
-                  : item.kind === 'polygon'
-                    ? '⬠'
-                    : item.kind === 'path'
-                      ? '⌁'
-                      : '□'}
-          </span>
+          <LayerThumbnail
+            layer={item}
+            frame={frame}
+            assets={thumbnailAssets}
+            fallback={
+              item.kind === 'text'
+                ? 'T'
+                : item.kind === 'raster'
+                  ? '▧'
+                  : item.kind === 'smart-object'
+                    ? '◈'
+                  : item.kind === 'adjustment'
+                    ? '◐'
+                  : item.kind === 'line'
+                    ? '╱'
+                    : item.kind === 'polygon'
+                      ? '⬠'
+                      : item.kind === 'path'
+                        ? '⌁'
+                        : '□'
+            }
+          />
           <span>
             <b>{item.name || 'Untitled layer'}</b>
             <small>
@@ -1238,15 +1296,17 @@ export default function LayersPanel({
         />
       </label>
       <label className="layer-field">
-        Opacity {Math.round(layer.opacity * 100)}%
+        <span data-testid="layer-opacity-label">Opacity {opacityPercent}%</span>
         <input
+          ref={opacityInput}
           aria-label="Layer opacity"
+          aria-valuetext={`${opacityPercent}%`}
           type="range"
           min="0"
           max="100"
-          value={Math.round(layer.opacity * 100)}
+          value={opacityPercent}
           disabled={layerLocked}
-          onChange={(e) => edit({ opacity: Number(e.target.value) / 100 })}
+          onChange={(e) => applyOpacity(e.target.value)}
         />
       </label>
       {layer.kind === 'raster' && layer.fillColor && (

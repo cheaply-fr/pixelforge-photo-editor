@@ -161,6 +161,35 @@ the least recently used. Snapshots are released when another document is
 installed. The `pixelforge.composite-cache` mark reports `reusedLayers`, the
 number of bottom layers taken from a snapshot.
 
+While a layer is painted, the layers above it do not change, so on canvases
+of at least 4 MP (`COMPOSITE_SUFFIX_MIN_PIXELS`) the same context also keeps
+one canvas-sized composite of the layers above the edited
+one, drawn onto a transparent surface (`compositeSuffixStart`). The edited
+layer is the first live override (a stroke preview), else the active layer;
+an edited folder member makes the whole folder the edited unit. A render that
+reaches the start of that range draws the cached surface and stops, so a
+stroke on a low layer of a tall stack recomposites only the layers between
+the prefix snapshot and the cached range. The range is exact only where
+compositing is associative, so it contains only layers that composite with
+plain source-over and never read the pixels beneath them
+(`layerIgnoresBackdrop`): no adjustment layer, no other blend mode, no Drop
+Shadow or Outer Glow with its own blend mode, folders only in Normal mode,
+and a clipped layer only together with its base. A layer that breaks this
+moves the start above it; layers between the edited layer and the start are
+rendered every time, and fewer than 2 cacheable layers keep no range. Its key
+is the per-layer keys of the range. An edit inside the range renders the
+stack normally (keeping its prefix snapshots there), and a render that takes
+the surface to redraw drops the entry first, so a cancelled render cannot
+leave half-drawn pixels behind a valid key. The range needs a budget of at
+least two canvas-sized surfaces and takes one of the prefix snapshot slots
+while it is kept (so 2–3 prefix snapshots on desktops and 1 on phones at
+2646 × 4096; none at 2 GB or less). The mark reports `suffixLayers`, the
+number of top layers drawn from it. Flattening the range first changes the
+order of Canvas's 8-bit rounding, so on those large canvases the screen can
+differ from a sequential render by a level or two per channel (which layer
+is edited decides the split); smaller canvases always render sequentially and
+stay bit-identical. Exports never use these caches.
+
 The same context also keeps the finished composite of the last committed
 render (no live stroke overrides), keyed by `compositeEquivalenceKey`: the
 ordered keys of the layers that can draw, with names, lock state, the active
