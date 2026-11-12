@@ -361,6 +361,35 @@ export const neutralFilterEffects: FilterEffects = {
 
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
+
+/** Shared radius bound for every filter except Gaussian Blur. */
+export const FILTER_RADIUS_MAX = 64;
+/**
+ * Gaussian Blur radius bound (docs/blur-effects-contract.md). Radii above
+ * GAUSSIAN_EXACT_MAX_RADIUS run as a three-pass box cascade whose cost per
+ * pixel does not depend on the radius, so large documents can use large
+ * blurs. Other filters keep FILTER_RADIUS_MAX.
+ */
+export const GAUSSIAN_BLUR_MAX_RADIUS = 1000;
+/** Smallest Gaussian Blur slider range offered, whatever the document size. */
+export const GAUSSIAN_BLUR_MIN_SLIDER_MAX = 250;
+
+/** Largest stored radius for a filter type. */
+export function filterRadiusMax(type: string | undefined): number {
+  return type === 'gaussian-blur' ? GAUSSIAN_BLUR_MAX_RADIUS : FILTER_RADIUS_MAX;
+}
+
+/**
+ * Gaussian Blur slider maximum for a layer or document of this size: a
+ * quarter of the longer side, at least 250 px and at most 1000 px.
+ */
+export function gaussianBlurSliderMax(width: number, height: number): number {
+  const longest = Math.max(Number.isFinite(width) ? width : 0, Number.isFinite(height) ? height : 0);
+  return Math.max(
+    GAUSSIAN_BLUR_MIN_SLIDER_MAX,
+    Math.min(GAUSSIAN_BLUR_MAX_RADIUS, Math.round(longest / 4)),
+  );
+}
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 const clampByte = (value: number) => clamp(Math.round(value), 0, 255);
@@ -384,7 +413,7 @@ export function effectiveFilterEffects(
     ? clamp(source.amount, 0, 100)
     : neutralFilterEffects.amount;
   const radius = finite(source.radius)
-    ? clamp(Math.round(source.radius), 0, 64)
+    ? clamp(Math.round(source.radius), 0, filterRadiusMax(type))
     : neutralFilterEffects.radius;
   const angle = finite(source.angle)
     ? clamp(source.angle, -180, 180)
@@ -671,7 +700,7 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     finite(effect.radius) &&
     Number.isInteger(effect.radius) &&
     effect.radius >= 0 &&
-    effect.radius <= 64 &&
+    effect.radius <= filterRadiusMax(effect.type) &&
     finite(effect.angle) &&
     effect.angle >= -180 &&
     effect.angle <= 180 &&
@@ -1157,10 +1186,14 @@ const GAUSSIAN_COLUMN_BLOCK = 16;
  * variance best matches the truncated Gaussian kernel used for `radius`, while
  * the cascade support (sum of half-widths) never exceeds the radius. The tiled
  * renderer depends on that support bound: its tile overlap is the radius.
- * `maxRadius` defaults to the Gaussian Blur filter's 64 px bound; layer-style
+ * `maxRadius` defaults to the Gaussian Blur filter's 1000 px bound; layer-style
  * shadows reuse the same cascade up to their own 250 px bound.
  */
-export function gaussianBoxHalfWidths(radius: number, passes = GAUSSIAN_BOX_PASSES, maxRadius = 64): number[] {
+export function gaussianBoxHalfWidths(
+  radius: number,
+  passes = GAUSSIAN_BOX_PASSES,
+  maxRadius = GAUSSIAN_BLUR_MAX_RADIUS,
+): number[] {
   const bounded = Math.max(1, Math.min(maxRadius, Math.round(radius))),
     sigma = Math.max(0.5, bounded / 3);
   let total = 0,
@@ -1211,6 +1244,170 @@ function boxLine(input: Float64Array, output: Float64Array, length: number, half
 }
 
 /**
+ * Gaussian Blur radii above the historical 64 px bound blur a block-averaged
+ * copy of the layer (factor k ≥ 2, chosen so the reduced radius is at most
+ * 32 px) and upsample it bilinearly. The reduction and interpolation add a
+ * spread of roughly k / 2 px against a sigma of radius / 3 ≥ 10.7 k / 2 px,
+ * so the result stays within the tolerance documented in
+ * docs/blur-effects-contract.md while a 3000 × 4000 radius-1000 blur costs a
+ * fraction of a full-resolution pass. Radii ≤ 64 return 1 and keep the exact
+ * or full-resolution box path, bit for bit.
+ */
+export function gaussianBlurDownsampleFactor(radius: number): number {
+  const bounded = Math.max(1, Math.min(GAUSSIAN_BLUR_MAX_RADIUS, Math.round(radius)));
+  return bounded > FILTER_RADIUS_MAX ? Math.max(2, Math.ceil(bounded / 32)) : 1;
+}
+
+/** Separable zero-padded box cascade over a Float32 plane, in place. */
+function boxCascadePlane(plane: Float32Array, width: number, height: number, halves: readonly number[]): void {
+  const pad = halves.reduce((sum, value) => sum + value, 0),
+    longest = Math.max(width, height) + pad * 2,
+    first = new Float64Array(longest),
+    second = new Float64Array(longest);
+  const run = (length: number, read: (index: number) => number, write: (index: number, value: number) => void) => {
+    const total = length + pad * 2;
+    first.fill(0, 0, total);
+    for (let index = 0; index < length; index += 1) first[pad + index] = read(index);
+    let from = first,
+      to = second;
+    for (const half of halves) {
+      boxLine(from, to, total, half);
+      const swap = from;
+      from = to;
+      to = swap;
+    }
+    for (let index = 0; index < length; index += 1) write(index, from[pad + index]);
+  };
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    run(width, (x) => plane[row + x], (x, value) => (plane[row + x] = value));
+  }
+  for (let x = 0; x < width; x += 1)
+    run(height, (y) => plane[y * width + x], (y, value) => (plane[y * width + x] = value));
+}
+
+/** The same 1-D cascade applied to an all-ones line: in-image kernel mass per index. */
+function boxCascadeOnes(length: number, halves: readonly number[]): Float64Array {
+  const pad = halves.reduce((sum, value) => sum + value, 0),
+    total = length + pad * 2;
+  let from = new Float64Array(total),
+    to = new Float64Array(total);
+  from.fill(1, pad, pad + length);
+  for (const half of halves) {
+    boxLine(from, to, total, half);
+    const swap = from;
+    from = to;
+    to = swap;
+  }
+  return from.slice(pad, pad + length);
+}
+
+/** See gaussianBlurDownsampleFactor. Alpha spreads like the full-resolution Gaussian Blur. */
+function applyDownsampledGaussianBlur(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  radius: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const factor = gaussianBlurDownsampleFactor(radius),
+    bounded = Math.max(1, Math.min(GAUSSIAN_BLUR_MAX_RADIUS, Math.round(radius))),
+    smallWidth = Math.ceil(width / factor),
+    smallHeight = Math.ceil(height / factor),
+    smallCount = smallWidth * smallHeight,
+    mix = clamp(strength, 0, 1),
+    alpha = new Float32Array(smallCount),
+    red = new Float32Array(smallCount),
+    green = new Float32Array(smallCount),
+    blue = new Float32Array(smallCount);
+  // Block means of alpha (0..1) and premultiplied colour; edge blocks average
+  // only the pixels they contain.
+  for (let y = 0; y < height; y += 1) {
+    const smallRow = Math.floor(y / factor) * smallWidth;
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4,
+        a = source[offset + 3] / 255;
+      if (!a) continue;
+      const cell = smallRow + Math.floor(x / factor);
+      alpha[cell] += a;
+      red[cell] += source[offset] * a;
+      green[cell] += source[offset + 1] * a;
+      blue[cell] += source[offset + 2] * a;
+    }
+  }
+  for (let sy = 0; sy < smallHeight; sy += 1) {
+    const rows = Math.min(factor, height - sy * factor);
+    for (let sx = 0; sx < smallWidth; sx += 1) {
+      const cell = sy * smallWidth + sx,
+        count = rows * Math.min(factor, width - sx * factor);
+      alpha[cell] /= count;
+      red[cell] /= count;
+      green[cell] /= count;
+      blue[cell] /= count;
+    }
+  }
+  const smallRadius = Math.max(1, Math.round(bounded / factor)),
+    halves = gaussianBoxHalfWidths(smallRadius);
+  for (const plane of [alpha, red, green, blue]) boxCascadePlane(plane, smallWidth, smallHeight, halves);
+  // In-image kernel mass, for the same edge renormalisation as full resolution.
+  const coverageX = boxCascadeOnes(smallWidth, halves),
+    coverageY = boxCascadeOnes(smallHeight, halves);
+  for (let sy = 0; sy < smallHeight; sy += 1)
+    for (let sx = 0; sx < smallWidth; sx += 1) {
+      const cell = sy * smallWidth + sx,
+        coverage = coverageX[sx] * coverageY[sy];
+      alpha[cell] /= coverage;
+      red[cell] /= coverage;
+      green[cell] /= coverage;
+      blue[cell] /= coverage;
+    }
+  // Bilinear upsample between block centres, then the shared alpha-spread mix.
+  const sampleX0 = new Int32Array(width),
+    sampleX1 = new Int32Array(width),
+    sampleTx = new Float32Array(width);
+  for (let x = 0; x < width; x += 1) {
+    const position = clamp((x + 0.5) / factor - 0.5, 0, smallWidth - 1),
+      left = Math.floor(position);
+    sampleX0[x] = left;
+    sampleX1[x] = Math.min(smallWidth - 1, left + 1);
+    sampleTx[x] = position - left;
+  }
+  const sample = (plane: Float32Array, top: number, bottom: number, ty: number, x: number) => {
+    const tx = sampleTx[x],
+      a = plane[top + sampleX0[x]],
+      b = plane[top + sampleX1[x]],
+      c = plane[bottom + sampleX0[x]],
+      d = plane[bottom + sampleX1[x]];
+    return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+  };
+  for (let y = 0; y < height; y += 1) {
+    const position = clamp((y + 0.5) / factor - 0.5, 0, smallHeight - 1),
+      upper = Math.floor(position),
+      ty = position - upper,
+      top = upper * smallWidth,
+      bottom = Math.min(smallHeight - 1, upper + 1) * smallWidth;
+    for (let x = 0; x < width; x += 1) {
+      let weight = sample(alpha, top, bottom, ty, x);
+      // Float32 rounding must not break the opaque-neighbourhood fast path.
+      if (weight > 1 - 1e-5) weight = 1;
+      else if (weight < 1e-7) weight = 0;
+      writeSpreadPixel(
+        source,
+        output,
+        (y * width + x) * 4,
+        sample(red, top, bottom, ty, x),
+        sample(green, top, bottom, ty, x),
+        sample(blue, top, bottom, ty, x),
+        weight,
+        1,
+        mix,
+      );
+    }
+  }
+}
+
+/**
  * Zero-padded truncated kernel convolution. Taps are accumulated in the same
  * ascending order as the historical per-pixel loop so results stay identical.
  */
@@ -1245,8 +1442,8 @@ function kernelLine(
  * Radius ≤ GAUSSIAN_EXACT_MAX_RADIUS uses the exact truncated kernel
  * (sigma = radius / 3, support ±radius). Larger radii use
  * GAUSSIAN_BOX_PASSES cascaded box filters with matched variance and support
- * ≤ radius; each pass is a running sum, so a radius-64 blur costs the same as
- * radius 9. Numerator and alpha weight pass through the same linear operator,
+ * ≤ radius; each pass is a running sum, so a radius-1000 blur costs the same
+ * as radius 9. Numerator and alpha weight pass through the same linear operator,
  * so edge renormalisation and alpha weighting are preserved exactly. The box
  * path works on integer samples (colour × alpha byte, alpha byte) so its
  * running sums are exact and every value is a pure function of its window:
@@ -1271,7 +1468,7 @@ function applyGaussianBlur(
   /** Blur alpha too (premultiplied) so strokes on transparent layers soften; see alphaSpread.ts. */
   spread = false,
 ): void {
-  const bounded = Math.max(1, Math.min(64, Math.round(radius))),
+  const bounded = Math.max(1, Math.min(GAUSSIAN_BLUR_MAX_RADIUS, Math.round(radius))),
     sigma = Math.max(0.5, bounded / 3),
     count = width * height,
     mix = clamp(strength, 0, 1),
@@ -3919,7 +4116,9 @@ export function applyFilterEffectsPixels(
   } else if (effect.type === 'box-blur') {
     applyBoxBlur(data, width, height, effect.radius, output, strength, undefined, true);
   } else if (effect.type === 'gaussian-blur') {
-    applyGaussianBlur(data, width, height, effect.radius, output, strength, true);
+    if (gaussianBlurDownsampleFactor(effect.radius) > 1)
+      applyDownsampledGaussianBlur(data, width, height, effect.radius, output, strength);
+    else applyGaussianBlur(data, width, height, effect.radius, output, strength, true);
   } else if (effect.type === 'sharpen') {
     applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'high-pass') {

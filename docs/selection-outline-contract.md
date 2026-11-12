@@ -31,5 +31,7 @@ dialogs, and not during a gesture or Quick Mask) clears the selected pixels of
 the active visible, unlocked raster layer to transparency as one undoable
 history step (`clearSelectedPixels` in `src/colorRegion.ts`; feathered
 coverage clears partially). The selection stays active. Other layer kinds get
-a notice and are not changed. In the Layers list, Delete still deletes the
+a notice and are not changed. A selection that covers no pixels clears
+nothing and shows "No pixels are selected". Alt/Option+Backspace and
+Ctrl/Cmd+Backspace are the quick fills, not Clear (docs/keyboard-shortcuts.md). In the Layers list, Delete still deletes the
 focused layer row.

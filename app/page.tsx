@@ -514,6 +514,14 @@ import {
 } from '../src/selectionBrush';
 import { snapMagneticPoint } from '../src/magneticLasso';
 import { boundSelectionPolygon, ellipsePolygon } from '../src/selectionPolygon';
+import {
+  EMPTY_SELECTION_NOTICE,
+  emptyGestureResult,
+  emptySelection,
+  isExplicitEmptySelection,
+  quickFillShortcut,
+  selectionCoverageIsEmpty,
+} from '../src/selectionEmpty';
 import { appendFreeformPoint, buildFreeformPath } from '../src/freeformPen';
 import { appendCurvaturePoint, buildCurvaturePath } from '../src/curvaturePen';
 import { DEFAULT_PEN_OPTIONS, PATH_TOOL_HINTS, normalizePenOptions, pathToolOptions, penAutoEditMode, penLayerName, penLayerNotice, penPathStyle, rubberBandNodes, type PathOptionTool, type PenOptions } from '../src/penOptions';
@@ -888,6 +896,8 @@ import {
   DEFAULT_TILT_SHIFT_SETTINGS,
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
+  filterRadiusMax,
+  gaussianBlurSliderMax,
   isNeutralFilterEffects,
   neutralFilterEffects,
   retypeFilterEffects,
@@ -1117,6 +1127,8 @@ type Command =
   | 'paste-special'
   | 'clear-layer'
   | 'fill-layer'
+  | 'fill-foreground'
+  | 'fill-background'
   | 'stroke-selection'
   | 'stroke-path-brush'
   | 'new-layer'
@@ -1623,6 +1635,8 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Find and Replace Text…', command: 'find-replace-text' },
     { label: '', command: 'noop', separator: true },
     { label: 'Fill…', shortcut: 'Shift+F5', command: 'fill-layer' },
+    { label: 'Fill with Foreground Color', shortcut: 'Alt+Backspace', command: 'fill-foreground' },
+    { label: 'Fill with Background Color', shortcut: 'Ctrl+Backspace', command: 'fill-background' },
     { label: 'Action recipes…', command: 'actions' },
     { label: 'Patch Tool', shortcut: 'J', command: 'patch-tool' },
     { label: 'Mixer Brush Tool', shortcut: 'B', command: 'mixer-brush-tool' },
@@ -8131,6 +8145,24 @@ export default function Home() {
     })();
   };
   /**
+   * A marquee or lasso gesture that selects no canvas pixels. Add/Subtract
+   * keep the current selection; Replace/Intersect (or any mode with no
+   * current selection) commit an explicit empty selection so later Fill,
+   * Clear or Stroke cannot fall back to the whole layer.
+   */
+  const commitEmptySelectionGesture = (label: string) => {
+    const f = current();
+    if (emptyGestureResult(selectionOperation, Boolean(f.selection)) === 'keep') {
+      void paint(f);
+      setNotice(`${label} selection is outside the image; the selection is unchanged`);
+      return;
+    }
+    selectionWorkToken.current += 1;
+    if (commit({ ...f, selection: emptySelection(f.w, f.h) }))
+      setNotice(`${label} selection is outside the image; no pixels are selected`);
+    else void paint(f);
+  };
+  /**
    * Clip a lasso path to the canvas and merge it as a polygon selection.
    * Returns false, with a notice and the selection unchanged, when nothing of
    * the path remains on the canvas.
@@ -8140,6 +8172,10 @@ export default function Home() {
     label: 'Lasso' | 'Polygonal lasso' | 'Magnetic Lasso' | 'Elliptical marquee',
   ) => {
     const bounded = boundSelectionPolygon(g.points || [], g.frame.w, g.frame.h);
+    if (!bounded.ok && bounded.reason === 'outside') {
+      commitEmptySelectionGesture(label);
+      return false;
+    }
     if (!bounded.ok) {
       void paint(g.frame);
       setNotice(
@@ -8202,8 +8238,16 @@ export default function Home() {
         buffer = surface(image.naturalWidth, image.naturalHeight),
         context = buffer.getContext('2d')!;
       context.drawImage(image, 0, 0);
+      if (isExplicitEmptySelection(f.selection)) {
+        setNotice(EMPTY_SELECTION_NOTICE);
+        return;
+      }
       const mask = await selectionMaskForLayer(f.selection, f, layer, assets.current, buffer.width, buffer.height);
       if (current() !== f) return;
+      if (mask && selectionCoverageIsEmpty(mask, false)) {
+        setNotice(EMPTY_SELECTION_NOTICE);
+        return;
+      }
       const pixels = context.getImageData(0, 0, buffer.width, buffer.height);
       if (!mask || !clearSelectedPixels(pixels.data, mask)) {
         setNotice('The selection has no pixels to clear on this layer');
@@ -11189,16 +11233,42 @@ export default function Home() {
     const layer = current().layers.find((item) => item.id === current().active);
     if (layer) editLayer({ visible: !layer.visible });
   };
+  /**
+   * True when the frame has a selection that covers no canvas pixels
+   * (docs/selection-composition-contract.md, "Empty selections"). Such a
+   * selection must never fall back to whole-layer edits.
+   */
+  const selectionCoversNothing = async (f: Frame) => {
+    if (!f.selection) return false;
+    if (isExplicitEmptySelection(f.selection)) return true;
+    const rendered = await renderSelection(f.selection, f.w, f.h, assets.current);
+    return selectionCoverageIsEmpty(rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data);
+  };
   /** Edit > Fill… / Shift+F5: check the target, then ask for contents. */
-  const openEditFill = () => {
+  const openEditFill = async () => {
     const f = current(),
       layer = f.layers.find((item) => item.id === f.active);
     if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
       setNotice('Select a visible, unlocked raster layer before filling');
       return;
     }
+    try {
+      if (await selectionCoversNothing(f)) {
+        setNotice(EMPTY_SELECTION_NOTICE);
+        return;
+      }
+    } catch {
+      // Fill re-checks the rendered mask; let the dialog open.
+    }
     setEditFillOpen(true);
   };
+  /**
+   * Alt/Option+Backspace and Ctrl/Cmd+Backspace: fill the selection (or the
+   * whole layer with no selection) with the foreground or background colour
+   * at 100% Normal, without the modal dialog. An empty selection fills nothing.
+   */
+  const quickFill = (contents: 'foreground' | 'background') =>
+    fillActiveLayer({ contents, color, opacity: 100, mode: 'source-over' });
   const fillActiveLayer = async (
     options: EditFillOptions = { contents: 'foreground', color, opacity: 100, mode: 'source-over' },
   ) => {
@@ -11230,6 +11300,10 @@ export default function Home() {
       });
       fillContext.fillRect(0, 0, fill.width, fill.height);
       if (f.selection) {
+        if (isExplicitEmptySelection(f.selection)) {
+          setNotice(EMPTY_SELECTION_NOTICE);
+          return;
+        }
         const mask = await localSelectionMask(
           f.selection,
           f.w,
@@ -11238,6 +11312,10 @@ export default function Home() {
           output.width,
           output.height,
         );
+        if (selectionCoverageIsEmpty(mask.getContext('2d')!.getImageData(0, 0, mask.width, mask.height).data)) {
+          setNotice(EMPTY_SELECTION_NOTICE);
+          return;
+        }
         fillContext.globalCompositeOperation = 'destination-in';
         fillContext.drawImage(mask, 0, 0);
       }
@@ -11273,6 +11351,14 @@ export default function Home() {
     if (!layer || layer.kind !== 'raster' || layerIsLocked(f, layer) || !layer.visible) {
       setNotice('Select a visible, unlocked raster layer before stroking');
       return;
+    }
+    try {
+      if (await selectionCoversNothing(f)) {
+        setNotice(EMPTY_SELECTION_NOTICE);
+        return;
+      }
+    } catch {
+      // The stroke renderer reports its own failure below.
     }
     const entered = window.prompt('Stroke width in pixels', '4');
     if (entered === null) return;
@@ -11502,6 +11588,10 @@ export default function Home() {
         output = surface(image.naturalWidth, image.naturalHeight),
         context = output.getContext('2d')!;
       if (f.selection) {
+        if (isExplicitEmptySelection(f.selection)) {
+          setNotice(EMPTY_SELECTION_NOTICE);
+          return;
+        }
         context.drawImage(image, 0, 0);
         const mask = await localSelectionMask(
           f.selection,
@@ -11511,6 +11601,10 @@ export default function Home() {
           output.width,
           output.height,
         );
+        if (selectionCoverageIsEmpty(mask.getContext('2d')!.getImageData(0, 0, mask.width, mask.height).data)) {
+          setNotice(EMPTY_SELECTION_NOTICE);
+          return;
+        }
         context.globalCompositeOperation = 'destination-out';
         context.drawImage(mask, 0, 0);
       }
@@ -16951,6 +17045,8 @@ export default function Home() {
           feather: 0,
           inverted: false,
         });
+      else if (width >= 1 && height >= 1 && offCanvas)
+        commitEmptySelectionGesture(g.tool === 'ellipse-select' ? 'Elliptical marquee' : 'Rectangular marquee');
       else void paint(f);
     } else if (g.tool === 'lasso' && g.moved) {
       // Too short a drag is treated like a click; otherwise clip to the canvas.
@@ -17739,6 +17835,17 @@ export default function Home() {
         else setNotice('Exit Quick Mask mode before changing the document');
         return;
       }
+      const quickFillKey = quickFillShortcut(e);
+      if (
+        quickFillKey &&
+        !e.defaultPrevented &&
+        !gesture.current &&
+        !(e.target instanceof Element && e.target.closest('[role="menu"], [role="dialog"], dialog'))
+      ) {
+        e.preventDefault();
+        void quickFill(quickFillKey);
+        return;
+      }
       if (
         (e.key === 'Delete' || e.key === 'Backspace') &&
         !command && !e.altKey && !e.defaultPrevented &&
@@ -17773,7 +17880,7 @@ export default function Home() {
       }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
-        openEditFill();
+        void openEditFill();
         return;
       }
       if (command) {
@@ -18095,7 +18202,9 @@ export default function Home() {
     else if (command === 'paste-clipboard-image') void pasteSystemClipboardImage();
     else if (command === 'paste-special') setPasteSpecialOpen(true);
     else if (command === 'clear-layer') return clearActiveLayer();
-    else if (command === 'fill-layer') openEditFill();
+    else if (command === 'fill-layer') void openEditFill();
+    else if (command === 'fill-foreground') return quickFill('foreground');
+    else if (command === 'fill-background') return quickFill('background');
     else if (command === 'stroke-selection') return strokeSelection();
     else if (command === 'stroke-path-brush') openStrokePathDialog();
     else if (command === 'new-layer') addPaint();
@@ -18672,6 +18781,8 @@ export default function Home() {
         return !layer || locked || !canTrimRasterLayer(layer);
       case 'clear-layer':
       case 'fill-layer':
+      case 'fill-foreground':
+      case 'fill-background':
         return !layer || layer.kind !== 'raster' || locked || !layer.visible;
       case 'duplicate-layer':
         return (
@@ -23671,7 +23782,11 @@ export default function Home() {
                   }
                   value={filterEffects.radius}
                   min={1}
-                  max={64}
+                  max={
+                    filterEffects.type === 'gaussian-blur'
+                      ? Math.max(filterEffects.radius, gaussianBlurSliderMax(frame?.w ?? 0, frame?.h ?? 0))
+                      : 64
+                  }
                   set={(value) => setFilterEffects({ radius: value })}
                   suffix={
                     filterEffects.type === 'radial-blur' || filterEffects.type === 'spin-blur'
@@ -23679,6 +23794,20 @@ export default function Home() {
                       : ' px'
                   }
                 />}
+                {filterEffects.type === 'gaussian-blur' && (
+                  <div className="slider gaussian-radius-field">
+                    <span>
+                      <b>Exact blur radius (1–{filterRadiusMax('gaussian-blur')} px)</b>
+                    </span>
+                    <IntegerField
+                      label="Blur radius in pixels"
+                      value={filterEffects.radius}
+                      min={1}
+                      max={filterRadiusMax('gaussian-blur')}
+                      set={(value) => setFilterEffects({ radius: value })}
+                    />
+                  </div>
+                )}
                 {(filterEffects.type === 'twirl' || filterEffects.type === 'liquify') && (
                   <Slider
                     label={filterEffects.type === 'liquify' ? 'Liquify angle' : 'Twirl angle'}

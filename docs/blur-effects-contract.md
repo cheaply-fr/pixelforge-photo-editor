@@ -10,7 +10,8 @@ The metadata record uses the existing validated effect shape:
 
 - `type` is `average-blur`, `blur-more`, `box-blur`, `gaussian-blur`, `lens-blur`, `iris-blur`, `smart-blur`, `surface-blur`, `shape-blur`, `motion-blur`, `radial-blur`, `spin-blur` or `path-blur`.
 - `amount` is a 0–100 blend percentage. Zero is an identity operation.
-- `radius` is an integer source-pixel radius from 0–64. Zero is an identity
+- `radius` is an integer source-pixel radius from 0–64 (0–1000 for
+  Gaussian Blur, see below). Zero is an identity
   operation and the inspector exposes the value as **Blur radius**. Radial
   Blur and Spin Blur use the same bounded field as degrees of **Angular sweep**;
   Path Blur uses it as bounded path length.
@@ -28,6 +29,30 @@ image edges. The renderer always copies the source before writing output, is
 deterministic for a given metadata record, and is applied in layer-local
 coordinates after decoding the immutable source asset. Layer transforms and
 masks therefore remain editable.
+
+### Large Gaussian Blur radii
+
+Gaussian Blur accepts integer radii up to 1000 px (`GAUSSIAN_BLUR_MAX_RADIUS`
+in `src/filterEffects.ts`); every other filter keeps the 0–64 bound, and
+retyping a Gaussian Blur clamps its radius to the new filter's bound. The
+**Blur radius** slider spans 1 to a quarter of the document's longer side,
+at least 250 px and at most 1000 px (`gaussianBlurSliderMax`), and a
+**Blur radius in pixels** number field accepts any whole radius from 1 to
+1000 px.
+
+- Radii ≤ 64 render exactly as before: the exact kernel up to 8 px and the
+  full-resolution three-pass box cascade above, tiled for large layers.
+- Radii above 64 blur a block-averaged copy of the layer (factor
+  `ceil(radius / 32)`, reduced radius 16–32 px) with the same alpha-weighted,
+  edge-renormalised box cascade and upsample it bilinearly, then blend by
+  **Effect amount** with the shared alpha-spread rule. Against an exact
+  edge-renormalised Gaussian on a hard-edged test scene the mean error is
+  about 0.35 levels and the maximum at most 8 levels (radius 65–150;
+  `tests/gaussian-blur-large-radius.test.mjs`).
+- These radii stay off the tiled path, whose overlap equals the radius, and
+  use the full-frame renderer. A 3000 × 4000 radius-1000 blur takes about
+  1.3–1.5 s in Node on a development machine against about 7 s at full
+  resolution.
 
 ### Alpha spreading (Blur, Blur More, Box, Gaussian, Motion and Lens Blur)
 
@@ -56,7 +81,7 @@ premultiplied space (`src/alphaSpread.ts`). Consequences:
   still preserve source alpha.
 
 The spread reaches at most 64 px (the radius bound; Blur More doubles a
-radius up to the same 64 px cap). Stored-bounds paint layers do not cut it
+radius up to the same 64 px cap), or up to 1000 px for Gaussian Blur. Stored-bounds paint layers do not cut it
 off: choosing any filter on a plain paint layer stored at its content (for
 example after Trim Layer to Content, which stays tight) first grows the
 layer to the canvas, and automatic content-bounds storage keeps a 64 px
