@@ -484,7 +484,7 @@ tile encoding (large features, not started); the remaining W3 items; Tool
 presets do not yet capture the new Smudge and Silk strands options; layers
 above an edited layer are still composited per edit (W3-8/W4-8).
 
-## Large-document painting fixes (`fix/selection-fill-limits`)
+## Large-document painting fixes (#260, `fix/selection-fill-limits`)
 
 Reported while painting a 3000 × 4000 illustration on the live editor:
 
