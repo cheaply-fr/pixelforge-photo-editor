@@ -276,3 +276,57 @@ export function layerArrangeReason(reason: LayerArrangeReason): string {
   }
 }
 
+
+/** Panel position of a stack index: the Layers panel lists the top layer first, as 1. */
+export function layerPanelPosition(frame: Pick<Frame, 'layers'>, index: number): number {
+  return frame.layers.length - index;
+}
+
+export type LayerMoveToPositionPlan =
+  | { ok: true; frame: Frame; from: number; to: number; requested: number; layerIds: string[] }
+  | {
+      ok: false;
+      reason: LayerArrangeReason | 'invalid-position' | 'same-position';
+      from?: number;
+    };
+
+/**
+ * Layer > Arrange > Move to Position: move the selected layers (with the
+ * folders and clipping groups they carry, as Bring Forward / Send Backward
+ * do) so the topmost of them lands at Layers panel position `position`
+ * (1 = top of the panel, `layers.length` = bottom). The move repeats the
+ * arrange step, so a folder or clipping group in the way is passed as one
+ * unit and the result can land a few rows off the request; `to` reports
+ * where it landed. One commit, one undo step.
+ */
+export function planLayerMoveToPosition(frame: Frame, position: number): LayerMoveToPositionPlan {
+  const count = frame.layers.length;
+  if (!Number.isInteger(position) || position < 1 || position > count) return { ok: false, reason: 'invalid-position' };
+  const probe = planLayerArrange(frame, 'forward');
+  if (!probe.ok && probe.reason !== 'boundary') return { ok: false, reason: probe.reason };
+  const ids = probe.selectedLayerIds;
+  const selected = new Set(ids);
+  const top = (layers: readonly Layer[]) => {
+    let index = -1;
+    for (const [at, layer] of layers.entries()) if (selected.has(layer.id)) index = at;
+    return index;
+  };
+  const startIndex = top(frame.layers);
+  const from = layerPanelPosition(frame, startIndex);
+  const targetIndex = count - position;
+  if (targetIndex === startIndex) return { ok: false, reason: 'same-position', from };
+  const direction: 1 | -1 = targetIndex > startIndex ? 1 : -1;
+  const plan = planLayerArrange(frame, direction > 0 ? 'forward' : 'backward');
+  if (!plan.ok) return { ok: false, reason: plan.reason, from };
+  let layers: Layer[] = [...frame.layers];
+  for (let guard = 0; guard < count * 2; guard += 1) {
+    const index = top(layers);
+    if (direction > 0 ? index >= targetIndex : index <= targetIndex) break;
+    const next = stepLayerRuns(layers, selected, direction, clippingGroupKeys({ layers }));
+    if (next.every((layer, at) => layer === layers[at])) break;
+    layers = next;
+  }
+  const to = count - top(layers);
+  if (to === from) return { ok: false, reason: 'boundary', from };
+  return { ok: true, frame: { ...frame, layers }, from, to, requested: position, layerIds: ids };
+}

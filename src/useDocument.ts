@@ -3,6 +3,8 @@ import {
   assertAssetByteBudgetForEdit,
   assertLayerPixelBudgetForEdit,
   assetsDecodedByRender,
+  frameCompositeKey,
+  surface,
   verifyAssetsDecode,
   referencedAssets,
   validateFrame,
@@ -16,6 +18,8 @@ import type { Draft } from './drafts';
 import { referencedAudioClips, type AudioClip, type AudioClips } from './audioAnnotations';
 import { beginPerformanceSpan } from './performanceMarks';
 import { presentCanvasImage } from './canvasPresentation';
+import { detectCompositeSnapshotBudget, markCompositeReuse } from './compositeCache';
+import { PresentedComposite, retainPresentedComposite } from './presentedComposite';
 import {
   createPreviewScheduler,
   type PreviewRequest,
@@ -51,6 +55,28 @@ export type LayerSelectionIntent = {
   /** Select the contiguous range from the current active anchor. */
   range?: boolean;
 };
+
+const presentedBudget = detectCompositeSnapshotBudget();
+
+/** Composite-equivalence key of a large frame, or undefined (small frame or failure). */
+async function presentedKey(value: Frame, assets: Assets): Promise<string | undefined> {
+  if (!retainPresentedComposite(value.w, value.h, value.layers.length, presentedBudget)) return undefined;
+  try {
+    return await frameCompositeKey(value, assets);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Diagnostics: a render answered from the kept copy (no worker round trip). */
+function markPresentedReuse(layers: number): void {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
+      performance.mark('pixelforge.presented-composite', { detail: { layers } });
+  } catch {
+    // Diagnostics must never affect rendering.
+  }
+}
 
 /**
  * Best-effort diagnostics for one displayed gesture preview: `path` is where
@@ -97,6 +123,25 @@ export function useDocument(onError: (message: string) => void) {
     // same document revision. Keys include the revision, so edits cannot
     // reuse stale pixels; the byte cap keeps anonymous mobile drafts bounded.
     tiledCache = useRef(new TileCache<Uint8ClampedArray>(tiledCacheBudget));
+  // Copy of the last presented composite of a large document; an edit that
+  // cannot change a pixel re-presents it instead of rendering
+  // (src/presentedComposite.ts).
+  const presented = useRef(new PresentedComposite<HTMLCanvasElement>());
+  /** Keep a copy of what the canvas now shows, under `key`. */
+  const keepPresented = (target: HTMLCanvasElement, key: string | undefined, w: number, h: number) => {
+    const kept = presented.current;
+    if (key === undefined) {
+      kept.clear();
+      return;
+    }
+    const copy = kept.reusable(w, h) ?? surface(w, h);
+    kept.clear();
+    const context = copy.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, w, h);
+    context.drawImage(target, 0, 0);
+    kept.store(key, w, h, copy);
+  };
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };
@@ -127,6 +172,18 @@ export function useDocument(onError: (message: string) => void) {
       // below the stroke at once).
       let renderPath: 'worker' | 'main' | undefined, firstCompleted: number | undefined;
       try {
+        // An edit that cannot change a pixel (an empty layer added or
+        // deleted, a rename, a reselect, their undo) shows the kept copy.
+        const key = overrides ? undefined : await presentedKey(value, assets.current);
+        if (sequence !== renderSequence.current) return;
+        const kept = presented.current.match(key, value.w, value.h);
+        if (kept && canvas.current) {
+          presentCanvasImage(canvas.current, kept, value.w, value.h);
+          setRenderProgress({ completed: value.layers.length, total: Math.max(1, value.layers.length) });
+          markCompositeReuse({ final: true });
+          markPresentedReuse(value.layers.length);
+          return;
+        }
         const image = await renderFrameWithWorker(
           value,
           assets.current,
@@ -160,7 +217,11 @@ export function useDocument(onError: (message: string) => void) {
           const target = canvas.current;
           // Present the finished image in one synchronous step, resizing the
           // backing store only when the document size changed.
-          if (target) presentCanvasImage(target, image, value.w, value.h);
+          if (target) {
+            presentCanvasImage(target, image, value.w, value.h);
+            // Previews leave the copy as it is: it still shows its own key.
+            if (!overrides) keepPresented(target, key, value.w, value.h);
+          }
         } finally {
           closeImageSource(image);
         }
@@ -191,7 +252,11 @@ export function useDocument(onError: (message: string) => void) {
       if (state === 'failed') fellBack.add(family);
       if (state !== 'loaded' || !fellBack.delete(family)) return;
       const value = history.current[index.current];
-      if (value?.layers.some((layer) => layer.kind === 'text' && layer.fontFamily === family)) void renderNowRef.current(value);
+      if (value?.layers.some((layer) => layer.kind === 'text' && layer.fontFamily === family)) {
+        // The kept copy shows the fallback font under the same key.
+        presented.current.clear();
+        void renderNowRef.current(value);
+      }
     });
   }, []);
   /**
@@ -307,6 +372,8 @@ export function useDocument(onError: (message: string) => void) {
       // installed one fills the cache. Keys are content-based, so this bounds
       // memory rather than preventing stale reuse.
       clearLayerFilterCaches();
+      presented.current.clear();
+      const installedKey = presentedKey(draft.history[draft.index], draft.assets);
       // Validate every history asset before switching, so undo never
       // discovers a corrupt import. Decodes run a few at a time, are not
       // retained, and overlap the render below instead of preceding it.
@@ -363,6 +430,7 @@ export function useDocument(onError: (message: string) => void) {
         throw error;
       }
       try {
+        const keyOfInstalled = await installedKey;
         assertCurrentInstall();
         if (history.current[index.current] !== expected)
           throw new Error('Document changed during import. Please try again.');
@@ -372,6 +440,7 @@ export function useDocument(onError: (message: string) => void) {
         index.current = draft.index;
         const installed = draft.history[draft.index];
         presentCanvasImage(canvas.current!, image, installed.w, installed.h);
+        keepPresented(canvas.current!, keyOfInstalled, installed.w, installed.h);
       } finally {
         closeImageSource(image);
       }

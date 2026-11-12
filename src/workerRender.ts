@@ -187,6 +187,15 @@ function startRenderWatchdog(
  * recomputed. The cache is byte-bounded, so this only extends retention.
  */
 const PERSISTENT_WORKER_IDLE_MS = 5 * 60_000;
+/**
+ * Browser tests shorten the idle release with
+ * `globalThis.__PIXELFORGE_WORKER_IDLE_MS__` (a non-negative number) to cover
+ * the first edit after a pause, when the worker's caches are gone.
+ */
+function persistentWorkerIdleMs(): number {
+  const override = (globalThis as { __PIXELFORGE_WORKER_IDLE_MS__?: unknown }).__PIXELFORGE_WORKER_IDLE_MS__;
+  return typeof override === 'number' && Number.isFinite(override) && override >= 0 ? override : PERSISTENT_WORKER_IDLE_MS;
+}
 const WORKER_MIN_PIXELS = 2_000_000;
 
 /**
@@ -965,7 +974,7 @@ class PersistentWorkerSession {
       const worker = this.worker;
       this.worker = undefined;
       try { worker?.terminate(); } catch { /* already unavailable */ }
-    }, PERSISTENT_WORKER_IDLE_MS);
+    }, persistentWorkerIdleMs());
   }
 
   /**

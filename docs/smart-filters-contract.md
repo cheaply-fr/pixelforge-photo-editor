@@ -67,6 +67,40 @@ does not recompute stacked generators such as Clouds.
 Evidence: `tests/filter-style-fixes.test.mjs` and
 `tests/browser/filter-style-fixes.spec.ts` (desktop and mobile).
 
+## Filters chosen with an active selection
+
+As in Photoshop, a filter chosen while a selection is active changes only the
+selected pixels: Render > Clouds on an empty paint layer with a rectangular
+marquee fills the marquee, not the layer. The filter stays live: the
+selection is stored with the filter as its `region` (`src/filterRegion.ts`),
+converted into the layer's own pixel space as polygons with their
+add/subtract/intersect operations, feather, inversion and the canvas clip,
+normalised to the layer surface so a moved or resampled layer keeps it. The
+renderer filters the layer surface, then blends the result over the
+unfiltered pixels through the rasterised region (premultiplied, so Clouds
+filling transparent pixels fades in cleanly at a feathered edge). This
+applies to every filter, render generators included, and to stacked entries,
+which keep the region they were applied with.
+
+The Filter effects panel says "Limited to the … selection it was applied
+through", with **Whole layer** (lift the limit) and **Use current selection**
+(replace it) buttons; each is one undo step. Choosing a filter with no
+selection covers the whole layer; changing the type in place from the panel
+keeps the existing region. Colour-based selections (Magic Wand, Color Range,
+Quick Selection masks) have no geometry and are not stored yet: the filter
+then covers the whole layer and the status says so. This is a bounded local
+approximation of Photoshop's selection-limited filters and Smart Filter
+masks, not a paintable filter mask.
+
+Render > Lens Flare has **Fill transparent pixels** (on for new flares, off
+for older records): the light the flare would add over black becomes the
+pixel colour, its brightest channel the coverage, so a flare can be rendered
+on its own empty layer (for example in Screen mode). On opaque pixels the
+option changes nothing.
+
+Evidence: `tests/filter-region.test.mjs` and
+`tests/browser/painting-session-feedback.spec.ts` (desktop and mobile).
+
 ## Editing a stacked entry in place
 
 Each stacked entry has an **Edit stacked filter n. Name** toggle

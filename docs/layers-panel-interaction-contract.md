@@ -115,12 +115,24 @@ inspector's "Delete layer" button and Layer > Delete share one planner
 
 Right-click a row (desktop), long-press a row (touch, 550 ms), press the ⋯
 button, or press ContextMenu / Shift+F10. Items: Duplicate, Delete, Bring to
-Front, Bring Forward, Send Backward, Send to Back, Create / Release Clipping
+Front, Bring Forward, Send Backward, Send to Back, Move to Position…, Create / Release Clipping
 Mask, Group into Folder, Rename…, Hide / Show, Lock / Unlock. Disabled items
 reflect the same planners as the menu bar. Items act on the selection when it
 includes the row, otherwise on the row alone. Arrow keys, Home and End move
 between items; Escape closes and returns focus to the trigger; a press outside
 closes it.
+
+## Move to Position
+
+Layer > Move to Position… (also in the row menu) moves the selected layers so
+the topmost of them lands at a typed Layers panel row (1 = top), in one undo
+step, instead of dragging through a tall stack or stepping one row at a time.
+It repeats the Bring Forward / Send Backward step (`planLayerMoveToPosition`
+in `src/layerArrange.ts`), so folders and clipping groups move and are passed
+as whole units and a locked layer refuses; when a unit in the way makes the
+layer land a few rows off the request, the status names the row it landed on.
+Drag-and-drop reorder keeps working with mouse and touch, and the list
+auto-scrolls while a drag nears its top or bottom edge.
 
 ## Files dropped on the editor
 

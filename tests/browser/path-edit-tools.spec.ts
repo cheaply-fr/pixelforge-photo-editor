@@ -102,10 +102,10 @@ test('Pen and Path Selection flyouts expose every path tool with distinct icons 
   const draw = page.getByRole('region', { name: 'Draw & Type tools' });
   const pen = palette.getByRole('button', { name: 'Pen tool', exact: true });
   await expect(pen).toHaveAttribute('aria-haspopup', 'menu');
-  await expect(pen).toHaveAttribute('title', 'Pen (P) · press and hold for subtools');
+  await expect(pen).toHaveAttribute('title', 'Pen (P) · 5 more tools: right-click or press and hold');
   const pathSelection = palette.getByRole('button', { name: 'Path Selection tool', exact: true });
   await expect(pathSelection).toHaveAttribute('aria-haspopup', 'menu');
-  await expect(pathSelection).toHaveAttribute('title', 'Path Selection (A) · press and hold for subtools');
+  await expect(pathSelection).toHaveAttribute('title', 'Path Selection (A) · 1 more tool: right-click or press and hold');
   // One slot per family: neither variant is duplicated in the compact grid.
   await expect(draw.locator('[data-tool-id="direct-select"]')).toHaveCount(0);
   await expect(draw.locator('[data-tool-id="add-anchor"]')).toHaveCount(0);
@@ -125,7 +125,7 @@ test('Pen and Path Selection flyouts expose every path tool with distinct icons 
   await flyout.getByRole('menuitem', { name: 'Convert Point', exact: true }).click();
   const convert = palette.getByRole('button', { name: 'Convert Point tool', exact: true });
   await expect(convert).toHaveAttribute('aria-pressed', 'true');
-  await expect(convert).toHaveAttribute('title', 'Convert Point · press and hold for subtools');
+  await expect(convert).toHaveAttribute('title', 'Convert Point · 5 more tools: right-click or press and hold');
   await expect(convert.locator('kbd')).toHaveCount(0);
   await expect(page.locator('[data-sidebar-section="tool-options"]')).toBeVisible();
 

@@ -13,6 +13,14 @@ variant replaces that slot's label and icon while the other variants remain in
 the press-and-hold menu. This removes duplicate toolbar buttons without hiding
 a tool or changing its persisted `Tool` identifier.
 
+A family button whose other variants have no toolbar button of their own
+shows a corner mark (an accent-coloured triangle, `data-testid=
+"tool-subtool-indicator"`, `CanvasText` in forced-colours mode) and carries
+`data-hidden-subtools` with their count; its tooltip reads "N more tools:
+right-click or press and hold". The mark is decorative (`aria-hidden`); the
+accessible name stays "<Tool> tool" and the popup semantics below announce the
+menu. Tools that are not part of a flyout family never show it.
+
 Tool buttons with Photoshop-style subtools expose `aria-haspopup="menu"` and a
 stable `id`. There is one flyout at a time, rendered against the viewport so
 the palette's scrolling/overflow cannot clip it. Its `aria-labelledby` points

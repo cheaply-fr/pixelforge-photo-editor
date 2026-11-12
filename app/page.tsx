@@ -100,6 +100,7 @@ import {
   type CloudLink,
 } from '../src/cloud';
 import { prewarmFilterWorkers, primeWorkerDecodedAsset } from '../src/workerRender';
+import { describeFilterRegion, filterRegionFromSelection } from '../src/filterRegion';
 import { PREWARM_FILTER_TYPES } from '../src/filterWorkerPool';
 import {
   addAsset as addDocumentAsset,
@@ -282,6 +283,7 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import LayerPositionDialog from '../src/LayerPositionDialog';
 import {
   formatSelectionFeather,
   normalizeSelectionFeather,
@@ -386,6 +388,8 @@ import {
   expandClippingGroupSelection,
   layerArrangeReason,
   planLayerArrange,
+  planLayerMoveToPosition,
+  layerPanelPosition,
   stepLayerRuns,
   type LayerArrangeMode,
 } from '../src/layerArrange';
@@ -659,6 +663,7 @@ import {
   TOOL_CATEGORIES,
   categoryForTool,
   compactCategoryTools,
+  hiddenFamilyTools,
   flyoutForTool,
   flyoutTools,
 } from '../src/toolPalette';
@@ -1150,6 +1155,7 @@ type Command =
   | 'arrange-forward'
   | 'arrange-backward'
   | 'arrange-back'
+  | 'arrange-position'
   | 'merge-layers'
   | 'merge-visible'
   | 'combine-shapes-union'
@@ -1751,6 +1757,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Bring Forward', command: 'arrange-forward' },
     { label: 'Send Backward', command: 'arrange-backward' },
     { label: 'Send to Back', command: 'arrange-back' },
+    { label: 'Move to Position…', command: 'arrange-position' },
     { label: 'Combine Shapes → Union', command: 'combine-shapes-union' },
     { label: 'Combine Shapes → Subtract Front Shape', command: 'combine-shapes-subtract' },
     { label: 'Combine Shapes → Intersect', command: 'combine-shapes-intersect' },
@@ -4116,6 +4123,8 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  /** Move Layer to Position dialog: the moved layer's name and current panel row. */
+  const [layerPositioning, setLayerPositioning] = useState<{ name: string; current: number } | null>(null);
   const [saveSelectionOpen, setSaveSelectionOpen] = useState(false);
   const [editFillOpen, setEditFillOpen] = useState(false);
   const [strokePathDialog, setStrokePathDialog] = useState<{ pathLayerId?: string; targetLayerId?: string } | null>(null);
@@ -9013,6 +9022,31 @@ export default function Home() {
     if (changed && filterStackEditIndex === null) updateRecordedFilterParameters(next);
     return changed;
   };
+  /** Limit the live (or edited stacked) filter to the current selection, or lift the limit. */
+  const setFilterRegion = (target: 'whole' | 'selection') => {
+    const f = current(),
+      layer = f.layers.find((item) => item.id === f.active);
+    if (!layer || !isRasterContentLayer(layer)) return;
+    if (target === 'whole') {
+      const next = { ...filterEffects };
+      delete next.region;
+      if (commitFilterEffects(next)) setNotice('Filter now covers the whole layer');
+      return;
+    }
+    const asset = assets.current[layer.asset];
+    const region = f.selection && asset
+      ? filterRegionFromSelection(f.selection, layer.matrix, asset.w, asset.h, f)
+      : undefined;
+    if (!region) {
+      setNotice(
+        f.selection?.mask
+          ? 'A colour-based selection cannot limit a live filter yet'
+          : 'Make a selection first to limit the filter to it',
+      );
+      return;
+    }
+    if (commitFilterEffects({ ...filterEffects, region })) setNotice('Filter limited to the selection');
+  };
   const setPhotoAdjustments = (
     patch: Partial<Adjustments['photoAdjustments']>,
   ) => adjust({ photoAdjustments: { ...photoAdjustments, ...patch } });
@@ -9238,10 +9272,32 @@ export default function Home() {
                       ? 90
                       : 0,
                 ...(type === 'light-rays' ? lightRaysEffectDefaults() : {}),
+                ...(type === 'lens-flare' ? { flareFill: true } : {}),
               });
+    // Like Photoshop, a filter chosen with an active selection changes only
+    // the selected pixels: the selection is kept with the live filter as its
+    // region (src/filterRegion.ts). Picking a filter in place from the
+    // sidebar without a selection keeps the region the filter already had.
+    const regionTarget = current(),
+      regionLayer = regionTarget.layers.find((item) => item.id === regionTarget.active);
+    let regionNote = '';
+    delete next.region;
+    if (type !== 'none' && regionTarget.selection && regionLayer && isRasterContentLayer(regionLayer)) {
+      const regionAsset = assets.current[regionLayer.asset];
+      const region = regionAsset
+        ? filterRegionFromSelection(regionTarget.selection, regionLayer.matrix, regionAsset.w, regionAsset.h, regionTarget)
+        : undefined;
+      if (region) {
+        next.region = region;
+        regionNote = ' inside the selection';
+      } else
+        regionNote = regionTarget.selection.mask
+          ? ' to the whole layer (a colour-based selection cannot limit a live filter yet)'
+          : ' to the whole layer (the selection could not be mapped onto this layer)';
+    } else if (type !== 'none' && choice.switchInPlace && filterEffects.region) next.region = filterEffects.region;
     if (filterStackEditIndex !== null) {
       if (commitFilterEffects(next))
-        setNotice(type === 'none' ? 'Local filter effect cleared' : `Stacked filter ${filterStackEditIndex + 1} is now ${label}`);
+        setNotice(type === 'none' ? 'Local filter effect cleared' : `Stacked filter ${filterStackEditIndex + 1} is now ${label}${regionNote}`);
       return;
     }
     const activeLayer = current().layers.find((item) => item.id === current().active);
@@ -9264,7 +9320,7 @@ export default function Home() {
         })
       )
         setNotice(
-          `${previousLabel} moved to the filter stack (${plan.stack.length}/${SMART_FILTER_MAX}); ${label} applied on top and remains editable in Filter effects`,
+          `${previousLabel} moved to the filter stack (${plan.stack.length}/${SMART_FILTER_MAX}); ${label} applied on top${regionNote} and remains editable in Filter effects`,
         );
       return;
     }
@@ -9278,7 +9334,7 @@ export default function Home() {
               ? `${label} replaced ${previousLabel}; this layer cannot hold a filter stack`
               : plan.reason === 'switch'
                 ? `${label} replaced ${previousLabel} as the live filter; remains editable in Filter effects`
-                : `${label} applied; remains editable in Filter effects`,
+                : `${label} applied${regionNote}; remains editable in Filter effects`,
       );
   };
   const convertForSmartFilters = () => {
@@ -11646,6 +11702,46 @@ export default function Home() {
       released.length
         ? `${labels[mode]} applied; clipping mask released for ${clippingReleaseNames(released)} (no longer above its base). Undo restores it`
         : `${labels[mode]} applied; undo restores the previous order`,
+    );
+    return true;
+  };
+  const openLayerPosition = () => {
+    const f = current();
+    const probe = planLayerArrange(f, 'forward');
+    if (!probe.ok && probe.reason !== 'boundary') {
+      setNotice(layerArrangeReason(probe.reason));
+      return;
+    }
+    const ids = new Set(probe.selectedLayerIds);
+    let top = -1;
+    for (const [index, layer] of f.layers.entries()) if (ids.has(layer.id)) top = index;
+    if (top < 0) return;
+    const active = f.layers.find((layer) => layer.id === f.active);
+    setLayerPositioning({
+      name: probe.selectedLayerIds.length > 1 ? `${probe.selectedLayerIds.length} layers` : (active?.name ?? f.layers[top].name),
+      current: layerPanelPosition(f, top),
+    });
+  };
+  const moveLayerToPosition = (position: number) => {
+    const f = current();
+    const plan = planLayerMoveToPosition(f, position);
+    if (!plan.ok) {
+      setNotice(
+        plan.reason === 'invalid-position'
+          ? `Choose a position from 1 to ${f.layers.length}`
+          : plan.reason === 'same-position'
+            ? `The layer is already at position ${position}`
+            : layerArrangeReason(plan.reason),
+      );
+      return false;
+    }
+    const { frame: next, released } = preserveClippingAfterReorder(f, plan.frame);
+    if (!commit(next)) return false;
+    const landed = plan.to === position ? `position ${position}` : `position ${plan.to} (folders and clipping groups move as one unit)`;
+    setNotice(
+      released.length
+        ? `Moved to ${landed}; clipping mask released for ${clippingReleaseNames(released)}. Undo restores it`
+        : `Moved from position ${plan.from} to ${landed}; undo restores the previous order`,
     );
     return true;
   };
@@ -17968,6 +18064,7 @@ export default function Home() {
     else if (command === 'arrange-forward') arrangeLayers('forward');
     else if (command === 'arrange-backward') arrangeLayers('backward');
     else if (command === 'arrange-back') arrangeLayers('back');
+    else if (command === 'arrange-position') openLayerPosition();
     else if (command === 'merge-layers') return mergeLayers();
     else if (command === 'merge-visible') return mergeVisible();
     else if (command === 'flatten') return flattenImage();
@@ -18802,6 +18899,10 @@ export default function Home() {
         return !planLayerArrange(frame, 'backward').ok;
       case 'arrange-back':
         return !planLayerArrange(frame, 'back').ok;
+      case 'arrange-position': {
+        const plan = planLayerArrange(frame, 'forward');
+        return frame.layers.length < 2 || (!plan.ok && plan.reason !== 'boundary');
+      }
       case 'merge-layers': {
         const selected = selectedIdsForFrame(frame);
         if (selected.length >= 2 || Boolean(layer?.groupId))
@@ -19114,6 +19215,7 @@ export default function Home() {
       remove={remove}
       reorder={reorder}
       arrange={arrangeLayers}
+      moveToPosition={openLayerPosition}
       moveLayers={moveLayersFromPanel}
       setLayerSelection={setLayerSelection}
       dropFiles={(files, target) => void dropFiles(files, { target })}
@@ -19355,6 +19457,18 @@ export default function Home() {
           apply={(options) => {
             setEditFillOpen(false);
             void fillActiveLayer(options);
+          }}
+        />
+      )}
+      {layerPositioning && frame && (
+        <LayerPositionDialog
+          layerName={layerPositioning.name}
+          current={layerPositioning.current}
+          count={frame.layers.length}
+          close={() => setLayerPositioning(null)}
+          apply={(position) => {
+            setLayerPositioning(null);
+            moveLayerToPosition(position);
           }}
         />
       )}
@@ -19852,7 +19966,10 @@ export default function Home() {
                   if (!item) return null;
                   const { id, label, icon: Icon, key } = item,
                     flyout = flyoutForTool(id),
-                    subtools = flyout ? flyoutTools(flyout) : [];
+                    subtools = flyout ? flyoutTools(flyout) : [],
+                    // Sub-tools reachable only through the flyout (right-click,
+                    // press and hold, or the keyboard): the corner mark says so.
+                    hiddenSubtools = hiddenFamilyTools(subtools, compactTools);
                   return (
                     <div className="tool-button-wrap" key={flyout ? `family-${flyout}` : id}>
                       <button
@@ -19898,14 +20015,16 @@ export default function Home() {
                               toolFlyoutAnchor?.dataset.toolId === id
                             : undefined
                         }
-                        title={`${label}${id === 'frame' ? ' (artboard)' : ''}${key ? ` (${key})` : ''}${flyout ? ' · press and hold for subtools' : ''}`}
+                        data-hidden-subtools={hiddenSubtools.length || undefined}
+                        title={`${label}${id === 'frame' ? ' (artboard)' : ''}${key ? ` (${key})` : ''}${hiddenSubtools.length ? ` · ${hiddenSubtools.length} more ${hiddenSubtools.length === 1 ? 'tool' : 'tools'}: right-click or press and hold` : ''}`}
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
                         {key && <kbd>{key}</kbd>}
-                        {subtools.length > 1 && (
+                        {hiddenSubtools.length > 0 && (
                           <span
                             className="tool-subtool-arrow"
+                            data-testid="tool-subtool-indicator"
                             aria-hidden="true"
                           />
                         )}
@@ -23041,6 +23160,23 @@ export default function Home() {
                 </option>
               ))}
             </select>
+            {filterEffects.type !== 'none' && (filterEffects.region || frame?.selection) && active && isRasterContentLayer(active) && (
+              <p className="adjust-note filter-region-note" data-testid="filter-region">
+                {filterEffects.region
+                  ? `Limited to the ${describeFilterRegion(filterEffects.region)} it was applied through.`
+                  : 'Covers the whole layer.'}{' '}
+                {filterEffects.region && (
+                  <button type="button" onClick={() => setFilterRegion('whole')}>
+                    Whole layer
+                  </button>
+                )}{' '}
+                {frame?.selection && (
+                  <button type="button" onClick={() => setFilterRegion('selection')}>
+                    Use current selection
+                  </button>
+                )}
+              </p>
+            )}
             {filterEffects.type === 'lens-blur' && (
               <p>Local circular aperture blur · 49 samples. No depth map or highlight reconstruction. Source alpha stays unchanged.</p>
             )}
@@ -23670,6 +23806,15 @@ export default function Home() {
                             setFilterEffects({ seed: value });
                         }}
                       />
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        aria-label="Fill transparent pixels"
+                        checked={filterEffects.flareFill === true}
+                        onChange={(event) => setFilterEffects({ flareFill: event.target.checked })}
+                      />
+                      Fill transparent pixels
                     </label>
                   </>
                 )}
