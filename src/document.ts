@@ -1,3 +1,4 @@
+import { PERSIST_MIN_PIXELS, sharedPersistentLayerCache, shouldPersistSurface, type PersistentLayerCache } from './persistentLayerCache.ts';
 import { validReferenceImage, type ReferenceImage } from './referenceImage.ts';
 import { rotateHuePixels } from './hue.ts';
 import {
@@ -2799,6 +2800,11 @@ export type RenderOptions = {
    * cache; pass null to render every filter from scratch.
    */
   layerFilterCache?: ByteLruCache<CanvasImageSource> | null;
+  /**
+   * On-device second tier of the layer filter cache. Omit for this context's
+   * shared store; pass null to skip it (e.g. a one-off export render).
+   */
+  persistentLayerCache?: PersistentLayerCache | null;
   /** Internal: set by the outermost render after it starts a cache pass. */
   layerFilterPass?: boolean;
   /**
@@ -3598,9 +3604,24 @@ export async function renderFrame(
       filteredKey && stylesActive && !stylesInFrame
         ? `${filteredKey}|styles:${stableSerialize(layer.styles)}`
         : filteredKey;
-    const cachedLocal = localFilterCacheKey
+    const memoryLocal = localFilterCacheKey
       ? localFilterCache!.get(localFilterCacheKey)
       : undefined;
+    // Second tier: a finished local surface kept on the device from an earlier
+    // render or session (persistentLayerCache.ts), so reopening a large
+    // painting, or the first edit after opening, decodes instead of
+    // re-running seconds of filtering per layer.
+    const localAsset = isRasterContentLayer(layer) ? assets[layer.asset] : undefined;
+    const persistentStore =
+      !memoryLocal && localFilterCacheKey && localAsset && options?.persistentLayerCache !== null &&
+      localAsset.w * localAsset.h >= PERSIST_MIN_PIXELS
+        ? (options?.persistentLayerCache ?? sharedPersistentLayerCache(surface))
+        : undefined;
+    const persistedLocal = persistentStore ? await persistentStore.get(localFilterCacheKey!) : undefined;
+    if (persistedLocal && localAsset)
+      localFilterCache!.set(localFilterCacheKey!, persistedLocal as unknown as CanvasImageSource, surfaceBytes(localAsset.w, localAsset.h));
+    const cachedLocal = memoryLocal ?? (persistedLocal as unknown as CanvasImageSource | undefined);
+    const localStarted = typeof performance !== 'undefined' ? performance.now() : Date.now();
     const cachedFiltered =
       !cachedLocal && keepIntermediate && filteredKey && filteredKey !== localFilterCacheKey
         ? localFilterCache!.get(filteredKey)
@@ -3924,6 +3945,13 @@ export async function renderFrame(
       );
     }
     if (!cachedLocal) storeLocal(localFilterCacheKey, rasterSource);
+    if (!cachedLocal && persistentStore && localFilterCacheKey && rasterSource && rasterSource !== override) {
+      const width = (rasterSource as { width?: number }).width ?? 0,
+        height = (rasterSource as { height?: number }).height ?? 0,
+        elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - localStarted;
+      if (shouldPersistSurface(width, height, elapsed, persistentStore.budget))
+        persistentStore.put(localFilterCacheKey, rasterSource, width, height);
+    }
     if (
       !isRasterContentLayer(layer) &&
       (effectiveAdjustments(layer.adjustments).hue !== 0 ||

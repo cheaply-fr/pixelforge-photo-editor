@@ -3025,6 +3025,9 @@ function applyPictureFrame(
  * `radius` scales the flare relative to the shorter canvas edge while
  * `centerX`, `centerY`, `angle`, `amount` and `seed` remain editable metadata.
  */
+/** Gaussian exponent beyond which a flare term is below 1e-17 and skipped. */
+const FLARE_NEGLIGIBLE_EXPONENT = 40;
+
 function applyLensFlare(
   source: Uint8ClampedArray,
   width: number,
@@ -3068,32 +3071,54 @@ function applyLensFlare(
     intensity: 0.22 + hash(index + 61) * 0.18,
     colour: palette(index * 0.9 + 0.4),
   }));
+  // Per-pixel work is the hot path of a large document (10.8 MP layers):
+  // constants are hoisted, and a Gaussian term whose exponent exceeds
+  // FLARE_NEGLIGIBLE_EXPONENT (< 1e-17 of full brightness, far below one
+  // output level) is skipped instead of evaluated.
+  const mainColour = palette(0);
+  const starAcross = Math.max(1, spread * 0.012);
+  const starAlong = Math.max(1, spread * 0.9);
+  const ringCentre = spread * 0.34;
+  const ghostCount = ghosts.length;
+  const ghostPosition = ghosts.map((ghost) => ghost.position);
+  const ghostRadius = ghosts.map((ghost) => Math.max(1.5, ghost.radius));
+  const ghostIntensity = ghosts.map((ghost) => ghost.intensity);
+  const ghostColour = ghosts.map((ghost) => ghost.colour);
   for (let y = 0; y < height; y += 1) {
+    const dy = y - centreY;
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
       const alpha = source[offset + 3];
       if (!alpha && !fill) continue;
       const dx = x - centreX;
-      const dy = y - centreY;
       const along = dx * axisX + dy * axisY;
       const across = dx * normalX + dy * normalY;
-      const distance = Math.hypot(dx, dy);
-      const core = Math.exp(-((distance / coreWidth) ** 2)) * 1.35;
-      const ringDistance = Math.abs(distance - spread * 0.34);
-      const ring = Math.exp(-((ringDistance / ringWidth) ** 2)) * 0.5;
-      const star = Math.exp(-((across / Math.max(1, spread * 0.012)) ** 2)) *
-        Math.exp(-((along / Math.max(1, spread * 0.9)) ** 2)) * 0.22;
-      const mainColour = palette(0);
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const coreExponent = (distance / coreWidth) ** 2;
+      const core = coreExponent > FLARE_NEGLIGIBLE_EXPONENT ? 0 : Math.exp(-coreExponent) * 1.35;
+      const ringExponent = (Math.abs(distance - ringCentre) / ringWidth) ** 2;
+      const ring = ringExponent > FLARE_NEGLIGIBLE_EXPONENT ? 0 : Math.exp(-ringExponent) * 0.5;
+      const acrossExponent = (across / starAcross) ** 2;
+      const star = acrossExponent > FLARE_NEGLIGIBLE_EXPONENT
+        ? 0
+        : Math.exp(-acrossExponent) * Math.exp(-((along / starAlong) ** 2)) * 0.22;
       let red = core * 1.05 + ring * mainColour[0] + star;
       let green = core * 0.92 + ring * mainColour[1] + star * 0.88;
       let blue = core * 0.7 + ring * mainColour[2] + star * 0.72;
-      for (const ghost of ghosts) {
-        const ghostAlong = along - ghost.position;
-        const ghostDistance = Math.hypot(ghostAlong, across);
-        const glow = Math.exp(-((ghostDistance / Math.max(1.5, ghost.radius)) ** 2)) * ghost.intensity;
-        red += glow * ghost.colour[0];
-        green += glow * ghost.colour[1];
-        blue += glow * ghost.colour[2];
+      const acrossSquared = across * across;
+      for (let index = 0; index < ghostCount; index += 1) {
+        const ghostAlong = along - ghostPosition[index];
+        const radius = ghostRadius[index];
+        // Cheap bound first: the glow is negligible when even the squared
+        // distance (which is at least the larger axis squared) is far out.
+        const bound = Math.max(ghostAlong * ghostAlong, acrossSquared) / (radius * radius);
+        if (bound > FLARE_NEGLIGIBLE_EXPONENT) continue;
+        const ghostDistance = Math.sqrt(ghostAlong * ghostAlong + acrossSquared);
+        const glow = Math.exp(-((ghostDistance / radius) ** 2)) * ghostIntensity[index];
+        const colour = ghostColour[index];
+        red += glow * colour[0];
+        green += glow * colour[1];
+        blue += glow * colour[2];
       }
       const flare = Math.min(1.8, Math.max(0, red + green + blue) / 2.2) * strength;
       if (flare <= 0) continue;
