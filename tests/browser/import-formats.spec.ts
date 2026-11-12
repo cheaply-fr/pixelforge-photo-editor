@@ -187,14 +187,14 @@ test('keeps the draft unchanged when TIFF decoding fails', async ({ page }) => {
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('height', '960');
 });
 
-test('rasterizes SVG with an explicit vector-loss disclosure', async ({ page }) => {
+test('opens SVG as editable vector layers', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles({
     name: 'illustration.svg',
     mimeType: 'image/svg+xml',
     buffer: SIMPLE_SVG,
   });
   await expect(
-    page.getByText('SVG rasterized as a flattened raster; vector data and external resources omitted', { exact: true }),
+    page.getByText('SVG opened as 1 vector layer', { exact: true }),
   ).toBeVisible();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '2');
 });

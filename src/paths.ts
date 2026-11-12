@@ -34,7 +34,16 @@ export type PathModel = {
   contours?: PathContour[];
   /** Even-odd is used by boolean results so holes remain non-destructive. */
   fillRule?: 'nonzero' | 'evenodd';
+  /** Stroke corner and end styles. Omitted means round (the Pen default);
+   * SVG imports keep their miter/bevel corners and butt/square ends. */
+  lineJoin?: PathLineJoin;
+  lineCap?: PathLineCap;
 };
+
+export type PathLineJoin = 'round' | 'miter' | 'bevel';
+export type PathLineCap = 'round' | 'butt' | 'square';
+export const PATH_LINE_JOINS: readonly PathLineJoin[] = ['round', 'miter', 'bevel'];
+export const PATH_LINE_CAPS: readonly PathLineCap[] = ['round', 'butt', 'square'];
 
 export type PathMatrix = readonly [number, number, number, number, number, number];
 export type PathHandleKind = 'in' | 'out';
@@ -144,6 +153,10 @@ export function validatePath(value: unknown): PathModel {
   }
   const fillRule = path.fillRule ?? 'nonzero';
   if (fillRule !== 'nonzero' && fillRule !== 'evenodd') throw new Error('Path fill rule is invalid');
+  if (path.lineJoin !== undefined && !PATH_LINE_JOINS.includes(path.lineJoin))
+    throw new Error('Path line join is invalid');
+  if (path.lineCap !== undefined && !PATH_LINE_CAPS.includes(path.lineCap))
+    throw new Error('Path line cap is invalid');
   return {
     nodes: path.nodes.map(cloneNode),
     closed: path.closed,
@@ -154,6 +167,8 @@ export function validatePath(value: unknown): PathModel {
     strokeColor: path.strokeColor.toLowerCase(),
     ...(contours ? { contours } : {}),
     fillRule,
+    ...(path.lineJoin && path.lineJoin !== 'round' ? { lineJoin: path.lineJoin } : {}),
+    ...(path.lineCap && path.lineCap !== 'round' ? { lineCap: path.lineCap } : {}),
   };
 }
 

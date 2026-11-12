@@ -491,6 +491,8 @@ import { decodePsdComposite } from '../src/psd';
 import { decodePdfComposite } from '../src/pdf';
 import { decodeTiffComposite } from '../src/tiff';
 import { prepareSvgBytes } from '../src/svg';
+import { svgImportLayers, svgImportNotice } from '../src/svgImportLayers';
+import { multiplyMatrix } from '../src/svgImport';
 import { renderSelection } from '../src/selections';
 import {
   brushSegmentRect,
@@ -1103,6 +1105,7 @@ type Command =
   | 'png'
   | 'jpg'
   | 'webp'
+  | 'export-svg'
   | 'undo'
   | 'redo'
   | 'toggle-last-state'
@@ -1590,6 +1593,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Export as PNG', shortcut: 'Ctrl+S', command: 'png' },
     { label: 'Export as JPEG', command: 'jpg' },
     { label: 'Export as WebP', command: 'webp' },
+    { label: 'Export as SVG', command: 'export-svg' },
   ],
   Edit: [
     { label: 'Undo', shortcut: 'Ctrl+Z', command: 'undo' },
@@ -3978,6 +3982,7 @@ export default function Home() {
       frame: Frame;
       assets: typeof assets.current;
       name: string;
+      startWithSvg?: boolean;
     } | null>(null),
     [batchExporting, setBatchExporting] = useState<{
       history: Frame[];
@@ -9400,18 +9405,75 @@ export default function Home() {
     setCloud(undefined);
     setCloudMessage('');
   };
-  const startRaster = (image: HTMLCanvasElement, title: string, background = false) => {
-    const f = rasterFrame(image, assets.current, 'Background', background);
+  /** Replace the document with a new frame (Open, New). */
+  const startFrame = (f: Frame, title: string) => {
     if (commit(f, true)) {
       clearClipboard();
       setDraftId(createDraftId());
       clearCloud();
       setName(title.slice(0, 160));
       setMetadata({ ...DEFAULT_DOCUMENT_METADATA });
-      setViewZoomState(fittedZoom(stage.current, image.width, image.height));
+      setViewZoomState(fittedZoom(stage.current, f.w, f.h));
       return true;
     }
     return false;
+  };
+  const startRaster = (image: HTMLCanvasElement, title: string, background = false) =>
+    startFrame(rasterFrame(image, assets.current, 'Background', background), title);
+  /**
+   * Insert an imported SVG's layers above the active layer, centred on
+   * `point` (or the document centre). Layers join the active layer's folder,
+   * so the SVG's own group opacity is folded into each layer.
+   */
+  const placeSvgLayers = (
+    base: Frame,
+    imported: Awaited<ReturnType<typeof svgImportLayers>>,
+    point?: { x: number; y: number },
+  ) => {
+    const offset = placementMatrixAt(point, imported.w, imported.h, base.w, base.h);
+    let next = base;
+    const ids: string[] = [];
+    for (const layer of imported.layers) {
+      const groupOpacity = imported.groups.find((group) => group.id === layer.groupId)?.opacity ?? 1;
+      const placed = {
+        ...layer,
+        groupId: undefined,
+        opacity: layer.opacity * groupOpacity,
+        matrix: multiplyMatrix(offset, layer.matrix),
+      } as Layer;
+      next = insertLayerAboveActive(next, placed).frame;
+      ids.push(placed.id);
+    }
+    return { frame: ids.length ? { ...next, selectedLayerIds: ids } : next, ids };
+  };
+  /** Open or place an SVG file as editable vector, text and pixel layers. */
+  const importSvgFile = async (selected: File, asLayer: boolean) => {
+    const original = current();
+    const prepared = prepareSvgBytes(new Uint8Array(await selected.arrayBuffer()));
+    const nextAssets = asLayer ? { ...assets.current } : assets.current;
+    const room = asLayer ? MAX_DOCUMENT_LAYERS - original.layers.length : MAX_DOCUMENT_LAYERS;
+    if (room < 1) throw new Error(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
+    const imported = await svgImportLayers(prepared.markup, nextAssets, room);
+    if (current() !== original) throw new Error('Document changed during import. Please try again.');
+    if (!imported.layers.length) throw new Error('This SVG has no visible content');
+    const title = selected.name.replace(/\.[^/.]+$/, '').slice(0, 160);
+    if (asLayer) {
+      const placed = placeSvgLayers(original, imported);
+      if (!commit(placed.frame, false, nextAssets)) return;
+    } else {
+      const layers = imported.layers;
+      const top = layers[layers.length - 1];
+      if (!startFrame({
+        w: imported.w,
+        h: imported.h,
+        layers,
+        active: top.id,
+        selectedLayerIds: [top.id],
+        ...(imported.groups.length ? { groups: imported.groups } : {}),
+      }, title))
+        return;
+    }
+    setNotice(svgImportNotice(imported.plan, asLayer));
   };
   const newDocument = (transparent = false) => {
     const image = surface(1200, 800);
@@ -12189,6 +12251,10 @@ export default function Home() {
     try {
       if (selected.size > 64 * 1024 * 1024)
         throw new Error('Image file exceeds 64 MB');
+      if (importInfo.format === 'svg') {
+        await importSvgFile(selected, asLayer);
+        return;
+      }
       const c = await decodeImportedRaster(selected, importInfo);
       if (current() !== original)
         throw new Error('Document changed during import. Please try again.');
@@ -12212,15 +12278,15 @@ export default function Home() {
             ? `TIFF imported as a flattened raster${asLayer ? ' layer' : ''}; source metadata omitted`
             : importInfo.format === 'pdf'
               ? `PDF imported as a flattened single-page raster${asLayer ? ' layer' : ''}; page structure, vectors, text and PDF metadata omitted`
-            : importInfo.format === 'svg'
-              ? `SVG rasterized as a flattened raster${asLayer ? ' layer' : ''}; vector data and external resources omitted`
           : asLayer
             ? 'Image layer added'
             : 'Photo opened as a flattened raster; source metadata omitted',
       );
     } catch (error) {
       setNotice(
-        importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'pdf' || importInfo.format === 'svg'
+        importInfo.format === 'svg' && error instanceof Error && /layer limit|no visible content|changed during import/.test(error.message)
+          ? error.message
+          : importInfo.format === 'psd' || importInfo.format === 'heic' || importInfo.format === 'tiff' || importInfo.format === 'pdf' || importInfo.format === 'svg'
           ? importFailureMessage(importInfo)
           : error instanceof Error
             ? error.message
@@ -12286,6 +12352,19 @@ export default function Home() {
     try {
       for (const { file: item, info } of images) {
         if (item.size > 64 * 1024 * 1024) throw new Error(`${item.name} exceeds 64 MB`);
+        if (info.format === 'svg') {
+          // SVGs arrive as editable vector/text layers, not one flat image.
+          const prepared = prepareSvgBytes(new Uint8Array(await item.arrayBuffer()));
+          const imported = await svgImportLayers(prepared.markup, nextAssets, MAX_DOCUMENT_LAYERS - next.layers.length);
+          if (current() !== original)
+            throw new Error('Document changed during import. Please try again.');
+          if (next.layers.length + imported.layers.length > MAX_DOCUMENT_LAYERS)
+            throw new Error(`${MAX_DOCUMENT_LAYERS}-layer limit reached`);
+          const placed = placeSvgLayers(next, imported, options.point);
+          next = placed.frame;
+          added.push(...placed.ids);
+          continue;
+        }
         const decoded = await decodeImportedRaster(item, info);
         if (current() !== original)
           throw new Error('Document changed during import. Please try again.');
@@ -17373,9 +17452,9 @@ export default function Home() {
     }
     setPurgeHistoryOpen(false);
   };
-  const download = (format?: ExportFormat) => {
-    if (format) setExportFormat(format);
-    setExporting({ frame: current(), assets: { ...assets.current }, name });
+  const download = (format?: ExportFormat | 'svg') => {
+    if (format && format !== 'svg') setExportFormat(format);
+    setExporting({ frame: current(), assets: { ...assets.current }, name, startWithSvg: format === 'svg' });
   };
   const rotateViewBy = (degrees: number) => {
     setViewRotation((value) => normalizeViewRotation(value + degrees));
@@ -17974,6 +18053,7 @@ export default function Home() {
     else if (command === 'png') download('png');
     else if (command === 'jpg') download('jpeg');
     else if (command === 'webp') download('webp');
+    else if (command === 'export-svg') download('svg');
     else if (command === 'fade') return fadeLastEdit();
     else if (command === 'apply-image') return applyImage();
     else if (command === 'calculations') return calculateImage();

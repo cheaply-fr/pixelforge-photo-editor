@@ -4302,8 +4302,10 @@ export async function renderFrame(
       if (layer.path.stroke) {
         context.strokeStyle = layer.path.strokeColor;
         context.lineWidth = layer.path.strokeWidth;
-        context.lineJoin = 'round';
-        context.lineCap = 'round';
+        context.lineJoin = layer.path.lineJoin ?? 'round';
+        context.lineCap = layer.path.lineCap ?? 'round';
+        // SVG's default miter limit, so imported corners match their source.
+        context.miterLimit = 4;
         context.stroke();
       }
     }
