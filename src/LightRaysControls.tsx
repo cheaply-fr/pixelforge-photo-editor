@@ -1,8 +1,8 @@
 import type { FilterEffects } from './filterEffects';
 import {
-  DEFAULT_LIGHT_RAYS_SETTINGS,
   DEFAULT_STARBURST_PATCH,
   LIGHT_RAYS_LIMITS,
+  NEW_LIGHT_RAYS_SETTINGS,
   lightRaysPixelExtent,
   normalizeLightRaysSettings,
   type LightRaysSettings,
@@ -19,7 +19,7 @@ export function lightRaysEffectDefaults(): Partial<FilterEffects> {
     angle: 0,
     centerX: 0.5,
     centerY: 0.5,
-    lightRays: { ...DEFAULT_LIGHT_RAYS_SETTINGS },
+    lightRays: { ...NEW_LIGHT_RAYS_SETTINGS },
   };
 }
 

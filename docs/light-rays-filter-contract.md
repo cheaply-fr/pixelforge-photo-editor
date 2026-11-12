@@ -53,6 +53,10 @@ only on `light-rays` effects.
 - `transparent` ("Render on transparent") lets light fill transparent pixels,
   growing alpha (as Render → Clouds with Fill does); opaque pixels composite
   exactly as Screen.
+- A Light Rays filter newly applied from the menu starts in `transparent`
+  (`NEW_LIGHT_RAYS_SETTINGS`), so rays show on their own empty layer instead of
+  only over painted pixels, like Lens Flare's "Fill transparent pixels".
+  Saved records without a blend still normalize to Screen.
 - `amount` 0 or `intensity` 0 is a detached identity; the source buffer is
   never mutated.
 
