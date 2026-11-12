@@ -4652,6 +4652,8 @@ export default function Home() {
    * so a new stroke can never continue a stroke from a different press.
    */
   const gesturePointer = useRef<number | null>(null);
+  /** timeStamp of the press that began the current stroke (see applyCoalescedSamples). */
+  const pressTime = useRef<number | undefined>(undefined);
   const paintSpan = useRef<PerformanceSpan | null>(null);
   const viewZoomRef = useRef(viewZoom);
   /** Image box and client anchor captured before a zoom, applied after commit. */
@@ -13175,6 +13177,8 @@ export default function Home() {
     e: React.PointerEvent<HTMLCanvasElement>,
     skipExpansion = false,
   ): Promise<void> => {
+    // A replayed press (trimmed-layer expansion) keeps the original time.
+    if (Number.isFinite(e.timeStamp)) pressTime.current = e.timeStamp;
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
       paintSpan.current?.cancel();
@@ -15423,7 +15427,7 @@ export default function Home() {
    * there keeps only a few positions and paints straight chords.
    */
   const applyCoalescedSamples = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    for (const sample of precedingCoalescedSamples(e, e.nativeEvent as PointerEvent | undefined))
+    for (const sample of precedingCoalescedSamples(e, e.nativeEvent as PointerEvent | undefined, pressTime.current))
       pointerMove(Object.create(e, {
         clientX: { value: sample.clientX },
         clientY: { value: sample.clientY },

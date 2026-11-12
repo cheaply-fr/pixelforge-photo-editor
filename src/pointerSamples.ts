@@ -13,6 +13,10 @@ export type CoalescedSource = {
   clientX: number;
   clientY: number;
   pressure?: number;
+  /** Event time (ms, the page's clock); coalesced samples carry their own. */
+  timeStamp?: number;
+  /** Pressed buttons; 0 for a hover sample of a mouse or pen. */
+  buttons?: number;
   getCoalescedEvents?: () => ArrayLike<CoalescedSource>;
 };
 
@@ -33,10 +37,18 @@ export const MAX_COALESCED_SAMPLES = 4096;
  * came from; a replayed move carries a client offset (see the trimmed-layer
  * expansion in the editor), which is applied to every sample. Returns an
  * empty list when the browser does not coalesce or listed only the event.
+ *
+ * `pressedAt` is the timeStamp of the press that started the stroke. A page
+ * starved of animation frames can hold hover moves (button up) until the
+ * next delivered move, so the first move after a press may list samples from
+ * before the press: the path from the previous stroke's end to the new
+ * start. Samples older than the press, or hover samples (no buttons) inside a
+ * pressed move, are not part of the stroke and are dropped.
  */
 export function precedingCoalescedSamples<T extends CoalescedSource>(
   event: { clientX: number; clientY: number },
   native: T | undefined,
+  pressedAt?: number,
 ): PointerSample<T>[] {
   if (!native || typeof native.getCoalescedEvents !== 'function') return [];
   let list: ArrayLike<CoalescedSource>;
@@ -55,6 +67,7 @@ export function precedingCoalescedSamples<T extends CoalescedSource>(
   for (let index = start; index < end; index += 1) {
     const sample = list[index];
     if (!sample || !Number.isFinite(sample.clientX) || !Number.isFinite(sample.clientY)) continue;
+    if (staleSample(sample, native, pressedAt)) continue;
     samples.push({
       clientX: sample.clientX + dx,
       clientY: sample.clientY + dy,
@@ -63,4 +76,15 @@ export function precedingCoalescedSamples<T extends CoalescedSource>(
     });
   }
   return samples;
+}
+
+/** A sample recorded before the press, or a hover sample inside a pressed move. */
+function staleSample(sample: CoalescedSource, native: CoalescedSource, pressedAt: number | undefined): boolean {
+  if (
+    pressedAt !== undefined && Number.isFinite(pressedAt) &&
+    typeof sample.timeStamp === 'number' && Number.isFinite(sample.timeStamp) && sample.timeStamp > 0 &&
+    sample.timeStamp < pressedAt
+  )
+    return true;
+  return (native.buttons ?? 0) > 0 && sample.buttons === 0;
 }

@@ -83,3 +83,31 @@ test('grouping a dense path into coalesced moves reproduces every sample (hidden
   }
   assert.deepEqual(delivered, points.slice(1));
 });
+
+test('samples from before the press (the hover path to the new start) are dropped', () => {
+  const at = (clientX, clientY, timeStamp, buttons) => ({ clientX, clientY, timeStamp, buttons });
+  // Previous stroke ended at (10, 10); the pointer hovered to (100, 100) and pressed at t=50.
+  const hover = [at(10, 10, 20, 0), at(55, 55, 30, 0), at(100, 100, 40, 0)];
+  const drag = [at(104, 100, 60, 1), at(108, 100, 70, 1)];
+  const list = [...hover, ...drag];
+  const native = { ...drag[1], getCoalescedEvents: () => list };
+  const samples = precedingCoalescedSamples(native, native, 50);
+  assert.deepEqual(samples.map((sample) => [sample.clientX, sample.clientY]), [[104, 100]]);
+  // Without a press time, hover samples inside a pressed move are still dropped.
+  assert.deepEqual(precedingCoalescedSamples(native, native).map((sample) => sample.clientX), [104]);
+});
+
+test('samples at or after the press, and samples without times or buttons, are kept', () => {
+  const list = [
+    { clientX: 1, clientY: 1, timeStamp: 50, buttons: 1 },
+    { clientX: 2, clientY: 2 },
+    { clientX: 3, clientY: 3, timeStamp: 0, buttons: 1 },
+    { clientX: 4, clientY: 4, timeStamp: 90, buttons: 1 },
+  ];
+  const native = { ...list[3], getCoalescedEvents: () => list };
+  assert.deepEqual(precedingCoalescedSamples(native, native, 50).map((sample) => sample.clientX), [1, 2, 3]);
+  // A hover move (no buttons) keeps its own hover samples: nothing is painted from them anyway.
+  const hoverList = list.map((sample) => ({ ...sample, buttons: 0 }));
+  const hoverNative = { ...hoverList[3], getCoalescedEvents: () => hoverList };
+  assert.equal(precedingCoalescedSamples(hoverNative, hoverNative).length, 3);
+});
