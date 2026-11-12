@@ -392,6 +392,54 @@ Opening the draft was not made faster: reopening the 21-layer probe took
 (also with noise-textured layers), so the lookahead was not kept. Showing a
 saved flattened preview while the layers decode is the remaining option.
 
+### Reopening a large filtered draft (`perf/large-draft-load`)
+
+Reported live (v0.1.1026): an 82-layer 2646×4096 draft took 3–5 minutes to
+reach "Render ready" (about 5 layers per 40 s), and the first stroke after
+opening, on the 6th layer of 82, showed "Rendering… 41/82" for about
+3 minutes. Each full-canvas Clouds or Lens Flare layer cost seconds to
+recompute, and the layer filter cache holds only 6–12 such 43 MB surfaces,
+so every render that started below them recomputed them.
+
+- **On-device filtered layers** (`src/persistentLayerCache.ts`): a raster
+  layer's finished local surface (source → healing/patch → Smart Filters →
+  live filter → styles) of at least 1 MP that took longer to compute than
+  a PNG decode of its size (~20 ns per pixel, at least 50 ms) is written
+  losslessly (PNG) to the `pixelforge-layer-cache` IndexedDB database,
+  keyed by SHA-256 of the same content key as the memory cache. A render
+  that misses the memory cache reads it back instead of recomputing, with
+  byte-identical pixels. Writes run one at a time after the render; the
+  store is bounded at 1 GiB on desktops and 256 MiB on phones and 4 GB
+  devices (none at 2 GB or less), with least-recently-used eviction.
+- **Draft preview**: for documents of at least 2 MP and 8 layers, the
+  last presented composite is saved in one replaced slot of that store,
+  tagged with its composite-equivalence key, 3 s after rendering goes
+  quiet. Reopening the same document state shows it at once while the
+  layers load (mark `pixelforge.draft-preview`); a failed open shows the
+  previous document again.
+- **Lens Flare kernel**: constants hoisted and Gaussian terms below 1e-17
+  skipped; byte-identical to the original formula, 6.1 s → 1.4 s per
+  2646×4096 layer (Node 24). Clouds is unchanged (2.0 s).
+
+Local probe (`tests/browser/large-draft-benchmark.spec.ts`, release build,
+headless desktop Chromium, one run each on the same machine): 24 imported
+full-canvas 2646×4096 layers alternating Clouds and Lens Flare, draft saved
+with the bottom layer active, reopened, then a stroke on the 3rd row from
+the top (itself a filtered layer).
+
+| Step | `main` at aa4df8e | This change |
+| --- | --- | --- |
+| Reopen to "Render ready" | 102.6 s | 10.7 s |
+| First stroke after reopening | 53.4 s (layers 12–25 recomputed) | 7.9 s (layers 12–25 read back) |
+| Second stroke | 16.0 s | 5.2 s |
+
+The probe authors its layers in the same browser profile, so every
+filtered layer is already on the device when the draft reopens; a draft
+opened for the first time on a device, or after the store evicted its
+layers, still computes each filter once. The 82-layer live draft was not
+re-measured. The second stroke still recomputes the painted layer's own
+live filter.
+
 ### Structural layer edits (`perf/incremental-structural-renders`)
 
 Reported live: deleting one non-empty layer of a 62-layer 2646×4096 painting
