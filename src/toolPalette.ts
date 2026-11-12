@@ -203,6 +203,18 @@ export function categoryForTool(tool: string): string | undefined {
  * one slot for a tool family and keeps the variants in its press-and-hold
  * flyout; the active variant replaces that representative slot.
  */
+/**
+ * Members of a tool family that the compact toolbar does not show as their
+ * own button, so they open only from the family's flyout. Their count drives
+ * the corner mark on the family button.
+ */
+export function hiddenFamilyTools(
+  family: readonly string[],
+  shown: readonly string[],
+): string[] {
+  return family.filter((tool) => !shown.includes(tool as PaletteToolId));
+}
+
 export function compactCategoryTools(
   category: ToolCategory,
   activeTool?: string,

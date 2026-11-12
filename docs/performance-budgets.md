@@ -358,6 +358,40 @@ render by a level or two per channel), and smaller canvases recomposite fast
 enough to stay bit-identical. The live 71-layer case and live builds were not
 measured.
 
+### Empty-layer insert after a pause (kept presented composite)
+
+Reported live (v0.1.1024): on a 2646×4096, 77-layer painting, "Add paint
+layer" showed "Rendering… 70/77 layers" for about a minute, and opening the
+draft took 2–3 minutes. Inserting an empty layer is pixel-neutral and the
+render worker's finished-composite cache already skips such renders, but the
+persistent render worker is released after 5 minutes idle (with all of its
+caches), so the first edit after a pause re-rendered every layer. The editor
+now keeps one main-thread copy of the last presented composite for documents
+of at least 2 MP and 8 layers (the renderer's own composite-cache threshold;
+none on low-memory devices), keyed by the
+composite-equivalence key, and re-presents it when the next frame's key
+matches (`src/presentedComposite.ts`, `useDocument`): adding or deleting an
+empty layer, renaming, locking, reselecting and undoing them no longer
+render at all. It costs one canvas-sized surface (43 MB at 2646×4096).
+
+Local probe (`tests/browser/add-layer-benchmark.spec.ts`, release build,
+headless desktop Chromium, 21 full-canvas 2646×4096 layers; the worker idle
+timeout shortened to 500 ms through the test hook
+`globalThis.__PIXELFORGE_WORKER_IDLE_MS__`):
+
+| Add paint layer | `main` at 503eb2d | This change |
+| --- | --- | --- |
+| While the worker is warm | 0.42–0.55 s (worker final cache) | 0.35–0.47 s |
+| After the worker idled out | 2.3 s (full render, `final: false`) | 0.50–0.52 s (kept copy) |
+| Right after reopening the draft | 0.54 s | 0.39–0.60 s (kept copy) |
+
+The full render it avoids scales with the layer count and content, so the
+77-layer case is the reported minute; that live case was not re-measured.
+Opening the draft was not made faster: reopening the 21-layer probe took
+3.3–4.8 s both with and without an experimental two-layer decode lookahead
+(also with noise-textured layers), so the lookahead was not kept. Showing a
+saved flattened preview while the layers decode is the remaining option.
+
 ### Structural layer edits (`perf/incremental-structural-renders`)
 
 Reported live: deleting one non-empty layer of a 62-layer 2646×4096 painting

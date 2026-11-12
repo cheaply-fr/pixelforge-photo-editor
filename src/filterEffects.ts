@@ -8,6 +8,7 @@
  */
 
 import { deinterlacePixels, effectiveDeinterlaceSettings, validDeinterlaceSettings, type DeinterlaceSettings } from './deinterlace.ts';
+import { validFilterRegion, type FilterRegion } from './filterRegion.ts';
 import { isGradientStops, normalizeGradientStops, type GradientStop } from './gradientStops.ts';
 import {
   fastEllipseSpinBlur,
@@ -298,6 +299,16 @@ export type FilterEffects = {
   cloudScale?: number;
   /** Render → Light Rays geometry, colour and blend (light-rays only). */
   lightRays?: LightRaysSettings;
+  /**
+   * Render → Lens Flare: also light transparent pixels, so a flare can be
+   * rendered on its own empty layer (lens-flare only; omitted = off).
+   */
+  flareFill?: boolean;
+  /**
+   * The selection the filter was applied through, in layer-surface units
+   * (src/filterRegion.ts). Omitted: the filter covers the whole layer.
+   */
+  region?: FilterRegion;
 };
 
 export type CloudRenderSettings = {
@@ -407,6 +418,8 @@ export function effectiveFilterEffects(
   if (type === 'clouds' && validCloudRenderSettings(source.cloudRender)) {
     normalized.cloudRender = { ...source.cloudRender };
   }
+  if (type === 'lens-flare' && source.flareFill === true) normalized.flareFill = true;
+  if (source.region !== undefined && validFilterRegion(source.region)) normalized.region = source.region;
   if (type === 'difference-clouds' && finite(source.cloudScale)) {
     normalized.cloudScale = clamp(Math.round(source.cloudScale), MIN_CLOUD_RENDER_SCALE, MAX_CLOUD_RENDER_SCALE);
   }
@@ -650,6 +663,8 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
       effect.cloudScale >= MIN_CLOUD_RENDER_SCALE && effect.cloudScale <= MAX_CLOUD_RENDER_SCALE
     )) &&
     (effect.lightRays === undefined || (effect.type === 'light-rays' && validLightRaysSettings(effect.lightRays))) &&
+    (effect.flareFill === undefined || (effect.type === 'lens-flare' && typeof effect.flareFill === 'boolean')) &&
+    (effect.region === undefined || validFilterRegion(effect.region)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -3018,6 +3033,7 @@ function applyLensFlare(
   output: Uint8ClampedArray,
   strength: number,
 ): void {
+  const fill = effect.flareFill === true;
   const seed = effect.seed >>> 0;
   const hash = (value: number): number => {
     let next = Math.imul((value | 0) ^ seed, 374761393);
@@ -3056,7 +3072,7 @@ function applyLensFlare(
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
       const alpha = source[offset + 3];
-      if (!alpha) continue;
+      if (!alpha && !fill) continue;
       const dx = x - centreX;
       const dy = y - centreY;
       const along = dx * axisX + dy * axisY;
@@ -3081,6 +3097,21 @@ function applyLensFlare(
       }
       const flare = Math.min(1.8, Math.max(0, red + green + blue) / 2.2) * strength;
       if (flare <= 0) continue;
+      if (!alpha) {
+        // Fill transparent pixels: the light the flare would add over black
+        // becomes the pixel, its brightest channel the coverage, so the flare
+        // can sit on its own layer (Screen or Normal) above the artwork.
+        const lightRed = Math.min(255, red * 180 * flare);
+        const lightGreen = Math.min(255, green * 180 * flare);
+        const lightBlue = Math.min(255, blue * 180 * flare);
+        const coverage = Math.max(lightRed, lightGreen, lightBlue);
+        if (coverage < 0.5) continue;
+        output[offset] = clampByte((lightRed * 255) / coverage);
+        output[offset + 1] = clampByte((lightGreen * 255) / coverage);
+        output[offset + 2] = clampByte((lightBlue * 255) / coverage);
+        output[offset + 3] = clampByte(coverage);
+        continue;
+      }
       output[offset] = clampByte(source[offset] + red * 180 * flare);
       output[offset + 1] = clampByte(source[offset + 1] + green * 180 * flare);
       output[offset + 2] = clampByte(source[offset + 2] + blue * 180 * flare);

@@ -89,6 +89,7 @@ import {
   validMeasurements,
   type MeasurementAnnotation,
 } from './measurements.ts';
+import { blendThroughRegion, rasterizeFilterRegion, validFilterRegion } from './filterRegion.ts';
 import {
   applyFilterEffects,
   effectiveFilterEffects,
@@ -2838,6 +2839,31 @@ async function applyFilterEffectsToSurface(
   options: RenderOptions | undefined,
   layerId: string,
 ): Promise<void> {
+  const region = effect?.region;
+  if (!region || !validFilterRegion(region)) {
+    await applyWholeFilterEffectsToSurface(target, effect, options, layerId);
+    return;
+  }
+  // A filter applied through a selection changes only the selected pixels
+  // (src/filterRegion.ts): filter the whole surface, then blend it over the
+  // unfiltered pixels through the rasterised region.
+  const context = target.getContext('2d');
+  if (!context) return;
+  const before = context.getImageData(0, 0, target.width, target.height).data;
+  await applyWholeFilterEffectsToSurface(target, effect, options, layerId);
+  const after = context.getImageData(0, 0, target.width, target.height);
+  after.data.set(
+    blendThroughRegion(before, after.data, rasterizeFilterRegion(region, target.width, target.height)),
+  );
+  context.putImageData(after, 0, 0);
+}
+
+async function applyWholeFilterEffectsToSurface(
+  target: HTMLCanvasElement,
+  effect: Partial<FilterEffects> | undefined,
+  options: RenderOptions | undefined,
+  layerId: string,
+): Promise<void> {
   const pool = renderFilterPool(options);
   if (
     !pool ||
@@ -3820,7 +3846,7 @@ export async function renderFrame(
       const asset = assets[layer.asset],
         filteredWidth = override?.width ?? asset.w,
         filteredHeight = override?.height ?? asset.h;
-      if (options?.tiledRevision !== undefined && isTiledNeighborhoodBlur(filterEffect)) {
+      if (options?.tiledRevision !== undefined && isTiledNeighborhoodBlur(filterEffect) && !filterEffect.region) {
         try {
           const tiled = await applyTiledNeighborhoodEffect(
             rasterSource,

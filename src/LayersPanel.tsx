@@ -104,6 +104,8 @@ type Props = {
   remove: () => boolean | void;
   reorder: (direction: number) => void;
   arrange: (mode: LayerArrangeMode) => boolean | void;
+  /** Open Move to Position… for the selected layers (the row menu prepares the selection). */
+  moveToPosition?: () => void;
   /** Commit one drag-and-drop move; returns the moved IDs or false. */
   moveLayers?: (source: LayerDragSource, target: LayerDropTarget) => string[] | false;
   /** Replace the layer selection without a history step. */
@@ -172,7 +174,8 @@ type RowMenuAction =
   | 'group'
   | 'rename'
   | 'visibility'
-  | 'lock';
+  | 'lock'
+  | 'position';
 
 export default function LayersPanel({
   frame,
@@ -191,6 +194,7 @@ export default function LayersPanel({
   remove,
   reorder,
   arrange,
+  moveToPosition,
   moveLayers,
   setLayerSelection,
   dropFiles,
@@ -1072,6 +1076,7 @@ export default function LayersPanel({
           ids={idsFor(menuLayer.id)}
           x={menuState.x}
           y={menuState.y}
+          canMoveToPosition={Boolean(moveToPosition)}
           close={(restoreFocus) => {
             const trigger = menuState.trigger;
             setMenuState(null);
@@ -1093,6 +1098,10 @@ export default function LayersPanel({
               case 'backward':
               case 'back':
                 arrangeRow(id, action, true);
+                break;
+              case 'position':
+                prepareRow(id);
+                moveToPosition?.();
                 break;
               case 'clip':
                 prepareRow(id);
@@ -2472,6 +2481,7 @@ function LayerRowMenu({
   y,
   close,
   run,
+  canMoveToPosition = false,
 }: {
   frame: Frame;
   layer: Layer;
@@ -2480,6 +2490,7 @@ function LayerRowMenu({
   y: number;
   close: (restoreFocus: boolean) => void;
   run: (action: RowMenuAction) => void;
+  canMoveToPosition?: boolean;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const scoped: Frame = { ...frame, active: layer.id, selectedLayerIds: ids };
@@ -2497,6 +2508,16 @@ function LayerRowMenu({
     { action: 'forward', label: 'Bring Forward', disabled: !planLayerArrange(scoped, 'forward').ok },
     { action: 'backward', label: 'Send Backward', disabled: !planLayerArrange(scoped, 'backward').ok },
     { action: 'back', label: 'Send to Back', disabled: !planLayerArrange(scoped, 'back').ok },
+    ...(canMoveToPosition
+      ? [{
+          action: 'position' as const,
+          label: 'Move to Position…',
+          disabled: frame.layers.length < 2 || (() => {
+            const plan = planLayerArrange(scoped, 'forward');
+            return !plan.ok && plan.reason !== 'boundary';
+          })(),
+        }]
+      : []),
     layer.clippingTo
       ? { action: 'release-clip', label: 'Release Clipping Mask', disabled: locked, separator: true }
       : {
