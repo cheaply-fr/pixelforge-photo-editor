@@ -1,13 +1,14 @@
 /**
  * Bounded, local-only SVG import preparation.
  *
- * PixelForge rasterizes SVG into an editable raster layer.  Passing the
- * original markup directly to an image decoder would allow embedded network
+ * PixelForge imports SVG as editable layers (see svgImport.ts) and lets the
+ * browser rasterize only the parts it cannot convert. Passing the original
+ * markup directly to an image decoder would allow embedded network
  * references, scripts, event handlers, or foreign documents to escape the
- * local-only import contract.  This module intentionally accepts a small,
- * conservative SVG subset and returns the original bytes only after the
- * safety and resource checks pass.  It does not attempt to preserve vector
- * editability or provide a general XML parser.
+ * local-only import contract.  This module accepts a conservative SVG
+ * subset (local stylesheets without imports, fragment references, and
+ * embedded raster images as base64 data URLs) and returns the markup only
+ * after the safety and resource checks pass.
  */
 
 export const SVG_MAX_INPUT_BYTES = 8 * 1024 * 1024;
@@ -35,12 +36,19 @@ function finitePositive(value: number, label: string): number {
 function parseLength(value: string | undefined, label: string): number | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();
-  // Percentages and viewport-relative units require layout context that is
-  // intentionally outside this flattened local import contract.
-  const match = /^([+]?(?:\d+(?:\.\d*)?|\.\d+))(?:px)?$/i.exec(trimmed);
-  if (!match) fail(`SVG ${label} must use a bounded pixel length.`);
-  return finitePositive(Number(match[1]), label);
+  // A percentage means "fill the viewer"; the viewBox then sets the size.
+  if (/^\d+(?:\.\d*)?%$/.test(trimmed)) return undefined;
+  // Viewport-relative units need layout context outside this local contract.
+  const match = /^([+]?(?:\d+(?:\.\d*)?|\.\d+))(px|pt|pc|mm|cm|in)?$/i.exec(trimmed);
+  if (!match) fail(`SVG ${label} must use a bounded absolute length.`);
+  return finitePositive(Number(match[1]) * ABSOLUTE_UNITS[(match[2] ?? '').toLowerCase()], label);
 }
+
+const ABSOLUTE_UNITS: Record<string, number> = { '': 1, px: 1, pt: 4 / 3, pc: 16, mm: 96 / 25.4, cm: 96 / 2.54, in: 96 };
+
+/** Embedded raster images are allowed only as base64 data URLs. */
+const DATA_IMAGE = /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/\s]+={0,2}$/;
+const DATA_HREF = /((?:xlink:)?href)\s*=\s*(?:"(data:[^"]*)"|'(data:[^']*)')/gi;
 
 function parseViewBox(value: string | undefined): [number, number, number, number] | undefined {
   if (value === undefined) return undefined;
@@ -74,12 +82,23 @@ function rootAttributes(openTag: string): Map<string, string> {
   return attributes;
 }
 
-function rejectUnsafeMarkup(markup: string): void {
+function rejectUnsafeMarkup(original: string): void {
+  // Check embedded images first, then scan the rest without their base64
+  // payloads (which can contain look-alike text such as "src=").
+  const markup = original.replace(DATA_HREF, (_whole, name: string, double?: string, single?: string) => {
+    if (!DATA_IMAGE.test(double ?? single ?? ''))
+      fail('SVG data URLs must be base64 PNG, JPEG, GIF or WebP images.');
+    return `${name}="#embedded-image"`;
+  });
   const lowered = markup.toLowerCase();
   if (lowered.includes('\u0000')) fail('SVG contains a NUL byte.');
-  if (/<\s*!doctype\b|<\s*!entity\b|<\s*\?xml-stylesheet\b/.test(lowered))
+  // A plain DOCTYPE (as Illustrator writes) is fine; an internal subset can
+  // declare entities and is rejected.
+  if (/<\s*!doctype\b[^>]*\[/.test(lowered) || /<\s*!entity\b|<\s*\?xml-stylesheet\b/.test(lowered))
     fail('SVG document declarations are not supported.');
-  for (const tag of ['script', 'foreignobject', 'iframe', 'object', 'embed', 'audio', 'video', 'link', 'style']) {
+  if (/@import\b|@font-face\b|expression\s*\(/i.test(markup))
+    fail('SVG stylesheet imports are not allowed.');
+  for (const tag of ['script', 'foreignobject', 'iframe', 'object', 'embed', 'audio', 'video', 'link']) {
     if (new RegExp(`<\\s*${tag}\\b`, 'i').test(markup))
       fail(`SVG ${tag} elements are not allowed for local import.`);
   }
@@ -123,7 +142,7 @@ export function prepareSvgImport(markup: string): SvgImportInfo {
   const width = parseLength(attributes.get('width'), 'width');
   const height = parseLength(attributes.get('height'), 'height');
   const viewBox = parseViewBox(attributes.get('viewbox'));
-  if (width === undefined && height === undefined && !viewBox)
+  if ((width === undefined || height === undefined) && !viewBox)
     fail('SVG must declare pixel dimensions or a viewBox.');
   if (width !== undefined && height !== undefined && width * height > SVG_MAX_PIXELS)
     fail('SVG exceeds the 16 megapixel safety limit.');

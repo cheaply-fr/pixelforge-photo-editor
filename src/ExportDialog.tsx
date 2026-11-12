@@ -21,6 +21,11 @@ import {
   writeToFileHandle,
 } from './download';
 import { beginPerformanceSpan, type PerformanceSpan } from './performanceMarks';
+import { encodeSvgDocument } from './svgDocumentExport';
+
+/** Formats the dialog offers: the raster encoders plus layered SVG. */
+type DialogFormat = ExportFormat | 'svg';
+const dialogLabels: Record<DialogFormat, string> = { ...exportLabels, svg: 'SVG' };
 
 type Props = {
   frame: Frame;
@@ -34,11 +39,13 @@ type Props = {
   setTargetBytes: (bytes: number | undefined) => void;
   close: () => void;
   downloaded: (message: string) => void;
+  /** Open with the layered SVG format selected (File → Export as SVG). */
+  startWithSvg?: boolean;
 };
 type Preview = {
   blob: Blob;
   url: string;
-  format: ExportFormat;
+  format: DialogFormat;
   quality: number;
   targetBytes?: number;
   targetMet: boolean;
@@ -58,7 +65,10 @@ export default function ExportDialog({
   setTargetBytes,
   close,
   downloaded,
+  startWithSvg = false,
 }: Props) {
+  const [svg, setSvg] = useState(startWithSvg);
+  const shownFormat: DialogFormat = svg ? 'svg' : format;
   const dialog = useRef<HTMLDialogElement>(null);
   const snapshot = useRef({ frame, assets });
   const selectableArtboards = frame.artboards?.filter((item) => item.visible) ?? [];
@@ -112,7 +122,37 @@ export default function ExportDialog({
   }, [selectedArtboardId, exportProfile, frame.colorProfile]);
 
   useEffect(() => {
-    if (!image) return;
+    if (!svg) return;
+    let cancelled = false;
+    let url: string | undefined;
+    const span = beginPerformanceSpan('export');
+    exportSpan.current = span;
+    void encodeSvgDocument(snapshot.current.frame, snapshot.current.assets, {
+      artboardId: selectedArtboardId,
+      title: name || 'pixelforge-edit',
+    })
+      .then((blob) => {
+        if (cancelled) return;
+        span.finish();
+        setError('');
+        url = URL.createObjectURL(blob);
+        setPreview({ blob, url, format: 'svg', quality, targetBytes, targetMet: true });
+      })
+      .catch((reason: unknown) => {
+        span.finish();
+        if (!cancelled)
+          setError(reason instanceof Error ? reason.message : 'SVG export failed. Your editable draft is kept.');
+      });
+    return () => {
+      cancelled = true;
+      span.cancel();
+      if (url) URL.revokeObjectURL(url);
+      if (exportSpan.current === span) exportSpan.current = null;
+    };
+  }, [svg, selectedArtboardId, name, quality, targetBytes]);
+
+  useEffect(() => {
+    if (!image || svg) return;
     let cancelled = false;
     let url: string | undefined;
     const span = beginPerformanceSpan('export');
@@ -156,16 +196,16 @@ export default function ExportDialog({
       if (url) URL.revokeObjectURL(url);
       if (exportSpan.current === span) exportSpan.current = null;
     };
-  }, [image, format, quality, targetBytes]);
+  }, [image, format, quality, targetBytes, svg]);
 
-  const targetMode = Boolean(targetBytes && (format === 'jpeg' || format === 'webp'));
+  const targetMode = Boolean(!svg && targetBytes && (format === 'jpeg' || format === 'webp'));
   const current =
-    preview?.format === format &&
+    preview?.format === shownFormat &&
     preview.targetBytes === targetBytes &&
     (targetMode || preview.quality === quality)
       ? preview
       : null;
-  const filename = `${name || 'pixelforge-edit'}.${format === 'jpeg' ? 'jpg' : format}`;
+  const filename = `${name || 'pixelforge-edit'}.${shownFormat === 'jpeg' ? 'jpg' : shownFormat}`;
   const updateTarget = (value: string) => {
     setTargetInput(value);
     if (!value.trim()) {
@@ -201,7 +241,7 @@ export default function ExportDialog({
           // host that fetches the blob asynchronously still finds it.
           downloadBlob(current.blob, filename);
           downloaded(
-            `${exportLabels[format]} export downloaded (${current.blob.size.toLocaleString()} bytes)`,
+            `${dialogLabels[shownFormat]} export downloaded (${current.blob.size.toLocaleString()} bytes)`,
           );
         }}
       >
@@ -209,8 +249,12 @@ export default function ExportDialog({
         <p data-testid="export-viewport">
           {frame.artboards?.length
             ? `Download the active artboard “${viewport?.name ?? 'Canvas'}” at ${viewport?.w ?? frame.w} × ${viewport?.h ?? frame.h} px.`
-            : `Download a flattened image at ${frame.w} × ${frame.h} px.`}{' '}
-          Keep a project file to continue editing layers.
+            : svg
+              ? `Download a layered SVG at ${frame.w} × ${frame.h} px.`
+              : `Download a flattened image at ${frame.w} × ${frame.h} px.`}{' '}
+          {svg
+            ? 'Shapes and text stay editable vectors in other apps.'
+            : 'Keep a project file to continue editing layers.'}
         </p>
         {selectableArtboards.length > 0 && (
           <label>
@@ -232,9 +276,12 @@ export default function ExportDialog({
           Format
           <select
             aria-label="Export format"
-            value={format}
+            value={shownFormat}
             onChange={(event) => {
-              const next = event.target.value as ExportFormat;
+              const picked = event.target.value as DialogFormat;
+              setSvg(picked === 'svg');
+              if (picked === 'svg') return;
+              const next = picked;
               setFormat(next);
               if (next === 'png' || next === 'psd' || next === 'pdf') {
                 setTargetBytes(undefined);
@@ -248,8 +295,10 @@ export default function ExportDialog({
             <option value="webp">WebP — smaller, transparent</option>
             <option value="psd">PSD — flattened composite</option>
             <option value="pdf">PDF — flattened page</option>
+            <option value="svg">SVG — layered vectors</option>
           </select>
         </label>
+        {!svg && (
         <label>
           Export color profile
           <select
@@ -264,7 +313,8 @@ export default function ExportDialog({
             ))}
           </select>
         </label>
-        {format !== 'png' && format !== 'psd' && format !== 'pdf' && (
+        )}
+        {!svg && format !== 'png' && format !== 'psd' && format !== 'pdf' && (
           <>
             <label>
               Quality
@@ -306,7 +356,9 @@ export default function ExportDialog({
           </>
         )}
         <p className="export-format-note">
-          {format === 'jpeg'
+          {svg
+            ? 'SVG keeps shapes and paths as vector elements, text as editable text and layer groups as groups. Pixel layers and layers with masks, styles or adjustments are embedded as PNG images; adjustment layers, clipping masks and blend modes SVG lacks flatten the layers below them into one image. Text uses fonts installed where the file is opened.'
+            : format === 'jpeg'
             ? 'JPEG uses lossy compression. Transparent areas become white.'
             : format === 'webp'
               ? 'WebP uses lossy color compression and preserves transparency. Quality 100 is not a lossless guarantee.'
@@ -323,10 +375,10 @@ export default function ExportDialog({
           </p>
         )}
         <div className="export-preview">
-          {current && ((format !== 'psd' && format !== 'pdf') || rasterPreviewUrl) && (
+          {current && ((shownFormat !== 'psd' && shownFormat !== 'pdf') || rasterPreviewUrl) && (
             <img
-              src={format === 'psd' || format === 'pdf' ? rasterPreviewUrl ?? undefined : current.url}
-              alt={`${exportLabels[format]} export preview`}
+              src={shownFormat === 'psd' || shownFormat === 'pdf' ? rasterPreviewUrl ?? undefined : current.url}
+              alt={`${dialogLabels[shownFormat]} export preview`}
             />
           )}
         </div>
@@ -354,7 +406,8 @@ export default function ExportDialog({
           </p>
         )}
         <p data-testid="export-privacy-disclosure">
-          Encoded locally. Browser exports contain rendered pixels only. Original
+          Encoded locally. Browser exports contain rendered pixels only
+          {svg ? ', plus the layer names, shapes and text that keep SVG layers editable' : ''}. Original
           EXIF/GPS metadata and source color profiles are not copied. File Info
           title, description and author stay in the local draft and editable
           .pixelforge project only. File size depends on image content and browser encoding.
@@ -385,13 +438,13 @@ export default function ExportDialog({
                     if (picked.status === 'unavailable') {
                       downloadBlob(saved.blob, filename);
                       downloaded(
-                        `${picked.reason} ${exportLabels[saved.format]} export downloaded instead (${saved.blob.size.toLocaleString()} bytes)`,
+                        `${picked.reason} ${dialogLabels[saved.format]} export downloaded instead (${saved.blob.size.toLocaleString()} bytes)`,
                       );
                       return;
                     }
                     await writeToFileHandle(picked.handle, saved.blob);
                     downloaded(
-                      `${exportLabels[saved.format]} export saved with the file picker (${saved.blob.size.toLocaleString()} bytes)`,
+                      `${dialogLabels[saved.format]} export saved with the file picker (${saved.blob.size.toLocaleString()} bytes)`,
                     );
                   } catch {
                     setError('The file could not be written. Try Download image instead.');

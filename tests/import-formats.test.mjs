@@ -51,7 +51,7 @@ test('TIFF is conditional and never claims a lossless container round trip', () 
   assert.match(importFailureMessage(byName), /^This TIFF is not a supported/);
 });
 
-test('SVG is conditional flattened rasterization with vector-loss disclosure', () => {
+test('SVG opens as editable vector layers with a pixel-fallback disclosure', () => {
   const byName = describeImportFormat('illustration.svg', 'application/octet-stream');
   const byMime = describeImportFormat('illustration.bin', 'image/svg+xml; charset=utf-8');
   for (const info of [byName, byMime]) {
@@ -59,8 +59,8 @@ test('SVG is conditional flattened rasterization with vector-loss disclosure', (
       { format: info.format, capability: info.capability, tryDecode: info.tryDecode },
       { format: 'svg', capability: 'conditional', tryDecode: true },
     );
-    assert.match(info.disclosure, /flattened/);
-    assert.match(info.disclosure, /vector paths/);
+    assert.match(info.disclosure, /vector layers/);
+    assert.match(info.disclosure, /pixel layers/);
   }
   assert.match(importFailureMessage(byName), /safe local SVG/);
 });
