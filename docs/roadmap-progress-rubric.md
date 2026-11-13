@@ -499,6 +499,18 @@ Limitations: large Gaussian radii render full-frame (not tiled) and are an
 approximation (mean ≈ 0.35 levels, max ≤ 8 levels against an exact Gaussian
 on a hard-edged scene); the quick fills always use 100 % Normal.
 
+## Stroke Selection (painting-session follow-up)
+
+Outlines in the same session were brushed by hand: the old Edit > Stroke…
+asked only for a width in a browser prompt, always drew an inner border in the
+foreground colour and replaced the layer's pixels (`putImageData`) instead
+of compositing. Edit > Stroke Selection… now offers 1–250 px, colour,
+Inside/Center/Outside, opacity and blend mode, measures an exact-distance band
+along the selection's 50 % edge (Lasso, feathered and compound selections
+alike) and composites it as one undo step. See
+`stroke-selection-contract.md`; `tests/stroke-selection.test.mjs`,
+`tests/browser/stroke-selection.spec.ts`. Pattern fill, faster feathered
+selections and Save draft from the same session are in #264, #265 and #262.
 ## Stroke lifecycle and zoom guard (`fix/stroke-lifecycle-zoom-guard`)
 
 The remaining reports from the same 3000 × 4000 painting session:
