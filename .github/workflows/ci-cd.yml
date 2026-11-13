@@ -17,16 +17,16 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate editor (${{ matrix.shard }}/4)
+    name: Validate editor (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     # A stuck browser or hosted-runner process must fail closed so it cannot
-    # block all subsequent deploys indefinitely. The full four-shard suite
+    # block all subsequent deploys indefinitely. The full six-shard suite
     # normally completes well below this bound.
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -64,9 +64,9 @@ jobs:
         env:
           # Each test owns an isolated browser context and IndexedDB draft.
           # Sharding keeps a slow browser case from starving the whole gate;
-          # all desktop/mobile tests still run across the four shards.
+          # all desktop/mobile tests still run across the six shards (four ran into the 15 min shard bound).
           PLAYWRIGHT_WORKERS: 2
-        run: timeout --signal=TERM --kill-after=30s 15m npm run test:e2e -- --shard=${{ matrix.shard }}/4
+        run: timeout --signal=TERM --kill-after=30s 15m npm run test:e2e -- --shard=${{ matrix.shard }}/6
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: site-${{ github.sha }}-${{ matrix.shard }}
