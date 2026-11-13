@@ -41,15 +41,79 @@ export type PreviewScheduler<T> = {
   readonly stats: PreviewSchedulerStats;
 };
 
-const defaultRequestFrame = (callback: () => void): unknown =>
-  typeof requestAnimationFrame === 'function'
-    ? requestAnimationFrame(() => callback())
-    : setTimeout(callback, 16);
+/**
+ * Longest wait for an animation frame before a frame-or-timeout callback runs
+ * anyway. Browsers pause frames in a hidden tab or app pane; pointer input
+ * still arrives there, and a stroke must still preview and finish.
+ */
+export const FRAME_FALLBACK_MS = 100;
+
+export type FrameClock = {
+  requestFrame?: (callback: () => void) => unknown;
+  cancelFrame?: (handle: unknown) => void;
+  setTimer?: (callback: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+  /** True when the page is hidden: frames will not run, use the timer now. */
+  hidden?: () => boolean;
+};
+
+export type FrameRequest = { cancel: () => void };
+
+const pageHidden = () =>
+  typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
+/**
+ * Run `callback` once, on the next animation frame or after `timeoutMs`,
+ * whichever comes first. A hidden page skips the frame and uses a short timer
+ * (which browsers throttle, but still run) so work never waits for the page
+ * to be shown again.
+ */
+export function requestFrameOrTimeout(
+  callback: () => void,
+  timeoutMs = FRAME_FALLBACK_MS,
+  clock: FrameClock = {},
+): FrameRequest {
+  const requestFrame =
+    clock.requestFrame ??
+    (typeof requestAnimationFrame === 'function'
+      ? (run: () => void) => requestAnimationFrame(() => run())
+      : undefined);
+  const cancelFrame =
+    clock.cancelFrame ??
+    ((handle: unknown) => {
+      if (typeof cancelAnimationFrame === 'function' && typeof handle === 'number') cancelAnimationFrame(handle);
+    });
+  const setTimer = clock.setTimer ?? ((run: () => void, ms: number) => setTimeout(run, ms));
+  const clearTimer = clock.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  const hidden = clock.hidden ?? pageHidden;
+  let done = false,
+    frame: unknown,
+    timer: unknown;
+  const fire = () => {
+    if (done) return;
+    done = true;
+    if (frame !== undefined) cancelFrame(frame);
+    if (timer !== undefined) clearTimer(timer);
+    callback();
+  };
+  const useFrame = requestFrame && !hidden();
+  if (useFrame) frame = requestFrame(fire);
+  // A frame can still be paused later (the page hidden after this request).
+  if (!done) timer = setTimer(fire, useFrame ? Math.max(0, timeoutMs) : 16);
+  return {
+    cancel() {
+      if (done) return;
+      done = true;
+      if (frame !== undefined) cancelFrame(frame);
+      if (timer !== undefined) clearTimer(timer);
+    },
+  };
+}
+
+const defaultRequestFrame = (callback: () => void): unknown => requestFrameOrTimeout(callback);
 
 const defaultCancelFrame = (handle: unknown): void => {
-  if (typeof cancelAnimationFrame === 'function' && typeof handle === 'number')
-    cancelAnimationFrame(handle);
-  else clearTimeout(handle as ReturnType<typeof setTimeout>);
+  (handle as FrameRequest | undefined)?.cancel?.();
 };
 
 export function createPreviewScheduler<T>(

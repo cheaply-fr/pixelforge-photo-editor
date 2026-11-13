@@ -109,6 +109,45 @@ function boxPass(
 }
 
 /**
+ * boxPass down every column at once, visiting rows in memory order (one
+ * running sum per column). The arithmetic per column is the same sequence of
+ * operations as boxPass with stride `width`, so the result is bit-identical,
+ * without a cache miss per sample on large planes.
+ */
+function columnPass(
+  source: Float32Array,
+  target: Float32Array,
+  sums: Float64Array,
+  width: number,
+  height: number,
+  radius: number,
+  alpha: number,
+) {
+  const weight = 1 / (2 * radius + 1 + 2 * alpha);
+  sums.fill(0);
+  for (let row = 0; row <= Math.min(radius, height - 1); row += 1) {
+    const offset = row * width;
+    for (let column = 0; column < width; column += 1) sums[column] += source[offset + column];
+  }
+  for (let row = 0; row < height; row += 1) {
+    const before = row - radius - 1, after = row + radius + 1, leaving = row - radius,
+      hasBefore = before >= 0, hasAfter = after < height,
+      beforeOffset = before * width, afterOffset = after * width,
+      leavingOffset = leaving * width, offset = row * width;
+    for (let column = 0; column < width; column += 1) {
+      const outer =
+        (hasBefore ? source[beforeOffset + column] : 0) +
+        (hasAfter ? source[afterOffset + column] : 0);
+      let sum = sums[column];
+      target[offset + column] = weight * (sum + alpha * outer);
+      if (hasAfter) sum += source[afterOffset + column];
+      if (leaving >= 0) sum -= source[leavingOffset + column];
+      sums[column] = sum;
+    }
+  }
+}
+
+/**
  * Gaussian-blur an 8-bit alpha plane with a fractional standard deviation
  * (`sigma` = the feather radius in px). Cost is independent of the radius.
  * Pixels outside the plane count as transparent, like canvas `blur()`.
@@ -134,9 +173,9 @@ export function featherAlpha(
       boxPass(current, scratch, row * width, width, 1, radius, extension);
     [current, scratch] = [scratch, current];
   }
+  const sums = new Float64Array(width);
   for (let pass = 0; pass < FEATHER_BOX_PASSES; pass += 1) {
-    for (let column = 0; column < width; column += 1)
-      boxPass(current, scratch, column, height, width, radius, extension);
+    columnPass(current, scratch, sums, width, height, radius, extension);
     [current, scratch] = [scratch, current];
   }
   for (let index = 0; index < size; index += 1)

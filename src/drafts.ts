@@ -1080,7 +1080,7 @@ export async function draftOpenElsewhere(id: string): Promise<boolean> {
 }
 
 export const LOCAL_CONFLICT =
-  'This draft changed in another tab. Save a local copy to keep your edits.';
+  'This draft changed in another tab. Duplicate the draft to keep your edits.';
 const PENDING_DRAFT_PREFIX = 'pixelforge:pending-draft:';
 const MAX_PENDING_DRAFT_BYTES = 4 * 1024 * 1024;
 

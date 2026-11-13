@@ -1,4 +1,4 @@
-import { validPatternId, type PatternId } from './patternStamp.ts';
+import { patternUsesForeground, validPatternId, type PatternId } from './patternStamp.ts';
 import { blendColorAt, validBlendMode, type LayerBlendMode } from './blendModes.ts';
 import { gaussianBoxHalfWidths } from './filterEffects.ts';
 
@@ -1074,17 +1074,7 @@ export function applyLayerStylesPixels(
         const i = (y * width + x) * 4;
         const tileX = ((x % size) + size) % size;
         const tileY = ((y % size) + size) % size;
-        const third = Math.max(1, Math.floor(size / 3));
-        const half = Math.max(1, Math.floor(size / 2));
-        const useForeground = styles.patternOverlay.pattern === 'checker'
-          ? (Math.floor(tileX / half) + Math.floor(tileY / half)) % 2 === 0
-          : styles.patternOverlay.pattern === 'stripes'
-            ? Math.floor((tileX + tileY) / third) % 2 === 0
-            : styles.patternOverlay.pattern === 'diagonal'
-              ? (tileX + tileY) % size < half
-              : styles.patternOverlay.pattern === 'grid'
-                ? tileX < 2 || tileY < 2
-                : (tileX - half) * (tileX - half) + (tileY - half) * (tileY - half) <= Math.max(1, Math.floor(size * 0.18)) ** 2;
+        const useForeground = patternUsesForeground(styles.patternOverlay.pattern, tileX, tileY, size);
         const pattern = useForeground ? foreground : background;
         over(output, i, pattern[0], pattern[1], pattern[2], source[i + 3] * styles.patternOverlay.opacity);
       }

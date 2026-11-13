@@ -173,6 +173,30 @@ few moves that each carry many samples, with the release flushing the rest.
   same stroke delivered visibly one sample per move, with the curve's peaks
   painted (Brush, Pencil, Eraser, Smudge, Dodge, Blur, Clone; desktop and
   mobile). `tests/pointer-samples.test.mjs` covers the sample helper.
+- Previews never wait on a frame alone: the preview scheduler and the Silk
+  strands overlay use `requestFrameOrTimeout` (`src/previewScheduler.ts`),
+  which runs on the next animation frame or a fallback timer, so a stroke
+  made while hidden previews and commits before the page is shown.
+
+### Stroke start and end
+
+A single-press stroke owns its pointer from press to release, and a new
+stroke never inherits the previous stroke's last point
+(`src/strokeLifecycle.ts`). Browsers can drop a pointerup (a hidden tab or
+pane, a window switch); a mouse or pen keeps the same pointerId for every
+press, so a dropped release used to let the next press and the hover path
+before it continue the old stroke as a straight line.
+
+- A move of the owning pointer with no buttons pressed ends the stroke at its
+  last position, as a release there.
+- A new press of the owning mouse or pen ends the live stroke first, then
+  starts its own. Touch contacts have their own pointerIds and are not
+  affected; click-to-place tools (lassos, pens) are exempt.
+- Moves buffered while a trimmed paint layer grows are replayed only up to
+  the press's release and never include hover samples.
+- `tests/browser/stroke-lifecycle.spec.ts` covers hidden-tab strokes, lost
+  releases with hover paths, and press-without-release dab series (desktop
+  and mobile); `tests/stroke-lifecycle.test.mjs` covers the rules.
 
 ## Acceptance tests
 

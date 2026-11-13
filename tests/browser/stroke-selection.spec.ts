@@ -138,7 +138,8 @@ test('feathered lasso and compound Add selections are stroked along their compos
   await settled(page);
   const frame = await projectFrame(page);
   expect(frame.selection.mask).toBeTruthy();
-  expect(frame.selection.feather).toBe(3);
+  // The 3 px feather is already resolved into the composed mask, which is never feathered again.
+  expect(frame.selection.feather).toBe(0);
 
   await stroke(page, { width: '2', position: 'Inside' });
   // Outer edges of the union are stroked: left of the first lasso, right of the second.

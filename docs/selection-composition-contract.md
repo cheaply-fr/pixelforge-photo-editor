@@ -12,7 +12,12 @@ mode controls deterministic alpha composition:
 The operation copies both inputs, rejects mismatched or oversized masks and
 never mutates source pixels or the previous selection. The composed mask is
 stored as a local document asset so undo, reload and project export retain the
-exact alpha values. No inference provider or upload is involved. Pure tests
+exact alpha values. Both sides are resolved (feather, inversion and transform
+applied) before composing, so the stored result has feather 0, is not inverted
+and has no matrix (`composedSelection` in `src/selectionComposition.ts`);
+repeated feathered Adds therefore leave earlier edges unchanged instead of
+feathering them again on every render. Masks saved earlier with a feather keep
+loading and render with that feather once. No inference provider or upload is involved. Pure tests
 cover each operation, detached buffers, no-op detection and malformed input;
 the protected desktop/mobile Color Range acceptance tests verify both
 geometric-to-raster intersection and raster-to-geometric subtraction with soft

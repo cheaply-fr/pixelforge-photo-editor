@@ -5,7 +5,7 @@ import { EDIT_FILL_CONTENTS, editFillColor, normalizeEditFillOptions } from '../
 const colors = { foreground: '#FF5C35', background: '#102030', color: '#00ff7f' };
 
 test('fill contents resolve to exact colours', () => {
-  assert.deepEqual(EDIT_FILL_CONTENTS.map((item) => item.value), ['foreground', 'background', 'color', 'black', 'white', 'gray']);
+  assert.deepEqual(EDIT_FILL_CONTENTS.map((item) => item.value), ['foreground', 'background', 'color', 'black', 'white', 'gray', 'pattern']);
   assert.equal(editFillColor('foreground', colors), '#ff5c35');
   assert.equal(editFillColor('background', colors), '#102030');
   assert.equal(editFillColor('color', colors), '#00ff7f');

@@ -89,6 +89,16 @@ import {
   type Draft,
   type Settings,
 } from '../src/drafts';
+import {
+  DUPLICATE_DRAFT_DESCRIPTION,
+  DUPLICATE_DRAFT_LABEL,
+  DUPLICATE_DRAFT_NOTICE,
+  manualSaveNotice,
+  SAVE_DRAFT_DESCRIPTION,
+  SAVE_DRAFT_LABEL,
+  SAVED_ON_DEVICE,
+  savedOnDeviceStatus,
+} from '../src/draftSaveStatus';
 import { PORTABLE_MAX_BYTES, readPortableBundle, writePortableBundle } from '../src/portableBundle';
 import { DEFAULT_DEINTERLACE_SETTINGS } from '../src/deinterlace';
 import {
@@ -316,7 +326,13 @@ import {
   strokeSelectionAlpha,
   type StrokeSelectionOptions,
 } from '../src/strokeSelection';
-import { editFillColor, type EditFillOptions } from '../src/editFill';
+import {
+  editFillColor,
+  editFillImagePatternId,
+  editFillPatternTile,
+  renderEditFillPattern,
+  type EditFillOptions,
+} from '../src/editFill';
 import StrokePathDialog, { type StrokePathRequest } from '../src/StrokePathDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
@@ -501,7 +517,7 @@ import { decodeTiffComposite } from '../src/tiff';
 import { prepareSvgBytes } from '../src/svg';
 import { svgImportLayers, svgImportNotice } from '../src/svgImportLayers';
 import { multiplyMatrix } from '../src/svgImport';
-import { renderSelection } from '../src/selections';
+import { renderSelection, selectionAlpha } from '../src/selections';
 import {
   brushSegmentRect,
   brushStampReach,
@@ -559,7 +575,7 @@ import { traceAlphaContours } from '../src/alphaContours';
 import { CORNER_RADIUS_MAX, clampCornerRadius, roundedRectNodes, roundedRectPoints, shapeDragBox, shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
 import { CUSTOM_SHAPE_LIBRARY, DEFAULT_CUSTOM_SHAPE_ID, PATH_PRESET_SHAPE_PREFIX, validCustomShapeChoice, customShapeAspect, customShapeEntry, customShapePath, customShapeThumbnailPath, fitPathToBox } from '../src/customShapeLibrary';
 import { quickSelectionMask } from '../src/quickSelection';
-import { composeSelectionAlpha } from '../src/selectionComposition';
+import { composeSelectionAlpha, composedSelection } from '../src/selectionComposition';
 import {
   createQuickMask,
   loadSelection,
@@ -639,6 +655,13 @@ import {
   type BrushSpacingState,
 } from '../src/brushSize';
 import { precedingCoalescedSamples } from '../src/pointerSamples';
+import { requestFrameOrTimeout, type FrameRequest } from '../src/previewScheduler';
+import {
+  isHoverSample,
+  moveShowsLostRelease,
+  pressShowsLostRelease,
+  shouldBufferStrokeMove,
+} from '../src/strokeLifecycle';
 import {
   BRUSH_PRESSURE_CURVES,
   mapBrushPressure,
@@ -693,6 +716,7 @@ import {
   clampViewZoom,
   fillViewZoom,
   fitViewZoom,
+  usableStageSize,
   formatViewZoom,
   scrubbyViewZoom,
   nearestZoomStepIndex,
@@ -1496,21 +1520,40 @@ const SIDEBAR_PANEL_ICONS: Record<SidebarPanelId, typeof Brush> = {
 };
 /** Panels whose controls work before a document is open. */
 const PANELS_WITHOUT_DOCUMENT: ReadonlySet<SidebarPanelId> = new Set(['adjustments', 'filters', 'transform', 'projects']);
-/** Fitted view zoom for an image inside the stage, excluding its padding. */
-function fittedZoom(element: HTMLElement | null, width: number, height: number) {
-  if (!element) return 100;
-  const style = window.getComputedStyle(element);
+/**
+ * Inner (content) size of the stage. A hidden tab or pane, or a layout still
+ * settling, can report 0×0; `fitViewZoom` then keeps the fallback zoom.
+ */
+function stageContentSize(element: HTMLElement) {
+  const style = window.getComputedStyle(element),
+    px = (value: string) => {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+  return {
+    width: element.clientWidth - px(style.paddingLeft) - px(style.paddingRight),
+    height: element.clientHeight - px(style.paddingTop) - px(style.paddingBottom),
+  };
+}
+/**
+ * Fitted view zoom for an image inside the stage, excluding its padding.
+ * `fallback` is kept when the stage has no usable size (never the 1% floor).
+ */
+function fittedZoom(element: HTMLElement | null, width: number, height: number, fallback = 100) {
+  if (!element) return clampViewZoom(fallback);
+  const stageSize = stageContentSize(element);
   return fitViewZoom({
     imageWidth: width,
     imageHeight: height,
-    stageWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
-    stageHeight: element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+    stageWidth: stageSize.width,
+    stageHeight: stageSize.height,
+    fallback,
   });
 }
 /** Fitted zoom for a draft's current frame (used when it has no viewZoom). */
-function fittedDraftZoom(element: HTMLElement | null, draft: Draft) {
+function fittedDraftZoom(element: HTMLElement | null, draft: Draft, fallback?: number) {
   const frame = draft.history[draft.index];
-  return frame ? fittedZoom(element, frame.w, frame.h) : undefined;
+  return frame ? fittedZoom(element, frame.w, frame.h, fallback) : undefined;
 }
 /**
  * Tools whose Tool options section is titled with the tool name and holds
@@ -2085,7 +2128,7 @@ type Gesture = {
   strands?: {
     settings: BrushStrandSettings;
     points: StrandInputPoint[];
-    frameRequest?: number;
+    frameRequest?: FrameRequest;
   };
   /**
    * Asset id `buffer` was drawn from when its writes are tracked
@@ -3055,11 +3098,7 @@ const frameSelectionMask = async (
   assets: Assets,
 ): Promise<Uint8ClampedArray | undefined> => {
   if (!selection) return undefined;
-  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
-    data = rendered.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
-    mask = new Uint8ClampedArray(frame.w * frame.h);
-  for (let pixel = 0; pixel < mask.length; pixel += 1) mask[pixel] = data[pixel * 4 + 3];
-  return mask;
+  return selectionAlpha(selection, frame.w, frame.h, assets);
 };
 /**
  * Run one stroke segment of a buffer-based paint or retouch tool, confined to
@@ -3287,10 +3326,7 @@ const selectionMaskForLayer = async (
   assetHeight?: number,
 ): Promise<Uint8ClampedArray | undefined> => {
   if (!selection) return undefined;
-  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
-    frameData = rendered
-      .getContext('2d')!
-      .getImageData(0, 0, frame.w, frame.h).data,
+  const frameAlpha = await selectionAlpha(selection, frame.w, frame.h, assets),
     asset =
       assetWidth && assetHeight
         ? undefined
@@ -3304,7 +3340,7 @@ const selectionMaskForLayer = async (
       const frameX = Math.floor(a * (x + 0.5) + c * (y + 0.5) + e),
         frameY = Math.floor(b * (x + 0.5) + d * (y + 0.5) + f);
       if (frameX >= 0 && frameX < frame.w && frameY >= 0 && frameY < frame.h)
-        mask[y * width + x] = frameData[(frameY * frame.w + frameX) * 4 + 3];
+        mask[y * width + x] = frameAlpha[frameY * frame.w + frameX];
     }
   return mask;
 };
@@ -4321,7 +4357,10 @@ export default function Home() {
   const saveQueue = useRef(Promise.resolve());
   const saveSequence = useRef(0),
     saving = useRef(false),
-    discarding = useRef(false);
+    discarding = useRef(false),
+    // Set by Save draft; the next local save to settle reports its result.
+    manualSavePending = useRef(false);
+  const [manualSaveNonce, setManualSaveNonce] = useState(0);
   const { member, checking, unavailable: signInUnavailable, retry: retrySignIn } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
@@ -4361,7 +4400,17 @@ export default function Home() {
       : null;
   const filterEffects =
     filterStackEditIndex !== null ? filterStackEntries[filterStackEditIndex].effect : liveFilterEffects;
-  const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
+  // A draft being opened reports its layer progress (and whether its saved
+  // picture is already shown) until the document is installed.
+  const openingProgress =
+    (!frame || doc.openingPreview) && doc.rendering && renderProgress && renderProgress.total > 1
+      ? renderProgress
+      : null;
+  const dimensions = frame
+    ? `${frame.w} × ${frame.h} px`
+    : openingProgress
+      ? `Opening… ${openingProgress.completed}/${openingProgress.total} layers`
+      : 'Opening…',
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
@@ -4503,14 +4552,15 @@ export default function Home() {
     context.setTransform(1, 0, 0, 1, 0, 0);
     overlay.dataset.strands = String(strands.length);
   };
-  /** At most one overlay redraw per animation frame. */
+  /** At most one overlay redraw per animation frame (or fallback timer). */
   const scheduleStrandPreview = (g: Gesture) => {
     if (!g.strands || g.strands.frameRequest !== undefined) return;
     if (strandOverlayClear.current) {
       window.clearTimeout(strandOverlayClear.current.timer);
       strandOverlayClear.current = null;
     }
-    g.strands.frameRequest = requestAnimationFrame(() => {
+    // A hidden tab or pane runs no frames; the timer keeps the preview going.
+    g.strands.frameRequest = requestFrameOrTimeout(() => {
       if (!g.strands) return;
       g.strands.frameRequest = undefined;
       if (gesture.current === g && !g.released) drawStrandPreview(g);
@@ -4682,10 +4732,17 @@ export default function Home() {
    * so a new stroke can never continue a stroke from a different press.
    */
   const gesturePointer = useRef<number | null>(null);
+  /**
+   * Client position of the gesture's latest press or move: where a stroke
+   * whose release was lost ends (see `src/strokeLifecycle.ts`).
+   */
+  const gestureClient = useRef<{ x: number; y: number } | null>(null);
   /** timeStamp of the press that began the current stroke (see applyCoalescedSamples). */
   const pressTime = useRef<number | undefined>(undefined);
   const paintSpan = useRef<PerformanceSpan | null>(null);
   const viewZoomRef = useRef(viewZoom);
+  /** An opened document is still to be fitted once the stage has a size. */
+  const pendingFit = useRef(false);
   /** Image box and client anchor captured before a zoom, applied after commit. */
   const zoomAnchor = useRef<{ before: DOMRect; x: number; y: number } | null>(null);
   /**
@@ -4693,6 +4750,7 @@ export default function Home() {
    * coordinates; the stage centre by default) in place.
    */
   const setZoomAround = (target: number, anchor?: { x: number; y: number }) => {
+    pendingFit.current = false;
     const next = clampViewZoom(target);
     const previous = viewZoomRef.current;
     const element = stage.current,
@@ -4717,17 +4775,48 @@ export default function Home() {
   const zoomBy = (direction: 1 | -1, anchor?: { x: number; y: number }) =>
     setZoomAround(stepViewZoom(viewZoomRef.current, direction), anchor);
   const fitZoom = () => {
-    const next = fittedZoom(stage.current, frame?.w ?? 0, frame?.h ?? 0);
+    pendingFit.current = false;
+    const next = fittedZoom(stage.current, frame?.w ?? 0, frame?.h ?? 0, viewZoomRef.current);
     setViewZoomState(next);
     viewZoomRef.current = next;
     requestAnimationFrame(() => stage.current?.scrollTo({ left: 0, top: 0 }));
     return next;
   };
+  /**
+   * Fit zoom for a document being opened. A stage without a usable size (a
+   * hidden tab or pane, a layout still settling) keeps the current zoom and
+   * fits once the stage is measurable again.
+   */
+  const openingFitZoom = (width: number, height: number) => {
+    const element = stage.current,
+      size = element ? stageContentSize(element) : undefined;
+    pendingFit.current = !size || !usableStageSize(size.width, size.height);
+    return fittedZoom(element, width, height, viewZoomRef.current);
+  };
   const zoomByRef = useRef(zoomBy);
+  const deferredFit = useRef(() => undefined as void);
   useLayoutEffect(() => {
     viewZoomRef.current = viewZoom;
     zoomByRef.current = zoomBy;
+    deferredFit.current = () => {
+      const element = stage.current;
+      if (!pendingFit.current || !element || !frame) return;
+      const size = stageContentSize(element);
+      if (usableStageSize(size.width, size.height)) fitZoom();
+    };
   });
+  useEffect(() => {
+    const run = () => deferredFit.current();
+    document.addEventListener('visibilitychange', run);
+    window.addEventListener('resize', run);
+    const observer = typeof ResizeObserver === 'function' && stage.current ? new ResizeObserver(run) : undefined;
+    if (observer && stage.current) observer.observe(stage.current);
+    return () => {
+      document.removeEventListener('visibilitychange', run);
+      window.removeEventListener('resize', run);
+      observer?.disconnect();
+    };
+  }, []);
   // Once the new size is laid out, scroll so the anchored image point is
   // back under the pointer (or the stage centre).
   useLayoutEffect(() => {
@@ -4876,7 +4965,11 @@ export default function Home() {
   };
   const restoreSettings = useCallback((s: Settings, fallbackZoom?: number) => {
     setTool(s.tool);
-    if (validViewZoom(s.viewZoom)) setViewZoomState(s.viewZoom);
+    // A restored zoom replaces any fit still waiting for a measurable stage.
+    if (validViewZoom(s.viewZoom)) {
+      pendingFit.current = false;
+      setViewZoomState(s.viewZoom);
+    }
     // Older drafts stored a stage-relative zoom; fit those to the window.
     else if (fallbackZoom !== undefined) setViewZoomState(fallbackZoom);
     setViewRotation(normalizeViewRotation(s.viewRotation ?? 0));
@@ -7333,7 +7426,7 @@ export default function Home() {
       image.data[offset + 3] = composed.mask[index];
     }
     merged.getContext('2d')!.putImageData(image, 0, 0);
-    return { selection: { ...next, mask: undefined }, mask: merged };
+    return { selection: composedSelection(next), mask: merged };
   };
   const isCurrentSelectionOperation = (
     frame: Frame,
@@ -9470,7 +9563,7 @@ export default function Home() {
       clearCloud();
       setName(title.slice(0, 160));
       setMetadata({ ...DEFAULT_DOCUMENT_METADATA });
-      setViewZoomState(fittedZoom(stage.current, f.w, f.h));
+      setViewZoomState(openingFitZoom(f.w, f.h));
       return true;
     }
     return false;
@@ -9570,7 +9663,7 @@ export default function Home() {
       setDraftId(createDraftId());
       setName(copy.name);
       setMetadata(effectiveDocumentMetadata(copy.metadata));
-      restoreSettings(copy.settings, fittedDraftZoom(stage.current, copy));
+      restoreSettings(copy.settings, fittedDraftZoom(stage.current, copy, viewZoomRef.current));
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
@@ -9616,7 +9709,7 @@ export default function Home() {
             openingDraftId.current,
             saved.localRevision || 0,
           );
-          restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved));
+          restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved, viewZoomRef.current));
           const restoredMask = saved.history[saved.index].quickMask;
           if (restoredMask?.active) {
             try {
@@ -9686,7 +9779,7 @@ export default function Home() {
         x.stroke();
       }
       commitDocument(rasterFrame(c, assets.current, 'Background', true), true);
-      setViewZoomState(fittedZoom(stage.current, c.width, c.height));
+      setViewZoomState(openingFitZoom(c.width, c.height));
       setReady(true);
     })();
     return () => {
@@ -9828,24 +9921,34 @@ export default function Home() {
       .then(() => {
         if (sequence === saveSequence.current) {
           saving.current = false;
-          setSaveStatus('Saved on this device');
+          if (manualSavePending.current) {
+            manualSavePending.current = false;
+            const status = savedOnDeviceStatus(new Date());
+            setSaveStatus(status);
+            setNotice(manualSaveNotice(status));
+          } else setSaveStatus(SAVED_ON_DEVICE);
         }
       })
       .catch((error: unknown) => {
         if (sequence === saveSequence.current) {
           saving.current = true;
-          setSaveStatus(
+          const status =
             error instanceof Error && error.message === LOCAL_CONFLICT
               ? LOCAL_CONFLICT
               : error instanceof Error && error.message === LOCAL_STORAGE_FULL
                 ? LOCAL_STORAGE_FULL
-                : 'Local save failed — export a copy',
-          );
+                : 'Local save failed — export a copy';
+          setSaveStatus(status);
+          if (manualSavePending.current) {
+            manualSavePending.current = false;
+            setNotice(manualSaveNotice(status));
+          }
         }
       });
   }, [
     ready,
     revision,
+    manualSaveNonce,
     audioClips,
     draftId,
     cloud,
@@ -10082,7 +10185,7 @@ export default function Home() {
         generation: result.generation,
         owner: member.id,
       });
-      restoreSettings(result.document.settings, fittedDraftZoom(stage.current, result.document));
+      restoreSettings(result.document.settings, fittedDraftZoom(stage.current, result.document, viewZoomRef.current));
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
@@ -10142,7 +10245,7 @@ export default function Home() {
       clearCloud();
       setName(saved.name);
       setMetadata(effectiveDocumentMetadata(saved.metadata));
-      restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved));
+      restoreSettings(saved.settings, fittedDraftZoom(stage.current, saved, viewZoomRef.current));
       setNotice('Project opened with editable layers and history');
     } catch (error) {
       setNotice(
@@ -10379,6 +10482,16 @@ export default function Home() {
       setSaveStatus('Could not discard the draft. Please try again.');
     }
   };
+  // Explicit "Save draft": re-run the local autosave now and report when it
+  // settles. Local IndexedDB only — never a download or a cloud upload.
+  const saveDraftNow = () => {
+    if (!ready || recovering || discarding.current || index.current < 0) {
+      setNotice('The draft is still opening. Try Save draft again in a moment.');
+      return;
+    }
+    manualSavePending.current = true;
+    setManualSaveNonce((value) => value + 1);
+  };
   const reloadNewerDraft = async () => {
     if (saveStatus !== LOCAL_CONFLICT || recovering) return;
     const expectedRevision = localVersions.current.get(draftId) || 0;
@@ -10400,12 +10513,12 @@ export default function Home() {
       setName(latest.name);
       setMetadata(effectiveDocumentMetadata(latest.metadata));
       setCloud(latest.cloud);
-      restoreSettings(latest.settings, fittedDraftZoom(stage.current, latest));
+      restoreSettings(latest.settings, fittedDraftZoom(stage.current, latest, viewZoomRef.current));
       localVersions.current.set(draftId, latest.localRevision);
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
-      setSaveStatus('Saved on this device');
+      setSaveStatus(SAVED_ON_DEVICE);
       setNotice('Newer draft restored from this browser');
     } catch (error) {
       setSaveStatus(
@@ -11252,8 +11365,7 @@ export default function Home() {
   const selectionCoversNothing = async (f: Frame) => {
     if (!f.selection) return false;
     if (isExplicitEmptySelection(f.selection)) return true;
-    const rendered = await renderSelection(f.selection, f.w, f.h, assets.current);
-    return selectionCoverageIsEmpty(rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data);
+    return selectionCoverageIsEmpty(await selectionAlpha(f.selection, f.w, f.h, assets.current), false);
   };
   /** Edit > Fill… / Shift+F5: check the target, then ask for contents. */
   const openEditFill = async () => {
@@ -11304,12 +11416,28 @@ export default function Home() {
       context.drawImage(image, 0, 0);
       const fill = surface(output.width, output.height),
         fillContext = fill.getContext('2d')!;
-      fillContext.fillStyle = editFillColor(options.contents, {
-        foreground: color,
-        background: backgroundColor,
-        color: options.color,
-      });
-      fillContext.fillRect(0, 0, fill.width, fill.height);
+      // Pattern contents: the Pattern Stamp tile (or a defined image pattern)
+      // repeated from the layer origin; the selection is applied below.
+      let patternTile: { width: number; height: number; data: ArrayLike<number> } | undefined;
+      if (options.contents === 'pattern') {
+        if (!options.pattern) throw new Error('Fill pattern is missing');
+        const imageId = editFillImagePatternId(options.pattern.source);
+        patternTile = imageId
+          ? await imagePatternTile(imageId)
+          : editFillPatternTile(options.pattern, { foreground: color, background: backgroundColor });
+        if (!patternTile) {
+          setNotice('That pattern is no longer defined');
+          return;
+        }
+      } else {
+        fillContext.fillStyle = editFillColor(options.contents, {
+          foreground: color,
+          background: backgroundColor,
+          color: options.color,
+        });
+        fillContext.fillRect(0, 0, fill.width, fill.height);
+      }
+      let maskData: Uint8ClampedArray | undefined;
       if (f.selection) {
         if (isExplicitEmptySelection(f.selection)) {
           setNotice(EMPTY_SELECTION_NOTICE);
@@ -11323,13 +11451,22 @@ export default function Home() {
           output.width,
           output.height,
         );
-        if (selectionCoverageIsEmpty(mask.getContext('2d')!.getImageData(0, 0, mask.width, mask.height).data)) {
+        maskData = mask.getContext('2d')!.getImageData(0, 0, mask.width, mask.height).data;
+        if (selectionCoverageIsEmpty(maskData)) {
           setNotice(EMPTY_SELECTION_NOTICE);
           return;
         }
-        fillContext.globalCompositeOperation = 'destination-in';
-        fillContext.drawImage(mask, 0, 0);
+        if (!patternTile) {
+          fillContext.globalCompositeOperation = 'destination-in';
+          fillContext.drawImage(mask, 0, 0);
+        }
       }
+      if (patternTile)
+        fillContext.putImageData(
+          new ImageData(renderEditFillPattern(fill.width, fill.height, patternTile, maskData), fill.width, fill.height),
+          0,
+          0,
+        );
       context.globalAlpha = options.opacity / 100;
       context.globalCompositeOperation = options.mode as GlobalCompositeOperation;
       context.drawImage(fill, 0, 0);
@@ -13361,8 +13498,21 @@ export default function Home() {
     e: React.PointerEvent<HTMLCanvasElement>,
     skipExpansion = false,
   ): Promise<void> => {
+    // A press of the pointer that still owns a live stroke means that
+    // stroke's release was lost. End it where it was drawn first, so this
+    // press starts a new stroke instead of being joined to the old one.
+    if (!skipExpansion) {
+      const pending = expansionPointer.current,
+        live = gesture.current;
+      if (pending && !pending.release && pending.pointerId === e.pointerId && e.pointerType !== 'touch')
+        pending.release = lostReleaseEvent(e);
+      else if (!pending && live && pressShowsLostRelease(strokeState(live), gesturePointer.current, e))
+        await pointerUp(lostReleaseEvent(e)).then(dropUnusedExpansion);
+    }
     // A replayed press (trimmed-layer expansion) keeps the original time.
     if (Number.isFinite(e.timeStamp)) pressTime.current = e.timeStamp;
+    // A press that can start a gesture is where that gesture is, until it moves.
+    if (!gesture.current && !expansionPointer.current) gestureClient.current = { x: e.clientX, y: e.clientY };
     if (quickMasking && quickMaskRef.current) {
       if (gesture.current || quickMaskGesture.current || doc.rendering) return;
       paintSpan.current?.cancel();
@@ -13589,11 +13739,7 @@ export default function Home() {
             context.getImageData(0, 0, f.w, f.h).data,
           );
           if (f.selection) {
-            const selectionCanvas = await renderSelection(f.selection, f.w, f.h, assets.current),
-              alpha = selectionCanvas.getContext('2d')!.getImageData(0, 0, f.w, f.h).data;
-            g.quickSelectionExisting = new Uint8ClampedArray(f.w * f.h);
-            for (let index = 0; index < g.quickSelectionExisting.length; index += 1)
-              g.quickSelectionExisting[index] = alpha[index * 4 + 3];
+            g.quickSelectionExisting = await selectionAlpha(f.selection, f.w, f.h, assets.current);
             if (g.quickSelectionOperation !== 'replace')
               g.quickSelectionBase = g.quickSelectionExisting.slice();
           }
@@ -13645,18 +13791,7 @@ export default function Home() {
       g.pending = (async () => {
         try {
           if (f.selection) {
-            const rendered = await renderSelection(
-              f.selection,
-              f.w,
-              f.h,
-              assets.current,
-            );
-            const alpha = rendered
-              .getContext('2d')!
-              .getImageData(0, 0, f.w, f.h).data;
-            g.selectionExisting = new Uint8ClampedArray(f.w * f.h);
-            for (let index = 0; index < g.selectionExisting.length; index += 1)
-              g.selectionExisting[index] = alpha[index * 4 + 3];
+            g.selectionExisting = await selectionAlpha(f.selection, f.w, f.h, assets.current);
             if (g.selectionBrushOperation !== 'replace')
               g.selectionBase = g.selectionExisting.slice();
           }
@@ -13717,6 +13852,7 @@ export default function Home() {
     // joined to that stroke.
     if (gesture.current || !frame || (!skipExpansion && expansionPointer.current)) return;
     gesturePointer.current = e.pointerId;
+    gestureClient.current = { x: e.clientX, y: e.clientY };
     if (
       !skipExpansion &&
       !quickMasking &&
@@ -15599,6 +15735,26 @@ export default function Home() {
    * tools (lassos and pens) keep one gesture across several presses, which
    * may each use a new pointer id on touch.
    */
+  const strokeState = (g: Gesture) => ({
+    released: g.released,
+    multiPress: MULTI_PRESS_GESTURE_TOOLS.includes(g.tool),
+  });
+  /**
+   * A pointerup standing in for one the browser never delivered: it releases
+   * the gesture's own pointer at the gesture's last position, so the stroke
+   * ends where it was drawn and gains no segment towards `e`.
+   */
+  const lostReleaseEvent = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const at = gestureClient.current ?? { x: e.clientX, y: e.clientY };
+    return Object.create(e, {
+      type: { value: 'pointerup' },
+      clientX: { value: at.x },
+      clientY: { value: at.y },
+      buttons: { value: 0 },
+      pressure: { value: 0 },
+      pointerId: { value: expansionPointer.current?.pointerId ?? gesturePointer.current ?? e.pointerId },
+    }) as React.PointerEvent<HTMLCanvasElement>;
+  };
   const ownsGesture = (g: Gesture, e: React.PointerEvent<HTMLCanvasElement>) =>
     MULTI_PRESS_GESTURE_TOOLS.includes(g.tool) ||
     gesturePointer.current === null ||
@@ -15635,12 +15791,26 @@ export default function Home() {
       return;
     }
     if (expansionPointer.current) {
-      if (expansionPointer.current.pointerId === e.pointerId && expansionPointer.current.moves.length < 4096)
-        expansionPointer.current.moves.push(e);
+      const pending = expansionPointer.current;
+      // Only pressed moves before the release belong to the starting stroke;
+      // a hover after a lost release ends it there instead.
+      if (shouldBufferStrokeMove(pending, e)) {
+        pending.moves.push(e);
+        gestureClient.current = { x: e.clientX, y: e.clientY };
+      } else if (!intermediate && pending.pointerId === e.pointerId && !pending.release && isHoverSample(e))
+        pending.release = lostReleaseEvent(e);
       return;
     }
     const g = gesture.current;
     if (!g || g.released || !ownsGesture(g, e)) return;
+    // Nothing is pressed any more, yet no pointerup arrived (a hidden tab or
+    // pane, a window switch): end the stroke where it last was rather than
+    // painting the hover path into it.
+    if (!intermediate && moveShowsLostRelease(strokeState(g), e)) {
+      void pointerUp(lostReleaseEvent(e)).then(dropUnusedExpansion);
+      return;
+    }
+    gestureClient.current = { x: e.clientX, y: e.clientY };
     // The browser may merge several pointer samples into one move event (one
     // per animation frame, and almost none while the page is hidden); apply
     // each of them so fast flicks, pen curves and background strokes keep
@@ -17582,13 +17752,14 @@ export default function Home() {
     fillScreen = () => {
       const element = stage.current;
       if (!element || !frame) return;
-      const style = window.getComputedStyle(element);
+      const stageSize = stageContentSize(element);
       const next = setZoomAround(
         fillViewZoom({
           imageWidth: frame.w,
           imageHeight: frame.h,
-          stageWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
-          stageHeight: element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+          stageWidth: stageSize.width,
+          stageHeight: stageSize.height,
+          fallback: viewZoomRef.current,
         }),
       );
       setNotice(`Fill screen (${formatViewZoom(next)})`);
@@ -19667,6 +19838,9 @@ export default function Home() {
           foreground={color}
           background={backgroundColor}
           hasSelection={Boolean(frame.selection)}
+          imagePatterns={imagePatterns}
+          initialPattern={activeImagePattern ? `image:${activeImagePattern.id}` : patternId}
+          initialTileSize={patternTileSize}
           close={() => setEditFillOpen(false)}
           apply={(options) => {
             setEditFillOpen(false);
@@ -20131,14 +20305,23 @@ export default function Home() {
         </div>
         <div className="draft-actions">
           <button
+            className="draft-save"
+            disabled={!ready || recovering}
+            title={SAVE_DRAFT_DESCRIPTION}
+            onClick={saveDraftNow}
+          >
+            <Save aria-hidden="true" /> {SAVE_DRAFT_LABEL}
+          </button>
+          <button
             disabled={recovering}
+            title={DUPLICATE_DRAFT_DESCRIPTION}
             onClick={() => {
               setDraftId(createDraftId());
               clearCloud();
-              setNotice('New local copy created. The original draft is kept.');
+              setNotice(DUPLICATE_DRAFT_NOTICE);
             }}
           >
-            Save local copy
+            {DUPLICATE_DRAFT_LABEL}
           </button>
           {saveStatus === LOCAL_CONFLICT && (
             <button
@@ -20622,6 +20805,19 @@ export default function Home() {
                   objectFit: referenceObjectFit(frame.reference.fit),
                 }}
               />
+            )}
+            {openingProgress && (
+              <output
+                className="opening-progress"
+                data-testid="opening-progress"
+                data-preview={doc.openingPreview ? 'true' : 'false'}
+                aria-live="polite"
+              >
+                <span>
+                  {doc.openingPreview ? 'Saved picture shown · ' : ''}Opening draft… {openingProgress.completed}/{openingProgress.total} layers
+                </span>
+                <progress max={openingProgress.total} value={openingProgress.completed} aria-hidden="true" />
+              </output>
             )}
             {quickMasking && (
               <canvas

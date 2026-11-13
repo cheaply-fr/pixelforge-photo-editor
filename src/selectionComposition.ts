@@ -79,3 +79,18 @@ export function composeSelectionAlpha(
   }
   return { mask: output, changed };
 }
+
+/**
+ * The stored form of a composed (Add/Subtract/Intersect) selection. Both
+ * sides are resolved to alpha before composing, so feather, inversion and
+ * transform are already in the composed mask; keeping them on the result
+ * applied them again on every render, so each Add softened earlier edges
+ * once more. The caller then sets `mask` to the composed alpha asset.
+ */
+export function composedSelection<
+  T extends { feather: number; inverted: boolean; matrix?: unknown; mask?: string },
+>(next: T): T {
+  const result = { ...next, mask: undefined, feather: 0, inverted: false };
+  delete result.matrix;
+  return result;
+}

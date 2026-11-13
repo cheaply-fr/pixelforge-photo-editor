@@ -56,7 +56,7 @@ test('content keys hash to stable fixed-length ids', async () => {
 test('without IndexedDB the store is a silent miss and never throws', async () => {
   const store = new PersistentLayerCache(PERSIST_DESKTOP_BYTES, () => { throw new Error('no canvas'); });
   assert.equal(await store.get('key'), undefined);
-  store.put('key', {}, 1000, 1000);
+  assert.equal(await store.put('key', {}, 1000, 1000), false, 'nothing stored');
   await store.flush();
   assert.equal(store.writes, 0);
   const off = new PersistentLayerCache(0, () => { throw new Error('no canvas'); });
