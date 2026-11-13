@@ -551,7 +551,7 @@ import { traceAlphaContours } from '../src/alphaContours';
 import { CORNER_RADIUS_MAX, clampCornerRadius, roundedRectNodes, roundedRectPoints, shapeDragBox, shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
 import { CUSTOM_SHAPE_LIBRARY, DEFAULT_CUSTOM_SHAPE_ID, PATH_PRESET_SHAPE_PREFIX, validCustomShapeChoice, customShapeAspect, customShapeEntry, customShapePath, customShapeThumbnailPath, fitPathToBox } from '../src/customShapeLibrary';
 import { quickSelectionMask } from '../src/quickSelection';
-import { composeSelectionAlpha } from '../src/selectionComposition';
+import { composeSelectionAlpha, composedSelection } from '../src/selectionComposition';
 import {
   createQuickMask,
   loadSelection,
@@ -7315,7 +7315,7 @@ export default function Home() {
       image.data[offset + 3] = composed.mask[index];
     }
     merged.getContext('2d')!.putImageData(image, 0, 0);
-    return { selection: { ...next, mask: undefined }, mask: merged };
+    return { selection: composedSelection(next), mask: merged };
   };
   const isCurrentSelectionOperation = (
     frame: Frame,

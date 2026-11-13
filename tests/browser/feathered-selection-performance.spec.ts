@@ -11,7 +11,7 @@ const W = 2646, H = 4096;
 type Geometry = { x: number; y: number; w: number; h: number; feather: number; inverted: boolean };
 
 type Project = {
-  history: Array<{ w: number; h: number; layers: Array<{ mask?: string }>; previousSelection?: Geometry }>;
+  history: Array<{ w: number; h: number; layers: Array<{ mask?: string }>; selection?: Geometry & { mask?: string }; previousSelection?: Geometry }>;
   index: number;
   assets: Record<string, { url: string; w: number; h: number }>;
 };
@@ -171,4 +171,38 @@ test('a feathered ellipse on a 2646 × 4096 document renders promptly with a sof
   // Before bounded rendering each step re-blurred the whole 10.8 MP canvas;
   // the bounds are generous so slower CI runners stay green.
   for (const [step, ms] of Object.entries(timings)) expect(ms, step).toBeLessThan(6_000);
+});
+
+test('repeated feathered Adds store a resolved mask and leave earlier edges unchanged', async ({ page }) => {
+  test.slow();
+  await selectTool(page, 'Rectangular Marquee');
+  await page.getByTestId('marquee-options').getByLabel('Feather (new selections)', { exact: true }).fill('20');
+  await drag(page, [0.1, 0.1], [0.3, 0.3]);
+  await expect(page.getByTestId('selection-outline')).toBeVisible({ timeout: 60_000 });
+  let saved = await project(page);
+  const first = saved.history[saved.index].selection!;
+  expect(first).toMatchObject({ feather: 20, inverted: false });
+  const row = Math.round(first.y + first.h / 2), until = Math.round(first.x + first.w / 2);
+
+  await page.getByLabel('Selection mode', { exact: true }).selectOption('add');
+  const edges: number[][] = [];
+  let previousMask: string | undefined;
+  for (const [start, end] of [[[0.6, 0.6], [0.8, 0.8]], [[0.6, 0.1], [0.8, 0.3]]] as const) {
+    await drag(page, [...start], [...end]);
+    // Composition is asynchronous: wait for the history entry with the new mask.
+    await expect.poll(async () => {
+      saved = await project(page);
+      const mask = saved.history[saved.index].selection?.mask;
+      return Boolean(mask) && mask !== previousMask;
+    }, { timeout: 60_000 }).toBe(true);
+    const composed = saved.history[saved.index].selection!;
+    previousMask = composed.mask;
+    // Feather is already in the composed mask; keeping it re-feathered on every render.
+    expect(composed).toMatchObject({ feather: 0, inverted: false });
+    expect(composed.mask).toBeTruthy();
+    edges.push((await maskProfile(page, saved.assets[composed.mask!], row)).alpha.slice(0, until));
+  }
+  // The first rectangle's soft left edge is the same after the second Add.
+  expect(edges[0].some((value) => value > 0 && value < 255)).toBe(true);
+  expect(edges[1]).toEqual(edges[0]);
 });
