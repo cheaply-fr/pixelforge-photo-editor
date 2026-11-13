@@ -12,6 +12,9 @@ import {
   nearestZoomStepIndex,
   stepViewZoom,
   validViewZoom,
+  fillViewZoom,
+  MIN_FIT_STAGE,
+  usableStageSize,
 } from '../src/viewZoom.ts';
 
 test('zoom steps are strictly increasing and span 1% to 3200%', () => {
@@ -98,4 +101,33 @@ test('anchored zoom keeps the image point under the pointer', () => {
 
 test('the legacy zoom written for older builds is inside their accepted range', () => {
   assert.ok(Number.isInteger(LEGACY_STAGE_ZOOM) && LEGACY_STAGE_ZOOM >= 20 && LEGACY_STAGE_ZOOM <= 140);
+});
+
+test('fitting into a zero-size or unmeasured stage keeps the current zoom, never 1%', () => {
+  const big = { imageWidth: 3000, imageHeight: 4000 };
+  // A hidden tab or pane reports a 0x0 stage; padding makes it negative.
+  assert.equal(fitViewZoom({ ...big, stageWidth: 0, stageHeight: 0 }), 100);
+  assert.equal(fitViewZoom({ ...big, stageWidth: 0, stageHeight: 0, fallback: 33.33 }), 33.33);
+  assert.equal(fitViewZoom({ ...big, stageWidth: 0, stageHeight: 900, padding: 40, fallback: 25 }), 25);
+  assert.equal(fitViewZoom({ ...big, stageWidth: 1200, stageHeight: 0, fallback: 25 }), 25);
+  assert.equal(fitViewZoom({ ...big, stageWidth: NaN, stageHeight: 800, fallback: 25 }), 25);
+  assert.equal(fitViewZoom({ ...big, stageWidth: 800, stageHeight: 800, padding: NaN }), 20);
+  // A fallback is itself clamped.
+  assert.equal(fitViewZoom({ ...big, stageWidth: 0, stageHeight: 0, fallback: 0 }), MIN_VIEW_ZOOM);
+  assert.equal(fitViewZoom({ ...big, stageWidth: 0, stageHeight: 0, fallback: NaN }), 100);
+  // A real stage still fits normally, even a small one.
+  assert.equal(fitViewZoom({ ...big, stageWidth: 300, stageHeight: 400, fallback: 50 }), 10);
+  assert.equal(fitViewZoom({ ...big, stageWidth: MIN_FIT_STAGE, stageHeight: MIN_FIT_STAGE, fallback: 50 }), MIN_VIEW_ZOOM);
+  assert.equal(fillViewZoom({ ...big, stageWidth: 0, stageHeight: 0, fallback: 40 }), 40);
+  assert.equal(fillViewZoom({ ...big, stageWidth: 300, stageHeight: 300, fallback: 40 }), 10);
+});
+
+test('a stage is usable only with finite sides of at least MIN_FIT_STAGE pixels', () => {
+  assert.equal(usableStageSize(800, 600), true);
+  assert.equal(usableStageSize(MIN_FIT_STAGE, MIN_FIT_STAGE), true);
+  assert.equal(usableStageSize(MIN_FIT_STAGE - 1, 600), false);
+  assert.equal(usableStageSize(0, 0), false);
+  assert.equal(usableStageSize(-80, 600), false);
+  assert.equal(usableStageSize(NaN, 600), false);
+  assert.equal(usableStageSize(Infinity, 600), false);
 });

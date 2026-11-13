@@ -499,6 +499,22 @@ Limitations: large Gaussian radii render full-frame (not tiled) and are an
 approximation (mean ≈ 0.35 levels, max ≤ 8 levels against an exact Gaussian
 on a hard-edged scene); the quick fills always use 100 % Normal.
 
+## Stroke lifecycle and zoom guard (`fix/stroke-lifecycle-zoom-guard`)
+
+The remaining reports from the same 3000 × 4000 painting session:
+
+| Issue | Change | Contract and tests |
+| --- | --- | --- |
+| A stroke crossing a hidden tab or app pane stalled (no preview until shown) | Gesture previews and the Silk strands overlay run on the next frame or a fallback timer (100 ms; 16 ms when the page is already hidden), so a stroke previews, releases and commits with frames paused | `brush-tool-contract.md`; `tests/preview-scheduler.test.mjs`, `tests/browser/stroke-lifecycle.spec.ts` |
+| Separate dabs joined by a straight line from the previous dab | A pointerup the browser never delivered (hidden page, window switch) left the stroke live; a mouse or pen keeps one pointerId, so the next press and the hover path extended it. A hover move (no buttons) or a new press of the owning pointer now ends the stroke at its last position; moves buffered while a trimmed layer grows stop at the release and skip hovers | `brush-tool-contract.md`; `tests/stroke-lifecycle.test.mjs`, browser spec |
+| Zoom reset to 1% on its own | Fit computed against a 0 × 0 stage (hidden pane, layout mid-resize) hit the 1% floor. Fit/Fill keep the current zoom when the stage is smaller than 8 px or unmeasurable; a document opened then is fitted once the stage has a size | `tests/view-zoom.test.mjs`, browser spec |
+
+Limitations: the exact live trigger of the 1% reset was not reproduced; the
+zero-size fit is the only path found that yields 1% without a user zoom
+action. A lost touch release is still not detected (each touch has its own
+pointerId), and a press during a stroke's commit is still ignored rather than
+queued.
+
 ## Latest protected release evidence
 
 The protected workflow run for the current merged release completed

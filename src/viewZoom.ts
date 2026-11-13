@@ -69,14 +69,34 @@ export function fitViewZoom(input: {
   stageHeight: number;
   padding?: number;
   maxFit?: number;
+  /**
+   * Zoom to keep when the stage has no usable size (see `usableStageSize`).
+   * Defaults to 100.
+   */
+  fallback?: number;
 }): number {
   const { imageWidth, imageHeight, stageWidth, stageHeight } = input;
-  const padding = input.padding ?? 0;
-  if (!(imageWidth > 0 && imageHeight > 0)) return 100;
-  const width = Math.max(1, stageWidth - padding * 2);
-  const height = Math.max(1, stageHeight - padding * 2);
+  const padding = Number.isFinite(input.padding) ? Math.max(0, input.padding ?? 0) : 0;
+  const fallback = clampViewZoom(input.fallback ?? 100);
+  if (!(imageWidth > 0 && imageHeight > 0)) return fallback;
+  const width = stageWidth - padding * 2;
+  const height = stageHeight - padding * 2;
+  if (!usableStageSize(width, height)) return fallback;
   const fit = Math.min(width / imageWidth, height / imageHeight) * 100;
   return clampViewZoom(Math.min(fit, input.maxFit ?? 100));
+}
+
+/**
+ * Smallest stage side (CSS pixels, after padding) a fit is computed for. A
+ * hidden tab or pane, a collapsed layout or a resize mid-layout reports a
+ * 0×0 (or NaN) stage; fitting a large image into that gave the 1% floor, so
+ * the zoom "reset to 1%" on its own. Below this size the current zoom stays.
+ */
+export const MIN_FIT_STAGE = 8;
+
+/** Whether a stage measurement is real enough to fit an image into. */
+export function usableStageSize(width: number, height: number): boolean {
+  return Number.isFinite(width) && Number.isFinite(height) && width >= MIN_FIT_STAGE && height >= MIN_FIT_STAGE;
 }
 
 /**
@@ -88,11 +108,13 @@ export function fillViewZoom(input: {
   imageHeight: number;
   stageWidth: number;
   stageHeight: number;
+  /** Zoom to keep when the stage has no usable size. Defaults to 100. */
+  fallback?: number;
 }): number {
-  const { imageWidth, imageHeight } = input;
-  if (!(imageWidth > 0 && imageHeight > 0)) return 100;
-  const width = Math.max(1, input.stageWidth),
-    height = Math.max(1, input.stageHeight);
+  const { imageWidth, imageHeight, stageWidth: width, stageHeight: height } = input;
+  const fallback = clampViewZoom(input.fallback ?? 100);
+  if (!(imageWidth > 0 && imageHeight > 0)) return fallback;
+  if (!usableStageSize(width, height)) return fallback;
   return clampViewZoom(Math.max(width / imageWidth, height / imageHeight) * 100);
 }
 
