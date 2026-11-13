@@ -12,6 +12,7 @@ import {
   DEFAULT_STARBURST_PATCH,
   LIGHT_RAYS_LIMITS,
   LIGHT_RAYS_SOURCE_BUDGET,
+  NEW_LIGHT_RAYS_SETTINGS,
   lightRaysBandSafe,
   lightRaysGeometry,
   normalizeLightRaysSettings,
@@ -227,6 +228,34 @@ test('render on transparent fills empty pixels with the ray colour', () => {
     applyFilterEffectsPixels(opaque, 60, 40, effect({ blend: 'transparent' })),
     applyFilterEffectsPixels(opaque, 60, 40, effect({ blend: 'screen' })),
   );
+});
+
+test('a new Light Rays filter lights a mostly empty layer beyond its painted pixels', () => {
+  // New filters start in "Render on transparent"; everything else matches the defaults.
+  assert.equal(NEW_LIGHT_RAYS_SETTINGS.blend, 'transparent');
+  assert.deepEqual({ ...NEW_LIGHT_RAYS_SETTINGS, blend: 'screen' }, DEFAULT_LIGHT_RAYS_SETTINGS);
+  assert.ok(validLightRaysSettings(NEW_LIGHT_RAYS_SETTINGS));
+  // Legacy records without a blend keep Screen.
+  const { blend: _omitted, ...legacy } = DEFAULT_LIGHT_RAYS_SETTINGS;
+  assert.equal(normalizeLightRaysSettings(legacy).blend, 'screen');
+
+  // A small painted glow in the middle of an otherwise empty 120×80 layer.
+  const width = 120, height = 80;
+  const layer = rgba(width, height, (x, y) => (Math.hypot(x - 60, y - 40) < 8 ? [140, 196, 255, 200] : [0, 0, 0, 0]));
+  const painted = (offset) => layer[offset + 3] > 0;
+  const outside = (output) => {
+    let count = 0;
+    for (let offset = 0; offset < output.length; offset += 4) if (!painted(offset) && output[offset + 3] > 0) count += 1;
+    return count;
+  };
+  const settings = { ...NEW_LIGHT_RAYS_SETTINGS, count: 12, randomness: 0, length: 90 };
+  const fresh = applyFilterEffectsPixels(layer, width, height, effect(settings));
+  // Rays reach far past the painted glow…
+  assert.ok(outside(fresh) > 400, `only ${outside(fresh)} pixels lit outside the glow`);
+  // …while Screen (the old default) stays clipped to the painted pixels.
+  assert.equal(outside(applyFilterEffectsPixels(layer, width, height, effect({ ...settings, blend: 'screen' }))), 0);
+  // The painted glow itself still brightens.
+  assert.ok(sum(pixel(fresh, width, 60, 40)) >= sum(pixel(layer, width, 60, 40)));
 });
 
 test('Starburst renders sharp spikes with a bright core', () => {

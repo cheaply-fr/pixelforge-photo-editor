@@ -144,7 +144,7 @@ test('Light Rays renders editable rays with a movable centre, undo/redo and relo
   expect(styled).not.toBe(twelve);
 
   await undo(page);
-  await expect(page.getByLabel('Ray blend', { exact: true })).toHaveValue('screen');
+  await expect(page.getByLabel('Ray blend', { exact: true })).toHaveValue('transparent');
   await undo(page);
   await expect(page.getByLabel('Ray colour', { exact: true })).toHaveValue('#ffe3a3');
   await undo(page);
@@ -241,4 +241,37 @@ test('a stacked Light Rays entry stays editable, including its centre', async ({
   await expect.poll(() => digest(page)).toBe(recentred);
   await page.getByRole('button', { name: 'Edit stacked filter 1. Light rays', exact: true }).click();
   await expect(page.getByLabel('Ray count', { exact: true })).toHaveValue('6');
+});
+
+test('a new Light Rays filter renders onto an empty layer', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
+  await settled(page);
+  /** Canvas pixels with any coverage. */
+  const litPixels = async () => {
+    await settled(page);
+    return page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => {
+      const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
+      let lit = 0;
+      for (let index = 3; index < data.length; index += 4) if (data[index] > 0) lit += 1;
+      return lit;
+    });
+  };
+  expect(await litPixels()).toBe(0);
+
+  await filter(page, 'Light Rays…');
+  await openPanel(page, 'Filters');
+  await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('light-rays');
+  const blend = page.getByLabel('Ray blend', { exact: true });
+  // New filters render on transparent, so rays appear on an empty layer.
+  await expect(blend).toHaveValue('transparent');
+  expect(await litPixels()).toBeGreaterThan(500);
+  const exported = await project(page);
+  expect(exported.history[exported.index].layers.at(-1)!.adjustments.filterEffects)
+    .toMatchObject({ type: 'light-rays', lightRays: { blend: 'transparent' } });
+
+  // Screen lights only existing pixels, so the empty layer stays empty.
+  await blend.selectOption('screen');
+  expect(await litPixels()).toBe(0);
 });

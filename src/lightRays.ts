@@ -85,6 +85,17 @@ export const DEFAULT_LIGHT_RAYS_SETTINGS: LightRaysSettings = {
   threshold: 170,
 };
 
+/**
+ * Settings for a newly applied Light Rays filter. "Render on transparent"
+ * matches Screen on opaque pixels and also lights empty ones, so rays work on
+ * their own empty layer instead of showing only where something was painted.
+ * Legacy records without a blend still normalize to Screen.
+ */
+export const NEW_LIGHT_RAYS_SETTINGS: LightRaysSettings = {
+  ...DEFAULT_LIGHT_RAYS_SETTINGS,
+  blend: 'transparent',
+};
+
 /** Starting values applied when the shape is switched to Starburst. */
 export const DEFAULT_STARBURST_PATCH: Partial<LightRaysSettings> = {
   shape: 'starburst',
