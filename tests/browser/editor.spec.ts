@@ -946,7 +946,7 @@ test('Photoshop menu families expose working commands and label planned actions'
   await expect(
     page.getByRole('menuitem', { name: /^Copy Layer/ }),
   ).toBeEnabled();
-  await expect(page.getByRole('menuitem', { name: /^Fill/ })).toBeEnabled();
+  await expect(page.getByRole('menuitem', { name: /^Fill…/ })).toBeEnabled();
   await expect(
     page.getByRole('menuitem', { name: /^Cut Layer/ }),
   ).toBeDisabled();
@@ -1004,7 +1004,7 @@ test('Levels adjustment is nondestructive, undoable, persisted and pixel-accurat
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'New transparent document', exact: true }).click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await page.getByRole('menuitem', { name: /^Fill…/ }).click();
   // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
@@ -1097,7 +1097,7 @@ test('Edit Fill is undoable and menu selection commands persist', async ({
     .click();
   const canvas = page.getByTestId('editor-canvas');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await page.getByRole('menuitem', { name: /^Fill…/ }).click();
   // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await expect
@@ -1738,7 +1738,7 @@ test('menus provide roving keyboard focus and restore the trigger on Escape', as
   ).toBeFocused();
   await page.keyboard.press('ArrowDown');
   await expect(
-    editMenu.getByRole('menuitem', { name: /^Fill/ }),
+    editMenu.getByRole('menuitem', { name: /^Fill…/ }),
   ).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(edit).toBeFocused();
@@ -1918,7 +1918,7 @@ test('Color Balance is nondestructive, pixel-visible, persisted and menu-address
     }, value);
   await setColorInput('#707070');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await page.getByRole('menuitem', { name: /^Fill…/ }).click();
   // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');
@@ -1966,7 +1966,7 @@ test('Sharpen and Noise controls preserve alpha, remain deterministic and round-
     element.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await page.getByRole('menuitem', { name: /^Fill…/ }).click();
   // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');

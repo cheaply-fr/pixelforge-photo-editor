@@ -38,7 +38,7 @@ async function makeRedFill(page: Page) {
     .getByRole('menuitem', { name: 'New transparent document', exact: true })
     .click();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await page.getByRole('menuitem', { name: /^Fill…/ }).click();
   // Edit > Fill… opens the Fill dialog; its defaults fill with the foreground colour.
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   const canvas = page.getByTestId('editor-canvas');

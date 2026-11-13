@@ -58,7 +58,7 @@ async function greyLayer(page: Page) {
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await setColor(page, '#808080');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await page.getByRole('menuitem', { name: /^Fill…/ }).click();
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await expect.poll(() => pixel(page)).toEqual([128, 128, 128, 255]);
 }

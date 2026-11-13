@@ -707,7 +707,7 @@ test('box and Gaussian blur are deterministic editable effects with bounded meta
   const normalized = effectiveFilterEffects({
     type: 'gaussian-blur',
     amount: 140,
-    radius: 99,
+    radius: 1099,
   });
   assert.deepEqual(
     {
@@ -715,7 +715,7 @@ test('box and Gaussian blur are deterministic editable effects with bounded meta
       amount: normalized.amount,
       radius: normalized.radius,
     },
-    { type: 'gaussian-blur', amount: 100, radius: 64 },
+    { type: 'gaussian-blur', amount: 100, radius: 1000 },
   );
   assert.equal(validFilterEffects(normalized), true);
   assert.equal(

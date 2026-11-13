@@ -100,8 +100,8 @@ test('frame masks resample through a layer placement', () => {
 
 test('marquee options normalise and constrain rectangles', () => {
   assert.deepEqual(normalizeMarqueeOptions(undefined), { feather: 0, style: 'normal', width: 1, height: 1 });
-  assert.deepEqual(normalizeMarqueeOptions({ feather: 999, style: 'odd', width: -3, height: 'x' }), {
-    feather: 250,
+  assert.deepEqual(normalizeMarqueeOptions({ feather: 1500, style: 'odd', width: -3, height: 'x' }), {
+    feather: 1000,
     style: 'normal',
     width: 1,
     height: 1,

@@ -25,7 +25,8 @@ edge reconstruction.
 ## Options-bar Feather and marquee Style
 
 Selection options for the marquee and lasso tools also show **Feather (new
-selections)** (0–250 px). Like an options-bar feather it applies to every
+selections)** (0–1000 px, the same bound as Select > Modify > Feather).
+Like an options-bar feather it applies to every
 *next* selection those tools create (not to the current one) and is persisted
 in Settings as `marquee.feather`; it does not apply to the one-pixel Single
 Row/Column marquees. The panel slider labelled "Current selection feather"

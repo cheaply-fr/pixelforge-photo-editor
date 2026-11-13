@@ -62,6 +62,10 @@ yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View 
 | `Cmd/Ctrl+Shift+]` / `Cmd/Ctrl+Shift+[` | Bring to Front / Send to Back the selected layers |
 | `Alt+↑` / `Alt+↓` (Layers panel row focused) | Bring Forward / Send Backward that row; add `Shift` for front/back |
 | `Delete` / `Backspace` (Layers panel row focused) | Delete that row (or the selection it belongs to) |
+| `Delete` / `Backspace` (canvas, with a selection) | Clear the selected pixels of the active raster layer |
+| `Shift+F5` | Edit > Fill… dialog |
+| `Alt+Backspace` (`Option+Delete` on macOS) | Fill the selection, or the whole layer with no selection, with the foreground colour at 100 % Normal |
+| `Ctrl+Backspace` (`Cmd+Delete` on macOS) | Fill the selection, or the whole layer with no selection, with the background colour at 100 % Normal |
 | `Cmd/Ctrl+Alt+I` | Open image resize |
 | `0` | Fit to screen |
 | `1` | Actual size |
@@ -69,6 +73,12 @@ yet (for example Freeform/Curvature Pen) remain planned; **R cycles Rotate View 
 | `F` | Cycle Standard Screen Mode, Full Screen with Menu and Full Screen |
 | `Escape` | Exit a reduced screen mode, or close an open menu |
 | `F6` or `Cmd/Ctrl+.` | Move focus into the active tool's options in the properties sidebar |
+
+The quick fills are also Edit > Fill with Foreground Color and Edit > Fill
+with Background Color, so touch devices reach them from the menu. Each is one
+undoable step on the active visible, unlocked raster layer. An empty selection
+(for example a Lasso drawn entirely off the canvas) fills nothing and shows
+"No pixels are selected" (docs/selection-composition-contract.md).
 
 Quick Mask mode uses the current selection as its starting alpha. Paint hides
 selected pixels with the standard red overlay; hold `Alt` or enable Reveal in

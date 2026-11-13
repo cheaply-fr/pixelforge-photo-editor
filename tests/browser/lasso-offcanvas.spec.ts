@@ -276,7 +276,7 @@ test('Elliptical Marquee half off the left edge keeps its true radius', async ({
   expect(green(beyond)).toBe(false);
 });
 
-test('a Lasso loop entirely outside the image leaves the selection unchanged', async ({ page }, testInfo) => {
+test('a Lasso loop entirely outside the image selects no pixels (an explicit empty selection)', async ({ page }, testInfo) => {
   const mobile = testInfo.project.name === 'mobile';
   await selectTool(page, 'Lasso');
   const box = await canvasBox(page);
@@ -295,8 +295,10 @@ test('a Lasso loop entirely outside the image leaves the selection unchanged', a
   await canvas.dispatchEvent('pointerdown', init(path[0], 1));
   for (const point of path.slice(1)) await canvas.dispatchEvent('pointermove', init(point, 1));
   await canvas.dispatchEvent('pointerup', init(path.at(-1)!, 0));
-  await expect(page.locator('footer')).toContainText('Lasso selection is outside the image');
+  await expect(page.locator('footer')).toContainText('Lasso selection is outside the image; no pixels are selected');
   await expect(page.locator('footer')).not.toContainText('Invalid layer document');
+  // Not "no selection": a later Fill must not cover the whole layer
+  // (docs/selection-composition-contract.md, Empty selections).
   const frame = await project(page);
-  expect(frame.selection).toBeUndefined();
+  expect(frame.selection.parts.map((part: { operation: string }) => part.operation)).toEqual(['replace', 'subtract']);
 });

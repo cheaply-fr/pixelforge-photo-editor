@@ -108,7 +108,7 @@ async function filledGrey(page: Page, hex: string) {
   }, hex);
   await menu(page, 'File', 'New transparent document');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
-  await page.getByRole('menuitem', { name: /^Fill/ }).click();
+  await page.getByRole('menuitem', { name: /^Fill…/ }).click();
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await settled(page);
 }

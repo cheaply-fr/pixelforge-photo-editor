@@ -19,7 +19,8 @@ export type MarqueeOptions = {
   height: number;
 };
 
-export const MARQUEE_FEATHER_MAX = 250;
+/** Same bound as Select > Modify > Feather (MAX_SELECTION_FEATHER). */
+export const MARQUEE_FEATHER_MAX = 1000;
 export const MARQUEE_DIMENSION_MAX = 30000;
 
 export const DEFAULT_MARQUEE_OPTIONS: MarqueeOptions = Object.freeze({
