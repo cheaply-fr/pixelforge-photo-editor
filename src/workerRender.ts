@@ -24,6 +24,12 @@ import {
   validLayerFilterCacheStats,
 } from './layerFilterCache.ts';
 import {
+  markPersistentLayerCacheStats,
+  persistentLayerCacheDelta,
+  persistentLayerCacheStats,
+  validPersistentLayerCacheStats,
+} from './persistentLayerCache.ts';
+import {
   validTiledNeighborhoodProgress,
   validTiledRenderTelemetry,
   type TiledNeighborhoodProgress,
@@ -298,6 +304,7 @@ export async function renderFrameWithWorker(
   const fallback = async () => {
     options.onRenderPath?.('main');
     const cacheBefore = sharedLayerFilterCache().stats();
+    const persistentBefore = persistentLayerCacheStats();
     const finalHitsBefore = mainThreadCompositeCache.finalHits;
     const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
     const image = await renderFrame(frame, assets, overrides, {
@@ -327,6 +334,7 @@ export async function renderFrameWithWorker(
     });
     if (isCancelled()) throw abortError();
     markLayerFilterCacheStats(layerFilterCacheDelta(cacheBefore, sharedLayerFilterCache().stats()));
+    markPersistentLayerCacheStats(persistentLayerCacheDelta(persistentBefore, persistentLayerCacheStats()));
     if (!overrides || !Object.keys(overrides).length)
       markCompositeReuse({
         final: mainThreadCompositeCache.finalHits > finalHitsBefore,
@@ -492,6 +500,7 @@ export async function renderFrameWithWorker(
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
         if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
         if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
+        if (validPersistentLayerCacheStats(value.persistent)) markPersistentLayerCacheStats(value.persistent);
         finish(() => resolve(value.image as ImageBitmap));
       } else if (
         value.kind === 'result-bytes' &&
@@ -504,6 +513,7 @@ export async function renderFrameWithWorker(
         if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
         if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
         if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
+        if (validPersistentLayerCacheStats(value.persistent)) markPersistentLayerCacheStats(value.persistent);
         void createImageBitmap(
           new Blob([value.bytes], { type: 'image/png' }),
         ).then(
@@ -874,6 +884,7 @@ class PersistentWorkerSession {
       if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
       if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
       if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
+      if (validPersistentLayerCacheStats(value.persistent)) markPersistentLayerCacheStats(value.persistent);
       this.finish(task, () => task.resolve(value.image as ImageBitmap));
       void this.startNext();
       return;
@@ -889,6 +900,7 @@ class PersistentWorkerSession {
       if (validLayerFilterCacheStats(value.layerCache)) markLayerFilterCacheStats(value.layerCache);
       if (validDecodedTileCacheStats(value.tileCache)) markDecodedTileCacheStats(value.tileCache, 'worker');
       if (validCompositeReuse(value.composite)) markCompositeReuse(value.composite);
+      if (validPersistentLayerCacheStats(value.persistent)) markPersistentLayerCacheStats(value.persistent);
       void createImageBitmap(new Blob([value.bytes], { type: 'image/png' })).then(
         (image) => {
           if (this.active !== task || task.cancelRequested || task.options.signal?.aborted || task.options.isCancelled?.()) {

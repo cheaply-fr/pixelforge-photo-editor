@@ -440,6 +440,95 @@ layers, still computes each filter once. The 82-layer live draft was not
 re-measured. The second stroke still recomputes the painted layer's own
 live filter.
 
+### Reopening a large painting every time (`perf/large-draft-reopen`)
+
+Reported live (v0.1.1035, desktop Chrome, 32 GB): an 89-layer 2646×4096
+draft (tiled layers, history 1) took ~72 s to reopen, the same on the
+second reopen, with no saved picture shown and an empty checkerboard
+under "Opening…". The layer-filter-cache mark showed 46 misses; there was
+no mark for the on-device tier, so whether it hit could not be read from
+the live evidence.
+
+**Reproduction.** `tests/browser/large-painting-fixture.ts` writes a draft
+of the same shape straight into the draft store (format 4, tiled assets,
+empty tiles omitted): 89 layers at 2646×4096 with the reported slow layers
+at the same indices (Clouds; Motion Blur / Emboss over Smart Filter stacks
+with Clouds; Light Rays; Wave over Gaussian Blur; an Outer Glow), plus
+star-field layers with Gaussian blurs, screen/multiply/overlay blends,
+masks (some inverted), clipped layers, Levels and CSS blurs. The opt-in
+benchmark (`PIXELFORGE_BENCH=1 npx playwright test large-draft-benchmark
+-g "night-sky" --project=desktop`) opens it three times: open 1 computes
+everything, open 2 is a plain reopen, open 3 reopens after removing the
+saved picture (a reopen right after an edit that had no time to save it).
+
+Findings on `main` (6225f90, same machine and fixture): the on-device tier
+does hit on a reopen of this synthetic draft, so the live 0-hit pattern
+was not reproduced; but a reopen still took 26–29 s, because
+
+- the saved picture was only shown while every layer rendered: the draft
+  was not usable until the full render finished;
+- the picture is written 3 s after rendering goes quiet; a reload within
+  that window (or one dropped while the previous picture was still being
+  written, which still marked it saved) left no matching picture, and a
+  failed or closed IndexedDB connection disabled the tier until reload;
+- on-device reads ran one at a time inside the render (IndexedDB read +
+  PNG decode, ~0.2–0.4 s per 43 MB layer, ~6 s for the stack);
+- frame-space work was never kept: clipped layers, inverted masks,
+  Levels/Curves, masked styles (0.5–1.3 s per layer), and clipped layers
+  whose result is empty were recomputed every time.
+
+Changes:
+
+- **Install from the saved picture.** When the picture's composite key
+  matches the reopened state (equal keys mean identical pixels), it is the
+  finished composite: the draft is installed with it (mark
+  `pixelforge.draft-preview-installed`) and its layers render in the
+  background without presenting (mark `pixelforge.draft-warm`), so the
+  first edit finds the worker's caches; any render that needs the worker
+  supersedes the warm-up. The picture is written right after a draft
+  opens, counted saved only once its write completes, retried once if it
+  was dropped, and flushed when the page is hidden.
+- **Read-ahead.** The outermost render starts on-device reads up to 4
+  layers ahead on desktops (1 on phones and 4 GB devices), so reads and
+  decodes overlap each other and the layers in between; recency updates
+  are batched into one write.
+- **Frame-space results kept too.** Clipped layers, masked layers and
+  Levels/Curves layers keep their finished frame-space buffer, cropped to
+  its visible pixels (or an empty placeholder), in memory and on the
+  device when producing it took longer than decoding it.
+- **Diagnostics.** Each render publishes `pixelforge.persistent-layer-cache`
+  (hits, misses, queued, writes, failed, skipped, readMs, prefetches,
+  budget) from the worker or main thread, so a live reopen shows whether
+  the tier hit. A failed or blocked open is no longer memoized and a
+  closed connection is reopened.
+- **Opening progress.** While a draft opens the canvas shows "Opening
+  draft… N/M layers" with a progress bar (and "Saved picture shown" once it
+  is), and the document bar says "Opening… N/M layers".
+
+Local probe (release build, headless desktop Chromium, Windows, 44 cores,
+same machine; `main` one run, this change two runs; picture time from
+navigation start, other times from `page.reload()`):
+
+| Step | `main` 6225f90 | This change |
+| --- | --- | --- |
+| Open 1 (nothing on the device) to "Render ready" | 105.8 s | 119.3 / 130.7 s ¹ |
+| Open 2: saved picture visible | 1.9 s ² | 2.4 / 2.5 s |
+| Open 2: draft usable ("Render ready", final pixels) | 28.7 s | 3.2 / 3.2 s |
+| Open 2: background warm-up (after "Render ready") | — | 12.4 / 13.7 s |
+| Open 3 (no saved picture) to "Render ready" | 26.3 s | 14.4 / 15.5 s |
+| On-device hits / misses, open 3 | (no mark) | 48 / 2, 0 recomputed |
+| Composite SHA-256, all opens | 99950b50… | 99950b50… (identical) |
+
+¹ Open 1 also crops and writes the frame-space results (55 writes instead
+of ~36); first opens varied 102–138 s between runs on this machine.
+² Shown, but the document stayed in "Rendering… N/89" until 28.7 s.
+
+The live 89-layer draft was not re-measured, and the cause of its 0-hit
+reopens is not confirmed: the new mark will show it. Rendering still
+costs ~0.1–0.3 s per layer to decode tiles and composite even when every
+slow stage is on the device, so a reopen without a matching saved picture
+stays around 15 s at this size.
+
 ### Structural layer edits (`perf/incremental-structural-renders`)
 
 Reported live: deleting one non-empty layer of a 62-layer 2646×4096 painting

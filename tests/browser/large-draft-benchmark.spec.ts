@@ -1,4 +1,14 @@
-// Opt-in benchmark (skipped unless PIXELFORGE_BENCH=1, desktop project only):
+// Opt-in benchmarks (skipped unless PIXELFORGE_BENCH=1, desktop project only).
+//
+// 1. A saved night-sky painting shaped like the reported 89-layer draft
+//    (large-painting-fixture.ts: 2646 x 4096, tiled layers, Clouds and Smart
+//    Filter stacks, Light Rays, Wave, Outer Glow, masks, clipping, Levels,
+//    CSS blurs, blend modes), reopened three times: the first open computes
+//    and keeps every slow layer, the second installs from the saved picture,
+//    the third (saved picture removed) renders from the on-device layers.
+//   PIXELFORGE_BENCH=1 npx playwright test large-draft-benchmark -g "night-sky" --project=desktop
+//
+// 2.
 // reopen a saved draft of a large many-layer document whose layers carry live
 // filters, and time (1) the first visible composite, (2) "Render ready" and
 // (3) the first stroke afterwards on a layer near the top of the stack. See
@@ -6,6 +16,7 @@
 //   PIXELFORGE_BENCH=1 BENCH_LAYERS=16 npx playwright test large-draft-benchmark --project=desktop
 import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
+import { compositeChecksum, dropDraftPreview, marks, nightSkyPainting, seedPainting } from './large-painting-fixture';
 
 const W = Number(process.env.BENCH_W || 2646), H = Number(process.env.BENCH_H || 4096), N = Number(process.env.BENCH_LAYERS || 16);
 const FILTERS = (process.env.BENCH_FILTERS || 'Clouds,Lens Flare…').split(',');
@@ -119,4 +130,52 @@ test('reopen a large filtered draft and paint near the top', async ({ page }, in
   await page.waitForTimeout(50);
   await settled(page);
   console.log(`second stroke: ${Date.now() - second} ms`);
+});
+
+/** Sample render status (and whether the saved picture is shown) until the draft is open. */
+async function openTimeline(page: Page, start: number, layers: number) {
+  const samples: string[] = [];
+  for (;;) {
+    const state = await page.evaluate(() => ({
+      rendering: document.querySelector('[data-testid="editor-canvas"]')?.getAttribute('data-rendering'),
+      status: document.querySelector('[aria-label="Render status"]')?.textContent ?? '',
+      rows: document.querySelectorAll('button[aria-label^="Select layer "]').length,
+      preview: performance.getEntriesByName('pixelforge.draft-preview').length,
+    })).catch(() => ({ rendering: 'true', status: '', rows: 0, preview: 0 }));
+    samples.push(`${((Date.now() - start) / 1000).toFixed(1)}s ${state.status}${state.preview ? ' [picture]' : ''}`);
+    if (state.rendering === 'false' && state.rows === layers) break;
+    await page.waitForTimeout(250);
+  }
+  return samples.filter((sample, index) => index === 0 || sample.split(' ').slice(1).join(' ') !== samples[index - 1].split(' ').slice(1).join(' '));
+}
+
+test('reopen a saved night-sky painting three times', async ({ page }, info) => {
+  test.skip(info.project.name !== 'desktop' || process.env.PIXELFORGE_BENCH !== '1');
+  test.setTimeout(3_600_000);
+  const layers = Number(process.env.BENCH_LAYERS || 89);
+  await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
+  await page.goto('/editor?new=1');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await seedPainting(page, W, H, nightSkyPainting(layers));
+  let computed: unknown;
+  for (const round of [1, 2, 3]) {
+    if (round === 3) expect(await dropDraftPreview(page)).toBe(1);
+    const opened = Date.now();
+    await page.reload();
+    const timeline = await openTimeline(page, opened, layers);
+    const ready = Date.now() - opened;
+    const picture = (await marks(page, 'pixelforge.draft-preview'))[0]?.at;
+    if ((await marks(page, 'pixelforge.draft-preview-installed')).length)
+      await expect.poll(async () => (await marks(page, 'pixelforge.draft-warm')).length, { timeout: 600_000 }).toBeGreaterThan(0);
+    const warm = (await marks(page, 'pixelforge.draft-warm'))[0]?.detail;
+    const store = (await marks(page, 'pixelforge.persistent-layer-cache')).at(-1)?.detail;
+    const checksum = await compositeChecksum(page);
+    console.log(`open ${round}: picture ${picture ?? '-'} ms after navigation, ready ${ready} ms, warm ${JSON.stringify(warm ?? null)}`);
+    console.log(`  on-device store ${JSON.stringify(store ?? null)}; composite sha256 ${checksum.sha256}`);
+    console.log(`  timeline ${timeline.join(' | ')}`);
+    if (computed) expect(checksum, `open ${round} pixels`).toEqual(computed);
+    computed ??= checksum;
+    // Background writes of the first open finish before the next reload.
+    await page.waitForTimeout(round === 1 ? 30_000 : 2_000);
+  }
 });

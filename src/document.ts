@@ -1,4 +1,10 @@
-import { PERSIST_MIN_PIXELS, sharedPersistentLayerCache, shouldPersistSurface, type PersistentLayerCache } from './persistentLayerCache.ts';
+import {
+  PERSIST_MIN_PIXELS,
+  sharedPersistentLayerCache,
+  shouldPersistPlaced,
+  shouldPersistSurface,
+  type PersistentLayerCache,
+} from './persistentLayerCache.ts';
 import { validReferenceImage, type ReferenceImage } from './referenceImage.ts';
 import { rotateHuePixels } from './hue.ts';
 import {
@@ -3162,6 +3168,153 @@ export function layerIgnoresBackdrop(layer: Layer): boolean {
   return layer.blend === 'source-over' && layerStyleBackdropPasses(layer.styles).length === 0;
 }
 
+/**
+ * Cache keys of a raster layer's local stage (see layerFilterCache.ts):
+ * `filtered` is the stage before local-space styles, `local` the finished
+ * local surface the renderer stores and the on-device tier keeps. Styles of a
+ * masked layer follow the mask in frame space (`stylesInFrame`), so they are
+ * not part of `local`.
+ */
+function localStageKeys(layer: Layer, assets: Assets): {
+  filtered?: string;
+  local?: string;
+  stylesActive: boolean;
+  stylesInFrame: boolean;
+} {
+  const stylesActive = isRasterContentLayer(layer) && !isNeutralLayerStyles(layer.styles);
+  const stylesInFrame = stylesActive && layerStylesFollowMask(layer, assets);
+  if (!isRasterContentLayer(layer)) return { stylesActive, stylesInFrame };
+  const filtered = layerFilterCacheKey({ ...layer, styles: undefined }, assets, { always: stylesActive });
+  const local = filtered && stylesActive && !stylesInFrame
+    ? `${filtered}|styles:${stableSerialize(layer.styles)}`
+    : filtered;
+  return { filtered, local, stylesActive, stylesInFrame };
+}
+
+/** True when a raster layer's tonal corrections run in software over a frame-space buffer. */
+function tonalFrameStage(adjustments: Adjustments): boolean {
+  const effective = effectiveAdjustments(adjustments);
+  return (
+    effective.hue !== 0 ||
+    adjustments.levelsBlack !== neutral.levelsBlack ||
+    adjustments.levelsWhite !== neutral.levelsWhite ||
+    adjustments.levelsGamma !== neutral.levelsGamma ||
+    adjustments.levelsOutputBlack !== neutral.levelsOutputBlack ||
+    adjustments.levelsOutputWhite !== neutral.levelsOutputWhite ||
+    !isNeutralColorBalance(effective.colorBalance) ||
+    !isNeutralSharpenNoise(effective.sharpenNoise) ||
+    !isNeutralCurves(effective.curves) ||
+    !isNeutralAuto(effective.auto) ||
+    !isNeutralPhotoAdjustments(effective.photoAdjustments)
+  );
+}
+
+/**
+ * Cache key of a raster layer's finished frame-space result when it goes
+ * through a frame-space buffer (an enabled mask, or software tonal
+ * corrections): the local stage plus everything that buffer reads (frame
+ * size, matrix, adjustments, mask content and settings, styles that follow
+ * the mask). Undefined for layers drawn straight onto the composite.
+ */
+function frameStageKey(
+  frame: Pick<Frame, 'w' | 'h'>,
+  layer: Layer,
+  assets: Assets,
+  stageKeys: ReturnType<typeof localStageKeys>,
+): string | undefined {
+  if (!isRasterContentLayer(layer)) return undefined;
+  const mask = effectiveLayerMask({ enabled: layer.maskEnabled, inverted: layer.maskInverted });
+  const maskAsset = layer.mask && mask.enabled ? assets[layer.mask] : undefined;
+  if (layer.mask && mask.enabled && !maskAsset) return undefined;
+  if (!maskAsset && !tonalFrameStage(layer.adjustments)) return undefined;
+  const local = stageKeys.local ?? layerFilterCacheKey({ ...layer, styles: undefined }, assets, { always: true });
+  if (!local) return undefined;
+  return `frame:${local}|${stableSerialize({
+    w: frame.w,
+    h: frame.h,
+    matrix: layer.matrix,
+    adjustments: layer.adjustments,
+    mask: maskAsset ? { asset: assetFingerprint(maskAsset), inverted: mask.inverted } : undefined,
+    styles: stageKeys.stylesInFrame ? layer.styles : undefined,
+  })}`;
+}
+
+/** The on-device tier this render may use (undefined when off or unavailable). */
+function renderPersistentStore(options: RenderOptions | undefined): PersistentLayerCache | undefined {
+  if (options?.persistentLayerCache === null || options?.layerFilterCache === null) return undefined;
+  return options?.persistentLayerCache ?? sharedPersistentLayerCache(surface);
+}
+
+/**
+ * On-device key of a frame-space result (clipped layer, masked styles). The
+ * entry holds the result cropped to its visible pixels; its tag records the
+ * crop offset, or that nothing is visible (stored as a 1 x 1 placeholder).
+ */
+const placedPersistKey = (key: string) => `placed|${key}`;
+const PLACED_TAG = /^placed:(-?\d{1,6}),(-?\d{1,6})$/;
+const PLACED_EMPTY_TAG = 'placed:none';
+
+/** Memory-cache cost of a cropped result (as cropFrameResult reports it). */
+function placedBytes(result: ClippedLayerResult): number {
+  const image = result.surface as { width?: number; height?: number } | undefined;
+  return image?.width && image.height ? surfaceBytes(image.width, image.height) : 64;
+}
+
+/** A cropped frame-space result kept on the device, or undefined. */
+async function readPersistedPlaced(store: PersistentLayerCache, key: string): Promise<ClippedLayerResult | undefined> {
+  const found = await store.getTagged(placedPersistKey(key));
+  if (found?.tag === PLACED_EMPTY_TAG) return { surface: undefined, x: 0, y: 0 };
+  const offset = found?.tag ? PLACED_TAG.exec(found.tag) : null;
+  if (!found || !offset) return undefined;
+  return { surface: found.surface as unknown as CanvasImageSource, x: Number(offset[1]), y: Number(offset[2]) };
+}
+
+/** Keep a cropped frame-space result on the device when it was slow to produce. */
+function persistPlaced(store: PersistentLayerCache, key: string, result: ClippedLayerResult, started: number): void {
+  const image = result.surface as { width?: number; height?: number } | undefined;
+  const w = image?.width ?? 1, h = image?.height ?? 1;
+  const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
+  if (!shouldPersistPlaced(w, h, elapsed, store.budget)) {
+    store.skipped += 1;
+    return;
+  }
+  if (result.surface) void store.put(placedPersistKey(key), result.surface, w, h, `placed:${result.x},${result.y}`);
+  else void store.put(placedPersistKey(key), surface(1, 1), 1, 1, PLACED_EMPTY_TAG);
+}
+
+/**
+ * On-device entries the render of `layer` reads first, when they are not in
+ * memory: the clipped result of a clipped layer, otherwise the finished local
+ * surface. Used to read a few layers ahead.
+ */
+function persistentReadAhead(
+  frame: Frame,
+  layer: Layer,
+  assets: Assets,
+  overrides: Record<string, HTMLCanvasElement> | undefined,
+): string[] {
+  if (!layer.visible || layer.opacity === 0 || overrides?.[layer.id] || !isRasterContentLayer(layer)) return [];
+  const base = layer.groupId ? undefined : clippingGroupBase(frame, layer);
+  if (base) {
+    const key = clippedLayerCacheKey(
+      frame as unknown as Parameters<typeof clippedLayerCacheKey>[0],
+      layer as unknown as Parameters<typeof clippedLayerCacheKey>[1],
+      base as unknown as Parameters<typeof clippedLayerCacheKey>[2],
+      assets,
+      overrides,
+    );
+    return key && !sharedClippedLayerCache().has(key) ? [placedPersistKey(key)] : [];
+  }
+  const stageKeys = localStageKeys(layer, assets);
+  const frameKey = frameStageKey(frame, layer, assets, stageKeys);
+  if (frameKey && sharedClippedLayerCache().has(frameKey)) return [];
+  const keys = frameKey ? [placedPersistKey(frameKey)] : [];
+  const asset = assets[layer.asset];
+  if (asset && asset.w * asset.h >= PERSIST_MIN_PIXELS && stageKeys.local && !sharedLayerFilterCache().has(stageKeys.local))
+    keys.push(stageKeys.local);
+  return keys;
+}
+
 export async function renderFrame(
   frame: Frame,
   assets: Assets,
@@ -3171,6 +3324,8 @@ export async function renderFrame(
   const nestedDepth = options?.nestedDepth ?? 0;
   if (nestedDepth < 0 || nestedDepth > MAX_NESTED_SMART_OBJECT_DEPTH)
     throw new Error('Nested Smart Object depth exceeds the local safety limit');
+  // Folder, clipping and decorated-layer renders run inside an outer pass.
+  const outermost = !options?.layerFilterPass;
   // Library fonts load on demand: wait for every face a text layer needs
   // before Canvas measures or draws it. A family that failed or timed out
   // renders with the fallback, and that composite is not cached so the next
@@ -3260,8 +3415,25 @@ export async function renderFrame(
     // A snapshot that already holds part of the range leaves nothing to reuse.
     if (startIndex > suffixStart) suffixStart = -1;
   }
+  // Reading a kept layer back costs an IndexedDB read and a PNG decode
+  // (~0.2 s at 2646 x 4096). The outermost render starts those reads a few
+  // layers ahead, so they overlap each other and the layers in between.
+  // Reads a cancelled render left behind are dropped when the next one starts.
+  const readAhead = outermost && options?.layerFilterCache === undefined ? renderPersistentStore(options) : undefined;
+  readAhead?.releasePrefetched();
+  let readAheadIndex = startIndex;
+  const readAheadFrom = (index: number) => {
+    if (!readAhead || readAhead.prefetchLimit <= 0) return;
+    readAheadIndex = Math.max(readAheadIndex, index);
+    while (readAheadIndex < frame.layers.length && readAhead.prefetching < readAhead.prefetchLimit) {
+      for (const key of persistentReadAhead(frame, frame.layers[readAheadIndex], assets, overrides))
+        readAhead.prefetch(key);
+      readAheadIndex += 1;
+    }
+  };
   for (const [layerIndex, layer] of frame.layers.entries()) {
     if (layerIndex < startIndex) continue;
+    readAheadFrom(layerIndex);
     if (options?.isCancelled?.())
       throw new DOMException('Document rendering cancelled', 'AbortError');
     if (compositeCache && keys && layerIndex > startIndex && checkpoints.has(layerIndex - 1)) {
@@ -3352,7 +3524,13 @@ export async function renderFrame(
             overrides,
           )
         : undefined;
-    const clippedCached = clippedKey ? sharedClippedLayerCache().get(clippedKey) : undefined;
+    const clippedMemory = clippedKey ? sharedClippedLayerCache().get(clippedKey) : undefined;
+    // Second tier: the clipped result kept on the device by an earlier session.
+    const clippedStore = clippedKey && !clippedMemory ? renderPersistentStore(options) : undefined;
+    const clippedPersisted = clippedStore ? await readPersistedPlaced(clippedStore, clippedKey!) : undefined;
+    if (clippedPersisted) sharedClippedLayerCache().set(clippedKey!, clippedPersisted, placedBytes(clippedPersisted));
+    const clippedCached = clippedMemory ?? clippedPersisted;
+    const clippedStarted = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (clippedBase && clippedCached) {
       // Same source, base and assets as an earlier render: reuse the result.
       compositePlacedResult(context, clippedCached, frame.w, frame.h, layer.opacity, layer.blend);
@@ -3418,7 +3596,10 @@ export async function renderFrame(
         // Keep the result cropped to its visible pixels for later renders,
         // and composite that same crop now so cached and fresh renders match.
         const cropped = cropFrameResult(sourceSurface, frame.w, frame.h, clippedPixels);
-        if (!options?.isCancelled?.()) sharedClippedLayerCache().set(clippedKey, cropped.result, cropped.bytes);
+        if (!options?.isCancelled?.()) {
+          sharedClippedLayerCache().set(clippedKey, cropped.result, cropped.bytes);
+          if (clippedStore) persistPlaced(clippedStore, clippedKey, cropped.result, clippedStarted);
+        }
         compositePlacedResult(context, cropped.result, frame.w, frame.h, layer.opacity, layer.blend);
       } else compositeFrameSurface(context, sourceSurface, frame.w, frame.h, layer.opacity, layer.blend);
       reportProgress(layerIndex);
@@ -3585,25 +3766,35 @@ export async function renderFrame(
       !override && isRasterContentLayer(layer) && options?.layerFilterCache !== null
         ? (options?.layerFilterCache ?? sharedLayerFilterCache())
         : undefined;
-    const stylesActive = isRasterContentLayer(layer) && !isNeutralLayerStyles(layer.styles);
-    const stylesInFrame = stylesActive && layerStylesFollowMask(layer, assets);
     const liveFilterActive = !isNeutralFilterEffects(effectiveFilterEffects(layer.adjustments.filterEffects));
     const unstyledLayer = { ...layer, styles: undefined };
     // Tiled blurs are cached too: their tile cache is keyed by the document
     // revision, so without this a Motion Blur layer above the edited one was
     // recomputed after every brush stroke. Styled layers are keyed even
     // without a filter, because styles alone cost seconds on large layers.
-    const filteredKey = localFilterCache
-      ? layerFilterCacheKey(unstyledLayer, assets, { always: stylesActive })
-      : undefined;
+    const stageKeys = localStageKeys(layer, assets);
+    const { stylesActive, stylesInFrame } = stageKeys;
+    const filteredKey = localFilterCache ? stageKeys.filtered : undefined;
     // Intermediate results only help while the active layer's live filter or
     // styles are being edited; other layers keep just their final surface so
     // a many-layer painting fits more layers in the byte budget.
     const keepIntermediate = layer.id === frame.active;
-    const localFilterCacheKey =
-      filteredKey && stylesActive && !stylesInFrame
-        ? `${filteredKey}|styles:${stableSerialize(layer.styles)}`
-        : filteredKey;
+    const localFilterCacheKey = localFilterCache ? stageKeys.local : undefined;
+    // A layer drawn through a frame-space buffer (mask, software tonal
+    // corrections) also keeps that finished buffer, cropped to its visible
+    // pixels, in memory and on the device: an inverted mask or a Levels pass
+    // costs most of a second per full-frame layer, local stage or not.
+    const frameKey = localFilterCache && !override ? frameStageKey(frame, layer, assets, stageKeys) : undefined;
+    const frameMemory = frameKey ? sharedClippedLayerCache().get(frameKey) : undefined;
+    const frameStore = frameKey && !frameMemory ? renderPersistentStore(options) : undefined;
+    const framePersisted = frameStore ? await readPersistedPlaced(frameStore, frameKey!) : undefined;
+    if (framePersisted) sharedClippedLayerCache().set(frameKey!, framePersisted, placedBytes(framePersisted));
+    const frameCached = frameMemory ?? framePersisted;
+    if (frameCached) {
+      compositePlacedResult(context, frameCached, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+      reportProgress(layerIndex);
+      continue;
+    }
     const memoryLocal = localFilterCacheKey
       ? localFilterCache!.get(localFilterCacheKey)
       : undefined;
@@ -3613,9 +3804,8 @@ export async function renderFrame(
     // re-running seconds of filtering per layer.
     const localAsset = isRasterContentLayer(layer) ? assets[layer.asset] : undefined;
     const persistentStore =
-      !memoryLocal && localFilterCacheKey && localAsset && options?.persistentLayerCache !== null &&
-      localAsset.w * localAsset.h >= PERSIST_MIN_PIXELS
-        ? (options?.persistentLayerCache ?? sharedPersistentLayerCache(surface))
+      !memoryLocal && localFilterCacheKey && localAsset && localAsset.w * localAsset.h >= PERSIST_MIN_PIXELS
+        ? renderPersistentStore(options)
         : undefined;
     const persistedLocal = persistentStore ? await persistentStore.get(localFilterCacheKey!) : undefined;
     if (persistedLocal && localAsset)
@@ -3950,7 +4140,8 @@ export async function renderFrame(
         height = (rasterSource as { height?: number }).height ?? 0,
         elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - localStarted;
       if (shouldPersistSurface(width, height, elapsed, persistentStore.budget))
-        persistentStore.put(localFilterCacheKey, rasterSource, width, height);
+        void persistentStore.put(localFilterCacheKey, rasterSource, width, height);
+      else persistentStore.skipped += 1;
     }
     if (
       !isRasterContentLayer(layer) &&
@@ -4060,29 +4251,11 @@ export async function renderFrame(
       maskSettings?.enabled
     ) {
       // Styles on a masked layer follow layer alpha x mask, so they run on
-      // the masked frame-space surface. When the local stage is cached, the
-      // styled result is cached too, keyed by everything this branch reads,
-      // in the frame-result cache cropped to its visible pixels (a full
-      // 2646 x 4096 surface per masked styled layer, or per Outer Glow /
-      // Drop Shadow pass, filled the layer budget with mostly empty pixels).
-      const maskedStyleKey =
-        stylesInFrame && localFilterCache && filteredKey && assets[layer.mask]
-          ? `masked:${filteredKey}|frame-styles:${stableSerialize({
-              w: frame.w,
-              h: frame.h,
-              matrix: layer.matrix,
-              mask: assetFingerprint(assets[layer.mask]),
-              inverted: maskSettings.inverted,
-              adjustments: layer.adjustments,
-              styles: layer.styles,
-            })}`
-          : undefined;
-      const cachedMaskedStyle = maskedStyleKey ? sharedClippedLayerCache().get(maskedStyleKey) : undefined;
-      if (cachedMaskedStyle) {
-        compositePlacedResult(context, cachedMaskedStyle, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
-        reportProgress(layerIndex);
-        continue;
-      }
+      // the masked frame-space surface. The result is kept under `frameKey`
+      // (above), cropped to its visible pixels: a full 2646 x 4096 surface
+      // per masked layer, or per Outer Glow / Drop Shadow pass, filled the
+      // budget with mostly empty pixels.
+      const frameStarted = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const masked = surface(frame.w, frame.h),
         maskContext = masked.getContext('2d')!;
       maskContext.save();
@@ -4132,9 +4305,12 @@ export async function renderFrame(
       const styledMasked = stylesInFrame
         ? applyRasterLayerStyles(masked, frame.w, frame.h, layer.styles)
         : masked;
-      if (maskedStyleKey) {
+      if (frameKey) {
         const cropped = cropFrameResult(styledMasked as HTMLCanvasElement, frame.w, frame.h);
-        if (!options?.isCancelled?.()) sharedClippedLayerCache().set(maskedStyleKey, cropped.result, cropped.bytes);
+        if (!options?.isCancelled?.()) {
+          sharedClippedLayerCache().set(frameKey, cropped.result, cropped.bytes);
+          if (frameStore) persistPlaced(frameStore, frameKey, cropped.result, frameStarted);
+        }
         compositePlacedResult(context, cropped.result, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       } else
         compositeFrameSurface(context, styledMasked, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
@@ -4144,27 +4320,8 @@ export async function renderFrame(
     // Canvas 2D has no levels filter. Render raster layers into a frame-space
     // buffer first, apply the input-levels LUT, then composite the result so
     // transforms, blend modes and opacity remain nondestructive metadata.
-    if (
-      isRasterContentLayer(layer) &&
-      rasterSource &&
-      (effectiveAdjustments(layer.adjustments).hue !== 0 ||
-        layer.adjustments.levelsBlack !== neutral.levelsBlack ||
-        layer.adjustments.levelsWhite !== neutral.levelsWhite ||
-        layer.adjustments.levelsGamma !== neutral.levelsGamma ||
-        layer.adjustments.levelsOutputBlack !== neutral.levelsOutputBlack ||
-        layer.adjustments.levelsOutputWhite !== neutral.levelsOutputWhite ||
-        !isNeutralColorBalance(
-          effectiveAdjustments(layer.adjustments).colorBalance,
-        ) ||
-        !isNeutralSharpenNoise(
-          effectiveAdjustments(layer.adjustments).sharpenNoise,
-        ) ||
-        !isNeutralCurves(effectiveAdjustments(layer.adjustments).curves) ||
-        !isNeutralAuto(effectiveAdjustments(layer.adjustments).auto) ||
-        !isNeutralPhotoAdjustments(
-          effectiveAdjustments(layer.adjustments).photoAdjustments,
-        ))
-    ) {
+    if (isRasterContentLayer(layer) && rasterSource && tonalFrameStage(layer.adjustments)) {
+      const frameStarted = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const leveled = surface(frame.w, frame.h),
         leveledContext = leveled.getContext('2d')!;
       leveledContext.save();
@@ -4181,7 +4338,14 @@ export async function renderFrame(
       applyCurves(leveled, layer.adjustments);
       applyAutoAdjustments(leveled, layer.adjustments);
       applyPhotoAdjustments(leveled, layer.adjustments.photoAdjustments);
-      compositeFrameSurface(context, leveled, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+      if (frameKey) {
+        const cropped = cropFrameResult(leveled, frame.w, frame.h);
+        if (!options?.isCancelled?.()) {
+          sharedClippedLayerCache().set(frameKey, cropped.result, cropped.bytes);
+          if (frameStore) persistPlaced(frameStore, frameKey, cropped.result, frameStarted);
+        }
+        compositePlacedResult(context, cropped.result, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
+      } else compositeFrameSurface(context, leveled, frame.w, frame.h, layer.opacity * groupOpacity, layer.blend);
       reportProgress(layerIndex);
       continue;
     }
@@ -4340,6 +4504,7 @@ export async function renderFrame(
     context.restore();
     reportProgress(layerIndex);
   }
+  readAhead?.releasePrefetched();
   if (suffixSurface) {
     context = outContext;
     context.drawImage(suffixSurface, 0, 0);

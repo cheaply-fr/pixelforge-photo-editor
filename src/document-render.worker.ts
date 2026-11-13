@@ -17,6 +17,11 @@ import { TILE_MAX_BATCH_BYTES } from './tilePlan.ts';
 import { CompositeCache, detectCompositeSnapshotBudget, type CompositeReuse } from './compositeCache.ts';
 import { resolveRequestAssets, retainedAssetStore } from './workerAssets.ts';
 import {
+  persistentLayerCacheDelta,
+  persistentLayerCacheStats,
+  type PersistentLayerCacheStats,
+} from './persistentLayerCache.ts';
+import {
   decodedTileCacheDelta,
   sharedDecodedTileCache,
   type DecodedTileCacheStats,
@@ -95,6 +100,7 @@ type Response =
       layerCache?: LayerFilterCacheStats;
       tileCache?: DecodedTileCacheStats;
       composite?: CompositeReuse;
+      persistent?: PersistentLayerCacheStats;
     }
   | {
       kind: 'result-bytes';
@@ -105,6 +111,7 @@ type Response =
       layerCache?: LayerFilterCacheStats;
       tileCache?: DecodedTileCacheStats;
       composite?: CompositeReuse;
+      persistent?: PersistentLayerCacheStats;
     }
   | { kind: 'error'; id: number; name: string; message: string };
 
@@ -172,15 +179,16 @@ async function encodeResult(
   layerCache: LayerFilterCacheStats,
   tileCache: DecodedTileCacheStats,
   composite: CompositeReuse,
+  persistent: PersistentLayerCacheStats,
 ): Promise<void> {
   if (typeof canvas.transferToImageBitmap === 'function') {
     const image = canvas.transferToImageBitmap();
-    scope.postMessage({ kind: 'result', id, image, width, height, layerCache, tileCache, composite }, [image]);
+    scope.postMessage({ kind: 'result', id, image, width, height, layerCache, tileCache, composite, persistent }, [image]);
     return;
   }
   const blob = await canvas.convertToBlob({ type: 'image/png' });
   const bytes = await blob.arrayBuffer();
-  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache, tileCache, composite }, [
+  scope.postMessage({ kind: 'result-bytes', id, bytes, width, height, layerCache, tileCache, composite, persistent }, [
     bytes,
   ]);
 }
@@ -225,6 +233,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
     let output: OffscreenCanvas | undefined;
     const cacheBefore = sharedLayerFilterCache().stats();
     const tilesBefore = sharedDecodedTileCache().stats();
+    const persistentBefore = persistentLayerCacheStats();
     const finalHitsBefore = compositeCache.finalHits;
     const clippedHitsBefore = sharedClippedLayerCache().stats().hits;
     try {
@@ -293,6 +302,7 @@ scope.onmessage = (event: MessageEvent<Request>) => {
           reusedLayers: compositeCache.lastReusedLayers,
           suffixLayers: compositeCache.lastSuffixLayers,
         },
+        persistentLayerCacheDelta(persistentBefore, persistentLayerCacheStats()),
       );
     } catch (error) {
       if (cancelled.has(request.id))
