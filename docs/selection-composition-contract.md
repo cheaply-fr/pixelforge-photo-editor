@@ -39,7 +39,7 @@ other selection-scoped edits would fall back to the whole layer.
   composed alpha mask) stay as they are: an all-zero selection.
 * Edit > Fill… (it refuses before opening the dialog), the quick fills
   Alt/Option+Backspace and Ctrl/Cmd+Backspace, Edit > Clear, Delete/Backspace
-  and Edit > Stroke… check the rendered coverage. When nothing is selected they
+  and Edit > Stroke Selection… check the rendered coverage. When nothing is selected they
   change no pixels, add no history step and show **No pixels are selected**.
 
 Pure tests (`tests/selection-empty.test.mjs`) cover the encoding, validation
