@@ -21,6 +21,7 @@ export const PATTERN_IDS = [
   'dots',
   'grid',
   'diagonal',
+  'mesh',
 ] as const;
 export type PatternId = (typeof PATTERN_IDS)[number];
 export const PATTERN_MIN_TILE = 4;
@@ -137,23 +138,32 @@ export function patternColor(
     throw new Error('Pattern coordinate is outside the tile');
   if (!validColor(foreground) || !validColor(background))
     throw new Error('Pattern colours must contain four 8-bit channels');
+  return (patternUsesForeground(pattern, x, y, size) ? foreground : background).slice() as BrushColor;
+}
+
+/**
+ * Whether a tile-local pixel takes the foreground colour. Shared by Pattern
+ * Stamp, the Pattern Overlay layer style and Edit > Fill so one pattern id
+ * always draws the same pixels. Callers validate the id, size and coordinate.
+ */
+export function patternUsesForeground(pattern: PatternId, x: number, y: number, size: number): boolean {
   const third = Math.max(1, Math.floor(size / 3)),
     half = Math.max(1, Math.floor(size / 2));
-  let useForeground = false;
-  if (pattern === 'checker')
-    useForeground = (Math.floor(x / half) + Math.floor(y / half)) % 2 === 0;
-  else if (pattern === 'stripes')
-    useForeground = Math.floor((x + y) / third) % 2 === 0;
-  else if (pattern === 'diagonal') useForeground = (x + y) % size < half;
-  else if (pattern === 'grid') useForeground = x < 2 || y < 2;
-  else {
-    const radius = Math.max(1, Math.floor(size * 0.18)),
-      cx = half,
-      cy = half;
-    useForeground =
-      (x - cx) * (x - cx) + (y - cy) * (y - cy) <= radius * radius;
+  if (pattern === 'checker') return (Math.floor(x / half) + Math.floor(y / half)) % 2 === 0;
+  if (pattern === 'stripes') return Math.floor((x + y) / third) % 2 === 0;
+  if (pattern === 'diagonal') return (x + y) % size < half;
+  if (pattern === 'grid') return x < 2 || y < 2;
+  if (pattern === 'mesh') {
+    // A diamond (fishnet) lattice: thin lines along both diagonals that meet
+    // at the tile corners and centre. Each line is periodic in the tile, so
+    // tiles join seamlessly; the band half-width grows with the tile.
+    const band = Math.floor(size / 16),
+      rising = (x + y + 1) % size,
+      falling = (((x - y) % size) + size) % size;
+    return Math.min(rising, size - rising) <= band || Math.min(falling, size - falling) <= band;
   }
-  return (useForeground ? foreground : background).slice() as BrushColor;
+  const radius = Math.max(1, Math.floor(size * 0.18));
+  return (x - half) * (x - half) + (y - half) * (y - half) <= radius * radius;
 }
 
 /**

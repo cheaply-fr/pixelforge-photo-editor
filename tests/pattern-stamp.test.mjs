@@ -38,6 +38,7 @@ test('pattern ids and tile sizes are finite bounded values', () => {
     'dots',
     'grid',
     'diagonal',
+    'mesh',
   ]);
   assert.equal(validPatternId('dots'), true);
   assert.equal(validPatternId('photo'), false);

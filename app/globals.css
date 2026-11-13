@@ -413,6 +413,11 @@ fieldset.perspective-crop-controls { display:flex; flex-direction:column; gap:8p
 .brush-preset-library{border:0;padding:0;margin:0;min-width:0}.brush-preset-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.brush-preset-actions button{flex:1 1 auto;min-height:32px;font-size:12px}
 .update-notice{position:fixed;z-index:60;left:50%;bottom:40px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;max-width:calc(100vw - 32px);padding:8px 10px 8px 14px;border:1px solid #2a5b45;border-radius:10px;background:#18261f;color:#d6f2e2;font-size:12px;box-shadow:0 10px 30px #0009}.update-notice span{min-width:0;overflow-wrap:anywhere}.update-notice button{min-height:32px;padding:0 12px;border:1px solid #3d7a5d;border-radius:7px;background:#20352a;color:#e8fff2;font-size:12px;font-weight:650;white-space:nowrap}.update-notice button:first-of-type{border-color:#45c486;background:#2b6b4c}.update-notice button:hover{background:#2f7a56}@media(max-width:680px){.update-notice{left:16px;right:16px;transform:none;max-width:none;bottom:36px}.update-notice span{flex:1}}
 .edit-fill-swatch{display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}.edit-fill-swatch span{display:inline-block;width:22px;height:22px;border:1px solid #555b66;border-radius:5px}
+.editor-dialog.edit-fill-dialog{max-height:92dvh;overflow:auto;box-sizing:border-box}
+.editor-dialog.edit-fill-dialog .edit-fill-check{justify-content:flex-start;gap:8px}
+.editor-dialog.edit-fill-dialog .edit-fill-check input{width:20px;height:20px}
+.edit-fill-pattern-preview{flex:none;width:64px;height:64px;border:1px solid #555b66;border-radius:5px;background:repeating-conic-gradient(#8a8f99 0 25%,#c5c9d2 0 50%) 0 0/12px 12px;image-rendering:pixelated}
+.edit-fill-pattern-note{font-size:12px;color:#c5c9d2}
 /* Properties sidebar: collapsible sections and auto-scroll landing highlight
    (docs/sidebar-autoscroll-contract.md). */
 .panel-title .panel-toggle{display:flex;align-items:center;gap:7px;min-width:0;min-height:24px;padding:0;border:0;border-radius:5px;background:transparent;color:#d4d5d8;font-size:11px;font-weight:730;text-align:left;cursor:pointer}

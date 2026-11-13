@@ -318,7 +318,13 @@ import {
 } from '../src/marqueeOptions';
 import SaveSelectionDialog from '../src/SaveSelectionDialog';
 import EditFillDialog from '../src/EditFillDialog';
-import { editFillColor, type EditFillOptions } from '../src/editFill';
+import {
+  editFillColor,
+  editFillImagePatternId,
+  editFillPatternTile,
+  renderEditFillPattern,
+  type EditFillOptions,
+} from '../src/editFill';
 import StrokePathDialog, { type StrokePathRequest } from '../src/StrokePathDialog';
 import SelectAndMaskDialog from '../src/SelectAndMaskDialog';
 import ColorRangeDialog from '../src/ColorRangeDialog';
@@ -11397,12 +11403,28 @@ export default function Home() {
       context.drawImage(image, 0, 0);
       const fill = surface(output.width, output.height),
         fillContext = fill.getContext('2d')!;
-      fillContext.fillStyle = editFillColor(options.contents, {
-        foreground: color,
-        background: backgroundColor,
-        color: options.color,
-      });
-      fillContext.fillRect(0, 0, fill.width, fill.height);
+      // Pattern contents: the Pattern Stamp tile (or a defined image pattern)
+      // repeated from the layer origin; the selection is applied below.
+      let patternTile: { width: number; height: number; data: ArrayLike<number> } | undefined;
+      if (options.contents === 'pattern') {
+        if (!options.pattern) throw new Error('Fill pattern is missing');
+        const imageId = editFillImagePatternId(options.pattern.source);
+        patternTile = imageId
+          ? await imagePatternTile(imageId)
+          : editFillPatternTile(options.pattern, { foreground: color, background: backgroundColor });
+        if (!patternTile) {
+          setNotice('That pattern is no longer defined');
+          return;
+        }
+      } else {
+        fillContext.fillStyle = editFillColor(options.contents, {
+          foreground: color,
+          background: backgroundColor,
+          color: options.color,
+        });
+        fillContext.fillRect(0, 0, fill.width, fill.height);
+      }
+      let maskData: Uint8ClampedArray | undefined;
       if (f.selection) {
         if (isExplicitEmptySelection(f.selection)) {
           setNotice(EMPTY_SELECTION_NOTICE);
@@ -11416,13 +11438,22 @@ export default function Home() {
           output.width,
           output.height,
         );
-        if (selectionCoverageIsEmpty(mask.getContext('2d')!.getImageData(0, 0, mask.width, mask.height).data)) {
+        maskData = mask.getContext('2d')!.getImageData(0, 0, mask.width, mask.height).data;
+        if (selectionCoverageIsEmpty(maskData)) {
           setNotice(EMPTY_SELECTION_NOTICE);
           return;
         }
-        fillContext.globalCompositeOperation = 'destination-in';
-        fillContext.drawImage(mask, 0, 0);
+        if (!patternTile) {
+          fillContext.globalCompositeOperation = 'destination-in';
+          fillContext.drawImage(mask, 0, 0);
+        }
       }
+      if (patternTile)
+        fillContext.putImageData(
+          new ImageData(renderEditFillPattern(fill.width, fill.height, patternTile, maskData), fill.width, fill.height),
+          0,
+          0,
+        );
       context.globalAlpha = options.opacity / 100;
       context.globalCompositeOperation = options.mode as GlobalCompositeOperation;
       context.drawImage(fill, 0, 0);
@@ -19801,6 +19832,9 @@ export default function Home() {
           foreground={color}
           background={backgroundColor}
           hasSelection={Boolean(frame.selection)}
+          imagePatterns={imagePatterns}
+          initialPattern={activeImagePattern ? `image:${activeImagePattern.id}` : patternId}
+          initialTileSize={patternTileSize}
           close={() => setEditFillOpen(false)}
           apply={(options) => {
             setEditFillOpen(false);
