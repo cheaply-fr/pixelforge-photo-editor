@@ -116,3 +116,38 @@ test('documents accept and validate fractional selection feather without migrati
   for (const feather of [-0.5, 1000.5, Number.NaN])
     assert.throws(() => validateFrame(frame(feather), assets), /Invalid layer document/);
 });
+
+test('the row-ordered column pass is bit-identical to strided box passes', () => {
+  // Reference: the previous column loop (one strided boxPass per column).
+  const reference = (alpha, width, height, sigma) => {
+    const size = width * height, { radius, alpha: extension } = extendedBoxKernel(sigma);
+    const pass = (source, target, start, length, stride) => {
+      const weight = 1 / (2 * radius + 1 + 2 * extension);
+      let sum = 0;
+      for (let index = 0; index <= Math.min(radius, length - 1); index += 1) sum += source[start + index * stride];
+      for (let index = 0; index < length; index += 1) {
+        const before = index - radius - 1, after = index + radius + 1;
+        const outer = (before >= 0 ? source[start + before * stride] : 0) + (after < length ? source[start + after * stride] : 0);
+        target[start + index * stride] = weight * (sum + extension * outer);
+        if (after < length) sum += source[start + after * stride];
+        if (index - radius >= 0) sum -= source[start + (index - radius) * stride];
+      }
+    };
+    let current = Float32Array.from(alpha), scratch = new Float32Array(size);
+    for (let p = 0; p < FEATHER_BOX_PASSES; p += 1) {
+      for (let row = 0; row < height; row += 1) pass(current, scratch, row * width, width, 1);
+      [current, scratch] = [scratch, current];
+    }
+    for (let p = 0; p < FEATHER_BOX_PASSES; p += 1) {
+      for (let column = 0; column < width; column += 1) pass(current, scratch, column, height, width);
+      [current, scratch] = [scratch, current];
+    }
+    return Uint8ClampedArray.from(current, (value) => Math.round(value));
+  };
+  let seed = 11;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (const [width, height, sigma] of [[1, 1, 2], [1, 9, 0.7], [9, 1, 3], [37, 23, 1.2], [64, 80, 5.5], [20, 30, 15.9], [5, 7, 12]]) {
+    const plane = Uint8ClampedArray.from({ length: width * height }, () => (random() < 0.4 ? 255 : Math.floor(random() * 256)));
+    assert.deepEqual(featherAlpha(plane, width, height, sigma), reference(plane, width, height, sigma), `${width}x${height} sigma ${sigma}`);
+  }
+});

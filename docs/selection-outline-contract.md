@@ -11,7 +11,8 @@ commands, Select All / Reselect, and selections restored from a draft or a
   composition and transforms) and traced by `selectionOutline` in
   `src/selectionOutline.ts` at 50 % coverage. Boundary edges are merged into
   horizontal and vertical runs, so separate islands and holes are outlined
-  separately. The trace runs once per selection change, off the pointer path;
+  separately. The trace runs once per selection change, off the pointer path,
+  and only visits each row's covered span (identical path output);
   busy masks are traced on a coarser grid so the path stays bounded
   (`SELECTION_OUTLINE_MAX_SEGMENTS`).
 - **Rendering**: an `svg.selection-outline` (`data-testid="selection-outline"`)

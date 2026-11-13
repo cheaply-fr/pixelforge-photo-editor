@@ -509,7 +509,7 @@ import { decodeTiffComposite } from '../src/tiff';
 import { prepareSvgBytes } from '../src/svg';
 import { svgImportLayers, svgImportNotice } from '../src/svgImportLayers';
 import { multiplyMatrix } from '../src/svgImport';
-import { renderSelection } from '../src/selections';
+import { renderSelection, selectionAlpha } from '../src/selections';
 import {
   brushSegmentRect,
   brushStampReach,
@@ -567,7 +567,7 @@ import { traceAlphaContours } from '../src/alphaContours';
 import { CORNER_RADIUS_MAX, clampCornerRadius, roundedRectNodes, roundedRectPoints, shapeDragBox, shapePoints, type ParametricShapeVariant } from '../src/vectorShapes';
 import { CUSTOM_SHAPE_LIBRARY, DEFAULT_CUSTOM_SHAPE_ID, PATH_PRESET_SHAPE_PREFIX, validCustomShapeChoice, customShapeAspect, customShapeEntry, customShapePath, customShapeThumbnailPath, fitPathToBox } from '../src/customShapeLibrary';
 import { quickSelectionMask } from '../src/quickSelection';
-import { composeSelectionAlpha } from '../src/selectionComposition';
+import { composeSelectionAlpha, composedSelection } from '../src/selectionComposition';
 import {
   createQuickMask,
   loadSelection,
@@ -3090,11 +3090,7 @@ const frameSelectionMask = async (
   assets: Assets,
 ): Promise<Uint8ClampedArray | undefined> => {
   if (!selection) return undefined;
-  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
-    data = rendered.getContext('2d')!.getImageData(0, 0, frame.w, frame.h).data,
-    mask = new Uint8ClampedArray(frame.w * frame.h);
-  for (let pixel = 0; pixel < mask.length; pixel += 1) mask[pixel] = data[pixel * 4 + 3];
-  return mask;
+  return selectionAlpha(selection, frame.w, frame.h, assets);
 };
 /**
  * Run one stroke segment of a buffer-based paint or retouch tool, confined to
@@ -3322,10 +3318,7 @@ const selectionMaskForLayer = async (
   assetHeight?: number,
 ): Promise<Uint8ClampedArray | undefined> => {
   if (!selection) return undefined;
-  const rendered = await renderSelection(selection, frame.w, frame.h, assets),
-    frameData = rendered
-      .getContext('2d')!
-      .getImageData(0, 0, frame.w, frame.h).data,
+  const frameAlpha = await selectionAlpha(selection, frame.w, frame.h, assets),
     asset =
       assetWidth && assetHeight
         ? undefined
@@ -3339,7 +3332,7 @@ const selectionMaskForLayer = async (
       const frameX = Math.floor(a * (x + 0.5) + c * (y + 0.5) + e),
         frameY = Math.floor(b * (x + 0.5) + d * (y + 0.5) + f);
       if (frameX >= 0 && frameX < frame.w && frameY >= 0 && frameY < frame.h)
-        mask[y * width + x] = frameData[(frameY * frame.w + frameX) * 4 + 3];
+        mask[y * width + x] = frameAlpha[frameY * frame.w + frameX];
     }
   return mask;
 };
@@ -7412,7 +7405,7 @@ export default function Home() {
       image.data[offset + 3] = composed.mask[index];
     }
     merged.getContext('2d')!.putImageData(image, 0, 0);
-    return { selection: { ...next, mask: undefined }, mask: merged };
+    return { selection: composedSelection(next), mask: merged };
   };
   const isCurrentSelectionOperation = (
     frame: Frame,
@@ -11351,8 +11344,7 @@ export default function Home() {
   const selectionCoversNothing = async (f: Frame) => {
     if (!f.selection) return false;
     if (isExplicitEmptySelection(f.selection)) return true;
-    const rendered = await renderSelection(f.selection, f.w, f.h, assets.current);
-    return selectionCoverageIsEmpty(rendered.getContext('2d')!.getImageData(0, 0, f.w, f.h).data);
+    return selectionCoverageIsEmpty(await selectionAlpha(f.selection, f.w, f.h, assets.current), false);
   };
   /** Edit > Fill… / Shift+F5: check the target, then ask for contents. */
   const openEditFill = async () => {
@@ -13726,11 +13718,7 @@ export default function Home() {
             context.getImageData(0, 0, f.w, f.h).data,
           );
           if (f.selection) {
-            const selectionCanvas = await renderSelection(f.selection, f.w, f.h, assets.current),
-              alpha = selectionCanvas.getContext('2d')!.getImageData(0, 0, f.w, f.h).data;
-            g.quickSelectionExisting = new Uint8ClampedArray(f.w * f.h);
-            for (let index = 0; index < g.quickSelectionExisting.length; index += 1)
-              g.quickSelectionExisting[index] = alpha[index * 4 + 3];
+            g.quickSelectionExisting = await selectionAlpha(f.selection, f.w, f.h, assets.current);
             if (g.quickSelectionOperation !== 'replace')
               g.quickSelectionBase = g.quickSelectionExisting.slice();
           }
@@ -13782,18 +13770,7 @@ export default function Home() {
       g.pending = (async () => {
         try {
           if (f.selection) {
-            const rendered = await renderSelection(
-              f.selection,
-              f.w,
-              f.h,
-              assets.current,
-            );
-            const alpha = rendered
-              .getContext('2d')!
-              .getImageData(0, 0, f.w, f.h).data;
-            g.selectionExisting = new Uint8ClampedArray(f.w * f.h);
-            for (let index = 0; index < g.selectionExisting.length; index += 1)
-              g.selectionExisting[index] = alpha[index * 4 + 3];
+            g.selectionExisting = await selectionAlpha(f.selection, f.w, f.h, assets.current);
             if (g.selectionBrushOperation !== 'replace')
               g.selectionBase = g.selectionExisting.slice();
           }
