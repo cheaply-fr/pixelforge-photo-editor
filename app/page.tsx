@@ -4350,7 +4350,17 @@ export default function Home() {
       : null;
   const filterEffects =
     filterStackEditIndex !== null ? filterStackEntries[filterStackEditIndex].effect : liveFilterEffects;
-  const dimensions = frame ? `${frame.w} × ${frame.h} px` : 'Opening…',
+  // A draft being opened reports its layer progress (and whether its saved
+  // picture is already shown) until the document is installed.
+  const openingProgress =
+    (!frame || doc.openingPreview) && doc.rendering && renderProgress && renderProgress.total > 1
+      ? renderProgress
+      : null;
+  const dimensions = frame
+    ? `${frame.w} × ${frame.h} px`
+    : openingProgress
+      ? `Opening… ${openingProgress.completed}/${openingProgress.total} layers`
+      : 'Opening…',
     canUndo = Boolean(slicePreview && slicePreviewMode === 'draft') || index.current > 0,
     canRedo = index.current < history.current.length - 1;
   const gesture = useRef<Gesture | null>(null);
@@ -20603,6 +20613,19 @@ export default function Home() {
                   objectFit: referenceObjectFit(frame.reference.fit),
                 }}
               />
+            )}
+            {openingProgress && (
+              <output
+                className="opening-progress"
+                data-testid="opening-progress"
+                data-preview={doc.openingPreview ? 'true' : 'false'}
+                aria-live="polite"
+              >
+                <span>
+                  {doc.openingPreview ? 'Saved picture shown · ' : ''}Opening draft… {openingProgress.completed}/{openingProgress.total} layers
+                </span>
+                <progress max={openingProgress.total} value={openingProgress.completed} aria-hidden="true" />
+              </output>
             )}
             {quickMasking && (
               <canvas

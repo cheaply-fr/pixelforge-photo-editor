@@ -79,6 +79,26 @@ function markDraftPreview(): void {
   }
 }
 
+/** Diagnostics: a reopened draft was installed with its saved picture as the composite. */
+function markDraftPreviewInstalled(layers: number): void {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
+      performance.mark('pixelforge.draft-preview-installed', { detail: { layers } });
+  } catch {
+    // Diagnostics only.
+  }
+}
+
+/** Diagnostics: the background render after a preview install finished or stopped. */
+function markWarm(detail: { completed: boolean; ms: number }): void {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function')
+      performance.mark('pixelforge.draft-warm', { detail });
+  } catch {
+    // Diagnostics only.
+  }
+}
+
 async function presentedKey(value: Frame, assets: Assets): Promise<string | undefined> {
   if (!retainPresentedComposite(value.w, value.h, value.layers.length, presentedBudget)) return undefined;
   try {
@@ -132,6 +152,8 @@ export function useDocument(onError: (message: string) => void) {
     // assistive technology. A new render resets it to zero.
     [renderProgress, setRenderProgress] = useState<RenderProgress | null>(null);
   const [tiledTelemetry, setTiledTelemetry] = useState<TiledRenderTelemetry | null>(null);
+  // A draft being opened shows its saved picture while its layers load.
+  const [openingPreview, setOpeningPreview] = useState(false);
   const [tiledProgress, setTiledProgress] = useState<TiledNeighborhoodProgress | null>(null);
   const [tiledCacheBudget] = useState(() => detectTileCacheBudget());
   // Device-aware undo/redo capacity (steps + retained image bytes).
@@ -147,8 +169,13 @@ export function useDocument(onError: (message: string) => void) {
   // cannot change a pixel re-presents it instead of rendering
   // (src/presentedComposite.ts).
   const presented = useRef(new PresentedComposite<HTMLCanvasElement>());
-  /** Keep a copy of what the canvas now shows, under `key`. */
-  const keepPresented = (target: HTMLCanvasElement, key: string | undefined, w: number, h: number) => {
+  /**
+   * Keep a copy of what the canvas now shows, under `key`. `immediate` saves
+   * it as the draft preview right away (a just-opened draft: nothing is being
+   * edited, and a reload soon after must still find it) instead of after
+   * DRAFT_PREVIEW_DELAY_MS of quiet.
+   */
+  const keepPresented = (target: HTMLCanvasElement, key: string | undefined, w: number, h: number, immediate = false) => {
     const kept = presented.current;
     if (key === undefined) {
       kept.clear();
@@ -161,32 +188,96 @@ export function useDocument(onError: (message: string) => void) {
     context.clearRect(0, 0, w, h);
     context.drawImage(target, 0, 0);
     kept.store(key, w, h, copy);
-    schedulePreviewSave(key, w, h);
+    schedulePreviewSave(key, w, h, immediate ? 0 : DRAFT_PREVIEW_DELAY_MS);
   };
   const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  /** The preview save waiting for quiet, if any (flushed when the page is hidden). */
+  const previewDue = useRef<{ key: string; w: number; h: number } | undefined>(undefined);
+  /** Composite key of the stored preview, once its write has completed. */
   const previewSaved = useRef<string | undefined>(undefined);
+  const previewRetried = useRef<string | undefined>(undefined);
+  /** Save the kept copy as the draft preview now, if it still shows `key`. */
+  const savePreviewNow = (key: string, w: number, h: number) => {
+    previewDue.current = undefined;
+    const kept = presented.current;
+    const copy = kept.key === key ? kept.reusable(w, h) : undefined;
+    if (!copy || previewSaved.current === key) return;
+    const store = sharedPersistentLayerCache(surface);
+    if (!store) return;
+    // The encoder snapshots the copy now; the next copy may reuse it. Only a
+    // completed write counts as saved: one dropped because the previous
+    // preview was still being written is retried once.
+    void store.put(DRAFT_PREVIEW_SLOT, copy, w, h, key).then((stored) => {
+      if (stored) previewSaved.current = key;
+      else if (previewRetried.current !== key && presented.current.key === key) {
+        previewRetried.current = key;
+        schedulePreviewSave(key, w, h, DRAFT_PREVIEW_DELAY_MS);
+      }
+    });
+  };
   /** Save the kept copy as the draft preview once rendering has been quiet a while. */
-  const schedulePreviewSave = (key: string, w: number, h: number) => {
+  const schedulePreviewSave = (key: string, w: number, h: number, delay: number) => {
     clearTimeout(previewTimer.current);
-    previewTimer.current = setTimeout(() => {
-      const kept = presented.current;
-      const copy = kept.key === key ? kept.reusable(w, h) : undefined;
-      if (!copy || previewSaved.current === key) return;
-      const store = sharedPersistentLayerCache(surface);
-      if (!store) return;
-      previewSaved.current = key;
-      // The encoder snapshots the copy now; the next copy may reuse it.
-      store.put(DRAFT_PREVIEW_SLOT, copy, w, h, key);
-    }, DRAFT_PREVIEW_DELAY_MS);
+    previewDue.current = { key, w, h };
+    previewTimer.current = setTimeout(() => savePreviewNow(key, w, h), delay);
   };
   const closeImageSource = (image: CanvasImageSource) => {
     if ('close' in image && typeof image.close === 'function') image.close();
   };
+  /**
+   * Render a document installed from its saved picture in the background,
+   * without presenting the result or showing progress, so the worker's
+   * layer and composite caches are ready for the first edit. Any other
+   * render or install supersedes it.
+   */
+  const warm = (value: Frame) => {
+    const controller = new AbortController();
+    warmAbort.current?.abort();
+    warmAbort.current = controller;
+    const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const stopped = () => controller.signal.aborted;
+    void renderFrameWithWorker(value, assets.current, undefined, {
+      signal: controller.signal,
+      reuseWorker: true,
+      tiledRevision: documentRevision.current,
+      tiledCache: tiledCache.current,
+      isCancelled: stopped,
+    }).then(
+      (image) => {
+        closeImageSource(image);
+        markWarm({ completed: !stopped(), ms: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started) });
+      },
+      () => markWarm({ completed: false, ms: Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started) }),
+    ).finally(() => {
+      if (warmAbort.current === controller) warmAbort.current = null;
+    });
+  };
+  const warmAbort = useRef<AbortController | null>(null);
   const previewScheduler = useRef<PreviewScheduler<GesturePreview> | null>(null);
+  useEffect(() => {
+    // Leaving the page (tab switch, close, reload) writes a pending preview
+    // now rather than losing it with the quiet timer.
+    const onHide = () => {
+      const due = previewDue.current;
+      if (!due) return;
+      clearTimeout(previewTimer.current);
+      savePreviewNow(due.key, due.w, due.h);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') onHide();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onHide);
+    };
+  }, []);
   useEffect(
     () => () => {
       previewScheduler.current?.cancel();
       renderAbort.current?.abort();
+      warmAbort.current?.abort();
       clearTimeout(previewTimer.current);
     },
     [],
@@ -222,6 +313,9 @@ export function useDocument(onError: (message: string) => void) {
           markPresentedReuse(value.layers.length);
           return;
         }
+        // This render needs the worker: a background warm-up yields to it
+        // (the layers it finished stay in the worker's caches).
+        warmAbort.current?.abort();
         const image = await renderFrameWithWorker(
           value,
           assets.current,
@@ -391,6 +485,7 @@ export function useDocument(onError: (message: string) => void) {
     const expected = history.current[index.current];
     previewScheduler.current?.cancel();
     renderAbort.current?.abort();
+    warmAbort.current?.abort();
     const installController = new AbortController();
     renderAbort.current = installController;
     const installSequence = ++renderSequence.current;
@@ -406,6 +501,7 @@ export function useDocument(onError: (message: string) => void) {
     setTiledTelemetry(null);
     setTiledProgress(null);
     let previewShown = false;
+    let finishedByPreviewOuter = false;
     try {
       // Release the previous document's retained filtered layers before the
       // installed one fills the cache. Keys are content-based, so this bounds
@@ -427,32 +523,41 @@ export function useDocument(onError: (message: string) => void) {
         assertCurrent: assertCurrentInstall,
       });
       validation.catch(() => installController.abort());
-      // Show the saved picture of this exact document state while its layers
-      // load (only before the real composite is presented).
+      // The saved picture of this exact document state (tagged with its
+      // composite key, so equal pixels) is shown while the layers load. Once
+      // shown it is the finished composite: the install completes with it
+      // instead of waiting for every layer, and the layers then render in
+      // the background (`warm`) so the first edit finds the worker's caches.
       let installRendered = false;
       const installedFrame = draft.history[draft.index];
-      void installedKey.then(async (key) => {
+      const previewLookup = installedKey.then(async (key) => {
         const store = key ? sharedPersistentLayerCache(surface) : undefined;
         const found = store ? await store.getTagged(DRAFT_PREVIEW_SLOT, key) : undefined;
-        if (!found || installRendered || installSequence !== renderSequence.current || !canvas.current) return;
+        if (!found || installRendered || installSequence !== renderSequence.current || !canvas.current) return false;
         presentCanvasImage(canvas.current, found.surface as HTMLCanvasElement, installedFrame.w, installedFrame.h);
         previewShown = true;
         previewSaved.current = key;
+        setOpeningPreview(true);
         markDraftPreview();
-      }).catch(() => undefined);
+        return true;
+      }).catch(() => false);
+      // The render has its own signal: finishing with the preview cancels it
+      // without cancelling the install.
+      const renderController = new AbortController();
+      installController.signal.addEventListener('abort', () => renderController.abort(), { once: true });
       // Decode and render before switching documents, preserving the current work on import failure.
       const rendering = renderFrameWithWorker(
         draft.history[draft.index],
         draft.assets,
         undefined,
         {
-          signal: installController.signal,
+          signal: renderController.signal,
           reuseWorker: true,
           tiledRevision: installSequence,
           tiledCache: tiledCache.current,
-          isCancelled: () => installSequence !== renderSequence.current,
+          isCancelled: () => renderController.signal.aborted || installSequence !== renderSequence.current,
           onProgress: (completed, total) => {
-            if (installSequence === renderSequence.current)
+            if (installSequence === renderSequence.current && !renderController.signal.aborted)
               setRenderProgress({ completed, total });
           },
           onTiledTelemetry: (telemetry) => {
@@ -463,21 +568,37 @@ export function useDocument(onError: (message: string) => void) {
           },
         },
       );
-      let image: CanvasImageSource;
-      try {
-        [, image] = await Promise.all([validation, rendering]);
-        // Test hook: hold the finished composite so a spec can observe the preview.
-        const hold = (globalThis as { __PIXELFORGE_INSTALL_HOLD_MS__?: number }).__PIXELFORGE_INSTALL_HOLD_MS__;
-        if (typeof hold === 'number' && hold > 0) await new Promise((resolve) => setTimeout(resolve, hold));
-        installRendered = true;
-      } catch (error) {
-        installRendered = true;
+      const releaseRendering = () =>
         void rendering.then(
           (rendered) => {
             if ('close' in rendered && typeof rendered.close === 'function') rendered.close();
           },
           () => undefined,
         );
+      let image: CanvasImageSource | undefined;
+      let finishedByPreview = false;
+      try {
+        type First = { rendered: CanvasImageSource } | { preview: true };
+        const first = await Promise.race<First>([
+          rendering.then((rendered): First => ({ rendered })),
+          previewLookup.then((shown): First | Promise<First> =>
+            shown ? { preview: true } : rendering.then((rendered): First => ({ rendered })),
+          ),
+        ]);
+        if ('rendered' in first) image = first.rendered;
+        else {
+          finishedByPreview = true;
+          renderController.abort();
+          releaseRendering();
+        }
+        await validation;
+        // Test hook: hold the finished composite so a spec can observe the preview.
+        const hold = (globalThis as { __PIXELFORGE_INSTALL_HOLD_MS__?: number }).__PIXELFORGE_INSTALL_HOLD_MS__;
+        if (typeof hold === 'number' && hold > 0) await new Promise((resolve) => setTimeout(resolve, hold));
+        installRendered = true;
+      } catch (error) {
+        installRendered = true;
+        releaseRendering();
         // A newer import or render superseded this one: report it as such,
         // whichever step noticed first.
         assertCurrentInstall();
@@ -496,10 +617,13 @@ export function useDocument(onError: (message: string) => void) {
         history.current = draft.history;
         index.current = draft.index;
         const installed = draft.history[draft.index];
-        presentCanvasImage(canvas.current!, image, installed.w, installed.h);
-        keepPresented(canvas.current!, keyOfInstalled, installed.w, installed.h);
+        // With the preview, the canvas already shows the finished composite.
+        if (image) presentCanvasImage(canvas.current!, image, installed.w, installed.h);
+        keepPresented(canvas.current!, keyOfInstalled, installed.w, installed.h, true);
+        if (finishedByPreview) markDraftPreviewInstalled(installed.layers.length);
+        finishedByPreviewOuter = finishedByPreview;
       } finally {
-        closeImageSource(image);
+        if (image) closeImageSource(image);
       }
     } catch (error) {
       if (installSequence === renderSequence.current) {
@@ -510,10 +634,14 @@ export function useDocument(onError: (message: string) => void) {
       throw error;
     } finally {
       if (renderAbort.current === installController) renderAbort.current = null;
+      setOpeningPreview(false);
     }
     setFrame(draft.history[draft.index]);
     setRevision((v) => v + 1);
-    if (installSequence === renderSequence.current) setRendering(false);
+    if (installSequence === renderSequence.current) {
+      setRendering(false);
+      if (finishedByPreviewOuter) warm(draft.history[draft.index]);
+    }
   }, []);
   const select = useCallback(
     (id: string, intent: LayerSelectionIntent = {}) => {
@@ -642,6 +770,7 @@ export function useDocument(onError: (message: string) => void) {
     revision,
     rendering,
     renderProgress,
+    openingPreview,
     tiledTelemetry,
     tiledProgress,
     tiledCacheBudget,

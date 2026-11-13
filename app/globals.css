@@ -167,6 +167,9 @@
 .quick-mask-panel p { color:#aeb8c8; font-size:11px; line-height:1.5; margin:9px 0 0; }
 .canvas-wrap { position:relative; }
 .canvas-wrap .quick-mask-overlay { position:absolute; inset:0; opacity:.5; pointer-events:none; }
+.canvas-wrap .opening-progress { position:absolute; z-index:3; top:12px; left:50%; transform:translateX(-50%); max-width:calc(100% - 24px); display:flex; flex-direction:column; gap:6px; padding:8px 12px; border:1px solid #34363e; border-radius:10px; background:#17181de8; color:#d4d7dc; font-size:12px; white-space:nowrap; pointer-events:none; box-shadow:0 7px 25px #0007; }
+.canvas-wrap .opening-progress span { overflow:hidden; text-overflow:ellipsis; }
+.canvas-wrap .opening-progress progress { width:100%; height:4px; accent-color:var(--accent); }
 .canvas-wrap .strand-preview-overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
 .strand-controls { display:grid; gap:inherit; border:0; margin:0; padding:0; min-width:0; }
 .strand-seed-row { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
