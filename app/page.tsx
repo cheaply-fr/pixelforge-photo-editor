@@ -89,6 +89,16 @@ import {
   type Draft,
   type Settings,
 } from '../src/drafts';
+import {
+  DUPLICATE_DRAFT_DESCRIPTION,
+  DUPLICATE_DRAFT_LABEL,
+  DUPLICATE_DRAFT_NOTICE,
+  manualSaveNotice,
+  SAVE_DRAFT_DESCRIPTION,
+  SAVE_DRAFT_LABEL,
+  SAVED_ON_DEVICE,
+  savedOnDeviceStatus,
+} from '../src/draftSaveStatus';
 import { PORTABLE_MAX_BYTES, readPortableBundle, writePortableBundle } from '../src/portableBundle';
 import { DEFAULT_DEINTERLACE_SETTINGS } from '../src/deinterlace';
 import {
@@ -4310,7 +4320,10 @@ export default function Home() {
   const saveQueue = useRef(Promise.resolve());
   const saveSequence = useRef(0),
     saving = useRef(false),
-    discarding = useRef(false);
+    discarding = useRef(false),
+    // Set by Save draft; the next local save to settle reports its result.
+    manualSavePending = useRef(false);
+  const [manualSaveNonce, setManualSaveNonce] = useState(0);
   const { member, checking, unavailable: signInUnavailable, retry: retrySignIn } = useMember();
   const [cloud, setCloud] = useState<CloudLink | undefined>(),
     [cloudBusy, setCloudBusy] = useState(false),
@@ -9817,24 +9830,34 @@ export default function Home() {
       .then(() => {
         if (sequence === saveSequence.current) {
           saving.current = false;
-          setSaveStatus('Saved on this device');
+          if (manualSavePending.current) {
+            manualSavePending.current = false;
+            const status = savedOnDeviceStatus(new Date());
+            setSaveStatus(status);
+            setNotice(manualSaveNotice(status));
+          } else setSaveStatus(SAVED_ON_DEVICE);
         }
       })
       .catch((error: unknown) => {
         if (sequence === saveSequence.current) {
           saving.current = true;
-          setSaveStatus(
+          const status =
             error instanceof Error && error.message === LOCAL_CONFLICT
               ? LOCAL_CONFLICT
               : error instanceof Error && error.message === LOCAL_STORAGE_FULL
                 ? LOCAL_STORAGE_FULL
-                : 'Local save failed — export a copy',
-          );
+                : 'Local save failed — export a copy';
+          setSaveStatus(status);
+          if (manualSavePending.current) {
+            manualSavePending.current = false;
+            setNotice(manualSaveNotice(status));
+          }
         }
       });
   }, [
     ready,
     revision,
+    manualSaveNonce,
     audioClips,
     draftId,
     cloud,
@@ -10368,6 +10391,16 @@ export default function Home() {
       setSaveStatus('Could not discard the draft. Please try again.');
     }
   };
+  // Explicit "Save draft": re-run the local autosave now and report when it
+  // settles. Local IndexedDB only — never a download or a cloud upload.
+  const saveDraftNow = () => {
+    if (!ready || recovering || discarding.current || index.current < 0) {
+      setNotice('The draft is still opening. Try Save draft again in a moment.');
+      return;
+    }
+    manualSavePending.current = true;
+    setManualSaveNonce((value) => value + 1);
+  };
   const reloadNewerDraft = async () => {
     if (saveStatus !== LOCAL_CONFLICT || recovering) return;
     const expectedRevision = localVersions.current.get(draftId) || 0;
@@ -10394,7 +10427,7 @@ export default function Home() {
       quickMaskRef.current = null;
       setQuickMask(null);
       setQuickMasking(false);
-      setSaveStatus('Saved on this device');
+      setSaveStatus(SAVED_ON_DEVICE);
       setNotice('Newer draft restored from this browser');
     } catch (error) {
       setSaveStatus(
@@ -20112,14 +20145,23 @@ export default function Home() {
         </div>
         <div className="draft-actions">
           <button
+            className="draft-save"
+            disabled={!ready || recovering}
+            title={SAVE_DRAFT_DESCRIPTION}
+            onClick={saveDraftNow}
+          >
+            <Save aria-hidden="true" /> {SAVE_DRAFT_LABEL}
+          </button>
+          <button
             disabled={recovering}
+            title={DUPLICATE_DRAFT_DESCRIPTION}
             onClick={() => {
               setDraftId(createDraftId());
               clearCloud();
-              setNotice('New local copy created. The original draft is kept.');
+              setNotice(DUPLICATE_DRAFT_NOTICE);
             }}
           >
-            Save local copy
+            {DUPLICATE_DRAFT_LABEL}
           </button>
           {saveStatus === LOCAL_CONFLICT && (
             <button

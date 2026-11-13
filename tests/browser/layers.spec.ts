@@ -1174,7 +1174,7 @@ test('magic wand persists a color-based alpha selection and converts it to a lay
   await expect(page.getByText('Nondestructive mask active', { exact: true })).toBeVisible();
 });
 
-test('a stale tab cannot overwrite or discard newer work and can save its own local copy', async ({
+test('a stale tab cannot overwrite or discard newer work and can duplicate its edits into a new draft', async ({
   page,
   context,
 }) => {
@@ -1193,7 +1193,7 @@ test('a stale tab cannot overwrite or discard newer work and can save its own lo
   await saved(second);
   await page.getByLabel('Document name').fill('Older tab edits');
   await expect(page.getByRole('alert')).toHaveText(
-    'This draft changed in another tab. Save a local copy to keep your edits.',
+    'This draft changed in another tab. Duplicate the draft to keep your edits.',
   );
   page.once('dialog', (dialog) => dialog.accept());
   await page
@@ -1208,7 +1208,7 @@ test('a stale tab cannot overwrite or discard newer work and can save its own lo
   );
   await saved(second);
   await page
-    .getByRole('button', { name: 'Save local copy', exact: true })
+    .getByRole('button', { name: 'Duplicate draft', exact: true })
     .click();
   await saved(page);
   expect(page.url()).not.toBe(bookmark);
@@ -1240,7 +1240,7 @@ test('a stale tab can reload the strictly newer draft without changing its bookm
 
   await page.getByLabel('Document name').fill('Stale edits to replace');
   await expect(page.getByRole('alert')).toHaveText(
-    'This draft changed in another tab. Save a local copy to keep your edits.',
+    'This draft changed in another tab. Duplicate the draft to keep your edits.',
   );
   await expect(
     page.getByRole('button', { name: 'Reload newer draft', exact: true }),

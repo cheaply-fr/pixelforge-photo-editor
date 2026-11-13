@@ -662,3 +662,6 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .select-row>button:disabled,.brush-preset-actions button:disabled,.panel-body>button.secondary:disabled{opacity:.45;cursor:not-allowed}
 .panel-body>button.secondary{width:100%;margin:6px 0}
 @media(max-width:680px){.select-row>select:not(.text-input),.select-row>input[type=number]:not(.text-input){height:36px}.select-row>button,.brush-preset-actions button,.panel-body>button.secondary{min-height:36px}}
+
+/* Doc bar: explicit local Save draft action (icon + label, compact). */
+.draft-actions .draft-save{display:inline-flex;align-items:center;gap:5px}.draft-actions .draft-save svg{width:13px;height:13px;flex:0 0 auto}
