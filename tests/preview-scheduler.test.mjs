@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPreviewScheduler } from '../src/previewScheduler.ts';
+import { createPreviewScheduler, requestFrameOrTimeout } from '../src/previewScheduler.ts';
 
 /** Deterministic animation-frame queue for the scheduler under test. */
 function frames() {
@@ -224,4 +224,96 @@ test('falls back to timers when requestAnimationFrame is unavailable', async () 
   scheduler.request(() => 'b');
   await new Promise((resolve) => setTimeout(resolve, 40));
   assert.deepEqual(rendered, ['b']);
+});
+
+/** Manual frame and timer queues for requestFrameOrTimeout. */
+function frameClock({ hidden = false } = {}) {
+  let next = 0;
+  const frames = new Map(), timers = new Map();
+  return {
+    hidden: () => hidden,
+    setHidden(value) {
+      hidden = value;
+    },
+    requestFrame: (callback) => {
+      const handle = ++next;
+      frames.set(handle, callback);
+      return handle;
+    },
+    cancelFrame: (handle) => frames.delete(handle),
+    setTimer: (callback, ms) => {
+      const handle = ++next;
+      timers.set(handle, { callback, ms });
+      return handle;
+    },
+    clearTimer: (handle) => timers.delete(handle),
+    frames,
+    timers,
+    tickFrames() {
+      const due = [...frames.values()];
+      frames.clear();
+      for (const callback of due) callback();
+    },
+    tickTimers() {
+      const due = [...timers.values()];
+      timers.clear();
+      for (const { callback } of due) callback();
+    },
+  };
+}
+
+test('frame-or-timeout runs once on the frame and cancels its fallback timer', () => {
+  const clock = frameClock();
+  let runs = 0;
+  requestFrameOrTimeout(() => (runs += 1), 100, clock);
+  assert.equal(clock.frames.size, 1);
+  assert.equal(clock.timers.size, 1);
+  assert.equal([...clock.timers.values()][0].ms, 100);
+  clock.tickFrames();
+  assert.equal(runs, 1);
+  assert.equal(clock.timers.size, 0, 'the fallback timer is cleared');
+  clock.tickTimers();
+  assert.equal(runs, 1);
+});
+
+test('frame-or-timeout still runs when frames pause after the request (page hidden mid-stroke)', () => {
+  const clock = frameClock();
+  let runs = 0;
+  requestFrameOrTimeout(() => (runs += 1), 100, clock);
+  clock.setHidden(true);
+  // No frame ever comes; the timer does.
+  clock.tickTimers();
+  assert.equal(runs, 1);
+  assert.equal(clock.frames.size, 0, 'the paused frame is cancelled');
+  clock.tickFrames();
+  assert.equal(runs, 1);
+});
+
+test('frame-or-timeout uses a short timer and no frame on a hidden page; cancel stops both', () => {
+  const clock = frameClock({ hidden: true });
+  let runs = 0;
+  const request = requestFrameOrTimeout(() => (runs += 1), 100, clock);
+  assert.equal(clock.frames.size, 0);
+  assert.equal([...clock.timers.values()][0].ms, 16);
+  request.cancel();
+  assert.equal(clock.timers.size, 0);
+  clock.tickTimers();
+  assert.equal(runs, 0);
+});
+
+test('a scheduler on frame-or-timeout keeps rendering previews while frames are paused', () => {
+  const clock = frameClock({ hidden: true });
+  const rendered = [];
+  const scheduler = createPreviewScheduler({
+    render: (value) => {
+      rendered.push(value);
+    },
+    requestFrame: (callback) => requestFrameOrTimeout(callback, 100, clock),
+    cancelFrame: (handle) => handle.cancel(),
+  });
+  for (let sample = 1; sample <= 3; sample += 1) {
+    scheduler.request(() => sample);
+    clock.tickTimers();
+  }
+  assert.deepEqual(rendered, [1, 2, 3], 'every preview ran without a single animation frame');
 });
