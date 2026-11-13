@@ -39,7 +39,19 @@ on a 2646 px wide layer) and a note: rays run from the inner radius to inner
 radius + length from the centre, measured in half the layer's shorter side,
 and with the current falloff they fade below 5% brightness at about N px
 (`lightRaysPixelExtent` in `src/lightRays.ts`; the renderer uses the same
-values). Randomness can shorten individual rays further. A layer mask is
+values). Randomness can shorten individual rays further.
+
+While the Filters panel edits a Light Rays filter (live or a Smart Filter
+stack entry), a display-only guide is drawn around the shared centre handle:
+a blue circle at the inner radius, an amber circle at inner radius + length
+and, for generated rays when it differs by more than a pixel, a dashed circle
+at the ~5% fade extent (`lightRaysGuide` in `src/lightRays.ts`, which uses the
+same extent and the handle's layer → frame mapping, so it follows layer
+transforms, zoom, pan and view rotation, and tracks the handle while it is
+dragged). It updates live with the sliders, has `pointer-events: none` and
+`aria-hidden`, can be hidden with "Show ray extent guide", disappears when the
+panel closes, and is never rendered into pixels, exports or saved documents.
+A layer mask is
 applied after the filter, so rays beyond a masked shape are hidden.
 
 Malformed or out-of-range values normalize at every persistence and render
@@ -77,7 +89,9 @@ enforces a generous bound.
 Unit tests cover determinism, ray geometry and counts, inner radius, alpha and
 transparent padding, render-on-transparent, starburst, source streak
 direction, band equivalence, normalization, persistence, Smart Filter stacks,
-layer filter cache keys, Actions and the 2646 × 4096 performance bound.
+layer filter cache keys, Actions, the extent guide geometry and the 2646 × 4096
+performance bound.
 Browser tests (desktop and mobile) apply Light Rays from the Render menu, move
-the centre by drag and keyboard, change parameters, undo/redo, edit a stacked
+the centre by drag and keyboard, check the extent guide radii, live updates,
+hiding and that it leaves pixels unchanged, change parameters, undo/redo, edit a stacked
 entry and its centre, and reload.

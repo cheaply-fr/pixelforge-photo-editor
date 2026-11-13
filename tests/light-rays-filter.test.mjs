@@ -15,6 +15,8 @@ import {
   NEW_LIGHT_RAYS_SETTINGS,
   lightRaysBandSafe,
   lightRaysGeometry,
+  lightRaysGuide,
+  lightRaysPixelExtent,
   normalizeLightRaysSettings,
   renderLightRays,
   validLightRaysSettings,
@@ -419,4 +421,50 @@ test('Light Rays stays within a performance bound on a 2646 × 4096 layer', () =
   }
   // Generous bounds for shared CI runners; local serial renders are ~0.3–2.5 s.
   for (const [name, elapsed] of Object.entries(timings)) assert.ok(elapsed < 20_000, `${name} took ${Math.round(elapsed)} ms`);
+});
+
+test('the on-canvas extent guide matches the renderer extent and the centre handle mapping', () => {
+  const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: ${actual} vs ${expected}`);
+  // 2646 x 4096 layer: base = 1323 px. Inner 60% -> 793.8 px, length 80% -> 1058.4 px.
+  const settings = { innerRadius: 60, length: 80, falloff: 50 };
+  const guide = lightRaysGuide(settings, 2646, 4096, 0.5, 0.25);
+  const extent = lightRaysPixelExtent(settings, 2646, 4096);
+  const ring = (kind) => guide.rings.find((item) => item.kind === kind);
+  close(ring('inner').radius, 793.8, 'inner radius');
+  close(ring('outer').radius, 793.8 + 1058.4, 'outer radius');
+  close(ring('fade').radius, extent.visibleRadius, 'fade radius');
+  assert.ok(ring('fade').radius < ring('outer').radius && ring('fade').radius > ring('inner').radius);
+  // Same centre as the renderer.
+  const geometry = lightRaysGeometry(settings, 2646, 4096, 0.5, 0.25, 1);
+  close(guide.centreX, geometry.centreX, 'centre x');
+  close(guide.centreY, geometry.centreY, 'centre y');
+  close(guide.frameX, 0.5 * 2645, 'identity frame x');
+  // Identity matrix at 100% view: view radii are layer pixels.
+  close(ring('outer').viewRadiusX, ring('outer').radius, 'identity view radius');
+
+  // A layer scaled 0.5 and placed at (10, 20), viewed at 200% zoom.
+  const scaled = lightRaysGuide(settings, 2646, 4096, 0.5, 0.25, [0.5, 0, 0, 0.5, 10, 20], 2);
+  close(scaled.frameX, 0.5 * 0.5 * 2645 + 10, 'scaled frame x');
+  close(scaled.frameY, 0.5 * 0.25 * 4095 + 20, 'scaled frame y');
+  const scaledInner = scaled.rings.find((item) => item.kind === 'inner');
+  close(scaledInner.viewRadiusX, 793.8, 'scaled + zoomed inner radius');
+  close(scaledInner.viewRadiusY, 793.8, 'scaled + zoomed inner radius y');
+  // Rotation keeps the radius; non-uniform scale gives an ellipse.
+  const angle = Math.PI / 6;
+  const rotated = lightRaysGuide(settings, 200, 100, 0.5, 0.5, [Math.cos(angle), Math.sin(angle), -Math.sin(angle), Math.cos(angle), 0, 0]);
+  close(rotated.rings[1].viewRadiusX, rotated.rings[1].radius, 'rotated radius');
+  const stretched = lightRaysGuide(settings, 200, 100, 0.5, 0.5, [2, 0, 0, 1, 0, 0]);
+  close(stretched.rings[0].viewRadiusX, 2 * stretched.rings[0].radius, 'stretched x');
+  close(stretched.rings[0].viewRadiusY, stretched.rings[0].radius, 'stretched y');
+  assert.deepEqual(stretched.transform, [2, 0, 0, 1, 0, 0]);
+
+  // Source streaks decay exponentially, so they have no fade ring.
+  assert.deepEqual(lightRaysGuide({ ...settings, mode: 'source' }, 200, 100, 0.5, 0.5).rings.map((item) => item.kind), ['inner', 'outer']);
+  // Malformed input normalizes like the renderer.
+  const fallback = lightRaysGuide({ innerRadius: 'x', length: 9999 }, 200, 100, Number.NaN, 2, [Number.NaN, 0, 0, 1, 0, 0], -1);
+  close(fallback.rings[0].radius, 0, 'default inner radius');
+  close(fallback.rings[1].radius, 150, 'length clamps to 300% of 50 px');
+  close(fallback.centreX, 0.5 * 199, 'NaN centre falls back to the middle');
+  close(fallback.centreY, 99, 'centre clamps to the layer');
+  assert.deepEqual(fallback.transform, [1, 0, 0, 1, 0, 0]);
 });

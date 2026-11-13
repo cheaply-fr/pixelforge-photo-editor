@@ -207,6 +207,74 @@ export function lightRaysPixelExtent(
   };
 }
 
+export type LightRaysGuideRing = {
+  /** inner: rays start; outer: inner radius + length; fade: ~5% brightness (generated rays only). */
+  kind: 'inner' | 'outer' | 'fade';
+  /** Radius in layer pixels (drawn in layer space under `transform`). */
+  radius: number;
+  /** On-screen radius along the layer's x and y axes (frame px × view scale). */
+  viewRadiusX: number;
+  viewRadiusY: number;
+};
+
+export type LightRaysGuide = {
+  /** Ray origin in layer pixels (the renderer's centre). */
+  centreX: number;
+  centreY: number;
+  /** Ray origin in frame (document canvas) pixels. */
+  frameX: number;
+  frameY: number;
+  /** Layer → frame affine matrix, for an SVG `matrix(...)` transform. */
+  transform: [number, number, number, number, number, number];
+  rings: LightRaysGuideRing[];
+};
+
+/**
+ * Display-only on-canvas guide for the Light Rays panel: circles at the inner
+ * radius and at inner radius + length, plus (generated rays only, when it
+ * differs by more than a pixel) a fade ring where an unvaried ray drops below
+ * 5% brightness. It uses the renderer's pixel extent and the shared centre
+ * handle's layer → frame mapping (centre = fraction × (size − 1), then the
+ * layer matrix). `viewScale` converts frame pixels to screen pixels (zoom).
+ */
+export function lightRaysGuide(
+  value: Partial<LightRaysSettings> | undefined,
+  width: number,
+  height: number,
+  centerX: number,
+  centerY: number,
+  matrix: readonly number[] = [1, 0, 0, 1, 0, 0],
+  viewScale = 1,
+): LightRaysGuide {
+  const settings = normalizeLightRaysSettings(value);
+  const extent = lightRaysPixelExtent(settings, width, height);
+  const centreX = clamp(finite(centerX) ? centerX : 0.5, 0, 1) * Math.max(0, width - 1);
+  const centreY = clamp(finite(centerY) ? centerY : 0.5, 0, 1) * Math.max(0, height - 1);
+  const identity = [1, 0, 0, 1, 0, 0];
+  const m = identity.map((fallback, index) => (finite(matrix[index]) ? matrix[index] : fallback)) as
+    [number, number, number, number, number, number];
+  const scale = finite(viewScale) && viewScale > 0 ? viewScale : 1;
+  const axisX = Math.hypot(m[0], m[1]) * scale;
+  const axisY = Math.hypot(m[2], m[3]) * scale;
+  const ring = (kind: LightRaysGuideRing['kind'], radius: number): LightRaysGuideRing => ({
+    kind,
+    radius,
+    viewRadiusX: radius * axisX,
+    viewRadiusY: radius * axisY,
+  });
+  const rings = [ring('inner', extent.innerRadius), ring('outer', extent.outerRadius)];
+  if (settings.mode === 'generate' && extent.visibleRadius < extent.outerRadius - 1)
+    rings.push(ring('fade', extent.visibleRadius));
+  return {
+    centreX,
+    centreY,
+    frameX: m[0] * centreX + m[2] * centreY + m[4],
+    frameY: m[1] * centreX + m[3] * centreY + m[5],
+    transform: m,
+    rings,
+  };
+}
+
 export type LightRay = {
   /** Direction in radians, normalized to [0, 2π). */
   angle: number;

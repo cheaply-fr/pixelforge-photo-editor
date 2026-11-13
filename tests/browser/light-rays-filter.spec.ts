@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
-import { openPanel } from './sidebar-panels';
+import { closePanels, openPanel } from './sidebar-panels';
 
 type Layer = { smartFilters?: Array<Record<string, unknown>>; adjustments: { filterEffects?: Record<string, unknown> } };
 type Project = { history: Array<{ layers: Layer[] }>; index: number };
@@ -212,6 +212,8 @@ test('a stacked Light Rays entry stays editable, including its centre', async ({
   await expect(page.getByTestId('filter-stack-editing')).toContainText('Editing stacked filter 1. Light rays');
   const count = page.getByLabel('Ray count', { exact: true });
   await expect(count).toHaveValue('16');
+  // The extent guide also outlines a stacked entry being edited.
+  await expect(page.getByTestId('light-rays-guide')).toHaveCount(1);
   await count.fill('6');
   const edited = await digest(page);
   expect(edited).not.toBe(stacked);
@@ -274,4 +276,95 @@ test('a new Light Rays filter renders onto an empty layer', async ({ page }) => 
   // Screen lights only existing pixels, so the empty layer stays empty.
   await blend.selectOption('screen');
   expect(await litPixels()).toBe(0);
+});
+
+test('an on-canvas guide shows where rays start, end and fade while Light Rays is edited', async ({ page }) => {
+  test.setTimeout(180_000);
+  await importFixture(page);
+  await filter(page, 'Light Rays…');
+  await openPanel(page, 'Filters');
+  await expect(page.getByTestId('light-rays-controls')).toBeVisible();
+  const guide = page.getByTestId('light-rays-guide');
+  await expect(guide).toHaveCount(1);
+  await expect(guide).toHaveCSS('pointer-events', 'none');
+  await expect(guide).toHaveAttribute('aria-hidden', 'true');
+
+  // 201 x 121 layer: half the shorter side is 60.5 px. Defaults: inner 0%,
+  // length 80% (48.4 px), falloff 50% fades below 5% at about 36.9 px.
+  const base = 60.5;
+  const fade = (inner: number, length: number) =>
+    inner + length * (1 - 0.05 ** (1 / (0.15 + 0.5 * 3.85)));
+  const ringOf = (kind: string) => page.getByTestId(`light-rays-guide-${kind}`);
+  const radius = async (kind: string) => Number(await ringOf(kind).getAttribute('data-radius'));
+  /** On-screen radius of a ring, in layer pixels (independent of the view zoom). */
+  const screenRadius = async (kind: string) => {
+    const canvas = (await page.getByTestId('editor-canvas').boundingBox())!;
+    const ring = (await ringOf(kind).boundingBox())!;
+    return (ring.width / 2) * (WIDTH / canvas.width);
+  };
+  const centreOffset = async (kind: string) => {
+    const handleBox = (await page.getByTestId('filter-center-handle').boundingBox())!;
+    const ring = (await ringOf(kind).boundingBox())!;
+    return Math.max(
+      Math.abs(ring.x + ring.width / 2 - (handleBox.x + handleBox.width / 2)),
+      Math.abs(ring.y + ring.height / 2 - (handleBox.y + handleBox.height / 2)),
+    );
+  };
+  await expect(ringOf('inner')).toHaveCount(1);
+  expect(await radius('inner')).toBeCloseTo(0, 5);
+  expect(await radius('outer')).toBeCloseTo(0.8 * base, 5);
+  expect(await radius('fade')).toBeCloseTo(fade(0, 0.8 * base), 5);
+  expect(Math.abs((await screenRadius('outer')) - 0.8 * base)).toBeLessThan(1);
+  await expect(ringOf('fade')).toHaveCSS('stroke-dasharray', /\d/);
+  // Centred on the shared centre handle.
+  expect(await centreOffset('outer')).toBeLessThan(1.5);
+  const shown = await digest(page);
+
+  // The centre handle still drags through the guide, and the guide follows it.
+  const canvasBox = (await page.getByTestId('editor-canvas').boundingBox())!;
+  const handle = page.getByTestId('filter-center-handle');
+  const start = (await handle.boundingBox())!;
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(canvasBox.x + canvasBox.width * 0.42, canvasBox.y + canvasBox.height * 0.5, { steps: 4 });
+  await page.mouse.move(canvasBox.x + canvasBox.width * 0.35, canvasBox.y + canvasBox.height * 0.5, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.abs(Number(await handle.getAttribute('data-center-x')) - 0.35)).toBeLessThan(0.04);
+  expect(await centreOffset('outer')).toBeLessThan(1.5);
+  const moved = await digest(page);
+  expect(moved).not.toBe(shown);
+
+  // The guide follows the sliders live.
+  await page.getByLabel('Inner radius', { exact: true }).fill('20');
+  await expect.poll(() => radius('inner')).toBeCloseTo(0.2 * base, 5);
+  expect(await radius('outer')).toBeCloseTo(0.2 * base + 0.8 * base, 5);
+  expect(await radius('fade')).toBeCloseTo(fade(0.2 * base, 0.8 * base), 5);
+  expect(Math.abs((await screenRadius('inner')) - 0.2 * base)).toBeLessThan(1);
+  await page.getByLabel('Ray length', { exact: true }).fill('40');
+  await expect.poll(() => radius('outer')).toBeCloseTo(0.6 * base, 5);
+  const edited = await digest(page);
+  expect(edited).not.toBe(moved);
+
+  // Display only: hiding it, or closing the panel, leaves the pixels unchanged.
+  const toggle = page.getByLabel('Show ray extent guide', { exact: true });
+  await expect(toggle).toBeChecked();
+  await toggle.uncheck();
+  await expect(guide).toHaveCount(0);
+  expect(await digest(page)).toBe(edited);
+  await toggle.check();
+  await expect(guide).toHaveCount(1);
+  await closePanels(page);
+  await expect(guide).toHaveCount(0);
+  await expect(handle).toHaveCount(1);
+  expect(await digest(page)).toBe(edited);
+  await openPanel(page, 'Filters');
+  await expect(guide).toHaveCount(1);
+  expect(await digest(page)).toBe(edited);
+
+  // Nothing about the guide is saved with the filter.
+  await saved(page);
+  const exported = await project(page);
+  const effect = exported.history[exported.index].layers.at(-1)!.adjustments.filterEffects!;
+  expect(JSON.stringify(effect)).not.toMatch(/guide/i);
+  expect(effect).toMatchObject({ type: 'light-rays', lightRays: { innerRadius: 20, length: 40 } });
 });

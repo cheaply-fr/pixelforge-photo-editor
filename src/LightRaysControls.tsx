@@ -54,11 +54,14 @@ function Range({ label, value, min, max, step = 1, suffix = '', detail, change }
 }
 
 /** Editable Light Rays parameters for the Filter effects panel. */
-export default function LightRaysControls({ effect, change, layerSize }: {
+export default function LightRaysControls({ effect, change, layerSize, guide, onGuideChange }: {
   effect: FilterEffects;
   change: (patch: Partial<FilterEffects>) => void;
   /** The filtered layer's pixel size; lengths are shown in its pixels. */
   layerSize?: { w: number; h: number };
+  /** Whether the display-only on-canvas extent guide is shown. */
+  guide?: boolean;
+  onGuideChange?: (show: boolean) => void;
 }) {
   const settings = normalizeLightRaysSettings(effect.lightRays);
   const extent = layerSize ? lightRaysPixelExtent(settings, layerSize.w, layerSize.h) : undefined;
@@ -124,6 +127,17 @@ export default function LightRaysControls({ effect, change, layerSize }: {
             <> At this falloff rays fade out by about {px(extent.visibleRadius)}; lower Ray falloff to see their full length.</>
           )}
         </p>
+      )}
+      {onGuideChange && (
+        <label className="resize-lock">
+          <input
+            type="checkbox"
+            aria-label="Show ray extent guide"
+            checked={guide !== false}
+            onChange={(event) => onGuideChange(event.target.checked)}
+          />
+          <span>Show ray extent guide on canvas (inner radius, ray ends, fade)</span>
+        </label>
       )}
       {range('falloff', 'Ray falloff', '%')}
       {range('intensity', 'Ray intensity', '%')}

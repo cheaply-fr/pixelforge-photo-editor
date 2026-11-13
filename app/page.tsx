@@ -924,6 +924,7 @@ import {
   nudgeFilterCenter,
 } from '../src/filterCenter';
 import LightRaysControls, { lightRaysEffectDefaults } from '../src/LightRaysControls';
+import { lightRaysGuide } from '../src/lightRays';
 import { effectiveLayerStyles, isNeutralLayerStyles } from '../src/layerStyles';
 import BlurGalleryControls, {
   DEFAULT_BLUR_PATH,
@@ -9442,6 +9443,8 @@ export default function Home() {
     type.split('-').map((word, index) => (index ? word : word[0].toUpperCase() + word.slice(1))).join(' ');
   /** Live filter-centre drag preview (frame space) before the edit commits. */
   const [filterCenterDrag, setFilterCenterDrag] = useState<{ centerX: number; centerY: number } | null>(null);
+  /** Display-only Light Rays extent guide on the canvas (never rendered into pixels). */
+  const [lightRaysGuideVisible, setLightRaysGuideVisible] = useState(true);
   const chooseFilter = (filter: string, label: string) => {
     revealSidebarSection(QUICK_FILTER_SECTION);
     if (adjust({ filter }))
@@ -20656,8 +20659,40 @@ export default function Home() {
                 if (next.centerX !== filterEffects.centerX || next.centerY !== filterEffects.centerY)
                   setFilterEffects(next);
               };
+              // While the Filters panel edits Light Rays, outline where rays
+              // start, end and fade. Display only: pointer-events none, never
+              // part of the rendered pixels, export or the saved document.
+              const guide =
+                filterEffects.type === 'light-rays' && openSidebarPanel === 'filters' && lightRaysGuideVisible
+                  ? lightRaysGuide(filterEffects.lightRays, asset.w, asset.h, center.centerX, center.centerY, active.matrix)
+                  : null;
               return (
                 <div className="filter-center-overlay" data-testid="filter-center-overlay">
+                  {guide && (
+                    <svg
+                      className="light-rays-guide"
+                      data-testid="light-rays-guide"
+                      viewBox={`0 0 ${frame.w} ${frame.h}`}
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      <g transform={`matrix(${guide.transform.join(' ')})`}>
+                        {guide.rings.map((ring) => (
+                          <circle
+                            key={ring.kind}
+                            className={`light-rays-guide-${ring.kind}`}
+                            data-testid={`light-rays-guide-${ring.kind}`}
+                            data-radius={ring.radius}
+                            data-frame-radius-x={ring.viewRadiusX}
+                            data-frame-radius-y={ring.viewRadiusY}
+                            cx={guide.centreX}
+                            cy={guide.centreY}
+                            r={ring.radius}
+                          />
+                        ))}
+                      </g>
+                    </svg>
+                  )}
                   <button
                     type="button"
                     className="filter-center-handle"
@@ -23677,6 +23712,8 @@ export default function Home() {
                     effect={filterEffects}
                     change={setFilterEffects}
                     layerSize={isRasterContentLayer(active) && assets.current[active.asset] ? { w: assets.current[active.asset].w, h: assets.current[active.asset].h } : undefined}
+                    guide={lightRaysGuideVisible}
+                    onGuideChange={setLightRaysGuideVisible}
                   />
                 )}
             {filterEffects.type === 'picture-frame' && (
