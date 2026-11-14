@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { menuPopupPlacement } from '../src/menuPopupPosition';
+import { moveLayerIds, translateLayers } from '../src/moveLayers';
 import { flushSync } from 'react-dom';
 import { SidebarSection } from '../src/SidebarSection';
 import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
@@ -2093,6 +2094,8 @@ type Gesture = {
   last: { x: number; y: number };
   frame: Frame;
   layer?: Layer;
+  /** Move tool: every layer the drag moves (selected and linked layers). */
+  moveIds?: string[];
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
   /** Mixer Brush paint reservoirs for this stroke, one per symmetry copy. */
@@ -15694,6 +15697,16 @@ export default function Home() {
       setNotice('The Background layer is position-locked; use Layer > Layer from Background to move it');
       return;
     }
+    // The Move tool carries the other selected layers and linked layers along.
+    const moveIds = tool === 'move' ? moveLayerIds(f, layer.id) : undefined;
+    if (moveIds && moveIds.length > 1) {
+      const blocked = f.layers.filter((item) => moveIds.includes(item.id) && item.id !== layer.id &&
+        (layerIsLocked(f, item) || isBackgroundLayer(f, item)));
+      if (blocked.length) {
+        setNotice('Unlock every selected and linked layer before moving them together');
+        return;
+      }
+    }
     const rasterAsset = layer.kind === 'raster' ? layer.asset : null;
     const g = {
       tool,
@@ -15702,6 +15715,7 @@ export default function Home() {
       smoothedLast: local,
       frame: f,
       layer,
+      moveIds,
       lastPressure: pressure(e),
       pointerType: e.pointerType,
       moved: false,
@@ -16492,14 +16506,9 @@ export default function Home() {
       return;
     }
     if (g.tool === 'move' && g.layer) {
-      const matrix = [...g.layer.matrix] as Matrix;
-      matrix[4] += p.x - g.start.x;
-      matrix[5] += p.y - g.start.y;
       void paint({
         ...g.frame,
-        layers: g.frame.layers.map((l) =>
-          l.id === g.layer!.id ? { ...l, matrix } : l,
-        ),
+        layers: translateLayers(g.frame.layers, g.moveIds ?? [g.layer.id], p.x - g.start.x, p.y - g.start.y),
       });
     } else if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
@@ -17100,16 +17109,12 @@ export default function Home() {
           ? g.pathHandle ? 'Vector mask handle moved' : 'Vector mask node moved'
           : g.pathHandle ? 'Path handle moved' : 'Path node moved');
     } else if (g.tool === 'move' && g.layer && g.moved) {
-      const matrix = [...g.layer.matrix] as Matrix;
-      matrix[4] += p.x - g.start.x;
-      matrix[5] += p.y - g.start.y;
+      const ids = g.moveIds ?? [g.layer.id];
       const changed = commit({
         ...f,
-        layers: f.layers.map((l) =>
-          l.id === g.layer!.id ? { ...l, matrix } : l,
-        ),
+        layers: translateLayers(f.layers, ids, p.x - g.start.x, p.y - g.start.y),
       });
-      if (changed) setNotice('Layer moved');
+      if (changed) setNotice(ids.length > 1 ? `${ids.length} layers moved` : 'Layer moved');
     } else if (g.tool === 'spot-heal' && g.layer?.kind === 'raster' && g.spotHealingStroke) {
       const stroke = g.spotHealingStroke;
       if (commit({

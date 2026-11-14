@@ -34,6 +34,14 @@ commands that operate on one layer.
 
 ## Multi-layer operations
 
+A Move tool drag on a layer that is part of the selection moves every
+selected layer, and every layer linked to any of them, by the same document
+offset as one undoable step ("N layers moved"); when the active layer is not
+selected (for example after Deselect Layers) it moves alone. A locked or
+position-locked Background layer in that set blocks the drag and nothing
+moves (`src/moveLayers.ts`, `tests/move-layers.test.mjs`,
+`tests/browser/move-selected-linked.spec.ts`).
+
 Duplicate, delete and group operate on the selected set as one undoable
 command. They reject locked members, preserve stable stack order, and retain a
 valid active anchor. Align commands translate every selected unlocked layer by
