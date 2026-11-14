@@ -708,3 +708,26 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .text-replace-dialog .text-replace-field>span{font-size:11px;color:#c5c9d2}
 .text-replace-dialog .text-replace-field .text-input{box-sizing:border-box;width:100%;min-width:0;max-width:none;height:36px;font-size:12px}
 .text-replace-dialog .check-row{justify-content:flex-start}
+
+/* Filter effects panel: descriptions, plain labels, selects, number fields and
+   buttons match the other sidebar controls (docs/filter-panel-controls-contract.md). */
+.filter-effects-panel .panel-body p{margin:8px 0 0;color:#aeb8c8;font-size:11px;line-height:1.5}
+.filter-effects-panel .panel-body label:not(.slider):not(.select-row):not(.layer-field):not(.blur-gallery-range){display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 8px;min-width:0;margin:8px 0;color:#93969e;font-size:10px}
+.filter-effects-panel .panel-body label:not(.slider):not(.select-row):not(.layer-field):not(.blur-gallery-range):has(>input[type=checkbox]){justify-content:flex-start}
+.filter-effects-panel .panel-body label>input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:var(--accent)}
+.filter-effects-panel .panel-body .layer-field{color:#93969e;font-size:10px}
+.filter-effects-panel .panel-body select:not(.text-input){flex:1 1 auto;min-width:0;max-width:65%;height:28px;padding:0 6px;border:1px solid #34363e;border-radius:6px;background:#202228;color:#ddd;font-size:10px}
+.filter-effects-panel .panel-body select:not(.text-input):focus{border-color:var(--accent)}
+.filter-effects-panel .panel-body input.number-input{width:96px;height:28px;padding:0 6px;border:1px solid #34363e;border-radius:6px;outline:0;background:#202228;color:#ddd;font-size:10px}
+.filter-effects-panel .panel-body input.number-input:focus{border-color:var(--accent)}
+.slider input.text-input{height:31px;accent-color:auto}
+.filter-effects-panel .light-rays-controls{min-width:0;margin:0;padding:0;border:0}
+.filter-effects-panel .filter-region-note,.filter-effects-panel .filter-stack-editing{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.filter-effects-panel .filter-region-note button,.filter-effects-panel .filter-stack-editing button,.filter-effects-panel .filter-stack>button,.filter-effects-panel .filter-subsection button,.filter-effects-panel .blur-gallery-controls>button,.filter-effects-panel .blur-path-point button{min-height:28px;padding:4px 10px;border:1px solid #34363e;border-radius:6px;background:#202228;color:#c9ccd3;font-size:10px;font-weight:600;cursor:pointer}
+.filter-effects-panel .filter-stack li button{border:1px solid #34363e;border-radius:6px;background:#202228;color:#c9ccd3}
+.filter-effects-panel .panel-body button:hover:not(:disabled){border-color:#564037;color:#ff967b}
+.filter-effects-panel .panel-body button:disabled{opacity:.45;cursor:not-allowed}
+.filter-effects-panel .filter-stack>button{width:100%;margin:4px 0 6px}
+.filter-effects-panel .filter-stack li>span{font-size:10px;color:#c9ccd3}
+@media(max-width:680px){.filter-effects-panel .panel-body select:not(.text-input),.filter-effects-panel .panel-body input.number-input{height:36px}.filter-effects-panel .filter-region-note button,.filter-effects-panel .filter-stack-editing button,.filter-effects-panel .filter-stack>button,.filter-effects-panel .filter-subsection button,.filter-effects-panel .blur-gallery-controls>button,.filter-effects-panel .blur-path-point button{min-height:36px}}
+.filter-effects-panel .light-rays-controls legend{margin:10px 0 2px;padding:0;color:#d4d5d8;font-size:11px;font-weight:700}

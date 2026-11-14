@@ -1364,16 +1364,16 @@ test('Path Blur and Spin Blur are bounded gallery effects with source-safe round
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('path-blur');
   await expect(page.getByLabel('Blur radius', { exact: true })).toHaveValue('6');
   await expect(page.getByLabel('Path direction', { exact: true })).toHaveValue('0');
-  await expect(page.getByLabel('Path center X', { exact: true })).toHaveValue('50');
+  // The authored motion path replaces the legacy centre, so no centre sliders.
+  await expect(page.getByLabel('Path center X', { exact: true })).toHaveCount(0);
   await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
   await page.getByLabel('Path direction', { exact: true }).press('ArrowRight');
-  await page.getByLabel('Path center X', { exact: true }).press('ArrowRight');
   await expect.poll(() => pixel(page, 1, 0)).not.toEqual(original);
   const pathProject = await downloadProject(page);
   const pathLayer = pathProject.history[pathProject.index].layers.at(-1)!;
   expect(pathLayer.asset).toBe(sourceAsset);
   expect(pathProject.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
-  expect(pathLayer.adjustments.filterEffects).toMatchObject({ type: 'path-blur', radius: 7, angle: 1, centerX: 0.51 });
+  expect(pathLayer.adjustments.filterEffects).toMatchObject({ type: 'path-blur', radius: 7, angle: 1, centerX: 0.5 });
 
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
@@ -1389,14 +1389,14 @@ test('Path Blur and Spin Blur are bounded gallery effects with source-safe round
   await expect(page.getByText('Path blur moved to the filter stack (1/8); Spin Blur (local approximation) applied on top and remains editable in Filter effects', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spin-blur');
   await expect(page.getByLabel('Angular sweep', { exact: true })).toHaveValue('18');
-  await expect(page.getByLabel('Spin center X', { exact: true })).toHaveValue('51');
+  await expect(page.getByLabel('Spin center X', { exact: true })).toHaveValue('50');
   await page.getByLabel('Angular sweep', { exact: true }).press('ArrowRight');
   await page.getByLabel('Spin center X', { exact: true }).press('ArrowRight');
   const spinProject = await downloadProject(page);
   const spinLayer = spinProject.history[spinProject.index].layers.at(-1)!;
   expect(spinLayer.asset).toBe(sourceAsset);
   expect(spinProject.assets[sourceAsset!]).toEqual(before.assets[sourceAsset!]);
-  expect(spinLayer.adjustments.filterEffects).toMatchObject({ type: 'spin-blur', radius: 19, centerX: 0.52 });
+  expect(spinLayer.adjustments.filterEffects).toMatchObject({ type: 'spin-blur', radius: 19, centerX: 0.51 });
   expect(spinLayer.smartFilters).toMatchObject([{ type: 'path-blur', radius: 7 }]);
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
@@ -1638,12 +1638,13 @@ test('Spherize is enabled as a nondestructive Distort effect with centred contro
   await expect(page.getByText('Spherize applied; remains editable in Filter effects', { exact: true })).toBeVisible();
   await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spherize');
-  await expect(page.getByLabel('Spherize radius', { exact: true })).toHaveValue('40');
+  // New Spherize records start at radius 64 (70 % of the shorter side).
+  await expect(page.getByLabel('Spherize radius', { exact: true })).toHaveValue('64');
   await expect(page.getByLabel('Spherize center X', { exact: true })).toHaveValue('50');
   await expect(page.getByLabel('Spherize center Y', { exact: true })).toHaveValue('50');
-  await page.getByLabel('Spherize radius', { exact: true }).press('ArrowRight');
+  await page.getByLabel('Spherize radius', { exact: true }).press('ArrowLeft');
   await page.getByLabel('Spherize center X', { exact: true }).press('ArrowRight');
-  await expect(page.getByLabel('Spherize radius', { exact: true })).toHaveValue('41');
+  await expect(page.getByLabel('Spherize radius', { exact: true })).toHaveValue('63');
   await expect(page.getByLabel('Spherize center X', { exact: true })).toHaveValue('51');
   await expect.poll(() => pixel(page, 1, 2)).not.toEqual(sourcePixel);
   expect((await pixel(page, 0, 0))[3]).toBe(0);
@@ -1655,7 +1656,8 @@ test('Spherize is enabled as a nondestructive Distort effect with centred contro
   expect(adjustedLayer.adjustments.filterEffects).toMatchObject({
     type: 'spherize',
     amount: 70,
-    radius: 41,
+    radius: 63,
+    relativeRadius: true,
     centerX: 0.51,
   });
 
@@ -1666,7 +1668,7 @@ test('Spherize is enabled as a nondestructive Distort effect with centred contro
   await expect(page.getByLabel('Spherize center X', { exact: true })).toHaveValue('51');
   await openProject(page, adjusted);
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('spherize');
-  await expect(page.getByLabel('Spherize radius', { exact: true })).toHaveValue('41');
+  await expect(page.getByLabel('Spherize radius', { exact: true })).toHaveValue('63');
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Undo/ }).click();
@@ -2235,21 +2237,25 @@ test('basic Sharpen is an enabled nondestructive Sharpen filter', async ({ page 
   const sourceAsset = sourceLayer.asset!;
   const original = await pixels(page);
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
-  const command = page.getByRole('menuitem', { name: 'Sharpen', exact: true });
+  // The Sharpen heading is a disabled menu item; the command is the enabled one.
+  await expect(page.getByRole('menuitem', { name: 'Sharpen', exact: true }).first()).toBeDisabled();
+  const command = page.getByRole('menuitem', { name: 'Sharpen', exact: true }).nth(1);
   await expect(command).toBeEnabled();
   await command.click();
   await expect(page.getByText('Sharpen (nondestructive) applied; remains editable in Filter effects', { exact: true })).toBeVisible();
   await openPanel(page, 'Filters');
   await expect(page.getByLabel('Filter effect', { exact: true })).toHaveValue('sharpen');
   await expect.poll(() => pixels(page)).not.toEqual(original);
-  await page.getByLabel('Blur radius', { exact: true }).press('ArrowRight');
+  // Sharpen is a fixed kernel: Amount is its only control.
+  await expect(page.getByLabel('Blur radius', { exact: true })).toHaveCount(0);
+  await page.getByLabel('Effect amount', { exact: true }).press('ArrowRight');
   expect((await pixels(page))).not.toEqual(original);
   expect((await pixel(page, 0, 0))[3]).toBe(0);
   const adjusted = await downloadProject(page);
   const layer = adjusted.history[adjusted.index].layers.at(-1)!;
   expect(layer.asset).toBe(sourceAsset);
   expect(adjusted.assets[sourceAsset]).toEqual(before.assets[sourceAsset]);
-  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'sharpen', radius: 7 });
+  expect(layer.adjustments.filterEffects).toMatchObject({ type: 'sharpen', amount: 71 });
 });
 
 test('Sharpen Edges is an enabled edge-weighted nondestructive Sharpen filter', async ({ page }) => {

@@ -16,6 +16,7 @@
 
 import {
   applyFilterEffectsPixels,
+  applyFilterFade,
   effectiveFilterEffects,
   isNeutralFilterEffects,
   type FilterEffects,
@@ -101,6 +102,7 @@ export function renderFilterBand(request: FilterBandRequest): Uint8ClampedArray 
       pixels, width, readRows, normalized.radius, normalized.angle, normalized.centerX, normalized.centerY,
       output, normalized.amount / 100, { rowOffset: readStart, fullHeight: height, start, end },
     );
+    if (normalized.fade !== undefined) applyFilterFade(pixels, output, normalized.fade);
     return output.slice(first, last);
   }
   if (normalized.type === 'light-rays') {
@@ -112,6 +114,7 @@ export function renderFilterBand(request: FilterBandRequest): Uint8ClampedArray 
       seed: normalized.seed,
       strength: normalized.amount / 100,
     }, { rowOffset: readStart, fullHeight: height, start, end });
+    if (normalized.fade !== undefined) applyFilterFade(pixels, output, normalized.fade);
     return output.slice(first, last);
   }
   // Halo rows are only read, never rendered.

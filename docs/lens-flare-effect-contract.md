@@ -7,7 +7,8 @@ asset on preview, export, undo and project reload.
 
 The bounded renderer adds a source-aligned soft glow, an editable-angle star
 streak and four seeded ghost rings. `amount` controls brightness, `radius`
-controls size relative to the shorter canvas edge, `centerX`/`centerY` position
+controls size relative to the shorter canvas edge (`radius / 64 × 92 %`,
+shown as **Flare size** in percent of the shorter side), `centerX`/`centerY` position
 the flare, `angle` rotates the streak and `seed` selects a reproducible colour
 and ghost layout. It is local-only: camera profiles, chromatic aberration,
 sensor bloom and spectral calibration are not inferred.
