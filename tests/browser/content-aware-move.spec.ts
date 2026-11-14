@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { answerPrompt } from './prompt-dialog';
 
 const openEditor = async (page: Page) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -37,11 +38,9 @@ test('Content-Aware Move translates an explicit selection and survives reload', 
   const before = await project(page);
   const beforeFrame = before.history[before.index];
   const beforeAsset = beforeFrame.layers.find((layer) => layer.id === beforeFrame.active)!.asset;
-  page.on('dialog', async (dialog) => {
-    await dialog.accept(dialog.message().includes('horizontally') ? '24' : '0');
-  });
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Content-Aware Move…', exact: true }).click();
+  await answerPrompt(page, 'Content-Aware Move', { 'Move horizontally': '24', 'Move vertically': '0' });
   await expect(page.getByText('Content-Aware Move applied locally; undo restores the original pixels', { exact: true })).toBeVisible();
   const after = await project(page);
   const afterFrame = after.history[after.index];

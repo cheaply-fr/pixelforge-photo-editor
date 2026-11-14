@@ -9,7 +9,7 @@ related: [free-transform, perspective-crop, liquify, vanishing-point]
 updated: 2026-11-14
 ---
 
-**Edit > Perspective Warp…** and **Edit > Puppet Warp…** reshape the pixels of the active layer. Both are simple, numeric versions of these effects: you type the points into your browser's prompt boxes rather than dragging a mesh on the canvas. For freehand pushing and pulling, [Liquify](liquify) is often easier.
+**Edit > Perspective Warp…** and **Edit > Puppet Warp…** reshape the pixels of the active layer. Both are simple, numeric versions of these effects: you type the points into a small dialog rather than dragging a mesh on the canvas. For freehand pushing and pulling, [Liquify](liquify) is often easier.
 
 ![The Edit menu with Free Transform, Perspective Warp…, Puppet Warp… and Content-Aware Scale… highlighted](img/edit-menu-warps.jpg "Transform and warp commands in the Edit menu")
 
@@ -24,8 +24,8 @@ Points are in the layer's own pixels, measured from its top-left corner: x incre
 Perspective Warp fits the whole layer into a four-sided shape that you define, for example to place artwork onto a sign or a screen in a photo.
 
 1. Select the layer and choose **Edit > Perspective Warp…**.
-2. Your browser asks for the **target quad**: four x,y points separated by semicolons, in clockwise order starting at the top-left. The suggested value is the layer's own corners, 10 px in from each edge.
-3. Edit the points, for example `100,50; 1500,150; 1450,900; 150,980`, and confirm.
+2. The **Perspective Warp** dialog asks for the **Target quad**: four x,y points separated by semicolons, in clockwise order starting at the top-left. The suggested value is the layer's own corners, 10 px in from each edge.
+3. Edit the points, for example `100,50; 1500,150; 1450,900; 150,980`, and click **Warp** or press <kbd>Enter</kbd>. While the text is not four numeric points, the dialog says so and **Warp** stays unavailable. **Cancel** or <kbd>Esc</kbd> leaves the layer unchanged.
 
 The layer's top-left corner moves to the first point, top-right to the second, bottom-right to the third and bottom-left to the fourth. Pixels outside the new shape become transparent. The shape must be convex (no inward corners).
 
@@ -34,7 +34,7 @@ The layer's top-left corner moves to the first point, top-right to the second, b
 Puppet Warp moves parts of a layer by pins. Each pin is written as `x,y,dx,dy`: where the pin is, and how far to move it right (dx) and down (dy). Separate pins with semicolons; you can use one to eight pins.
 
 1. Select the layer and choose **Edit > Puppet Warp…**.
-2. Type the pins, for example `800,420,160,0` to push the area around the point (800, 420) 160 px to the right, and confirm.
+2. In the **Puppet Warp** dialog, type the **Pins**, for example `800,420,160,0` to push the area around the point (800, 420) 160 px to the right, and click **Warp**. A malformed pin or more than eight pins is reported in the dialog before anything changes.
 
 ![A portrait after Puppet Warp with one pin: the face stretched to the right while the edges of the layer stay in place](img/puppet-warp-result.jpg "Puppet Warp with a single pin")
 

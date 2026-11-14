@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { openPanel } from './sidebar-panels';
+import { answerPrompt } from './prompt-dialog';
 
 // Filter menu / Filter effects panel audit fixes (docs/filter-panel-controls-contract.md).
 
@@ -169,8 +170,8 @@ test('Edit > Fade after a live filter sets that filter’s opacity', async ({ pa
   expect(blurred).not.toEqual(original);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: /^Fade/ })).toBeEnabled();
-  page.once('dialog', (dialog) => { expect(dialog.message()).toContain('Fade Gaussian blur'); void dialog.accept('0'); });
   await page.getByRole('menuitem', { name: /^Fade/ }).click();
+  await answerPrompt(page, 'Fade Gaussian blur', { 'Fade opacity': '0' });
   await expect(page.locator('footer')).toContainText('Gaussian blur faded to 0%');
   await settled(page);
   await expect.poll(() => pixels(page)).toEqual(original);

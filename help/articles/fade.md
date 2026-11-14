@@ -17,8 +17,8 @@ updated: 2026-11-14
 
 1. Make an edit on a raster layer, for example a brush stroke.
 2. Straight away, choose **Edit > Fade…**.
-3. The browser asks for "Fade opacity (0–100%)", starting at 50. Type a value.
-4. Click **OK**.
+3. The **Fade** dialog opens with **Fade opacity** at 50 %. Type a value from 0 to 100.
+4. Click **Fade** or press <kbd>Enter</kbd>. **Cancel** or <kbd>Esc</kbd> leaves the edit as it is.
 
 The status bar confirms, for example "Fade applied at 50%; undo restores the original edit". The fade is a new History step: undo it to get the full edit back, undo again to remove the edit.
 
@@ -28,7 +28,7 @@ Most filters in PixelForge are live: they are drawn on top of the layer without 
 
 1. Apply a filter from the **Filter** menu, or change a live filter's settings.
 2. Straight away, choose **Edit > Fade…**.
-3. The browser asks for the fade, for example "Fade Gaussian Blur (0–100%)", starting at 50. Type a value and click **OK**.
+3. A dialog named after the filter opens, for example **Fade Gaussian blur**, with **Fade opacity** at 50 %. Type a value from 0 to 100 and click **Fade**.
 
 The status bar confirms, for example "Gaussian Blur faded to 40%; edit it under Filter effects or undo to restore". The value is stored on the filter: at 0 % the layer looks as it did before the filter, at 100 % the filter shows in full.
 

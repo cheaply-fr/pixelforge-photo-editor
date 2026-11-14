@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
+import { answerPrompt } from './prompt-dialog';
 
 // Colour dynamics and the brush preset library on a small 400×200 document,
 // read back from the composited editor canvas (desktop and mobile projects).
@@ -143,8 +144,8 @@ test('save, apply, rename and delete a brush preset; it survives reload and expo
   await setSlider(page, 'Hue jitter', '37');
   await setSlider(page, 'Brightness jitter', '21');
   await setSlider(page, 'Size jitter', '15');
-  page.once('dialog', (dialog) => dialog.accept('Cosmic dust'));
   await page.getByRole('button', { name: 'Save brush preset', exact: true }).click();
+  await answerPrompt(page, 'Name this brush preset', { 'Preset name': 'Cosmic dust' });
   await expect(page.locator('footer')).toContainText('Brush preset “Cosmic dust” saved on this device');
   await expect(select.locator('option:checked')).toHaveText('Cosmic dust');
 
@@ -159,8 +160,8 @@ test('save, apply, rename and delete a brush preset; it survives reload and expo
   await expect(page.getByLabel('Brightness jitter', { exact: true })).toHaveValue('21');
   await expect(page.getByLabel('Size jitter', { exact: true })).toHaveValue('15');
 
-  page.once('dialog', (dialog) => dialog.accept('Cosmic haze'));
   await page.getByRole('button', { name: 'Rename brush preset', exact: true }).click();
+  await answerPrompt(page, 'Rename brush preset', { 'Preset name': 'Cosmic haze' });
   await expect(page.locator('footer')).toContainText('Brush preset renamed to “Cosmic haze”');
   await expect(select.locator('option:checked')).toHaveText('Cosmic haze');
   const stored = await page.evaluate(() => JSON.parse(window.localStorage.getItem('pixelforge.brush-presets.v1') ?? 'null'));
@@ -197,8 +198,8 @@ test('save, apply, rename and delete a brush preset; it survives reload and expo
 test('saved presets persist on this device for a new document, and corrupt storage is ignored', async ({ page }) => {
   await selectTool(page, 'Brush');
   await setSlider(page, 'Saturation jitter', '44');
-  page.once('dialog', (dialog) => dialog.accept('Device brush'));
   await page.getByRole('button', { name: 'Save brush preset', exact: true }).click();
+  await answerPrompt(page, 'Name this brush preset', { 'Preset name': 'Device brush' });
   await expect(page.locator('footer')).toContainText('saved on this device');
   // A brand-new document still offers the device library.
   await page.goto('/editor?new=1');

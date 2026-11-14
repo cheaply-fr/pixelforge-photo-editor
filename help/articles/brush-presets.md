@@ -35,7 +35,7 @@ The library presets use your current foreground colour. They look best on a dark
 
 1. Set up the Brush (or Pencil or Smudge) the way you want it.
 2. Click **Save brush preset**, or choose **Edit > Define Brush Preset…**.
-3. Type a name and confirm. The new preset is selected and listed under **Saved on this device**.
+3. Type a name in the dialog and click **Save** (or press <kbd>Enter</kbd>). The name cannot be empty. The new preset is selected and listed under **Saved on this device**.
 
 A preset stores the brush size, tip, opacity, flow, smoothing, scatter, count and jitter, colour dynamics, texture, dual tip, bristle, wet edges, build-up, pressure options, blend **Mode** and Silk strands settings. A preset saved while the Smudge tool is active also stores the Smudge options (Strength, Mode, Finger painting and the sampling options). Presets never contain pixels.
 

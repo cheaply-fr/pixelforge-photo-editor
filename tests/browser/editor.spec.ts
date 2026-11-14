@@ -2,6 +2,7 @@ import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 import { openPanel } from './sidebar-panels';
+import { answerPrompt } from './prompt-dialog';
 
 const additiveModifier: 'Meta' | 'Control' =
   process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -1476,11 +1477,10 @@ test('layer menu copy, paste, hide and flatten preserve an undoable project', as
 test('Cookie Cutter creates an editable vector mask and survives reload', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  const prompts = ['star'];
-  page.on('dialog', async (dialog) => await dialog.accept(prompts.shift()!));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Cookie Cutter Mask…', exact: true })).toBeEnabled();
   await page.getByRole('menuitem', { name: 'Cookie Cutter Mask…', exact: true }).click();
+  await answerPrompt(page, 'Cookie Cutter Mask', { Shape: 'star' });
   await expect(page.getByText(/Cookie Cutter star mask created/)).toBeVisible();
   await page.reload();
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');

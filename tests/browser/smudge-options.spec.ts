@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
+import { answerPrompt } from './prompt-dialog';
 
 // Smudge Strength, Mode, Finger Painting, Sample All Layers, tip/dynamics
 // controls and brush presets, on desktop and mobile.
@@ -263,8 +264,8 @@ test('Smudge settings are saved in and applied from the brush preset library', a
   await page.getByRole('combobox', { name: 'Smudge mode' }).selectOption('color');
   await page.getByRole('checkbox', { name: 'Finger painting', exact: true }).check();
   await page.getByLabel('Roundness', { exact: true }).fill('35');
-  page.once('dialog', (dialog) => dialog.accept('Smear'));
   await page.getByRole('button', { name: 'Save brush preset', exact: true }).click();
+  await answerPrompt(page, 'Name this brush preset', { 'Preset name': 'Smear' });
   await expect(page.locator('footer')).toContainText('Brush preset “Smear” saved on this device');
   const stored = await page.evaluate(() => JSON.parse(window.localStorage.getItem('pixelforge.brush-presets.v1') ?? 'null'));
   expect(stored.presets.find((preset: { label: string }) => preset.label === 'Smear').smudge).toMatchObject({

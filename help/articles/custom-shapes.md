@@ -35,7 +35,7 @@ Saved paths are also listed as **Saved path preset** in the options of the Pen a
 
 ## Save a shape preset
 
-**Edit > Define Custom Shape…** saves the current Rectangle, Ellipse, Line or Polygon tool with the foreground colour (and, for polygons, the variant and number of sides) under a name you choose. If another tool is active, you are asked which kind of shape to save.
+**Edit > Define Custom Shape…** saves the current Rectangle, Ellipse, Line or Polygon tool with the foreground colour (and, for polygons, the variant and number of sides) under a name you choose. A dialog asks for the preset name; if another tool is active, the same dialog also lets you choose the **Shape kind** (rectangle, ellipse, line or polygon).
 
 Saved shape presets appear as **Saved shape preset** in the Tool options of the Rectangle, Ellipse, Line and Polygon tools. Choosing one switches to its tool and colour; **Remove** deletes it.
 

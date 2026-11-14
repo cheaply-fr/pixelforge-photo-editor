@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { clickCanvas, dragOnCanvas, highlight, menu, openEditor, openSample, selectTool, shoot } from './helpers';
+import { answerPrompt } from '../../tests/browser/prompt-dialog';
 
 // Help Center screenshots for the Transform, crop and view category.
 
@@ -95,8 +96,8 @@ test('puppet-warp-result', async ({ page }) => {
   await openEditor(page);
   await openSample(page, 'portrait');
   // One pin: the face bends to the right while the rest of the layer stays put.
-  page.once('dialog', (d) => d.accept('800,420,160,0'));
   await menu(page, 'Edit', 'Puppet Warp…');
+  await answerPrompt(page, 'Puppet Warp', { Pins: '800,420,160,0' });
   await expect(page.locator('footer')).toContainText('Puppet Warp applied');
   await shoot(page, 'puppet-warp-result', canvasWrap(page));
 });
@@ -106,9 +107,8 @@ test('content-aware-scale-result', async ({ page }) => {
   await openSample(page, 'landscape');
   await selectTool(page, 'Elliptical Marquee');
   await dragOnCanvas(page, [0.6, 0.38], [0.76, 0.62]);
-  const answers = ['150', '150'];
-  page.on('dialog', (d) => d.accept(answers.shift() ?? ''));
   await menu(page, 'Edit', 'Content-Aware Scale…');
+  await answerPrompt(page, 'Content-Aware Scale', { 'Scale horizontally': '150', 'Scale vertically': '150' });
   await expect(page.locator('footer')).toContainText('Content-Aware Scale applied');
   await page.keyboard.press('Control+d');
   await shoot(page, 'content-aware-scale-result', canvasWrap(page));

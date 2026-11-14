@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { answerPrompt } from './prompt-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -31,10 +32,9 @@ test('Object Selection creates a connected local mask and survives reload on des
     name: 'object-selection-fixture.png', mimeType: 'image/png', buffer: Buffer.from(encoded, 'base64'),
   });
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
-  const values = ['1,2', '0', '0'];
-  page.on('dialog', async (dialog) => dialog.accept(values.shift() ?? '0'));
   await page.getByRole('button', { name: 'Select', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Object Selection…', exact: true }).click();
+  await answerPrompt(page, 'Object Selection', { 'Point X': '1', 'Point Y': '2', 'Colour tolerance': '0', 'Edge softness': '0' });
   await expect(page.getByText('Object Selection created (local connected-colour proxy)', { exact: true })).toBeVisible();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();

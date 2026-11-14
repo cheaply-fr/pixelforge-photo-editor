@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { answerPrompt } from './prompt-dialog';
 
 const makeFixture = (page: import('@playwright/test').Page) => page.evaluate(() => {
   const canvas = document.createElement('canvas');
@@ -39,10 +40,9 @@ test('Matting removes a white fringe nondestructively and round-trips on desktop
   expect(before[0]).toBeGreaterThan(150);
   expect(before[1]).toBe(128);
 
-  const prompts = ['white', '100'];
-  page.on('dialog', async (dialog) => await dialog.accept(prompts.shift()!));
   await page.getByRole('button', { name: 'Layer', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Matting…', exact: true }).click();
+  await answerPrompt(page, 'Matting', { 'Matte colour': 'white', Amount: '100' });
   await expect(page.getByText('White matte removal applied nondestructively', { exact: true })).toBeVisible();
   const after = await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => {
     const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;

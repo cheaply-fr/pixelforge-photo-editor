@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { clickCanvas, dragOnCanvas, highlight, menu, openEditor, openSample, selectTool, shoot } from './helpers';
+import { answerPrompt } from '../../tests/browser/prompt-dialog';
 
 // Type category screenshots (help/articles: add-text, edit-text-on-canvas,
 // character-and-paragraph, font-library-and-glyphs, vertical-type-and-type-masks,
@@ -128,9 +129,8 @@ test('type-warp-arc', async ({ page }) => {
   await openEditor(page);
   await openSample(page, 'landscape');
   await addType(page, 'Golden hour', [0.12, 0.35]);
-  const answers = ['arc', '60', '0'];
-  page.on('dialog', (dialog) => void dialog.accept(answers.shift()));
   await menu(page, 'Type', 'Warp Text…');
+  await answerPrompt(page, 'Warp Text', { 'Warp style': 'arc', Bend: '60', 'Vertical distortion': '0' });
   await settle(page);
   await page.waitForTimeout(400);
   await shoot(page, 'type-warp-arc', canvas(page));
@@ -151,8 +151,8 @@ test('type-on-path', async ({ page }) => {
   await page.mouse.up();
   await settle(page);
   await addType(page, 'Follow the curve of the hills', [0.1, 0.85], { size: '70' });
-  page.on('dialog', (dialog) => void (dialog.type() === 'confirm' ? dialog.dismiss() : dialog.accept(dialog.defaultValue())));
   await menu(page, 'Type', 'Text on Path…');
+  await answerPrompt(page, 'Text on Path');
   await settle(page);
   await page.waitForTimeout(400);
   await shoot(page, 'type-on-path', canvas(page));

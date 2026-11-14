@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { answerPrompt, cancelPrompt, expectPromptRejects } from './prompt-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -37,11 +38,11 @@ test('Perspective Warp changes the active raster asset and survives reload on de
   const before = await downloadedProject((await (await beforeDownload).path())!);
   const sourceLayer = before.history[before.index].layers.at(-1)!;
   const sourceAsset = sourceLayer.asset;
-  page.once('dialog', async (dialog) => dialog.accept('1,1;10,0;11,7;0,6'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   const command = page.getByRole('menuitem', { name: 'Perspective Warp…', exact: true });
   await expect(command).toBeEnabled();
   await command.click();
+  await answerPrompt(page, 'Perspective Warp', { 'Target quad': '1,1;10,0;11,7;0,6' });
   await expect(page.getByText('Perspective Warp applied locally; undo restores the source asset', { exact: true })).toBeVisible();
   const afterDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -85,14 +86,11 @@ test('Vanishing Point applies a bounded local plane projection and preserves the
   const before = await downloadedProject((await (await beforeDownload).path())!);
   const sourceLayer = before.history[before.index].layers.at(-1)!;
   const sourceAsset = sourceLayer.asset;
-  page.once('dialog', async (dialog) => {
-    expect(dialog.message()).toContain('Vanishing Point target quad');
-    await dialog.accept('1,1;10,0;11,7;0,6');
-  });
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   const command = page.getByRole('menuitem', { name: 'Vanishing Point…', exact: true });
   await expect(command).toBeEnabled();
   await command.click();
+  await answerPrompt(page, 'Vanishing Point', { 'Target quad': '1,1;10,0;11,7;0,6' });
   await expect(page.getByText('Vanishing Point applied locally; undo restores the source asset', { exact: true })).toBeVisible();
   const afterDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -115,10 +113,10 @@ test('Vanishing Point rejects invalid plans and disables itself for locked layer
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
   const before = await downloadedProject((await (await beforeDownload).path())!);
-  page.once('dialog', async (dialog) => await dialog.accept('1,1;2,2;3,3'));
   await page.getByRole('button', { name: 'Filter', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Vanishing Point…', exact: true }).click();
-  await expect(page.getByText('Vanishing Point needs four numeric x,y points', { exact: true })).toBeVisible();
+  await expectPromptRejects(page, 'Vanishing Point', { 'Target quad': '1,1;2,2;3,3' }, 'Vanishing Point needs four numeric x,y points');
+  await cancelPrompt(page, 'Vanishing Point');
   const unchangedDownload = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();
@@ -165,9 +163,9 @@ test('Perspective Warp on a paint layer stored at its content bounds works in ca
   expect(stored.asset.w).toBeLessThan(stored.frame.w);
 
   // Cancelling the quad prompt leaves the layer at its stored bounds.
-  page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Perspective Warp…', exact: true }).click();
+  await cancelPrompt(page, 'Perspective Warp');
   const cancelled = await download();
   expect([cancelled.asset.w, cancelled.asset.h]).toEqual([stored.asset.w, stored.asset.h]);
   expect(cancelled.project.history.length).toBe(stored.project.history.length);
@@ -175,9 +173,9 @@ test('Perspective Warp on a paint layer stored at its content bounds works in ca
   // The default quad spans the canvas: the warp is applied in canvas space as
   // one undo step and the result is stored at its content bounds again.
   const { w, h } = stored.frame;
-  page.once('dialog', (dialog) => dialog.accept(`10,10;${w - 10},10;${w - 10},${h - 10};10,${h - 10}`));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Perspective Warp…', exact: true }).click();
+  await answerPrompt(page, 'Perspective Warp', { 'Target quad': `10,10;${w - 10},10;${w - 10},${h - 10};10,${h - 10}` });
   await expect(page.getByText('Perspective Warp applied locally; undo restores the source asset', { exact: true })).toBeVisible();
   const warped = await download();
   expect(warped.project.history.length).toBe(stored.project.history.length + 1);

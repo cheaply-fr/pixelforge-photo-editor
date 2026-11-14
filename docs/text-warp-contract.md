@@ -7,6 +7,6 @@ bounded `warp` object changes raster placement at render time. `style` is one of
 reload, export, and local draft persistence reproduce the same result without
 rasterizing the text. Legacy text layers omit `warp` and remain unchanged.
 
-The current UI exposes this through Type → Warp Text… and prompts for style,
-bend, and vertical distortion. Full Photoshop mesh warps, font deformation,
+The current UI exposes this through Type → Warp Text…, an in-app dialog with
+a style list and bend / vertical distortion fields validated to −100…100. Full Photoshop mesh warps, font deformation,
 OpenType shaping, and arbitrary bezier envelopes remain future work.

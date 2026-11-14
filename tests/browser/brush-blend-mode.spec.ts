@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
+import { answerPrompt } from './prompt-dialog';
 
 // Brush/Pencil Mode (blend mode) on a small 400×200 document painted straight
 // onto its opaque Background layer, read back from the composited editor
@@ -223,8 +224,8 @@ test('presets store and restore the mode; old presets load as Normal and unknown
   await expect(librarySelect(page).locator('option', { hasText: 'Broken mode' })).toHaveCount(0);
 
   await modeSelect(page).selectOption('multiply');
-  page.once('dialog', (dialog) => dialog.accept('Shade'));
   await page.getByRole('button', { name: 'Save brush preset', exact: true }).click();
+  await answerPrompt(page, 'Name this brush preset', { 'Preset name': 'Shade' });
   await expect(page.locator('footer')).toContainText('Brush preset “Shade” saved on this device');
   const stored = await page.evaluate(() => JSON.parse(window.localStorage.getItem('pixelforge.brush-presets.v1') ?? 'null'));
   expect(stored.presets.find((preset: { label: string }) => preset.label === 'Shade').brushBlendMode).toBe('multiply');

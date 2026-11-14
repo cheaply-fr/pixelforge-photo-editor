@@ -24,11 +24,11 @@ In PixelForge this is a single-plane projection that you set by typing corner co
 ## Apply Vanishing Point
 
 1. Select the layer.
-2. Choose **Filter > Vanishing Point…**. The browser asks for the "target quad".
+2. Choose **Filter > Vanishing Point…**. The **Vanishing Point** dialog asks for the **Target quad**.
 3. Type four points, clockwise from the top-left, as `x,y` pairs separated by semicolons:
    `top-left; top-right; bottom-right; bottom-left`.
-   The box starts with a rectangle 10 px inside the layer's edges, for example `10,10;1590,10;1590,990;10,990` for a 1600 × 1000 layer.
-4. Click **OK**. The layer's top-left corner moves to the first point, its top-right corner to the second, and so on.
+   The field starts with a rectangle 10 px inside the layer's edges, for example `10,10;1590,10;1590,990;10,990` for a 1600 × 1000 layer. Until there are four numeric points, the dialog shows "Vanishing Point needs four numeric x,y points" and **Warp** stays unavailable.
+4. Click **Warp** or press <kbd>Enter</kbd>. The layer's top-left corner moves to the first point, its top-right corner to the second, and so on.
 
 The status bar says "Vanishing Point applied locally; undo restores the source asset". Areas of the layer outside the new shape become transparent.
 

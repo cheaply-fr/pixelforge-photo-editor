@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { answerPrompt } from './prompt-dialog';
 
 // Shortcut audit 2026-11-14 (docs/keyboard-shortcuts.md): every key shown in
 // the toolbar and the menus does what it says, on desktop and mobile.
@@ -82,14 +83,11 @@ test('Ctrl+F opens Search commands but Ctrl+Shift+F runs Fade…', async ({ page
   await menu(page, 'Edit', /^Fill…/);
   await page.getByRole('dialog', { name: 'Fill' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await expect(footer(page)).toContainText('Layer filled', { timeout: 10000 });
-  let prompted = false;
-  page.once('dialog', (dialog) => { prompted = dialog.message().includes('Fade'); void dialog.accept('50'); });
   await page.keyboard.press('Control+Shift+F');
   await expect(search).toBeHidden();
-  // Fade is a prompt today; accept a Fade dialog too if it becomes one.
-  await expect.poll(async () =>
-    prompted || await page.getByRole('dialog', { name: /Fade/ }).isVisible() || (await footer(page).textContent())?.includes('Fade applied'),
-  ).toBeTruthy();
+  // Fade opens its in-app dialog; applying it fades the fill.
+  await answerPrompt(page, 'Fade', { 'Fade opacity': '50' });
+  await expect(footer(page)).toContainText('Fade applied at 50%', { timeout: 10000 });
 });
 
 test('Ctrl+Alt+Shift+F focuses Find Layers instead of opening Search commands', async ({ page }) => {

@@ -18,8 +18,8 @@ updated: 2026-11-14
 1. Select a visible, unlocked raster (pixel) layer.
 2. Select the area to scale, for example with the [Elliptical Marquee](marquee-tools) or a [lasso](lasso-tools). The command is disabled without a selection.
 3. Choose **Edit > Content-Aware Scale…**.
-4. Your browser asks **Scale selection horizontally (%)** (suggested 120) and then **Scale selection vertically (%)** (suggested: the same value). Each must be between 25% and 400%.
-5. Confirm both. The selected pixels are scaled around the centre of the selection's bounding box.
+4. In the **Content-Aware Scale** dialog, set **Scale horizontally** and **Scale vertically** in percent (both start at 120). Each must be between 25% and 400%; a value outside that range is marked in red and **Scale** stays unavailable.
+5. Click **Scale** or press <kbd>Enter</kbd>. The selected pixels are scaled around the centre of the selection's bounding box. **Cancel** or <kbd>Esc</kbd> leaves the layer unchanged.
 
 The change is one undo step. It is stored with the layer rather than overwriting the original pixels, and it is included when you export.
 

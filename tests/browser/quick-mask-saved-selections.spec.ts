@@ -2,6 +2,7 @@ import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 import { openPanel } from './sidebar-panels';
+import { answerPrompt } from './prompt-dialog';
 
 const prepare = async (page: Page) => {
   await page.route(
@@ -184,8 +185,8 @@ test('saved selections are named, loaded, renamed, deleted and retained in proje
   await expect(
     page.getByText('Saved selection loaded', { exact: true }),
   ).toBeVisible();
-  page.once('dialog', (dialog) => dialog.accept('Hero'));
   await page.getByRole('button', { name: 'Rename selection Subject area', exact: true }).click();
+  await answerPrompt(page, 'Rename saved selection', { 'Selection name': 'Hero' });
   await expect(page.getByText('Hero', { exact: true })).toBeVisible();
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Delete selection Hero', exact: true }).click();

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { answerPrompt } from './prompt-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.route(
@@ -46,11 +47,11 @@ test('Puppet Warp moves a bounded pin, retains the source, and survives reload o
   const sourceLayer = before.history[before.index].layers.at(-1)!;
   const sourceAsset = sourceLayer.asset;
 
-  page.once('dialog', async (dialog) => dialog.accept('6,4,2,0'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   const command = page.getByRole('menuitem', { name: 'Puppet Warp…', exact: true });
   await expect(command).toBeEnabled();
   await command.click();
+  await answerPrompt(page, 'Puppet Warp', { Pins: '6,4,2,0' });
   await expect(page.getByText('Puppet Warp applied locally; undo restores the source asset', { exact: true })).toBeVisible();
   const afterPixel = await page.getByTestId('editor-canvas').evaluate((canvas) => {
     const context = (canvas as HTMLCanvasElement).getContext('2d')!;
@@ -94,9 +95,9 @@ test('a single Puppet Warp pin bends around itself and leaves the rest of the la
   });
   const before = await read();
   expect(before.width).toBeGreaterThan(900);
-  page.once('dialog', async (dialog) => dialog.accept('800,420,140,-60'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Puppet Warp…', exact: true }).click();
+  await answerPrompt(page, 'Puppet Warp', { Pins: '800,420,140,-60' });
   await expect(page.getByText('Puppet Warp applied locally; undo restores the source asset', { exact: true })).toBeVisible();
   await expect(canvas).toHaveAttribute('data-rendering', 'false');
   const after = await read();

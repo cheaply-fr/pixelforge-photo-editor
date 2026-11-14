@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
+import { answerPrompt } from './prompt-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -26,8 +27,8 @@ test('Edit Fade blends the previous raster edit with a bounded opacity and remai
   const activeBefore = before.history[before.index].layers.find((layer: { id: string }) => layer.id === before.history[before.index].active);
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: /^Fade/ })).toBeEnabled();
-  page.once('dialog', (dialog) => { expect(dialog.message()).toContain('Fade opacity'); void dialog.accept('50'); });
   await page.getByRole('menuitem', { name: /^Fade/ }).click();
+  await answerPrompt(page, 'Fade', { 'Fade opacity': '50' });
   await expect(page.locator('footer')).toContainText('Fade applied at 50%', { timeout: 10000 });
   const after = await project(page);
   const activeAfter = after.history[after.index].layers.find((layer: { id: string }) => layer.id === after.history[after.index].active);

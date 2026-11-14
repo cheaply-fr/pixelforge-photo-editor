@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { dragOnCanvas, highlight, openEditor, openPanel, openSample, selectTool, shoot } from './helpers';
+import { answerPrompt } from '../../tests/browser/prompt-dialog';
 
 // Help Center screenshots for the Filters and effects category (W6).
 
@@ -279,8 +280,8 @@ test('vanishing-point-result', async ({ page }) => {
   await openEditor(page);
   await openSample(page, 'city');
   // Map the layer's corners to a narrower top edge: a simple one-plane perspective.
-  page.once('dialog', (dialog) => dialog.accept('400,120;1200,120;1590,990;10,990'));
   await filter(page, 'Vanishing Point…');
+  await answerPrompt(page, 'Vanishing Point', { 'Target quad': '400,120;1200,120;1590,990;10,990' });
   await expect(page.getByText('Vanishing Point applied locally; undo restores the source asset')).toBeVisible();
   await settled(page);
   await shoot(page, 'vanishing-point-result');
@@ -312,9 +313,9 @@ test('fade-live-filter', async ({ page }) => {
   await openSample(page, 'landscape');
   await filter(page, 'Gaussian Blur…');
   // Edit > Fade… after a live filter asks for the opacity and stores it on the filter.
-  page.once('dialog', (dialog) => dialog.accept('40'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: /^Fade…/ }).click();
+  await answerPrompt(page, 'Fade Gaussian blur', { 'Fade opacity': '40' });
   await settled(page);
   await filtersPanel(page);
   const faded = page.locator('label.slider', { hasText: 'Faded to (Edit → Fade)' });
