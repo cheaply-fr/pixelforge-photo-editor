@@ -16,7 +16,7 @@ The Smudge tool picks up the pixels under the start of the stroke and drags them
 
 ## Smudge an area
 
-1. Choose **Smudge** in the **Retouch** group of the toolbar. Smudge, Blur and Sharpen share one toolbar button: press and hold (or right-click) it to switch.
+1. Choose **Smudge** in the **Retouch** group of the toolbar. Smudge, Blur and Sharpen share one toolbar button: press and hold (or right-click) it to switch. From the keyboard, press <kbd>Shift</kbd>+<kbd>R</kbd> (shown as **⇧R** on the button); press it again to cycle through Smudge, Blur and Sharpen.
 2. Set **Size**, **Hardness** and **Strength**.
 3. Start the stroke on the colour you want to move and drag.
 

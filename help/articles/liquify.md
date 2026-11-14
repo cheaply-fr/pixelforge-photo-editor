@@ -9,7 +9,7 @@ related: [distort-filters, perspective-and-puppet-warp, smudge-tool, filters-ove
 updated: 2026-11-14
 ---
 
-**Filter > Liquify…** reshapes a round area around a centre point: it can twist it, push it to one side, or change its size. It is a live filter, so you can move the centre or change the strength at any time, and the original pixels stay untouched.
+**Filter > Liquify…** reshapes a round area around a centre point: it can twist it, push it to one side, or enlarge it. It is a live filter, so you can move the centre or change the strength at any time, and the original pixels stay untouched.
 
 Liquify in PixelForge works on one area at a time with sliders. It is not a brush: you cannot paint warps freely, and there are no face-aware controls. For a brush that drags pixels, use the [Smudge tool](smudge-tool); for pinning and bending shapes, see [Perspective and Puppet Warp](perspective-and-puppet-warp).
 
@@ -30,9 +30,9 @@ The change is strongest at the centre and fades to nothing at the edge of the ar
 
 | Option | Range | Default | What it does |
 |---|---|---|---|
-| Liquify mode | Twist, Push, Bloat | Twist | **Twist** rotates the area around the centre. **Push** shifts it in the direction of **Liquify angle**. **Bloat** changes the area's size without turning it; in the current version it makes the area look smaller (drawn in towards the centre). |
+| Liquify mode | Twist, Push, Bloat | Twist | **Twist** rotates the area around the centre. **Push** shifts it in the direction of **Liquify angle**. **Bloat** enlarges the content under the radius without turning it, as if it swelled outwards from the centre. |
 | Effect amount | 0–100 % | 70 % | Strength of the warp. |
-| Liquify radius | 1–64 | 40 | Size of the affected area, relative to the layer: 64 is a circle about 70 % of the layer's shorter side in radius. The panel shows "px", but the value is relative. |
+| Liquify radius | 1–70 % of shorter side | 44 % | Radius of the affected circle, as a share of the layer's shorter side. |
 | Liquify angle | −180° to 180° | 75° | Twist: how far and which way the area turns. Push: the direction of the push (0° pushes to the right, 90° downwards). Not used by Bloat. |
 | Liquify center X / Liquify center Y | 0–100 % | 50 % | Position of the centre. |
 

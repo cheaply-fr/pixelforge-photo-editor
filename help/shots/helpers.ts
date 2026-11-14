@@ -130,7 +130,8 @@ export async function menu(page: Page, top: string, item?: string): Promise<void
   // Menu items with a shortcut are named "<label> <shortcut>", so match the label as a prefix.
   if (!item) return;
   const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  await page.getByRole('menuitem', { name: new RegExp(`^${escaped}(?:\\s|$)`) }).first().click();
+  // Skip disabled section headings that share a command's label (Filter > "Sharpen").
+  await page.getByRole('menuitem', { name: new RegExp(`^${escaped}(?:\\s|$)`) }).and(page.locator(':enabled')).first().click();
 }
 
 /** Close menus, dialogs' transient toasts and notices that would clutter a shot. */

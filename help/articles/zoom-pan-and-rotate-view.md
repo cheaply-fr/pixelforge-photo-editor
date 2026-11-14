@@ -60,7 +60,7 @@ Turning the canvas can make drawing at awkward angles more comfortable.
 The current angle is shown in the options. Tools keep working on the rotated canvas: you paint where you see the pointer.
 
 > [!NOTE]
-> <kbd>R</kbd> always selects Rotate View. While Rotate View is active, <kbd>Shift</kbd>+<kbd>R</kbd> switches back to the last used Smudge, Blur or Sharpen tool.
+> <kbd>R</kbd> always selects Rotate View. <kbd>Shift</kbd>+<kbd>R</kbd> selects the Smudge, Blur and Sharpen tools instead (see [Keyboard shortcuts](keyboard-shortcuts)).
 
 > [!TIP]
 > To actually rotate the image, see [Rotate and flip](rotate-and-flip). For more room to work, see [Screen modes](screen-modes).

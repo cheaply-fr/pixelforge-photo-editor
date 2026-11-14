@@ -34,7 +34,7 @@ All sliders run from −100 to 100; 0 means no change.
 | Shadows | Positive values lift dark areas; negative values deepen them. |
 | Temperature | Positive values warm the picture (towards yellow); negative values cool it (towards blue). |
 | Tint | Corrects a green or magenta cast. Positive values add magenta; negative values add green. |
-| Clarity | In the current version, Clarity changes colour intensity pixel by pixel: positive values push each pixel's colour away from grey (more vivid), negative values pull it towards grey (more muted). It does not add local contrast. |
+| Clarity | Midtone local contrast. Each pixel is compared with the average brightness of a large area around it (about 2.5 % of the longer side, 2–48 px). Positive values strengthen that difference, so edges and texture in the midtones stand out; negative values soften it for a hazier look. Blacks, whites, flat areas and colours (hue) are left as they are. |
 
 Fully transparent pixels are left alone.
 

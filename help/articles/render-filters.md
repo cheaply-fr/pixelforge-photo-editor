@@ -87,10 +87,10 @@ Draws a simple branching tree with round green leaves, growing up from an origin
 | Effect amount | 0–100 % (default 70 %) | Opacity of the tree. |
 | Tree origin X | 0–100 % | Horizontal position of the trunk. |
 | Tree origin Y | 20–98 % | Where the trunk starts, measured from the top. |
-| Branch count | 2–8 (default 5) | Main branches growing from the top of the trunk; each then forks in two. The panel shows a % sign, but this is a count. |
+| Trunk length | 3–40 % of shorter side (default 16 %) | Length of the trunk as a share of the layer's shorter side. The branches scale with it, so this sets the size of the whole tree. |
+| Branch count | 2–8 (default 5) | Main branches growing from the top of the trunk; each then forks in two. |
 | Leafiness | 0–100 % (default 55 %) | How many branch tips carry a leaf. |
 | Tree seed | 0–4294967295 | Picks a different tree. |
-| Cell size | 1–64 px | Does not change the tree in the current version. |
 
 ## Picture Frame
 

@@ -19,7 +19,7 @@ The noise filters either add grain to a picture or remove unwanted grain, specks
 2. Choose a command from the **Noise** part of the **Filter** menu, or **Filter > AI Denoise…**.
 3. Open the **Filters** panel and adjust **Filter effects**.
 
-Several noise filters measure differences in brightness levels from 0 to 255. The panel shows these values with a % sign, but they are levels, not percentages.
+Several noise filters measure differences in brightness levels from 0 to 255. The panel shows these thresholds as levels, for example "12 / 255".
 
 ## Add Noise
 
@@ -48,12 +48,12 @@ Finds pixels that differ strongly from their neighbourhood (dust, small scratche
 | Option | Range | Default | What it does |
 |---|---|---|---|
 | Effect amount | 0–100 % | 100 % | Mix with the original. |
-| Outlier threshold | 0–255 | 12 | How different a pixel must be before it is cleaned. Raise it to protect fine detail. |
+| Outlier threshold | 0–255 levels | 12 / 255 | How different a pixel must be before it is cleaned. Raise it to protect fine detail. |
 | Radius | 1–64 px | 2 px | Size of the neighbourhood. Values above 8 px give the same result as 8 px. |
 
 ## Despeckle
 
-A one-click clean-up with a fixed one-pixel neighbourhood and a fixed threshold. Only **Effect amount** (default 100 %) changes the result; the **Radius** slider does not.
+A one-click clean-up with a fixed one-pixel neighbourhood and a fixed threshold. It has only **Effect amount** (default 100 %).
 
 ## Reduce Noise
 
@@ -62,7 +62,7 @@ Smooths each pixel with nearby pixels of a similar tone, which reduces grain whi
 | Option | Range | Default | What it does |
 |---|---|---|---|
 | Effect amount | 0–100 % | 100 % | Mix with the original. |
-| Preserve details | 0–255 | 25 | How similar a neighbour must be to be used. Lower values keep more detail; higher values smooth more. |
+| Preserve details | 0–255 levels | 25 / 255 | How similar a neighbour must be to be used. Lower values keep more detail; higher values smooth more. |
 | Radius | 1–64 px | 2 px | Size of the neighbourhood. Values above 8 px give the same result as 8 px. |
 
 ## AI Denoise
@@ -72,7 +72,7 @@ Smooths each pixel with nearby pixels of a similar tone, which reduces grain whi
 | Option | Range | Default | What it does |
 |---|---|---|---|
 | Effect amount | 0–100 % | 100 % | Mix with the original. |
-| Edge protection | 0–255 | 18 | Brightness differences above this level count as edges and are kept. |
+| Edge protection | 0–255 levels | 18 / 255 | Brightness differences above this level count as edges and are kept. |
 | Radius | 1–64 px | 3 px | Size of the neighbourhood. Values above 6 px give the same result as 6 px. |
 
 It works on single images only; it does not use RAW data or several frames.
@@ -84,7 +84,7 @@ It works on single images only; it does not use RAW data or several frames.
 | Option | Range | Default | What it does |
 |---|---|---|---|
 | Effect amount | 0–100 % | 70 % | Mix with the original. |
-| Reflection threshold | 0–255 | 28 | How much brighter than its surroundings a spot must be to be treated. |
+| Reflection threshold | 0–255 levels | 28 / 255 | How much brighter than its surroundings a spot must be to be treated. |
 | Cleanup radius | 1–64 px | 4 px | Size of the neighbourhood. Values above 8 px give the same result as 8 px. |
 
 It does not detect reflections by meaning and cannot rebuild what is behind large, coloured or textured reflections. For those, use the [healing tools](spot-healing-and-healing) or [Content-Aware Fill](content-aware-fill-and-move).

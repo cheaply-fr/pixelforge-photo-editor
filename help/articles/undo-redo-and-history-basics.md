@@ -19,9 +19,11 @@ Every edit you make is recorded as a step. You can undo it, redo it, or jump str
 |---|---|---|
 | Undo the last step | **Edit > Undo** | <kbd>Ctrl</kbd>+<kbd>Z</kbd> |
 | Redo a step you undid | **Edit > Redo** | <kbd>Ctrl</kbd>+<kbd>Y</kbd> or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> |
-| Switch between the current and the previous step | **Edit > Toggle Last State** | |
+| Switch between the current and the previous step | **Edit > Toggle Last State** | <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Z</kbd> |
 
 On a Mac use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd>. The undo and redo arrows in the top bar do the same.
+
+Toggle Last State switches to the step before the current one; press it again to switch back. Pressing it repeatedly bounces between those two steps instead of going further back, which makes it easy to compare before and after. Undo, Redo, a History jump or a new edit starts a fresh toggle from wherever the document is.
 
 If you undo some steps and then make a new edit, the steps you undid are discarded and the new edit continues from there.
 

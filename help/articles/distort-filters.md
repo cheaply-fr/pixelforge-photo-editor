@@ -28,16 +28,16 @@ Rotates pixels around a centre, more strongly near the centre.
 | Option | Range | Default | What it does |
 |---|---|---|---|
 | Twirl angle | −180° to 180° | 75° | How far the centre is turned. Negative values twist the other way. |
+| Twirl radius | 1–70 % of shorter side | 70 % | Radius of the twirled circle, as a share of the layer's shorter side. Pixels outside it are not moved. |
 | Twirl center X / Y | 0–100 % | 50 % | Centre of the twirl. |
-| Radius | 1–64 px | 6 px | In the current version this slider does not change the result. The twirl always covers a circle about 70 % of the layer's shorter side in radius. |
 
 ## Pinch
 
-Pulls pixels towards a centre, so the middle looks squeezed.
+Pulls the content inside a circle in towards its centre, so the middle looks squeezed and smaller.
 
 | Option | Range | Default | What it does |
 |---|---|---|---|
-| Pinch radius | 1–64 | 40 | Size of the pinched area, relative to the layer: 64 is a circle about 70 % of the layer's shorter side in radius. The panel shows "px", but the value is relative. |
+| Pinch radius | 1–70 % of shorter side | 44 % | Radius of the pinched circle, as a share of the layer's shorter side. |
 | Pinch center X / Y | 0–100 % | 50 % | Centre of the pinch. |
 
 ## Spherize
@@ -46,8 +46,8 @@ Bulges the middle of a circle outwards, as if the picture were wrapped round a b
 
 | Option | Range | Default | What it does |
 |---|---|---|---|
+| Spherize radius | 1–70 % of shorter side | 70 % | Radius of the bulging circle, as a share of the layer's shorter side. Pixels outside it are not moved. |
 | Spherize center X / Y | 0–100 % | 50 % | Centre of the bulge. |
-| Spherize radius | 1–64 px | 40 px | In the current version this slider does not change the result. The bulge always covers a circle about 70 % of the layer's shorter side in radius. |
 
 ## Ripple
 
@@ -99,7 +99,7 @@ Wraps the layer into a circle around a centre: the top of the picture ends up in
 
 | Option | Range | Default | What it does |
 |---|---|---|---|
-| Polar radius | 1–64 | 64 | Size of the circle the picture is wrapped into, relative to the layer: 64 is a circle half the layer's shorter side in radius. Lower values make a smaller planet, with the bottom row of the picture stretched out around it. The panel shows "px", but the value is relative. |
+| Polar radius | 1–50 % of shorter side | 50 % | Radius of the circle the picture is wrapped into, as a share of the layer's shorter side. Lower values make a smaller planet, with the bottom row of the picture stretched out around it. |
 | Polar center X / Y | 0–100 % | 50 % | Centre of the circle. |
 
 > [!TIP]

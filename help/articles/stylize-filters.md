@@ -33,13 +33,13 @@ Turns the picture into a grey relief, as if it were pressed into metal, lit from
 
 | Option | Range | Default | What it does |
 |---|---|---|---|
-| Emboss depth | 1–64 | 6 | Depth of the relief. Every 8 steps add one pixel of depth, up to 8 px at 64. The panel shows "px". |
+| Emboss depth | 1–8 px | 1 px | How far apart, in pixels, the samples that form the relief are. Higher values give a deeper, broader relief. |
 | Light angle | −180° to 180° | 0° | Direction the light comes from. |
 | Effect amount | 0–100 % | 70 % | Strength of the relief. |
 
 ### Solarize
 
-Inverts the tones brighter than mid-grey, giving the partly negative look of a solarised print. Only **Effect amount** (default 70 %) changes the result; the **Radius** slider does not.
+Inverts the tones brighter than mid-grey, giving the partly negative look of a solarised print. It has only **Effect amount** (default 70 %).
 
 ### Diffuse
 

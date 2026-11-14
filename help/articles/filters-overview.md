@@ -31,7 +31,8 @@ Every filter runs in your browser on your device. Nothing is uploaded, including
 |---|---|
 | **Filter effect** list | Shows the live filter. Pick another entry to switch to a different filter in place. |
 | **Effect amount** | 0–100 %. How strongly the filter is mixed with the original layer. 0 % shows the layer unchanged. |
-| Filter settings | Sliders, lists and fields for the chosen filter. They are described in the article for each family. |
+| Filter settings | Sliders, lists and fields for the chosen filter. Each readout shows its unit: pixels, degrees, a share of the layer (such as "% of shorter side") or a brightness level ("n / 255"). One-click filters such as Average, Blur, Despeckle, Sharpen and Solarize have no settings besides Effect amount. The settings are described in the article for each family. |
+| **Faded to (Edit → Fade)** | Shown only after you use **Edit > Fade…** straight after applying the filter. 0–100 %: how much of the filter result is kept. 100 % removes the fade. See [Fade an edit](fade). |
 | **Filter center X (px)** / **Filter center Y (px)** | For filters that have a centre (Twirl, Radial Blur, Lens Flare, Light Rays and others): the exact centre in layer pixels, in 0.1 px steps. |
 | **Clear** | In the section header. Removes the live filter. **Filter > Clear local filter effect** does the same. |
 | **Add filter to stack (n/8)** | Moves the live filter into the layer's filter stack so you can add another filter on top. See [Smart filters and filter stacks](smart-filters). |
@@ -59,7 +60,7 @@ The Filter menu is one long list, grouped under grey headings.
 | Noise | Add Noise…, Median…, Dust & Scratches…, Despeckle, Reduce Noise… | [Noise filters](noise-filters) |
 | Pixelate | Color Halftone…, Crystallize…, Fragment, Facet…, Mezzotint…, Mosaic…, Pointillize… | [Pixelate filters](pixelate-and-artistic-filters) |
 | Render | Picture Frame…, Tree…, Clouds, Difference Clouds, Fibers…, Lens Flare…, Light Rays…, Flame… | [Render filters](render-filters), [Light Rays](light-rays), [Lens Flare](lens-flare) |
-| Sharpen | Sharpen, Sharpen Edges, Sharpen More, Smart Sharpen…, Unsharp Mask… (listed straight after the Render commands) | [Sharpen filters](sharpen-filters) |
+| Sharpen | Sharpen, Sharpen Edges, Sharpen More, Smart Sharpen…, Unsharp Mask… | [Sharpen filters](sharpen-filters) |
 | Stylize | Find Edges…, Emboss…, Solarize…, Diffuse…, Wind…, Gradient Map… | [Stylize and video filters](stylize-filters) |
 | Video | De-Interlace…, NTSC Colors | [Stylize and video filters](stylize-filters) |
 | Other | High Pass… | [Sharpen filters](sharpen-filters) |
@@ -93,7 +94,7 @@ A layer has one live filter at a time. When you choose a different filter from t
 - Undo also works: each filter change is one History step.
 
 > [!TIP]
-> Want a filter at half strength? Lower **Effect amount** instead of using **Edit > Fade…**. Live filters do not change the layer's pixels, so Fade has nothing to blend for them. See [Fade an edit](fade).
+> Want a filter at half strength? Lower **Effect amount**, or choose **Edit > Fade…** straight after applying the filter. Fade stores its value on the live filter, where you can change it later with the **Faded to (Edit → Fade)** slider. See [Fade an edit](fade).
 
 ## Filters that change pixels directly
 

@@ -35,7 +35,7 @@ The first entry is the document as you opened it. The current state is highlight
 
 Going back is itself undoable. If you make a new edit after going back, the later states you skipped are discarded and the new edit continues from there, just as with Undo.
 
-The same steps are available with **Edit > Undo** (<kbd>Ctrl</kbd>+<kbd>Z</kbd>), **Edit > Redo** (<kbd>Ctrl</kbd>+<kbd>Y</kbd> or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>) and **Edit > Toggle Last State**. See [Undo, redo and history basics](undo-redo-and-history-basics).
+The same steps are available with **Edit > Undo** (<kbd>Ctrl</kbd>+<kbd>Z</kbd>), **Edit > Redo** (<kbd>Ctrl</kbd>+<kbd>Y</kbd> or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>) and **Edit > Toggle Last State** (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Z</kbd>). See [Undo, redo and history basics](undo-redo-and-history-basics).
 
 ## How much history is kept
 

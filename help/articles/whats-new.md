@@ -11,6 +11,18 @@ updated: 2026-11-14
 
 PixelForge updates automatically. When a new version is published while the editor is open, a **New version available** notice appears in the top bar: choose **Reload** to switch (your draft is saved first) or **Later** to keep working. The version you are running is shown in the top bar.
 
+## November 14, 2026
+
+- Every toolbar key now selects its tool: <kbd>V</kbd> Move, <kbd>H</kbd> Hand, <kbd>Z</kbd> Zoom, <kbd>T</kbd> the Type tools, and <kbd>Shift</kbd>+<kbd>R</kbd> (shown as **⇧R**) for Smudge, Blur and Sharpen; <kbd>R</kbd> stays Rotate View. See [Keyboard shortcuts](keyboard-shortcuts).
+- Menu shortcuts match their modifiers exactly: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> is **Edit > Fade…**, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> **Find Layers**, <kbd>Ctrl</kbd>+<kbd>,</kbd> **Hide Layers**, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Z</kbd> **Toggle Last State**, which now switches between the current and the previous state.
+- A **Help** menu and <kbd>F1</kbd> open this Help Center.
+- **Edit > Keyboard Shortcuts…** shows a readable table that includes Search commands. **Find and Replace Text…** has clearly visible text boxes.
+- **Check Spelling…** uses a list of about 3,700 common English words and accepts their regular forms, so far fewer correct words are listed. See [Find, replace and check spelling](find-replace-and-spellcheck).
+- Rounded Rectangle and Custom Shape have **Tool presets**.
+- **Edit > Fade…** works right after a live filter: the fade is stored on the filter and stays editable with a **Faded to (Edit → Fade)** slider. See [Fade an edit](fade).
+- Filter controls now say what they do: Twirl and Spherize radius set the affected area, Tree has **Trunk length**, relative sizes read "% of shorter side" or "% of half diagonal", thresholds read "n / 255", and filters without a radius (Average, Blur, Despeckle, Sharpen, Solarize) no longer show one. Lens Correction and Adaptive Wide Angle now scale with the image.
+- **Liquify** Bloat now enlarges and **Pinch** pulls inwards. **Sharpen** is a fixed sharpening kernel, distinct from Unsharp Mask, and Camera Raw **Clarity** now adds midtone local contrast. The Filter menu has a **Sharpen** heading.
+
 ## November 13, 2026
 
 - **Edit > Stroke Selection…** now opens a full dialog: width, colour (with **Use foreground**), location (Inside, Center or Outside), opacity and blend mode. The stroke is one undo step and no longer wipes the rest of the layer.

@@ -26,7 +26,7 @@ updated: 2026-11-14
 | Option | Range | Default | What it does |
 |---|---|---|---|
 | Effect amount | 0–100 % | 75 % | Brightness of the flare. |
-| Flare size | 1–64 | 36 | Size of the flare, relative to the layer: at 64 it spans about 92 % of the layer's shorter side. The panel shows "px", but the value is relative. |
+| Flare size | 1–92 % of shorter side | 52 % | Size of the flare, as a share of the layer's shorter side. |
 | Flare centre X / Flare centre Y | 0–100 % | 50 % | Position of the flare's core. |
 | Streak angle | −180° to 180° | 0° | Direction of the star streak. The ghost circles line up along the same direction. |
 | Flare seed | 0–4294967295 | 0 | Picks a different colour and ghost layout. |

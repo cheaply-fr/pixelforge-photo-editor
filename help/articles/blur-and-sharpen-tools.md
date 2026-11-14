@@ -16,7 +16,7 @@ The Blur and Sharpen tools apply a blur or a sharpening effect only where you pa
 
 ## Blur or sharpen an area
 
-1. In the **Retouch** group, press and hold (or right-click) the Smudge button and choose **Blur** or **Sharpen**. The three tools share one button.
+1. In the **Retouch** group, press and hold (or right-click) the Smudge button and choose **Blur** or **Sharpen**. The three tools share one button. From the keyboard, press <kbd>Shift</kbd>+<kbd>R</kbd> (shown as **⇧R**) until the tool you want is selected.
 2. Set **Size**, **Hardness** and **Flow**. Flow sets the strength of each stroke.
 3. Paint over the area. Paint over it again to strengthen the effect.
 

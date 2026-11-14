@@ -49,12 +49,12 @@ Averages the pixels in a square around each pixel. It looks slightly more "boxy"
 
 One-click blurs.
 
-- **Blur** applies a light, fixed 1-pixel box blur. Its **Radius** slider does not change the result.
-- **Blur More** applies a stronger box blur at twice the **Radius** value (up to 64 px). Default Radius: 6 px.
+- **Blur** applies a light, fixed 1-pixel box blur. It has only **Effect amount** (default 70 %).
+- **Blur More** applies a stronger box blur. Its **Blur radius** reads the real box radius in pixels: each step of the slider adds 2 px, from 12 px by default up to 64 px. Default **Effect amount**: 85 %.
 
 ### Average
 
-Replaces the layer's colours with their average colour. **Effect amount** sets how far the layer moves towards that average (default 85 %). The **Radius** slider does not change the result. Useful for finding the overall colour cast of a photo.
+Replaces the layer's colours with their average colour. It has only **Effect amount**, which sets how far the layer moves towards that average (default 85 %). Useful for finding the overall colour cast of a photo.
 
 ### Lens Blur
 
@@ -146,7 +146,8 @@ Places up to eight pins; each pin sets how blurred the picture is around it. The
 | Field pin *n* X / Y | 0–100 % | Position of the pin. |
 | Field pin *n* radius | 0–64 px | Blur at that pin. Use 0 to keep an area sharp. |
 | **Add field pin** / **Remove pin** / **Reset field pins** | – | Add a pin (up to eight), remove one, or go back to the single default pin. |
-| Fallback blur radius | 1–64 px | Used only when the filter has no pins. |
+
+Field Blur has no overall radius slider: each pin sets its own blur.
 
 ### Path Blur
 
@@ -159,7 +160,7 @@ Blurs along a motion path that you shape with two to eight points.
 | **Add motion point** / **Remove point** / **Reset motion path** | – | Edit the path. |
 | Blur radius | 1–64 px | Length of the blur. |
 | Path direction | −180° to 180° | Turns the blur direction relative to the path. 0° follows the path. |
-| Path center X / Y | 0–100 % | Used only by older documents that have no motion path; it has no visible effect on a new Path Blur. |
+| Path center X / Y | 0–100 % | Shown only for Path Blur filters saved by older versions that have no motion path. A new Path Blur uses its motion points instead. |
 
 ### Spin Blur
 

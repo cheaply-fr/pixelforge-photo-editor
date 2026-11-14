@@ -194,7 +194,7 @@ test('stylize-emboss', async ({ page }) => {
   await filter(page, 'Emboss…');
   await filtersPanel(page);
   await slider(page, 'Effect amount', 100);
-  await slider(page, 'Emboss depth', 24);
+  await slider(page, 'Emboss depth', 3);
   await slider(page, 'Light angle', 135);
   await shoot(page, 'stylize-emboss');
 });
@@ -305,6 +305,25 @@ test('fade-menu', async ({ page }) => {
   await expect(fade).toBeEnabled();
   await highlight(fade);
   await shoot(page, 'fade-menu');
+});
+
+test('fade-live-filter', async ({ page }) => {
+  await openEditor(page);
+  await openSample(page, 'landscape');
+  await filter(page, 'Gaussian Blur…');
+  // Edit > Fade… after a live filter asks for the opacity and stores it on the filter.
+  page.once('dialog', (dialog) => dialog.accept('40'));
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^Fade…/ }).click();
+  await settled(page);
+  await filtersPanel(page);
+  const faded = page.locator('label.slider', { hasText: 'Faded to (Edit → Fade)' });
+  await expect(faded).toBeVisible();
+  // Scroll first: the ring is fixed-position, so it must be drawn after the panel settles.
+  await effects(page).scrollIntoViewIfNeeded();
+  await page.waitForTimeout(250);
+  await highlight(faded);
+  await shoot(page, 'fade-live-filter', effects(page));
 });
 
 test('filters-mobile @mobile', async ({ page }) => {

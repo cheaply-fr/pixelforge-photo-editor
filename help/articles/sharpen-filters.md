@@ -16,20 +16,20 @@ Sharpening increases contrast along edges so a picture looks crisper. PixelForge
 ## Apply a sharpen filter
 
 1. Select a visible, unlocked layer.
-2. Choose a sharpen command from the **Filter** menu. Sharpen, Sharpen Edges, Sharpen More, Smart Sharpen… and Unsharp Mask… are listed straight after the Render commands; **High Pass…** is under **Other**; **AI Sharpen…** is near the top of the menu.
+2. Choose a sharpen command from the **Filter** menu. Sharpen, Sharpen Edges, Sharpen More, Smart Sharpen… and Unsharp Mask… are under the **Sharpen** heading; **High Pass…** is under **Other**; **AI Sharpen…** is near the top of the menu.
 3. Open the **Filters** panel and adjust **Filter effects**.
 
 Zoom to 100 % (**View > Actual size**) to judge sharpening; at smaller zoom levels the effect is hard to see.
 
 ## The filters
 
-All of them have **Effect amount** (0–100 %, how strong the sharpening is) and a radius slider (1–64 px, how wide the edges that get sharpened are). Small radii (1–3 px) bring out fine detail; large radii add punchy local contrast but can create bright or dark halos.
+All of them have **Effect amount** (0–100 %, how strong the sharpening is). All except Sharpen also have a radius slider (**Blur radius**, 1–64 px, how wide the edges that get sharpened are). Small radii (1–3 px) bring out fine detail; large radii add punchy local contrast but can create bright or dark halos.
 
 | Filter | Default | What it does |
 |---|---|---|
-| **Sharpen** | 70 %, 6 px | Adds back the difference between the layer and a blurred copy of it, once. |
-| **Unsharp Mask…** | 70 %, 6 px | The classic unsharp mask. It currently uses the same calculation as Sharpen, so the same settings give the same result. There is no Threshold control. |
-| **Sharpen More** | 70 %, 6 px | Applies the unsharp step twice for a stronger result. |
+| **Sharpen** | 70 % | A one-click sharpen with a fixed 3 × 3 pixel kernel: each pixel is contrasted against its four direct neighbours. It has no radius; only **Effect amount** changes the result. |
+| **Unsharp Mask…** | 70 %, 6 px | The classic unsharp mask: adds back the difference between the layer and a blurred copy of it, with an adjustable **Blur radius**. There is no Threshold control. |
+| **Sharpen More** | 70 %, 6 px | Applies the unsharp mask step twice for a stronger result. |
 | **Sharpen Edges** | 70 %, 6 px | Weights the sharpening towards edges and leaves smooth areas mostly alone. |
 | **Smart Sharpen…** | 70 %, 6 px | Compares the layer with an edge-preserving blur, which limits sharpening on flat areas such as skies and skin. |
 | **High Pass…** | 85 %, 3 px (**High Pass radius**) | Turns the layer into neutral grey with only its edges showing. See the tip below. |
@@ -41,10 +41,8 @@ All of them have **Effect amount** (0–100 %, how strong the sharpening is) and
 | Option | Range | Default | What it does |
 |---|---|---|---|
 | Effect amount | 0–100 % | 100 % | Mix with the original. |
-| Edge threshold | 0–255 | 22 | Brightness differences below this level are not sharpened, which protects smooth areas. Higher values sharpen only stronger edges. |
+| Edge threshold | 0–255 levels | 22 / 255 | Brightness differences below this level are not sharpened, which protects smooth areas. Higher values sharpen only stronger edges. |
 | Blur radius | 1–64 px | 2 px | Size of the detail being boosted. Values above 6 px give the same result as 6 px. |
-
-The panel shows the edge threshold with a % sign, but the value is a brightness level from 0 to 255.
 
 ## Sharpen with High Pass
 

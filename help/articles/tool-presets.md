@@ -15,7 +15,9 @@ A tool preset stores the options of one tool under a name, such as "Soft sketch"
 
 ## Which tools have presets
 
-Tools with options show a **Tool presets** button at the top of their options in the sidebar: painting and retouching tools, the eraser tools, Gradient, the Horizontal Type tool, the Rectangle, Ellipse, Line and Polygon tools, and the marquee, lasso and selection tools. The button shows the tool name and the preset in use, with **Modified** when you have changed the options since applying it.
+Tools with options show a **Tool presets** button at the top of their options in the sidebar: painting and retouching tools, the eraser tools, Gradient, the Horizontal Type tool, every shape tool (Rectangle, Rounded Rectangle, Ellipse, Line, Polygon and Custom Shape), and the marquee, lasso and selection tools. The button shows the tool name and the preset in use, with **Modified** when you have changed the options since applying it.
+
+Shape tool presets store the colour and size; Polygon presets add the variant, number of sides and star inner radius, Rounded Rectangle presets add the **Corner radius**, and Custom Shape presets add the chosen shape (a built-in shape or one of your saved paths on this device; if that saved path is deleted later, the tool falls back to the built-in library).
 
 Tools without stored options, such as Move, Hand, Zoom, Crop and the Pen tools, have no presets.
 
