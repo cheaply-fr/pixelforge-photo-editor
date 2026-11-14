@@ -305,11 +305,33 @@ export type FilterEffects = {
    */
   flareFill?: boolean;
   /**
+   * `radius` is a layer-relative influence size (RELATIVE_RADIUS_TYPES):
+   * Twirl and Spherize use radius / 64 × 70 % of the shorter side, Lens
+   * Correction and Adaptive Wide Angle radius / 64 × half the layer
+   * diagonal. Twirl and Spherize records always carry it after
+   * normalization (legacy records, whose radius was ignored, become radius
+   * 64 = the old fixed 70 % extent). Lens Correction and Adaptive Wide Angle
+   * records without it keep the legacy source-pixel radius.
+   */
+  relativeRadius?: boolean;
+  /**
+   * Edit → Fade on a live filter: the filtered result is mixed with the
+   * filter's input at this opacity, 0–100 %. Omitted means 100 % (unfaded).
+   */
+  fade?: number;
+  /**
    * The selection the filter was applied through, in layer-surface units
    * (src/filterRegion.ts). Omitted: the filter covers the whole layer.
    */
   region?: FilterRegion;
 };
+
+/** Filter types whose `radius` can be layer-relative (`relativeRadius`). */
+export const RELATIVE_RADIUS_TYPES = ['twirl', 'spherize', 'lens-correction', 'adaptive-wide-angle'] as const;
+const relativeRadiusType = (type: string): boolean =>
+  (RELATIVE_RADIUS_TYPES as readonly string[]).includes(type);
+/** Twirl and Spherize always use the layer-relative radius after normalization. */
+const ALWAYS_RELATIVE_RADIUS_TYPES = new Set<string>(['twirl', 'spherize']);
 
 export type CloudRenderSettings = {
   /** Colour at noise value 1 (the drawing colour when created from the menu). */
@@ -428,6 +450,16 @@ export function effectiveFilterEffects(
     ? Math.trunc(source.seed) >>> 0
     : neutralFilterEffects.seed;
   const normalized = { type, amount, radius, angle, centerX, centerY, seed } as FilterEffects;
+  if (ALWAYS_RELATIVE_RADIUS_TYPES.has(type)) {
+    // Legacy Twirl/Spherize ignored `radius` and always covered 70 % of the
+    // shorter side, which is exactly the relative radius 64.
+    if (source.relativeRadius !== true) normalized.radius = FILTER_RADIUS_MAX;
+    normalized.relativeRadius = true;
+  } else if (relativeRadiusType(type) && source.relativeRadius === true) {
+    normalized.relativeRadius = true;
+  }
+  if (type !== 'none' && finite(source.fade) && Math.round(source.fade) < 100)
+    normalized.fade = clamp(Math.round(source.fade), 0, 100);
   if (type === 'liquify') {
     normalized.liquifyMode = source.liquifyMode === 'push' || source.liquifyMode === 'bloat'
       ? source.liquifyMode
@@ -581,7 +613,10 @@ export function retypeFilterEffects(
   previous: Partial<FilterEffects> | undefined,
   next: Partial<FilterEffects> & { type: FilterEffectType },
 ): FilterEffects {
-  return effectiveFilterEffects({ ...effectiveFilterEffects(previous), ...next });
+  // Fade belongs to the edit it faded, never to the next filter.
+  const kept: Partial<FilterEffects> = effectiveFilterEffects(previous);
+  delete kept.fade;
+  return effectiveFilterEffects({ ...kept, ...next });
 }
 
 function validBlurPath(value: unknown): value is BlurPathPoint[] {
@@ -694,6 +729,8 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
     (effect.lightRays === undefined || (effect.type === 'light-rays' && validLightRaysSettings(effect.lightRays))) &&
     (effect.flareFill === undefined || (effect.type === 'lens-flare' && typeof effect.flareFill === 'boolean')) &&
     (effect.region === undefined || validFilterRegion(effect.region)) &&
+    (effect.relativeRadius === undefined || (effect.relativeRadius === true && relativeRadiusType(effect.type as string))) &&
+    (effect.fade === undefined || (finite(effect.fade) && Number.isInteger(effect.fade) && effect.fade >= 0 && effect.fade <= 100)) &&
     finite(effect.amount) &&
     effect.amount >= 0 &&
     effect.amount <= 100 &&
@@ -717,6 +754,15 @@ export function validFilterEffects(value: unknown): value is FilterEffects {
   );
 }
 
+/**
+ * Effects whose output does not depend on `radius` (it is not shown in the
+ * Filter effects panel), so radius 0 is not an identity for them.
+ */
+const RADIUS_FREE_TYPES = new Set<FilterEffectType>([
+  'twirl', 'field-blur', 'deinterlace', 'ntsc-colors', 'solarize', 'add-noise', 'light-rays',
+  'average-blur', 'blur', 'despeckle', 'sharpen',
+]);
+
 export function isNeutralFilterEffects(
   value: Partial<FilterEffects> | undefined,
 ): boolean {
@@ -724,12 +770,13 @@ export function isNeutralFilterEffects(
   return (
     effect.type === 'none' ||
     effect.amount === 0 ||
+    effect.fade === 0 ||
     (effect.type === 'path-blur' && Boolean(effect.path) && effect.path!.every((point) => point.speed === 0)) ||
     (effect.type === 'twirl' && effect.angle === 0) ||
     (effect.type === 'shear' && effect.angle === 0) ||
     (effect.type === 'field-blur' && (!effect.fieldPoints || effect.fieldPoints.every((point) => point.radius === 0))) ||
     (effect.type === 'deinterlace' && effect.radius === 0) ||
-    (effect.type !== 'twirl' && effect.type !== 'field-blur' && effect.type !== 'deinterlace' && effect.type !== 'ntsc-colors' && effect.type !== 'solarize' && effect.type !== 'add-noise' && effect.type !== 'light-rays' && effect.radius === 0) ||
+    (!RADIUS_FREE_TYPES.has(effect.type) && effect.radius === 0) ||
     (effect.type === 'field-blur' && !effect.fieldPoints && effect.radius === 0)
   );
 }
@@ -2579,6 +2626,17 @@ function applyEmboss(
  * transparent RGB padding unchanged; branch count, leafiness and seed are
  * persisted so a local draft replays exactly without generated assets.
  */
+/** Tree trunk slider maximum: radius 15 is a trunk of 40 % of the shorter side. */
+export const TREE_TRUNK_RADIUS_MAX = 15;
+/**
+ * Root branch (trunk) length of Render → Tree as a fraction of the shorter
+ * side: radius × 16 % / 6, capped at 40 %. The menu default radius 6 is the
+ * 16 % trunk every earlier Tree rendered, whatever its stored radius.
+ */
+export function treeTrunkFraction(radius: number): number {
+  return Math.min(0.4, (Math.max(1, radius) * 0.16) / 6);
+}
+
 function applyTree(
   source: Uint8ClampedArray,
   width: number,
@@ -2600,7 +2658,7 @@ function applyTree(
   const leaves: Array<{ x: number; y: number; radius: number }> = [];
   const baseX = clamp(effect.centerX, 0, 1) * (width - 1);
   const baseY = clamp(effect.centerY, 0.2, 0.98) * (height - 1);
-  const unit = Math.max(2, Math.min(width, height) * 0.16);
+  const unit = Math.max(2, Math.min(width, height) * treeTrunkFraction(effect.radius));
   const maxDepth = 4;
   const grow = (x: number, y: number, length: number, angle: number, depth: number, key: number): void => {
     const endX = x + Math.cos(angle) * length;
@@ -2844,6 +2902,14 @@ function applyFacet(
   }
 }
 
+/**
+ * Influence radius of Pinch, Liquify, Twirl and Spherize as a fraction of the
+ * layer's shorter side: radius / 64 × 0.7 (radius 1–64 → about 1–70 %).
+ */
+export function distortInfluenceFraction(radius: number): number {
+  return (0.7 * Math.max(1, Math.min(FILTER_RADIUS_MAX, radius))) / FILTER_RADIUS_MAX;
+}
+
 function applyDistort(
   source: Uint8ClampedArray,
   width: number,
@@ -2854,13 +2920,9 @@ function applyDistort(
   const amount = effect.amount / 100,
     centerX = effect.centerX * (width - 1),
     centerY = effect.centerY * (height - 1),
-    radius =
-      effect.type === 'pinch' || effect.type === 'liquify'
-        ? Math.max(
-            1,
-            (Math.min(width, height) * 0.7 * Math.max(1, effect.radius)) / 64,
-          )
-        : Math.max(1, Math.min(width, height) * 0.7),
+    // Pinch, Liquify, Twirl and Spherize: radius / 64 × 70 % of the shorter
+    // side (distortInfluenceFraction). Ripple keeps its own wavelength.
+    radius = Math.max(1, Math.min(width, height) * distortInfluenceFraction(effect.radius)),
     angle = (effect.angle * Math.PI) / 180;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -2884,8 +2946,11 @@ function applyDistort(
         // squared falloff leaves the edge of the influence continuous. The
         // source is sampled only; output never feeds a later pixel, so the
         // operation remains deterministic and nondestructive.
+        // Each destination samples farther from the centre than itself
+        // (scale ≥ 1), so content is pulled in toward the centre. The map
+        // stays monotonic and inside the influence for every amount.
         const falloff = 1 - normalized;
-        const scale = 1 - amount * falloff * falloff;
+        const scale = 1 + amount * falloff * falloff;
         sampleX = centerX + dx * scale;
         sampleY = centerY + dy * scale;
       } else if (effect.type === 'liquify' && distance < radius) {
@@ -2898,7 +2963,10 @@ function applyDistort(
           sampleX = x - Math.cos(angle) * influence * radius;
           sampleY = y - Math.sin(angle) * influence * radius;
         } else {
-          const scale = effect.liquifyMode === 'bloat' ? 1 + influence : 1 - influence;
+          // Both sample nearer the centre (scale < 1): Bloat enlarges the
+          // content under the brush; Twist adds the same slight swelling to
+          // its rotation, as before.
+          const scale = 1 - influence;
           const turn = effect.liquifyMode === 'bloat' ? 0 : angle * amount * falloff * falloff;
           const cosine = Math.cos(turn);
           const sine = Math.sin(turn);
@@ -3342,6 +3410,23 @@ function applyLensFlare(
   }
 }
 
+/**
+ * Influence radius of Lens Correction / Adaptive Wide Angle in layer pixels.
+ * Relative records (every record created since the radius became layer
+ * relative) use radius / 64 × half the layer diagonal, so 64 reaches every
+ * corner from a centred origin. Legacy records keep the radius in source
+ * pixels (at most 64), which the tiled renderer can overlap.
+ */
+export function correctionInfluenceRadius(
+  effect: Pick<FilterEffects, 'radius' | 'relativeRadius'>,
+  width: number,
+  height: number,
+): number {
+  if (effect.relativeRadius === true)
+    return Math.max(1, (Math.max(1, effect.radius) / FILTER_RADIUS_MAX) * Math.hypot(width, height) / 2);
+  return Math.max(1, Math.min(effect.radius, Math.max(width, height)));
+}
+
 /** Apply a bounded radial lens-correction approximation without mutating the source. */
 function applyLensCorrection(
   source: Uint8ClampedArray,
@@ -3352,9 +3437,9 @@ function applyLensCorrection(
 ): void {
   const centreX = effect.centerX * (width - 1);
   const centreY = effect.centerY * (height - 1);
-  // Radius is expressed in source pixels so the correction can be rendered
-  // through the bounded tiled path without sampling beyond its overlap.
-  const influenceRadius = Math.max(1, Math.min(effect.radius, Math.max(width, height)));
+  // Legacy source-pixel radii can be rendered through the bounded tiled path
+  // without sampling beyond its overlap; relative radii render full frame.
+  const influenceRadius = correctionInfluenceRadius(effect, width, height);
   const strength = (effect.amount / 100) * 0.45 * (effect.lensDirection === 'outward' ? -1 : 1);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -3401,9 +3486,9 @@ function applyAdaptiveWideAngle(
 ): void {
   const centreX = effect.centerX * (width - 1);
   const centreY = effect.centerY * (height - 1);
-  // Radius is expressed in source pixels so a tiled render can expand by a
-  // bounded overlap and reproduce the full-frame result at tile seams.
-  const influenceRadius = Math.max(1, Math.min(effect.radius, Math.max(width, height)));
+  // A legacy source-pixel radius lets a tiled render expand by a bounded
+  // overlap; relative radii (half-diagonal based) render full frame.
+  const influenceRadius = correctionInfluenceRadius(effect, width, height);
   const strength = clamp(effect.amount, 0, 100) / 100 * 0.34;
   const settings = effect.adaptiveWideAngle ?? DEFAULT_ADAPTIVE_WIDE_ANGLE_SETTINGS;
   const horizontalBias = 0.55 + settings.horizontal / 100 * 0.9;
@@ -3436,6 +3521,42 @@ function applyAdaptiveWideAngle(
       output[destination + 1] = sample[1];
       output[destination + 2] = sample[2];
       output[destination + 3] = source[destination + 3];
+    }
+  }
+}
+
+/**
+ * One-click Filter → Sharpen: a fixed 3 × 3 kernel (centre 5, the four edge
+ * neighbours −1) blended with the source by `strength`. It has no radius.
+ * Neighbours outside the image repeat the edge pixel and transparent
+ * neighbours count as the centre colour, so hidden RGB never leaks in.
+ * Alpha and the RGB of transparent pixels are kept.
+ */
+function applySharpenKernel(
+  source: Uint8ClampedArray,
+  width: number,
+  height: number,
+  output: Uint8ClampedArray,
+  strength: number,
+): void {
+  const mix = clamp(strength, 0, 1);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      if (!source[offset + 3]) continue;
+      const neighbours = [
+        ((Math.max(0, y - 1) * width) + x) * 4,
+        ((Math.min(height - 1, y + 1) * width) + x) * 4,
+        ((y * width) + Math.max(0, x - 1)) * 4,
+        ((y * width) + Math.min(width - 1, x + 1)) * 4,
+      ];
+      for (let channel = 0; channel < 3; channel += 1) {
+        const centre = source[offset + channel];
+        let sum = centre * 5;
+        for (const neighbour of neighbours)
+          sum -= source[neighbour + 3] ? source[neighbour + channel] : centre;
+        output[offset + channel] = clampByte(centre + (sum - centre) * mix);
+      }
     }
   }
 }
@@ -4097,6 +4218,36 @@ export function applyFilterEffectsPixels(
   validateDimensions(data, width, height);
   const effect = effectiveFilterEffects(value);
   if (isNeutralFilterEffects(effect)) return new Uint8ClampedArray(data);
+  const rendered = renderFilterEffectPixels(data, width, height, effect, renderCenter, rows);
+  return effect.fade === undefined ? rendered : applyFilterFade(data, rendered, effect.fade);
+}
+
+/**
+ * Edit → Fade for a live filter: mix every RGBA byte of the filtered result
+ * with the filter's input at `fade` percent (100 keeps the filter result, 0
+ * the input), like src/fade.ts does for raster edits. Writes into `output`.
+ */
+export function applyFilterFade(
+  input: Uint8ClampedArray,
+  output: Uint8ClampedArray,
+  fade: number,
+): Uint8ClampedArray {
+  if (input.length !== output.length) throw new RangeError('Filter fade buffers must match');
+  const strength = clamp(fade, 0, 100) / 100;
+  if (strength >= 1) return output;
+  for (let index = 0; index < output.length; index += 1)
+    output[index] = Math.round(input[index] * (1 - strength) + output[index] * strength);
+  return output;
+}
+
+function renderFilterEffectPixels(
+  data: Uint8ClampedArray,
+  width: number,
+  height: number,
+  effect: FilterEffects,
+  renderCenter?: { x: number; y: number },
+  rows?: RowRange,
+): Uint8ClampedArray {
   if (effect.type === 'deinterlace')
     return deinterlacePixels(data, width, height, effectiveDeinterlaceSettings(effect.deinterlace), effect.amount);
   const output = new Uint8ClampedArray(data);
@@ -4120,7 +4271,7 @@ export function applyFilterEffectsPixels(
       applyDownsampledGaussianBlur(data, width, height, effect.radius, output, strength);
     else applyGaussianBlur(data, width, height, effect.radius, output, strength, true);
   } else if (effect.type === 'sharpen') {
-    applyUnsharpMask(data, width, height, effect.radius, output, effect.amount);
+    applySharpenKernel(data, width, height, output, strength);
   } else if (effect.type === 'high-pass') {
     applyHighPass(data, width, height, effect.radius, output, effect.amount);
   } else if (effect.type === 'unsharp-mask') {

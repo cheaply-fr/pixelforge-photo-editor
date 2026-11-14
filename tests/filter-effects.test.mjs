@@ -361,7 +361,7 @@ test('Sharpen More is a distinct deterministic two-pass effect with source-safe 
   })), true);
 });
 
-test('basic Sharpen is a distinct deterministic one-pass effect with source-safe alpha', () => {
+test('basic Sharpen is a fixed-kernel one-pass effect, distinct from Unsharp Mask, with source-safe alpha', () => {
   const source = rgba(9, 1, (x) => {
     if (x === 0) return [17, 23, 29, 0];
     return [x < 4 ? 24 : 232, 80, 120, x === 8 ? 128 : 255];
@@ -374,7 +374,13 @@ test('basic Sharpen is a distinct deterministic one-pass effect with source-safe
     type: 'unsharp-mask', amount: 70, radius: 3,
   });
   assert.deepEqual(source, original);
-  assert.deepEqual(output, onePass);
+  assert.notDeepEqual(output, onePass);
+  // The kernel has no radius: any stored radius gives the same pixels.
+  assert.deepEqual(output, applyFilterEffectsPixels(source, 9, 1, { type: 'sharpen', amount: 70, radius: 40 }));
+  // Centre 5, edge neighbours −1 at 70 %: the dark side of the edge at x = 3
+  // gets 24 + 0.7 × (24 − 232) → 0 and the bright side 232 + 0.7 × 208 → 255.
+  assert.equal(output[3 * 4], 0);
+  assert.equal(output[4 * 4], 255);
   assert.notDeepEqual(output, source);
   assert.equal(output[3], 0);
   assert.deepEqual(Array.from(output.slice(0, 3)), [17, 23, 29]);
@@ -1270,24 +1276,24 @@ test('pinch is a bounded radial remap with editable centre and alpha-safe edges'
 });
 
 test('pinch uses deterministic alpha-safe bilinear sampling for subpixel maps', () => {
-  const source = rgba(2, 2, (x, y) => {
-    if (x === 0 && y === 0) return [250, 5, 240, 0];
-    if (x === 1 && y === 0) return [0, 255, 0, 255];
-    if (x === 0 && y === 1) return [10, 20, 30, 255];
+  const source = rgba(4, 4, (x, y) => {
+    if (x === 0 && y === 2) return [250, 5, 240, 0];
+    if (x === 0 && y === 3) return [0, 255, 0, 255];
+    if (x === 1 && y === 2) return [10, 20, 30, 255];
     return [40, 50, 60, 255];
   });
   const effect = { type: 'pinch', amount: 100, radius: 64, centerX: 0.5, centerY: 0.5 };
-  const result = applyFilterEffectsPixels(source, 2, 2, effect);
-  assert.deepEqual(result, applyFilterEffectsPixels(source, 2, 2, effect));
-  // The nearest-neighbour map rounds this point back to (0, 1). Bilinear
-  // sampling now exposes the fractional pull while retaining destination alpha.
-  assert.notDeepEqual(pixel(result, 2, 0, 1), pixel(source, 2, 0, 1));
-  assert.equal(pixel(result, 2, 0, 1)[3], 255);
-  // Transparent hidden magenta at (0, 0) must not bleed into the visible mix.
-  assert.ok(pixel(result, 2, 0, 1)[0] < 80);
-  assert.ok(pixel(result, 2, 0, 1)[2] < 100);
+  const result = applyFilterEffectsPixels(source, 4, 4, effect);
+  assert.deepEqual(result, applyFilterEffectsPixels(source, 4, 4, effect));
+  // (1, 2) is pulled from the fractional point (0.72, 2.28), farther from the
+  // centre. Bilinear sampling exposes it while retaining destination alpha.
+  assert.notDeepEqual(pixel(result, 4, 1, 2), pixel(source, 4, 1, 2));
+  assert.equal(pixel(result, 4, 1, 2)[3], 255);
+  // Transparent hidden magenta at (0, 2) must not bleed into the visible mix.
+  assert.ok(pixel(result, 4, 1, 2)[0] < 80);
+  assert.ok(pixel(result, 4, 1, 2)[2] < 100);
   // A transparent destination keeps its original hidden RGB untouched.
-  assert.deepEqual(pixel(result, 2, 0, 0), [250, 5, 240, 0]);
+  assert.deepEqual(pixel(result, 4, 0, 2), [250, 5, 240, 0]);
 });
 
 test('liquify is a bounded source-safe push/twist remap with editable centre', () => {
