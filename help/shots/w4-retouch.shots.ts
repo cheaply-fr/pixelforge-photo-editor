@@ -97,9 +97,7 @@ test('clone-stamp-sun', async ({ page }) => {
 test('content-aware-fill-tree', async ({ page }) => {
   await openEditor(page);
   await openSample(page, 'landscape');
-  // The fill searches up to half the brush Size for context, so set a large Size first.
-  await selectTool(page, 'Brush');
-  await setSize(page, 200);
+  // The search radius follows the selection, so no brush setting is needed first.
   await selectTool(page, 'Rectangular Marquee');
   await dragOnCanvas(page, [0.05, 0.58], [0.115, 0.76]);
   await editCommand(page, 'Content-Aware Fill…');

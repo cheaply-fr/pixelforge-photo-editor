@@ -94,7 +94,8 @@ test('edit-menu-warps', async ({ page }) => {
 test('puppet-warp-result', async ({ page }) => {
   await openEditor(page);
   await openSample(page, 'portrait');
-  page.once('dialog', (d) => d.accept('300,500,0,0;800,250,0,-90;1300,500,0,0'));
+  // One pin: the face bends to the right while the rest of the layer stays put.
+  page.once('dialog', (d) => d.accept('800,420,160,0'));
   await menu(page, 'Edit', 'Puppet Warp…');
   await expect(page.locator('footer')).toContainText('Puppet Warp applied');
   await shoot(page, 'puppet-warp-result', canvasWrap(page));

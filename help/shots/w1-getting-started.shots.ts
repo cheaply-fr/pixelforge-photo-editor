@@ -48,3 +48,14 @@ test('mobile-properties-sheet @mobile', async ({ page }) => {
   await openPropertiesSheet(page);
   await shoot(page, 'mobile-properties-sheet');
 });
+
+test('phone-menu-mobile @mobile', async ({ page }) => {
+  await openEditor(page);
+  await openSample(page, 'landscape', { w: 1200, h: 900 });
+  await menu(page, 'File');
+  const popup = page.getByRole('menu', { name: 'File menu' });
+  await expect(popup).toBeVisible();
+  // The whole popup is on screen, with more than its first command visible.
+  await expect(popup.getByRole('menuitem').nth(4)).toBeInViewport();
+  await shoot(page, 'phone-menu-mobile');
+});
