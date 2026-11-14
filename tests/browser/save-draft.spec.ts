@@ -191,6 +191,14 @@ test('doc bar draft actions are at least 24 px tall, 32 px or more on touch scre
     const box = (await control.boundingBox())!;
     expect(box.height).toBeGreaterThanOrEqual(touch ? 32 : 24);
     expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    // The whole target takes taps: not clipped by the doc bar or covered.
+    for (const y of [box.y + 2, box.y + box.height - 2]) {
+      const hit = await page.evaluate(([x, py]) => {
+        const element = document.elementFromPoint(x, py);
+        return element?.closest('a, button')?.textContent?.trim() ?? null;
+      }, [box.x + box.width / 2, y]);
+      expect(hit).toBe((await control.textContent())!.trim());
+    }
   }
   // The doc bar still fits without horizontal overflow.
   const overflow = await page.locator('.docbar').evaluate((node) => node.scrollWidth - node.clientWidth);
