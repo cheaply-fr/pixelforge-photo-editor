@@ -2,7 +2,8 @@
  * Bounded, deterministic Puppet Warp approximation.
  *
  * Pins are expressed in layer-local pixel coordinates. Each pin contributes
- * a smooth inverse displacement whose influence is bounded; this keeps the
+ * a smooth inverse displacement with a compact falloff, so a pin bends the
+ * layer around it and pixels beyond every pin's radius stay put; this keeps the
  * operation source-safe and replayable without pretending to implement
  * Photoshop's mesh, pin constraints, or rigid-region solver.
  */
@@ -78,22 +79,49 @@ export function planPuppetWarp(
   return plan;
 }
 
-function sourcePointForOutput(x: number, y: number, plan: PuppetWarpPlan): { x: number; y: number } {
+/**
+ * A pin's reach. Wide enough that its displacement field never folds over
+ * itself (the falloff's steepest slope is about 1.54 / radius, so the radius
+ * must exceed about 1.54 times the move); otherwise the pin's own influence.
+ */
+export function puppetPinRadius(pin: PuppetPin): number {
+  return Math.max(pin.influence, Math.hypot(pin.dx, pin.dy) * 1.6);
+}
+
+/**
+ * Smooth compact falloff: 1 at the pin's target, 0 at and beyond its radius,
+ * with zero slope at both ends.
+ */
+function falloff(distanceSquared: number, radius: number): number {
+  const ratio = distanceSquared / (radius * radius);
+  if (ratio >= 1) return 0;
+  const remaining = 1 - ratio;
+  return remaining * remaining;
+}
+
+/**
+ * Inverse map: which source point lands on output (x, y). Each pin's
+ * influence is centred on where it moves to, so the pixel under the pin lands
+ * exactly on its target, nearby pixels follow with a smooth falloff, and
+ * pixels beyond every pin's radius stay where they are. Overlapping pins blend
+ * by weight without exceeding any pin's own move.
+ */
+export function puppetSourcePoint(x: number, y: number, plan: PuppetWarpPlan): { x: number; y: number } {
   let weightedX = 0;
   let weightedY = 0;
   let total = 0;
   for (const pin of plan.pins) {
-    const distanceX = x - pin.x;
-    const distanceY = y - pin.y;
-    const distanceSquared = distanceX * distanceX + distanceY * distanceY;
-    const radiusSquared = pin.influence * pin.influence;
-    const weight = radiusSquared / (radiusSquared + distanceSquared);
+    const distanceX = x - (pin.x + pin.dx);
+    const distanceY = y - (pin.y + pin.dy);
+    const weight = falloff(distanceX * distanceX + distanceY * distanceY, puppetPinRadius(pin));
+    if (!weight) continue;
     weightedX += pin.dx * weight;
     weightedY += pin.dy * weight;
     total += weight;
   }
   if (!total) return { x, y };
-  return { x: x - weightedX / total, y: y - weightedY / total };
+  const scale = 1 / Math.max(1, total);
+  return { x: x - weightedX * scale, y: y - weightedY * scale };
 }
 
 function sampleNearest(source: ArrayLike<number>, width: number, height: number, x: number, y: number, target: Uint8ClampedArray, destination: number): void {
@@ -125,7 +153,7 @@ export function warpPuppetRgba(
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const destination = (y * width + x) * 4;
-      const sourcePoint = sourcePointForOutput(x, y, plan);
+      const sourcePoint = puppetSourcePoint(x, y, plan);
       sampleNearest(source, width, height, sourcePoint.x, sourcePoint.y, output, destination);
     }
   }
