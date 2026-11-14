@@ -204,3 +204,57 @@ test('placing an SVG adds its layers to the open document', async ({ page }) => 
   expect(placed[1].groupId).toBeUndefined();
   expect(placed[1].opacity).toBeCloseTo(0.8, 5);
 });
+
+test('multi-line text written as x + dy tspan rows opens as a text layer', async ({ page }) => {
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><text id="Para" x="20" y="120" font-family="Arial" font-size="18" fill="#123456"><tspan x="20" dy="0">First line</tspan><tspan x="20" dy="24">Second line</tspan></text></svg>`;
+  await openSvg(page, 'dy-text.svg', markup);
+  await expect(page.getByText(/^SVG opened as 1 text layer/)).toBeVisible();
+  const frame = await savedDocument(page);
+  expect(frame.layers.map((layer) => [layer.kind, layer.name])).toEqual([['text', 'Para']]);
+  const text = frame.layers[0] as SavedLayer & { text: string; lineHeight: number };
+  expect(text.text).toBe('First line\nSecond line');
+  expect(text.lineHeight).toBeCloseTo(24 / 18, 5);
+  // The text layer draws like the browser draws the original.
+  const png = await exportFile(page, 'png');
+  const difference = await meanDifference(
+    page,
+    { type: 'image/svg+xml', base64: Buffer.from(markup).toString('base64') },
+    { type: 'image/png', base64: png.bytes.toString('base64') },
+    300,
+    200,
+  );
+  expect(difference).toBeLessThan(1.5);
+});
+
+test('letter-spaced and right-aligned text exports with letter-spacing and text-anchor and reopens as text', async ({ page }) => {
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160">
+<text id="Spaced" x="20" y="50" font-family="Arial" font-size="24" letter-spacing="3" fill="#202020">Spaced</text>
+<text id="Para" x="290" y="100" font-family="Arial" font-size="18" font-weight="bold" letter-spacing="1" fill="#123456" text-anchor="end"><tspan x="290" y="100">First line</tspan><tspan x="290" y="124">Second line</tspan></text>
+</svg>`;
+  await openSvg(page, 'spaced.svg', markup);
+  await expect(page.getByText(/^SVG opened as 2 text layers/)).toBeVisible();
+  const svg = await exportFile(page, 'svg');
+  const exported = svg.bytes.toString('utf8');
+  // One run per line with the spacing as an attribute, not one tspan per glyph.
+  expect(exported).toMatch(/<text data-name="Spaced" [^>]*letter-spacing="3"[^>]*><tspan [^>]*>Spaced<\/tspan><\/text>/);
+  expect(exported).toMatch(/<text data-name="Para" [^>]*font-weight="700" letter-spacing="1"[^>]*text-anchor="end"[^>]*><tspan [^>]*>First line<\/tspan><tspan [^>]*>Second line<\/tspan><\/text>/);
+  // The export still looks like the canvas.
+  const png = await exportFile(page, 'png');
+  const difference = await meanDifference(
+    page,
+    { type: 'image/svg+xml', base64: svg.bytes.toString('base64') },
+    { type: 'image/png', base64: png.bytes.toString('base64') },
+    300,
+    160,
+  );
+  // Tight: a line anchored one letter-spacing off already differs by ~2.
+  expect(difference).toBeLessThan(0.5);
+  await openSvg(page, 'spaced-round-trip.svg', svg.bytes);
+  await expect(page.getByText(/^SVG opened as 2 text layers/)).toBeVisible();
+  const frame = await savedDocument(page);
+  const layers = frame.layers as Array<SavedLayer & { text: string; letterSpacing: number; textAlign: string }>;
+  expect(layers.map((layer) => [layer.kind, layer.name, layer.text, layer.letterSpacing, layer.textAlign])).toEqual([
+    ['text', 'Spaced', 'Spaced', 3, 'left'],
+    ['text', 'Para', 'First line\nSecond line', 1, 'right'],
+  ]);
+});

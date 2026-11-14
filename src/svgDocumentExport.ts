@@ -28,7 +28,7 @@ import {
 } from './document.ts';
 import { isNeutralLayerStyles } from './layerStyles.ts';
 import { pathContours, serializePathData, type PathModel } from './paths.ts';
-import { baselineOffset, fontCss, renderedFontSize, type CharacterStyle } from './richText.ts';
+import { baselineOffset, fontCss, glyphSpacing, renderedFontSize, type CharacterStyle, type LayoutSegment } from './richText.ts';
 import { shapeOutlineColor } from './shapeAppearance.ts';
 import { clampCornerRadius, roundedRectNodes, shapePoints } from './vectorShapes.ts';
 
@@ -186,6 +186,8 @@ export type SvgTextRun = {
   weight: number;
   italic: boolean;
   color: string;
+  /** Uniform extra advance after each glyph, in px (SVG `letter-spacing`). */
+  spacing?: number;
   anchor?: 'start' | 'middle' | 'end';
 };
 export type SvgTextDecoration = { x: number; y: number; w: number; h: number; color: string };
@@ -197,12 +199,13 @@ export function textLayerSvg(layer: Layer, runs: readonly SvgTextRun[], decorati
   if (!runs.length && !decorations.length) return '';
   const first = runs[0];
   const sameStyle = (run: SvgTextRun) =>
-    run.family === first.family && run.size === first.size && run.weight === first.weight && run.italic === first.italic && run.color === first.color;
+    run.family === first.family && run.size === first.size && run.weight === first.weight && run.italic === first.italic && run.color === first.color &&
+    (run.spacing ?? 0) === (first.spacing ?? 0);
   const uniform = runs.every(sameStyle);
   const style = (run: SvgTextRun) =>
     attr('font-family', familyList(run.family)) + attr('font-size', run.size) +
     (run.weight !== 400 ? attr('font-weight', Math.round(run.weight)) : '') +
-    (run.italic ? attr('font-style', 'italic') : '') + paint('fill', run.color);
+    (run.italic ? attr('font-style', 'italic') : '') + (run.spacing ? attr('letter-spacing', run.spacing) : '') + paint('fill', run.color);
   const anchor = uniform && first.anchor && first.anchor !== 'start' ? attr('text-anchor', first.anchor) : '';
   const tspans = runs
     .map((run) => `<tspan${attr('x', run.x)}${attr('y', run.y)}${uniform ? '' : style(run)}${!uniform && run.anchor && run.anchor !== 'start' ? attr('text-anchor', run.anchor) : ''}>${escapeXml(run.text)}</tspan>`)
@@ -299,6 +302,22 @@ function baselineDrop(context: CanvasRenderingContext2D, style: CharacterStyle):
   return Number.isFinite(ascent) && ascent > 0 ? ascent : size * 0.8;
 }
 
+/**
+ * The SVG `letter-spacing` that reproduces a laid-out segment as one run: 0
+ * for a segment drawn in one call, the glyph spacing when every glyph sits
+ * one advance plus that spacing after the previous one, or undefined when
+ * glyphs need their own positions (justified gaps). Pure.
+ */
+export function uniformSpacing(segment: Pick<LayoutSegment, 'perGlyph' | 'glyphs' | 'style'>): number | undefined {
+  if (!segment.perGlyph) return 0;
+  const spacing = glyphSpacing(segment.style);
+  for (let index = 1; index < segment.glyphs.length; index++) {
+    const previous = segment.glyphs[index - 1];
+    if (Math.abs(segment.glyphs[index].x - (previous.x + previous.width + spacing)) > 0.01) return undefined;
+  }
+  return spacing;
+}
+
 /** Lay out a text layer like the canvas renderer and return SVG runs, or undefined to embed it as an image. */
 export function textLayerRuns(layer: Extract<Layer, { kind: 'text' }>): { runs: SvgTextRun[]; decorations: SvgTextDecoration[] } | undefined {
   const context = surface(1, 1).getContext('2d');
@@ -331,20 +350,26 @@ export function textLayerRuns(layer: Extract<Layer, { kind: 'text' }>): { runs: 
       const size = renderedFontSize(style);
       const top = line.y + (line.size - size) * 0.8 + baselineOffset(style);
       if (style.scaleX !== 100 || style.scaleY !== 100 || style.caps === 'small-caps') return undefined;
-      if (segment.perGlyph) for (const glyph of segment.glyphs) runs.push(runFor(style, glyph.x, top, glyph.text));
-      else runs.push(runFor(style, segment.x, top, segment.text));
+      const spacing = uniformSpacing(segment);
+      if (spacing !== undefined) runs.push({ ...runFor(style, segment.x, top, segment.text), ...(spacing ? { spacing } : {}) });
+      else for (const glyph of segment.glyphs) runs.push(runFor(style, glyph.x, top, glyph.text));
       const thickness = Math.max(1, size / 15);
       if (style.underline) decorations.push({ x: segment.x, y: top + size * 0.92, w: segment.width, h: thickness, color: style.color });
       if (style.strikethrough) decorations.push({ x: segment.x, y: top + size * 0.52, w: segment.width, h: thickness, color: style.color });
     }
-    lineAnchors.push({ start: lineStart, end: runs.length, uniform: line.segments.length === 1 && !line.segments[0].perGlyph && !line.marker });
+    lineAnchors.push({ start: lineStart, end: runs.length, uniform: line.segments.length === 1 && uniformSpacing(line.segments[0]) !== undefined && !line.marker });
   }
   // Single-run lines that share an alignment edge are written with
   // text-anchor so the text stays aligned when edited in other apps.
   const align = layer.textAlign ?? 'left';
   if (align !== 'left' && lineAnchors.length && lineAnchors.every((item) => item.uniform && item.end - item.start === 1)) {
     const widths = layout.lines.slice(0, lineAnchors.length).map((line) => line.segments[0]?.width ?? 0);
-    const edges = lineAnchors.map((item, index) => runs[item.start].x + (align === 'center' ? widths[index] / 2 : widths[index]));
+    // SVG letter-spacing also follows the last glyph, so the anchored
+    // advance is one spacing longer than the laid-out line.
+    const edges = lineAnchors.map((item, index) => {
+      const advance = widths[index] + (runs[item.start].spacing ?? 0);
+      return runs[item.start].x + (align === 'center' ? advance / 2 : advance);
+    });
     if (edges.every((edge) => Math.abs(edge - edges[0]) < 0.5))
       lineAnchors.forEach((item, index) => {
         runs[item.start].x = edges[index];

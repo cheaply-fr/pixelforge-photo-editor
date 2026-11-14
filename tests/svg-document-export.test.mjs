@@ -9,6 +9,7 @@ import {
   svgDocumentMarkup,
   svgLayerMode,
   textLayerSvg,
+  uniformSpacing,
   vectorLayerSvg,
 } from '../src/svgDocumentExport.ts';
 import { planSvgImport } from '../src/svgImport.ts';
@@ -95,6 +96,34 @@ test('text runs become SVG text, anchored when lines share an edge', () => {
   assert.match(mixed, /<tspan [^>]*font-style="italic" fill="#ff0000"/);
   assert.match(mixed, /<rect x="0" y="30" width="40" height="2" fill="#112233"\/><\/g>$/);
   assert.equal(textLayerSvg(text(), []), '');
+});
+
+test('letter-spaced text is written as letter-spacing runs, not glyph by glyph', () => {
+  const style = { fontSize: 24, letterSpacing: 3, tracking: 0 };
+  const glyphs = [{ x: 0, width: 10 }, { x: 13, width: 8 }, { x: 24, width: 12 }];
+  // Glyphs one advance plus the spacing apart are one run with that spacing.
+  assert.equal(uniformSpacing({ perGlyph: true, style, glyphs }), 3);
+  // Tracking (1/1000 em) adds to the layer spacing in px: 3 + 250 × 24 / 1000 = 9.
+  assert.equal(uniformSpacing({ perGlyph: true, style: { ...style, tracking: 250 }, glyphs: [{ x: 0, width: 10 }, { x: 19, width: 8 }] }), 9);
+  // A run drawn in one call needs no spacing; justified gaps keep per-glyph positions.
+  assert.equal(uniformSpacing({ perGlyph: false, style, glyphs }), 0);
+  assert.equal(uniformSpacing({ perGlyph: true, style, glyphs: [{ x: 0, width: 10 }, { x: 20, width: 8 }] }), undefined);
+  const runs = [
+    { x: 290, y: 20, text: 'First line', family: 'Arial', size: 18, weight: 700, italic: false, color: '#123456', spacing: 1, anchor: 'end' },
+    { x: 290, y: 44, text: 'Second line', family: 'Arial', size: 18, weight: 700, italic: false, color: '#123456', spacing: 1, anchor: 'end' },
+  ];
+  const markup = textLayerSvg(text({ textAlign: 'right' }), runs);
+  assert.match(markup, /^<text data-name="Title" x="290" y="20" [^>]*letter-spacing="1" fill="#123456" text-anchor="end" xml:space="preserve"><tspan x="290" y="20">First line<\/tspan><tspan x="290" y="44">Second line<\/tspan><\/text>$/);
+  // It reopens as one right-aligned text layer with the same spacing in px.
+  const back = planSvgImport(prepareSvgImport(wrap(markup, 300, 100)).markup);
+  assert.deepEqual(back.items.map((item) => item.kind === 'layer' && item.layer.kind), ['text']);
+  const layer = back.items[0].layer;
+  assert.equal(layer.text, 'First line\nSecond line');
+  assert.equal(layer.letterSpacing, 1);
+  assert.equal(layer.textAlign, 'right');
+  assert.equal(layer.bold, true);
+  // Runs with different spacing are styled per tspan.
+  assert.match(textLayerSvg(text(), [runs[0], { ...runs[1], spacing: 2 }]), /<tspan [^>]*letter-spacing="2"/);
 });
 
 test('groups wrap their members and images keep names and blend', () => {

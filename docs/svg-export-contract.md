@@ -28,8 +28,12 @@ SVG) writes the whole document, or the selected artboard, as one SVG file
 - Text layers become SVG `text`, laid out with the same engine as the canvas
   (wrapping, alignment, line height, letter spacing, rich runs, underline and
   strikethrough). Lines that share an alignment edge use `text-anchor`, so the
-  text stays editable and aligned in other apps. Fonts are referenced by
-  family name and are not embedded.
+  text stays editable and aligned in other apps. Uniform letter spacing (the
+  layer's letter spacing in px plus any tracking, converted from 1/1000 em to
+  px) is written as a `letter-spacing` attribute on whole runs; the anchor
+  point allows for the spacing SVG adds after the last glyph. Only glyphs that
+  need their own positions (justified word gaps) are written one `tspan` per
+  glyph. Fonts are referenced by family name and are not embedded.
 - Layer groups become `g` elements with their name and opacity.
 - Pixel layers, and any layer with a mask, layer style, adjustment, smart
   filter or cleanup edit, are embedded as PNG images cropped to their visible

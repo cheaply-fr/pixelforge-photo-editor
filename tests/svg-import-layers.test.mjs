@@ -177,6 +177,41 @@ test('simple text becomes a text layer with lines, spacing and anchor', () => {
   assertValidDocument(result);
 });
 
+test('dy-stepped tspan rows with an equal gap become a text layer', () => {
+  const textOf = (body) => {
+    const result = plan(body, 'width="300" height="200"');
+    return { kinds: result.items.map((item) => item.kind), layer: layers(result)[0], result };
+  };
+  // First row dy="0", later rows step by dy; every row back at the text x.
+  const dy = textOf('<text id="Para" x="20" y="120" font-family="Arial" font-size="18" fill="#123456"><tspan x="20" dy="0">First line</tspan><tspan x="20" dy="24">Second line</tspan><tspan x="20" dy="24">Third</tspan></text>');
+  assert.deepEqual(dy.kinds, ['layer']);
+  assert.equal(dy.layer.kind, 'text');
+  assert.equal(dy.layer.name, 'Para');
+  assert.equal(dy.layer.text, 'First line\nSecond line\nThird');
+  close(dy.layer.lineHeight, 24 / 18);
+  close(dy.layer.matrix[4], 20);
+  close(dy.layer.matrix[5], 120 - 18 * 0.8);
+  assertValidDocument(dy.result);
+  // The first row may omit dy, and em units step by the font size.
+  const omitted = textOf('<text x="20" y="120" font-size="20"><tspan x="20">One</tspan><tspan x="20" dy="1.5em">Two</tspan></text>');
+  assert.equal(omitted.layer?.kind, 'text');
+  assert.equal(omitted.layer.text, 'One\nTwo');
+  close(omitted.layer.lineHeight, 1.5);
+  // Rows may carry the x when the text element does not.
+  const rowX = textOf('<text y="50" font-size="10"><tspan x="30" dy="0">A</tspan><tspan x="30" dy="12">B</tspan></text>');
+  assert.equal(rowX.layer?.kind, 'text');
+  close(rowX.layer.matrix[4], 30);
+  // A first row at a different x than the text, unequal gaps, per-row
+  // indents, x jumps within a line and per-glyph x lists stay pixels.
+  for (const body of [
+    '<text x="20" y="120"><tspan x="40" dy="0">A</tspan><tspan x="40" dy="24">B</tspan></text>',
+    '<text x="20" y="120"><tspan x="20" dy="0">A</tspan><tspan x="20" dy="24">B</tspan><tspan x="20" dy="30">C</tspan></text>',
+    '<text x="20" y="120"><tspan x="20" dy="0">A</tspan><tspan x="30" dy="24">B</tspan></text>',
+    '<text x="20" y="120">Lead <tspan x="20">over</tspan></text>',
+    '<text x="20" y="120"><tspan x="20 30 40" dy="0">ABC</tspan></text>',
+  ]) assert.deepEqual(textOf(body).kinds, ['raster'], body);
+});
+
 test('styled runs and text on a path fall back to pixels', () => {
   const result = plan('<text x="0" y="10">Plain <tspan fill="red">red</tspan></text><text x="0" y="20" font-style="italic">Italic</text>');
   assert.deepEqual(result.items.map((item) => item.kind), ['raster']);
