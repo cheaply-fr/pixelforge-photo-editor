@@ -12,6 +12,8 @@ import {
   PersistentLayerCache,
   persistentLayerCacheDelta,
   persistentPrefetchLimit,
+  persistOutcome,
+  persistSurfaceFits,
   shouldPersistPlaced,
   validPersistentLayerCacheStats,
 } from '../src/persistentLayerCache.ts';
@@ -98,6 +100,7 @@ const source = (w, h, label) => ({
 const createSurface = (w, h) => {
   const target = { width: w, height: h, label: undefined };
   target.getContext = () => ({ drawImage: (bitmap) => (target.label = bitmap.label) });
+  target.toBlob = (done) => done(new Blob([JSON.stringify({ w, h, label: 'marker' })], { type: 'image/png' }));
   return target;
 };
 
@@ -240,4 +243,49 @@ test('per-render counters are deltas and validate', () => {
   assert.equal(validPersistentLayerCacheStats({ ...after, hits: -1 }), false);
   assert.equal(validPersistentLayerCacheStats({ ...after, readMs: 1.5 }), false);
   assert.equal(validPersistentLayerCacheStats(null), false);
+});
+
+test('the keep decision: store slow surfaces, mark cheap ones, and never revisit a cheap verdict', () => {
+  assert.equal(persistOutcome(true, true, false), 'store');
+  assert.equal(persistOutcome(true, false, false), 'mark-cheap');
+  assert.equal(persistOutcome(true, true, true), 'skip');
+  assert.equal(persistOutcome(true, false, true), 'skip');
+  assert.equal(persistOutcome(false, true, false), 'skip');
+  assert.equal(persistSurfaceFits(2000, 1500, PERSIST_DESKTOP_BYTES), true);
+  assert.equal(persistSurfaceFits(900, 1000, PERSIST_DESKTOP_BYTES), false);
+  assert.equal(persistSurfaceFits(2000, 1500, 0), false);
+});
+
+test('a surface judged cheap in one session is not written by a later, slower render of it', async () => {
+  await withFakes({}, async (database) => {
+    // Session 1: a body pass computed quickly is marked cheap; a slow layer is stored.
+    const first = new PersistentLayerCache(PERSIST_DESKTOP_BYTES, createSurface);
+    first.keep('body', source(2000, 1500, 'body'), 2000, 1500, true, false);
+    first.keep('clouds', source(2000, 1500, 'clouds'), 2000, 1500, true, true);
+    await first.flush();
+    assert.deepEqual(
+      { queued: first.stats().queued, writes: first.stats().writes, skipped: first.stats().skipped, failed: first.stats().failed },
+      { queued: 1, writes: 1, skipped: 1, failed: 0 },
+    );
+    assert.equal(first.isKnownCheap('body'), true);
+    // The marker carries no caller tag, so tag-based lookups (the draft
+    // preview, placed results) never mistake it for theirs.
+    const metas = [...database.stores.meta.values()].map((meta) => ({ tag: meta.tag, cheap: meta.cheap, w: meta.w })).sort((a, b) => a.w - b.w);
+    assert.deepEqual(metas, [{ tag: undefined, cheap: true, w: 1 }, { tag: undefined, cheap: undefined, w: 2000 }]);
+    // Session 2 (a background warm-up under load): the stored layer is read
+    // back, the cheap one misses, is recomputed slowly and still not written.
+    const second = new PersistentLayerCache(PERSIST_DESKTOP_BYTES, createSurface);
+    assert.equal((await second.get('clouds')).label, 'clouds');
+    assert.equal(await second.get('body'), undefined);
+    assert.equal(second.isKnownCheap('body'), true);
+    second.keep('body', source(2000, 1500, 'body'), 2000, 1500, true, true);
+    await second.flush();
+    const stats = second.stats();
+    assert.deepEqual({ hits: stats.hits, misses: stats.misses, queued: stats.queued, skipped: stats.skipped }, { hits: 1, misses: 1, queued: 0, skipped: 1 });
+    // A prefetched read notes the marker too.
+    const third = new PersistentLayerCache(PERSIST_DESKTOP_BYTES, createSurface);
+    assert.equal(third.prefetch('body'), true);
+    assert.equal(await third.getTagged('body'), undefined);
+    assert.equal(third.isKnownCheap('body'), true);
+  });
 });

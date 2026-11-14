@@ -491,7 +491,16 @@ Changes:
 - **Read-ahead.** The outermost render starts on-device reads up to 4
   layers ahead on desktops (1 on phones and 4 GB devices), so reads and
   decodes overlap each other and the layers in between; recency updates
-  are batched into one write.
+  are batched into one write. A layer whose Drop Shadow or Outer Glow
+  blends separately is read ahead by the keys its part-tagged passes (each
+  outer effect and the body) are stored under.
+- **Cheap verdicts stick.** Whether a computed surface is worth keeping is
+  timed by wall clock, which varies with load. A surface judged too cheap
+  leaves a 1 × 1 marker entry (`cheap: true`, no caller tag), and a later
+  render of that key on the device recomputes it but never writes it, so a
+  background warm-up competing with reads and decodes cannot reverse the
+  earlier verdict and rewrite it. Markers count as `skipped`, not `queued`
+  or `writes`.
 - **Frame-space results kept too.** Clipped layers, masked layers and
   Levels/Curves layers keep their finished frame-space buffer, cropped to
   its visible pixels (or an empty placeholder), in memory and on the

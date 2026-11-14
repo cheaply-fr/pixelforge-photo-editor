@@ -52,6 +52,8 @@ export type PersistedMeta = {
   h: number;
   /** Caller-defined label stored with the entry (e.g. the composite key of a preview). */
   tag?: string;
+  /** A marker, not a surface: this key was judged cheap to recompute (see `keep`). */
+  cheap?: true;
 };
 
 /** Byte budget by coarse device hints (same buckets as the memory caches). */
@@ -78,6 +80,36 @@ export function shouldPersistSurface(w: number, h: number, computeMs: number, bu
   const pixels = Math.max(0, Math.trunc(w)) * Math.max(0, Math.trunc(h));
   const worthMs = Math.max(PERSIST_MIN_COMPUTE_MS, (pixels * PERSIST_COMPUTE_NS_PER_PIXEL) / 1e6);
   return budget > 0 && pixels >= PERSIST_MIN_PIXELS && computeMs >= worthMs && pixels * 4 <= budget;
+}
+
+/**
+ * Marker entries (`cheap: true` in their metadata, no caller tag) record that
+ * a key's surface was computed and judged too cheap to keep. Whether a surface is worth keeping is measured
+ * in wall-clock time, which varies with load: a surface near the threshold,
+ * skipped by one render, could be judged slow and written by the next (a
+ * background render competing with reads and decodes, say), so a reopened
+ * draft would recompute and rewrite it. The marker makes the first decision
+ * stick on this device: a later render of the same key recomputes it but
+ * never writes it.
+ */
+export type PersistOutcome = 'store' | 'mark-cheap' | 'skip';
+
+/**
+ * What to keep for a computed surface: the surface itself (`store`), a small
+ * marker that it is cheap to recompute (`mark-cheap`), or nothing. `fits`:
+ * the surface's size qualifies; `slow`: it took long enough to be worth a
+ * read-back; `knownCheap`: an earlier render on this device already judged
+ * this key cheap. Pure.
+ */
+export function persistOutcome(fits: boolean, slow: boolean, knownCheap: boolean): PersistOutcome {
+  if (!fits || knownCheap) return 'skip';
+  return slow ? 'store' : 'mark-cheap';
+}
+
+/** Whether a surface of this size may be kept at all (before timing). */
+export function persistSurfaceFits(w: number, h: number, budget: number): boolean {
+  const pixels = Math.max(0, Math.trunc(w)) * Math.max(0, Math.trunc(h));
+  return budget > 0 && pixels >= PERSIST_MIN_PIXELS && pixels * 4 <= budget;
 }
 
 /**
@@ -199,6 +231,8 @@ export class PersistentLayerCache {
   /** Recency updates, written together once reads go quiet. */
   private touched = new Map<string, PersistedMeta>();
   private touchTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Keys whose stored entry is a cheap marker (seen on read or written here). */
+  private cheap = new Set<string>();
   /** The open connection, once `open` has resolved (for `putNow`). */
   private ready: IDBDatabase | undefined;
   /** Entry ids already hashed (for `putNow`, which cannot await a digest). */
@@ -350,7 +384,8 @@ export class PersistentLayerCache {
         request(read.objectStore(BLOBS).get(id)) as Promise<Blob | undefined>,
         request(read.objectStore(META).get(id)) as Promise<PersistedMeta | undefined>,
       ]);
-      if (!blob || !meta || (tag !== undefined && meta.tag !== tag)) {
+      if (meta?.cheap) this.cheap.add(key);
+      if (!blob || !meta || meta.cheap || (tag !== undefined && meta.tag !== tag)) {
         this.misses += 1;
         return undefined;
       }
@@ -403,9 +438,14 @@ export class PersistentLayerCache {
    * write of `key` in flight, no budget, quota or encode failure).
    */
   put(key: string, source: CanvasImageSource, w: number, h: number, tag?: string): Promise<boolean> {
+    return this.enqueue(key, source, w, h, tag, false);
+  }
+
+  /** `put`, or a cheap marker (`marker`), which the queued/writes counters leave out. */
+  private enqueue(key: string, source: CanvasImageSource, w: number, h: number, tag: string | undefined, marker: boolean): Promise<boolean> {
     if (this.budget <= 0 || this.pending.has(key)) return Promise.resolve(false);
     this.pending.add(key);
-    this.queued += 1;
+    if (!marker) this.queued += 1;
     const sequence = ++this.sequence;
     this.latest.set(key, sequence);
     let encoded: Promise<Blob>;
@@ -438,9 +478,9 @@ export class PersistentLayerCache {
           write.objectStore(META).delete(victim);
         }
         write.objectStore(BLOBS).put(blob, id);
-        write.objectStore(META).put({ id, bytes: blob.size, used: Date.now(), w, h, ...(tag === undefined ? {} : { tag }) } satisfies PersistedMeta);
+        write.objectStore(META).put({ id, bytes: blob.size, used: Date.now(), w, h, ...(tag === undefined ? {} : { tag }), ...(marker ? { cheap: true as const } : {}) } satisfies PersistedMeta);
         await done(write);
-        this.writes += 1;
+        if (!marker) this.writes += 1;
         stored = true;
       } catch {
         // Quota or encode failure: the layer is simply recomputed next time.
@@ -512,6 +552,30 @@ export class PersistentLayerCache {
     }
   }
 
+  /** True once this store has seen (or written) a cheap marker for `key`. */
+  isKnownCheap(key: string): boolean {
+    return this.cheap.has(key);
+  }
+
+  /**
+   * Keep a computed surface as `persistOutcome` decides: write it, write a
+   * cheap marker in its place, or count it as skipped. `fits` and `slow`
+   * come from shouldPersistSurface / shouldPersistPlaced's size and timing
+   * parts.
+   */
+  keep(key: string, source: CanvasImageSource, w: number, h: number, fits: boolean, slow: boolean, tag?: string): void {
+    const outcome = persistOutcome(fits, slow, this.cheap.has(key));
+    if (outcome === 'store') {
+      void this.put(key, source, w, h, tag);
+      return;
+    }
+    this.skipped += 1;
+    if (outcome === 'mark-cheap' && this.budget > 0) {
+      this.cheap.add(key);
+      void this.enqueue(key, cheapMarker(this.create), 1, 1, undefined, true);
+    }
+  }
+
   stats(): PersistentLayerCacheStats {
     return {
       hits: this.hits,
@@ -530,6 +594,13 @@ export class PersistentLayerCache {
   flush(): Promise<void> {
     return this.queue;
   }
+}
+
+/** A 1 x 1 transparent surface: the payload of a cheap marker. */
+function cheapMarker(create: (w: number, h: number) => Surface): Surface {
+  const marker = create(1, 1);
+  marker.getContext('2d');
+  return marker;
 }
 
 let shared: PersistentLayerCache | undefined;

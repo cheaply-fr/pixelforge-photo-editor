@@ -2,6 +2,7 @@ import {
   PERSIST_MIN_PIXELS,
   sharedPersistentLayerCache,
   shouldPersistPlaced,
+  persistSurfaceFits,
   shouldPersistSurface,
   type PersistentLayerCache,
 } from './persistentLayerCache.ts';
@@ -3274,12 +3275,12 @@ function persistPlaced(store: PersistentLayerCache, key: string, result: Clipped
   const image = result.surface as { width?: number; height?: number } | undefined;
   const w = image?.width ?? 1, h = image?.height ?? 1;
   const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - started;
-  if (!shouldPersistPlaced(w, h, elapsed, store.budget)) {
-    store.skipped += 1;
-    return;
-  }
-  if (result.surface) void store.put(placedPersistKey(key), result.surface, w, h, `placed:${result.x},${result.y}`);
-  else void store.put(placedPersistKey(key), surface(1, 1), 1, 1, PLACED_EMPTY_TAG);
+  // Placed results of any size qualify; only the time decides (and a cheap
+  // verdict from an earlier render sticks, see PersistentLayerCache.keep).
+  const fits = shouldPersistPlaced(w, h, Number.POSITIVE_INFINITY, store.budget);
+  const slow = shouldPersistPlaced(w, h, elapsed, store.budget);
+  if (result.surface) store.keep(placedPersistKey(key), result.surface, w, h, fits, slow, `placed:${result.x},${result.y}`);
+  else store.keep(placedPersistKey(key), surface(1, 1), 1, 1, fits, slow, PLACED_EMPTY_TAG);
 }
 
 /**
@@ -3305,13 +3306,32 @@ function persistentReadAhead(
     );
     return key && !sharedClippedLayerCache().has(key) ? [placedPersistKey(key)] : [];
   }
-  const stageKeys = localStageKeys(layer, assets);
-  const frameKey = frameStageKey(frame, layer, assets, stageKeys);
-  if (frameKey && sharedClippedLayerCache().has(frameKey)) return [];
-  const keys = frameKey ? [placedPersistKey(frameKey)] : [];
-  const asset = assets[layer.asset];
-  if (asset && asset.w * asset.h >= PERSIST_MIN_PIXELS && stageKeys.local && !sharedLayerFilterCache().has(stageKeys.local))
-    keys.push(stageKeys.local);
+  // A layer whose Drop Shadow or Outer Glow blends separately renders each
+  // outer effect and its body as their own part-tagged passes (renderFrame),
+  // so those are the keys a render reads; the untagged key is never stored.
+  const passes = layerStyleBackdropPasses(layer.styles);
+  // Each pass renders as renderFrame's renderPart does: alone, ungrouped, at
+  // full opacity with normal blending, carrying its part tag.
+  const parts = passes.length
+    ? [...passes.map((pass) => pass.part), 'body' as const].map((part) => ({
+        ...layer,
+        groupId: undefined,
+        opacity: 1,
+        blend: 'source-over' as const,
+        styles: withLayerStylePart(layer.styles, part),
+      }))
+    : [layer];
+  const keys: string[] = [];
+  for (const part of parts) {
+    const partFrame: Frame = passes.length ? { ...frame, layers: [part as Layer], groups: [], active: layer.id } : frame;
+    const stageKeys = localStageKeys(part, assets);
+    const frameKey = frameStageKey(partFrame, part, assets, stageKeys);
+    if (frameKey && sharedClippedLayerCache().has(frameKey)) continue;
+    if (frameKey) keys.push(placedPersistKey(frameKey));
+    const asset = assets[part.asset];
+    if (asset && asset.w * asset.h >= PERSIST_MIN_PIXELS && stageKeys.local && !sharedLayerFilterCache().has(stageKeys.local))
+      keys.push(stageKeys.local);
+  }
   return keys;
 }
 
@@ -4139,9 +4159,14 @@ export async function renderFrame(
       const width = (rasterSource as { width?: number }).width ?? 0,
         height = (rasterSource as { height?: number }).height ?? 0,
         elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - localStarted;
-      if (shouldPersistSurface(width, height, elapsed, persistentStore.budget))
-        void persistentStore.put(localFilterCacheKey, rasterSource, width, height);
-      else persistentStore.skipped += 1;
+      persistentStore.keep(
+        localFilterCacheKey,
+        rasterSource,
+        width,
+        height,
+        persistSurfaceFits(width, height, persistentStore.budget),
+        shouldPersistSurface(width, height, elapsed, persistentStore.budget),
+      );
     }
     if (
       !isRasterContentLayer(layer) &&
