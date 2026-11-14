@@ -296,6 +296,8 @@ import LayerTransformDialog, {
 } from '../src/LayerTransformDialog';
 import SelectionModifyDialog from '../src/SelectionModifyDialog';
 import SelectionFeatherDialog from '../src/SelectionFeatherDialog';
+import { usePromptDialog } from '../src/PromptDialog';
+import { parsePuppetPinText, parseQuadPoints, promptOptions } from '../src/promptForm';
 import LayerPositionDialog from '../src/LayerPositionDialog';
 import {
   formatSelectionFeather,
@@ -4232,6 +4234,8 @@ export default function Home() {
   const [selectionRefining, setSelectionRefining] =
     useState<SelectionRefineMode | null>(null);
   const [selectionFeathering, setSelectionFeathering] = useState(false);
+  /** In-app form dialog that replaces window.prompt for every command. */
+  const { ask: askPrompt, dialog: promptDialog } = usePromptDialog();
   /** Move Layer to Position dialog: the moved layer's name and current panel row. */
   const [layerPositioning, setLayerPositioning] = useState<{ name: string; current: number } | null>(null);
   const [saveSelectionOpen, setSaveSelectionOpen] = useState(false);
@@ -5236,10 +5240,19 @@ export default function Home() {
     if (preset) applyCustomBrushPreset(preset);
     else setSelectedBrushLibraryId('');
   };
-  const renameBrushLibraryPreset = () => {
+  /** Ask for one preset name in the in-app prompt dialog; null when cancelled. */
+  const askPresetName = async (title: string, value: string, submitLabel = 'Save') => {
+    const answer = await askPrompt({
+      title,
+      fields: [{ id: 'name', label: 'Preset name', type: 'text', value, required: true, maxLength: 80 }],
+      submitLabel,
+    });
+    return answer ? String(answer.name) : null;
+  };
+  const renameBrushLibraryPreset = async () => {
     const existing = customBrushPresets.find((item) => item.id === selectedBrushLibraryId);
     if (!existing) return;
-    const label = window.prompt('Rename this brush preset', existing.label);
+    const label = await askPresetName('Rename brush preset', existing.label, 'Rename');
     if (label === null) return;
     try {
       setCustomBrushPresets(renameCustomBrushPreset(customBrushPresets, existing.id, label));
@@ -5255,8 +5268,8 @@ export default function Home() {
     setSelectedBrushLibraryId('');
     setNotice(`Brush preset “${existing.label}” deleted from this device`);
   };
-  const defineBrushPreset = () => {
-    const label = window.prompt('Name this brush preset', 'Custom brush');
+  const defineBrushPreset = async () => {
+    const label = await askPresetName('Name this brush preset', 'Custom brush');
     if (label === null) return;
     const trimmed = label.trim().slice(0, 80);
     if (!trimmed) {
@@ -5311,8 +5324,8 @@ export default function Home() {
     setBackgroundColor(preset.background);
     setNotice(`Pattern preset “${preset.label}” applied`);
   };
-  const definePattern = () => {
-    const label = window.prompt('Name this pattern preset', 'Custom pattern');
+  const definePattern = async () => {
+    const label = await askPresetName('Name this pattern preset', 'Custom pattern');
     if (label === null) return;
     const trimmed = label.trim().slice(0, 80);
     if (!trimmed) {
@@ -5482,17 +5495,26 @@ export default function Home() {
     const f = current();
     addShapeLayer(tool, centeredShapeBox(f.w, f.h, shapeAppearance.createWidth, shapeAppearance.createHeight));
   };
-  const defineCustomShape = () => {
-    const label = window.prompt('Name this custom shape', 'Custom shape');
-    if (label === null) return;
-    const trimmed = label.trim().slice(0, 80);
+  const defineCustomShape = async () => {
+    const shapeKinds = ['rectangle', 'ellipse', 'line', 'polygon'];
+    const currentKind = shapeKinds.includes(tool) ? tool as CustomShapeKind : undefined;
+    // One dialog: the name, plus the kind when no shape tool is active.
+    const answer = await askPrompt({
+      title: 'Define custom shape',
+      fields: [
+        { id: 'name', label: 'Preset name', type: 'text', value: 'Custom shape', required: true, maxLength: 80 },
+        ...(currentKind ? [] : [{ id: 'kind', label: 'Shape kind', type: 'select' as const, value: 'rectangle', options: promptOptions(shapeKinds) }]),
+      ],
+      submitLabel: 'Save',
+    });
+    if (answer === null) return;
+    const trimmed = String(answer.name).trim().slice(0, 80);
     if (!trimmed) {
       setNotice('Custom shape name cannot be empty');
       return;
     }
-    const currentKind = ['rectangle', 'ellipse', 'line', 'polygon'].includes(tool) ? tool as CustomShapeKind : undefined;
-    const chosen = currentKind ?? window.prompt('Shape kind (rectangle, ellipse, line or polygon)', 'rectangle');
-    if (!chosen || !['rectangle', 'ellipse', 'line', 'polygon'].includes(chosen)) {
+    const chosen = currentKind ?? String(answer.kind);
+    if (!chosen || !shapeKinds.includes(chosen)) {
       setNotice('Choose a supported custom shape kind');
       return;
     }
@@ -5529,14 +5551,14 @@ export default function Home() {
       setNotice(`Path preset “${preset.label}” applied as an editable path layer`);
     }
   };
-  const defineCustomPath = () => {
+  const defineCustomPath = async () => {
     const f = current();
     const layer = f.layers.find((item) => item.id === f.active);
     if (!layer || layer.kind !== 'path') {
       setNotice('Select an editable path layer before defining a custom path');
       return;
     }
-    const label = window.prompt('Name this custom path', layer.name || 'Custom path');
+    const label = await askPresetName('Name this custom path', (layer.name || 'Custom path').slice(0, 80));
     if (label === null) return;
     const trimmed = label.trim().slice(0, 80);
     if (!trimmed) {
@@ -6902,15 +6924,17 @@ export default function Home() {
       );
     }
   };
-  const renameSavedSelection = (id: string) => {
+  const renameSavedSelection = async (id: string) => {
     const entry = currentSavedSelections().selections.find(
       (item) => item.id === id,
     );
-    const nextName = window.prompt(
-      'Rename saved selection',
-      entry?.name || 'Selection',
-    );
-    if (nextName === null) return;
+    const answer = await askPrompt({
+      title: 'Rename saved selection',
+      fields: [{ id: 'name', label: 'Selection name', type: 'text', value: entry?.name || 'Selection' }],
+      submitLabel: 'Rename',
+    });
+    if (answer === null) return;
+    const nextName = String(answer.name);
     try {
       const book = renameSelection(currentSavedSelections(), id, nextName);
       if (commit({ ...current(), savedSelections: book }))
@@ -7249,24 +7273,29 @@ export default function Home() {
     if (editLayer({ languageOptions: normalizeTextLanguage(languageOptions) }))
       setNotice('Language options updated; undo restores the previous text direction');
   };
-  const setTextWarp = () => {
+  const setTextWarp = async () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || layer.kind !== 'text') {
       setNotice('Select a text layer before warping type');
       return;
     }
-    const currentWarp = normalizeTextWarp(layer.warp),
-      styleInput = window.prompt(`Warp style (${TEXT_WARP_STYLES.join(', ')})`, currentWarp.style);
-    if (styleInput === null) return;
-    const style = TEXT_WARP_STYLES.includes(styleInput as TextWarp['style'])
-      ? styleInput as TextWarp['style'] : 'none';
-    const bendInput = window.prompt('Bend (-100 to 100)', String(currentWarp.bend));
-    if (bendInput === null) return;
-    const verticalInput = window.prompt('Vertical distortion (-100 to 100)', String(currentWarp.vertical));
-    if (verticalInput === null) return;
-    editLayer({ warp: normalizeTextWarp({ ...currentWarp, style, bend: Number(bendInput), vertical: Number(verticalInput) }) });
+    const currentWarp = normalizeTextWarp(layer.warp);
+    const answer = await askPrompt({
+      title: 'Warp Text',
+      description: 'The text stays editable; undo restores the previous warp.',
+      fields: [
+        { id: 'style', label: 'Warp style', type: 'select', value: currentWarp.style, options: promptOptions(TEXT_WARP_STYLES) },
+        { id: 'bend', label: 'Bend', type: 'number', value: currentWarp.bend, min: -100, max: 100, suffix: '%' },
+        { id: 'vertical', label: 'Vertical distortion', type: 'number', value: currentWarp.vertical, min: -100, max: 100, suffix: '%' },
+      ],
+      submitLabel: 'Warp',
+    });
+    if (answer === null) return;
+    const style = TEXT_WARP_STYLES.includes(answer.style as TextWarp['style'])
+      ? answer.style as TextWarp['style'] : 'none';
+    editLayer({ warp: normalizeTextWarp({ ...currentWarp, style, bend: Number(answer.bend), vertical: Number(answer.vertical) }) });
   };
-  const setTextOnPath = () => {
+  const setTextOnPath = async () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || layer.kind !== 'text') {
       setNotice('Select a text layer before attaching text to a path');
@@ -7278,17 +7307,30 @@ export default function Home() {
       return;
     }
     const defaultPath = layer.textPath?.pathLayerId || paths[0].id;
-    const pathId = window.prompt(`Path layer ID (${paths.map((item) => `${item.id}: ${item.name}`).join(', ')})`, defaultPath);
-    if (pathId === null) return;
-    const path = paths.find((item) => item.id === pathId.trim());
+    // One dialog replaces the old path-ID prompt, offset prompt and reverse confirm.
+    const answer = await askPrompt({
+      title: 'Text on Path',
+      fields: [
+        {
+          id: 'path',
+          label: 'Path layer',
+          type: 'select',
+          value: defaultPath,
+          options: paths.map((item, position) => ({ value: item.id, label: item.name || `Path ${position + 1}` })),
+        },
+        { id: 'offset', label: 'Path offset', type: 'number', value: layer.textPath?.offset ?? 0, min: -100000, max: 100000, suffix: 'px' },
+        { id: 'reverse', label: 'Reverse text direction along the path', type: 'checkbox', value: layer.textPath?.reverse === true },
+      ],
+      submitLabel: 'Attach',
+    });
+    if (answer === null) return;
+    const path = paths.find((item) => item.id === String(answer.path));
     if (!path) {
       setNotice('Text path layer ID was not found');
       return;
     }
-    const offsetInput = window.prompt('Path offset in pixels', String(layer.textPath?.offset ?? 0));
-    if (offsetInput === null) return;
-    const reverse = window.confirm('Reverse text direction along the path?');
-    const binding = normalizeTextPathBinding({ pathLayerId: path.id, offset: Number(offsetInput), reverse });
+    const reverse = answer.reverse === true;
+    const binding = normalizeTextPathBinding({ pathLayerId: path.id, offset: Number(answer.offset), reverse });
     if (!binding) {
       setNotice('Text path settings are invalid');
       return;
@@ -7747,15 +7789,21 @@ export default function Home() {
     const f = current(), frameIndex = index.current,
       workToken = ++selectionWorkToken.current,
       operation = selectionOperation, sourceAssets = assets.current;
-    const point = window.prompt(
-      'Object Selection point (canvas pixels, x,y)',
-      `${Math.round(f.w / 2)},${Math.round(f.h / 2)}`,
-    );
-    if (point === null) return;
-    const [xText, yText] = point.split(',').map((value) => value.trim());
-    const x = Number(xText), y = Number(yText);
-    const tolerance = Number(window.prompt('Object Selection colour tolerance (0-255)', '32') ?? '32');
-    const softness = Number(window.prompt('Object Selection edge softness (0-255)', '8') ?? '8');
+    const answer = await askPrompt({
+      title: 'Object Selection',
+      description: 'Select the connected colour region around a canvas point.',
+      fields: [
+        { id: 'x', label: 'Point X', type: 'number', value: Math.min(f.w - 1, Math.round(f.w / 2)), min: 0, max: f.w - 1, suffix: 'px' },
+        { id: 'y', label: 'Point Y', type: 'number', value: Math.min(f.h - 1, Math.round(f.h / 2)), min: 0, max: f.h - 1, suffix: 'px' },
+        { id: 'tolerance', label: 'Colour tolerance', type: 'number', value: 32, min: 0, max: 255 },
+        { id: 'softness', label: 'Edge softness', type: 'number', value: 8, min: 0, max: 255 },
+      ],
+      submitLabel: 'Select',
+    });
+    if (answer === null) return;
+    const x = Number(answer.x), y = Number(answer.y);
+    const tolerance = Number(answer.tolerance);
+    const softness = Number(answer.softness);
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(tolerance) || !Number.isFinite(softness)) {
       setNotice('Object Selection values must be numeric');
       return;
@@ -8043,14 +8091,25 @@ export default function Home() {
       const image = await decodeAsset(assets.current[layer.asset]);
       const width = image.naturalWidth, height = image.naturalHeight;
       const defaultQuad = `10,10;${Math.max(11, width - 10)},10;${Math.max(11, width - 10)},${Math.max(11, height - 10)};10,${Math.max(11, height - 10)}`;
-      const input = window.prompt(`${mode} target quad (clockwise x,y; x,y; x,y; x,y)`, defaultQuad);
-      if (input === null) return;
-      const points = input.split(';').map((entry) => entry.split(',').map((value) => Number(value.trim())));
-      if (points.length !== 4 || points.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value)))) {
+      const answer = await askPrompt({
+        title: mode,
+        fields: [{
+          id: 'quad',
+          label: 'Target quad',
+          hint: 'Four corners clockwise in layer pixels: x,y; x,y; x,y; x,y',
+          type: 'text',
+          value: defaultQuad,
+          validate: (text) => (parseQuadPoints(text) ? null : `${mode} needs four numeric x,y points`),
+        }],
+        submitLabel: 'Warp',
+      });
+      if (answer === null) return;
+      const points = parseQuadPoints(String(answer.quad));
+      if (!points) {
         setNotice(`${mode} needs four numeric x,y points`);
         return;
       }
-      const plan = planPerspectiveWarp(width, height, points.map(([x, y]) => ({ x, y })) as CropQuad);
+      const plan = planPerspectiveWarp(width, height, points as CropQuad);
       const source = surface(width, height), sourceContext = source.getContext('2d')!;
       sourceContext.drawImage(image, 0, 0);
       const pixels = sourceContext.getImageData(0, 0, width, height).data;
@@ -8084,21 +8143,30 @@ export default function Home() {
       const image = await decodeAsset(assets.current[layer.asset]);
       const width = image.naturalWidth, height = image.naturalHeight;
       const defaultPins = `${Math.round(width * 0.5)},${Math.round(height * 0.5)},0,0`;
-      const input = window.prompt(
-        'Puppet Warp pins (x,y,dx,dy; up to 8 layer-local pins)',
-        defaultPins,
-      );
-      if (input === null) return;
-      const pins = input.split(';').map((entry) => {
-        const values = entry.split(',').map((value) => Number(value.trim()));
-        if (values.length !== 4 || values.some((value) => !Number.isFinite(value)))
-          throw new Error('Puppet Warp needs x,y,dx,dy values for each pin');
-        return { x: values[0], y: values[1], dx: values[2], dy: values[3], influence: Math.max(1, Math.round(Math.min(width, height) * 0.35)) } satisfies PuppetPin;
+      const answer = await askPrompt({
+        title: 'Puppet Warp',
+        fields: [{
+          id: 'pins',
+          label: 'Pins',
+          hint: 'Up to 8 layer-local pins as x,y,dx,dy, separated by semicolons',
+          type: 'text',
+          value: defaultPins,
+          validate: (text) => {
+            const parsed = parsePuppetPinText(text);
+            return 'error' in parsed ? parsed.error : null;
+          },
+        }],
+        submitLabel: 'Warp',
       });
-      if (!pins.length || pins.length > 8) {
-        setNotice('Puppet Warp accepts one to eight pins');
+      if (answer === null) return;
+      const parsedPins = parsePuppetPinText(String(answer.pins));
+      if ('error' in parsedPins) {
+        setNotice(parsedPins.error);
         return;
       }
+      const pins = parsedPins.pins.map((pin) => ({
+        ...pin, influence: Math.max(1, Math.round(Math.min(width, height) * 0.35)),
+      } satisfies PuppetPin));
       const plan = planPuppetWarp(width, height, pins);
       const source = surface(width, height), sourceContext = source.getContext('2d');
       if (!sourceContext) throw new Error('Puppet Warp source canvas is unavailable');
@@ -8541,7 +8609,7 @@ export default function Home() {
     if (editLayer({ vectorMask: { path: defaultVectorMaskPath(bounds.width, bounds.height), enabled: true, inverted: false } }))
       setNotice('Vector mask created; edit the path with Direct Selection');
   };
-  const createCookieCutterMask = () => {
+  const createCookieCutterMask = async () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || !isVectorMaskableLayer(layer) || !layer.visible) {
       setNotice('Select a visible pixel-producing layer before using Cookie Cutter');
@@ -8555,8 +8623,13 @@ export default function Home() {
       setNotice('Remove the existing vector mask before using Cookie Cutter');
       return;
     }
-    const choice = window.prompt(`Cookie Cutter shape (${COOKIE_CUTTER_SHAPES.join(', ')})`, 'ellipse');
-    if (choice === null) return;
+    const answer = await askPrompt({
+      title: 'Cookie Cutter Mask',
+      fields: [{ id: 'shape', label: 'Shape', type: 'select', value: 'ellipse', options: promptOptions(COOKIE_CUTTER_SHAPES) }],
+      submitLabel: 'Create mask',
+    });
+    if (answer === null) return;
+    const choice = String(answer.shape);
     const shape = COOKIE_CUTTER_SHAPES.includes(choice as CookieCutterShape)
       ? choice as CookieCutterShape : 'ellipse';
     try {
@@ -8970,12 +9043,18 @@ export default function Home() {
       setNotice(`This layer has ${CONTENT_AWARE_MOVE_MAX_OPERATIONS} Content-Aware Move operations; export a copy before adding more`);
       return;
     }
-    const dxText = window.prompt('Move selection horizontally in pixels', '24');
-    if (dxText === null) return;
-    const dyText = window.prompt('Move selection vertically in pixels', '0');
-    if (dyText === null) return;
-    const dx = Number(dxText),
-      dy = Number(dyText);
+    const answer = await askPrompt({
+      title: 'Content-Aware Move',
+      description: 'Move the selected pixels and fill the hole they leave.',
+      fields: [
+        { id: 'dx', label: 'Move horizontally', type: 'number', value: 24, min: -CONTENT_AWARE_MOVE_MAX_OFFSET, max: CONTENT_AWARE_MOVE_MAX_OFFSET, suffix: 'px' },
+        { id: 'dy', label: 'Move vertically', type: 'number', value: 0, min: -CONTENT_AWARE_MOVE_MAX_OFFSET, max: CONTENT_AWARE_MOVE_MAX_OFFSET, suffix: 'px' },
+      ],
+      submitLabel: 'Move',
+    });
+    if (answer === null) return;
+    const dx = Number(answer.dx),
+      dy = Number(answer.dy);
     if (!Number.isFinite(dx) || !Number.isFinite(dy) ||
       Math.abs(dx) > CONTENT_AWARE_MOVE_MAX_OFFSET || Math.abs(dy) > CONTENT_AWARE_MOVE_MAX_OFFSET) {
       setNotice(`Content-Aware Move offsets must be within ±${CONTENT_AWARE_MOVE_MAX_OFFSET} pixels`);
@@ -9039,12 +9118,18 @@ export default function Home() {
       setNotice(`This layer has ${CONTENT_AWARE_SCALE_MAX_OPERATIONS} Content-Aware Scale operations; export a copy before adding more`);
       return;
     }
-    const horizontalText = window.prompt('Scale selection horizontally (%)', '120');
-    if (horizontalText === null) return;
-    const verticalText = window.prompt('Scale selection vertically (%)', horizontalText);
-    if (verticalText === null) return;
-    const scaleX = Number(horizontalText),
-      scaleY = Number(verticalText);
+    const answer = await askPrompt({
+      title: 'Content-Aware Scale',
+      description: 'Scale the selected content while protecting its surroundings.',
+      fields: [
+        { id: 'scaleX', label: 'Scale horizontally', type: 'number', value: 120, min: CONTENT_AWARE_SCALE_MIN_PERCENT, max: CONTENT_AWARE_SCALE_MAX_PERCENT, suffix: '%' },
+        { id: 'scaleY', label: 'Scale vertically', type: 'number', value: 120, min: CONTENT_AWARE_SCALE_MIN_PERCENT, max: CONTENT_AWARE_SCALE_MAX_PERCENT, suffix: '%' },
+      ],
+      submitLabel: 'Scale',
+    });
+    if (answer === null) return;
+    const scaleX = Number(answer.scaleX),
+      scaleY = Number(answer.scaleY);
     if (!Number.isFinite(scaleX) || !Number.isFinite(scaleY) ||
       scaleX < CONTENT_AWARE_SCALE_MIN_PERCENT || scaleX > CONTENT_AWARE_SCALE_MAX_PERCENT ||
       scaleY < CONTENT_AWARE_SCALE_MIN_PERCENT || scaleY > CONTENT_AWARE_SCALE_MAX_PERCENT) {
@@ -10991,6 +11076,16 @@ export default function Home() {
           : `${copies.length} layers duplicated`,
       );
   };
+  /** One 0–100% opacity field in the in-app prompt dialog; null when cancelled. */
+  const askOpacityPercent = async (title: string, label: string, value: number, submitLabel: string) => {
+    const answer = await askPrompt({
+      title,
+      fields: [{ id: 'opacity', label, type: 'number', value, min: 0, max: 100, suffix: '%' }],
+      submitLabel,
+    });
+    return answer ? Number(answer.opacity) : null;
+  };
+  const askFadeOpacity = (title: string) => askOpacityPercent(title, 'Fade opacity', 50, 'Fade');
   const fadeLastEdit = async () => {
     if (index.current <= 0) {
       setNotice('Fade is available immediately after an undoable raster edit');
@@ -11007,9 +11102,9 @@ export default function Home() {
         setNotice('Unlock and show this layer before fading its filter');
         return;
       }
-      const fadeText = window.prompt(`Fade ${filterTypeLabel(liveFilter.type)} (0–100%)`, '50');
-      if (fadeText === null) return;
-      const fade = Number(fadeText);
+      const fadeAnswer = await askFadeOpacity(`Fade ${filterTypeLabel(liveFilter.type)}`);
+      if (fadeAnswer === null) return;
+      const fade = fadeAnswer;
       if (!Number.isFinite(fade) || fade < 0 || fade > 100) {
         setNotice('Fade opacity must be between 0 and 100%');
         return;
@@ -11035,9 +11130,9 @@ export default function Home() {
       setNotice('Fade needs a raster edit or a newly applied live filter as the last step');
       return;
     }
-    const amountText = window.prompt('Fade opacity (0–100%)', '50');
-    if (amountText === null) return;
-    const amount = Number(amountText);
+    const amountAnswer = await askFadeOpacity('Fade');
+    if (amountAnswer === null) return;
+    const amount = amountAnswer;
     if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
       setNotice('Fade opacity must be between 0 and 100%');
       return;
@@ -11102,9 +11197,9 @@ export default function Home() {
       setNotice('Unlock and show the active raster layer before using Apply Image');
       return;
     }
-    const opacityText = window.prompt('Apply Image opacity (0–100%)', '100');
-    if (opacityText === null) return;
-    const opacity = Number(opacityText);
+    const opacityAnswer = await askOpacityPercent('Apply Image', 'Opacity', 100, 'Apply');
+    if (opacityAnswer === null) return;
+    const opacity = opacityAnswer;
     if (!Number.isFinite(opacity) || opacity < 0 || opacity > 100) {
       setNotice('Apply Image opacity must be between 0 and 100%');
       return;
@@ -11183,19 +11278,21 @@ export default function Home() {
       setNotice('Unlock and show the active raster layer before using Calculations');
       return;
     }
-    const modeText = window.prompt(
-      `Calculations blend mode (${CALCULATION_MODES.join(', ')})`,
-      'multiply',
-    );
-    if (modeText === null) return;
-    const mode = modeText.trim().toLowerCase() as CalculationMode;
+    const answer = await askPrompt({
+      title: 'Calculations',
+      fields: [
+        { id: 'mode', label: 'Blend mode', type: 'select', value: 'multiply', options: promptOptions(CALCULATION_MODES) },
+        { id: 'opacity', label: 'Opacity', type: 'number', value: 100, min: 0, max: 100, suffix: '%' },
+      ],
+      submitLabel: 'Apply',
+    });
+    if (answer === null) return;
+    const mode = String(answer.mode).trim().toLowerCase() as CalculationMode;
     if (!CALCULATION_MODES.includes(mode)) {
       setNotice(`Calculations mode must be one of: ${CALCULATION_MODES.join(', ')}`);
       return;
     }
-    const opacityText = window.prompt('Calculations opacity (0–100%)', '100');
-    if (opacityText === null) return;
-    const opacity = Number(opacityText);
+    const opacity = Number(answer.opacity);
     if (!Number.isFinite(opacity) || opacity < 0 || opacity > 100) {
       setNotice('Calculations opacity must be between 0 and 100%');
       return;
@@ -12421,7 +12518,7 @@ export default function Home() {
     // The stored-bounds asset may have been released with the replaced entry.
     doc.amend(expansion.before, top, 0, { [expansion.source[0]]: expansion.source[1] });
   };
-  const applyMatting = () => {
+  const applyMatting = async () => {
     const f = current(), layer = f.layers.find((item) => item.id === f.active);
     if (!layer || (layer.kind !== 'raster' && layer.kind !== 'smart-object')) {
       setNotice('Select a raster or smart-object layer before applying matting');
@@ -12431,16 +12528,23 @@ export default function Home() {
       setNotice('Unlock and show the layer before applying matting');
       return;
     }
-    const modeText = window.prompt('Matting colour (white or black)', effectiveMatting(layer.matting).mode);
-    if (modeText === null) return;
-    const mode = modeText.trim().toLowerCase();
+    const currentMatting = effectiveMatting(layer.matting);
+    const answer = await askPrompt({
+      title: 'Matting',
+      description: 'Remove a white or black fringe from anti-aliased edges, nondestructively.',
+      fields: [
+        { id: 'mode', label: 'Matte colour', type: 'select', value: currentMatting.mode, options: promptOptions(MATTING_MODES) },
+        { id: 'amount', label: 'Amount', type: 'number', value: currentMatting.amount, min: 0, max: 100, suffix: '%' },
+      ],
+      submitLabel: 'Apply',
+    });
+    if (answer === null) return;
+    const mode = String(answer.mode).trim().toLowerCase();
     if (!MATTING_MODES.includes(mode as (typeof MATTING_MODES)[number])) {
       setNotice('Matting colour must be white or black');
       return;
     }
-    const amountText = window.prompt('Matting amount (0-100%)', String(effectiveMatting(layer.matting).amount));
-    if (amountText === null) return;
-    const amount = Number(amountText);
+    const amount = Number(answer.amount);
     if (!Number.isFinite(amount) || amount < 0 || amount > 100) {
       setNotice('Matting amount must be between 0 and 100');
       return;
@@ -13537,7 +13641,7 @@ export default function Home() {
     },
     warp: () => {
       if (typeSession) typeTool.commitSession();
-      setTextWarp();
+      void setTextWarp();
     },
     commit: () => { typeTool.commitSession('confirm'); },
     cancel: () => typeTool.cancelSession(),
@@ -18622,7 +18726,7 @@ export default function Home() {
     else if (command === 'text-orientation-vertical')
       setTextOrientation('vertical');
     else if (command === 'language-options') setLanguageOptionsOpen(true);
-    else if (command === 'text-warp') setTextWarp();
+    else if (command === 'text-warp') void setTextWarp();
     else if (command === 'type-panels') {
       setTypePanelsOpen({ character: true, paragraph: true });
       if (!isTypeTool(tool)) activateTool('text');
@@ -18635,7 +18739,7 @@ export default function Home() {
     }
     else if (command === 'type-convert-point' || command === 'type-convert-paragraph')
       typeActions.convert(command === 'type-convert-point' ? 'point' : 'paragraph');
-    else if (command === 'text-on-path') setTextOnPath();
+    else if (command === 'text-on-path') void setTextOnPath();
     else if (command === 'font-preview-size') {
       const next = nextFontPreviewSize(fontPreviewSize);
       setFontPreviewSize(next);
@@ -20007,6 +20111,7 @@ export default function Home() {
           }}
         />
       )}
+      {promptDialog}
       {selectionFeathering && (
         <SelectionFeatherDialog
           close={() => setSelectionFeathering(false)}

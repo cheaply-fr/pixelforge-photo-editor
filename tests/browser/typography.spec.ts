@@ -1,6 +1,7 @@
 import { selectTool } from './tool-selection';
 import { downloadedProject } from './project-file';
 import { test, expect } from '@playwright/test';
+import { answerPrompt } from './prompt-dialog';
 
 async function saved(page: import('@playwright/test').Page) {
   await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText(
@@ -173,10 +174,9 @@ test('Warp Text stays editable, changes the raster, and persists across reload',
   await page.getByTestId('editor-canvas').evaluate((canvas: HTMLCanvasElement) => {
     (canvas as HTMLCanvasElement).dataset.beforeWarp = String(canvas.toDataURL().length);
   });
-  const prompts = ['arc', '65', '20'];
-  page.on('dialog', async (dialog) => await dialog.accept(prompts.shift()!));
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Warp Text…', exact: true }).click();
+  await answerPrompt(page, 'Warp Text', { 'Warp style': 'arc', Bend: '65', 'Vertical distortion': '20' });
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
   await saved(page);
   const exported = await project(page), frame = exported.history[exported.index];
@@ -227,13 +227,9 @@ test('Text on Path stays editable, follows a vector path, and survives reload', 
     name: 'text-on-path.pixelforge', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported)),
   });
   await expect(page.getByLabel('Edit layer text', { exact: true })).toHaveValue('PATH');
-  const prompts = [path.id, '0'];
-  page.on('dialog', async (dialog) => {
-    if (dialog.type() === 'confirm') await dialog.accept();
-    else await dialog.accept(prompts.shift()!);
-  });
   await page.getByRole('button', { name: 'Type', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Text on Path…', exact: true }).click();
+  await answerPrompt(page, 'Text on Path', { 'Path layer': path.id, 'Path offset': '0', 'Reverse text direction along the path': true });
   await expect(canvas).toHaveAttribute('data-rendering', 'false');
   await saved(page);
   const attached = await project(page);

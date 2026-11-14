@@ -321,7 +321,16 @@ missed; the unit tests listed catch the rest. Always finish with a contract doc
    handled by the editor's global `keydown` handler in `app/page.tsx`, so a new
    built-in chord needs a branch there as well.
 3. **Behaviour**: add the branch to `runCommand()`. Keep logic in a `src/`
-   module.
+   module. Never call `window.prompt` (it can be blocked and is poor on
+   phones). For a few values use the in-app prompt dialog:
+   `const answer = await askPrompt({ title, fields, submitLabel })` in
+   `app/page.tsx` (or `usePromptDialog()` from `src/PromptDialog.tsx` in a
+   component, rendering its `dialog`). Fields are `text`, `number`
+   (`min`/`max`/`integer`/`suffix`, validated inline with submit disabled),
+   `select` (fixed choices) or `checkbox`; `answer` is `null` on Cancel/Esc.
+   Validation lives in `src/promptForm.ts`; browser specs drive it with
+   `answerPrompt()` from `tests/browser/prompt-dialog.ts`. Larger option sets
+   still deserve a dedicated dialog component.
 4. **Enablement**: add a `case` to `menuItemDisabled()` when the command needs
    a layer, selection, unlocked layer, etc. Disabled roadmap items stay visible
    unless the user hides them (`src/menuPreferences.ts`, *Show disabled*).

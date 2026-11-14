@@ -17,15 +17,16 @@ Both commands keep the text editable: you can still retype it, change the font o
 
 1. Select a type layer.
 2. Choose **Type > Warp Text…**, or click **Warp** in the Type options bar.
-3. Answer the three prompts:
-   - **Warp style**: `none`, `arc`, `bulge` or `flag`.
+3. In the **Warp Text** dialog, set:
+   - **Warp style**: **None**, **Arc**, **Bulge** or **Flag**.
    - **Bend**: from −100 to 100. Negative values bend the other way.
    - **Vertical distortion**: from −100 to 100.
+4. Click **Warp** or press <kbd>Enter</kbd>. A value outside −100 to 100 is marked in red and **Warp** stays unavailable until you fix it.
 
-The warp is one undoable step. To remove it, run **Warp Text…** again and enter `none`.
+The warp is one undoable step. To remove it, run **Warp Text…** again and choose **None**.
 
 > [!NOTE]
-> Warp moves and rotates each character; the letter shapes themselves are not distorted. An unknown style name is treated as `none`.
+> Warp moves and rotates each character; the letter shapes themselves are not distorted.
 
 ## Put text on a path
 
@@ -34,10 +35,11 @@ The warp is one undoable step. To remove it, run **Warp Text…** again and ente
 1. Draw the path with the [Pen tools](pen-tools), for example a curve with the **Freeform Pen**. Set **Pen mode** to **Path (work path, no fill)** if you only want the path as a guide.
 2. Add the text with the **Horizontal Type** tool and make sure the type layer is selected.
 3. Choose **Type > Text on Path…**. The command is available when the document has at least one path layer.
-4. Answer the prompts:
-   - **Path layer ID**: the prompt lists each path layer's ID and name, and suggests the first path. Press <kbd>Enter</kbd> to accept it, or type the ID of another path from the list.
-   - **Path offset in pixels**: how far along the path the text starts.
-   - **Reverse text direction along the path?**: choose OK to run the text the other way.
+4. In the **Text on Path** dialog, set:
+   - **Path layer**: choose the path by its layer name. The first path (or the path the text already follows) is selected.
+   - **Path offset**: how far along the path the text starts, in pixels.
+   - **Reverse text direction along the path**: tick it to run the text the other way.
+5. Click **Attach** or press <kbd>Enter</kbd>.
 
 The text follows the path's first contour. If you edit or move the path afterwards, the text moves with it.
 

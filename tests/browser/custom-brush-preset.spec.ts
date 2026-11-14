@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { answerPrompt, cancelPrompt, expectPromptRejects } from './prompt-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -19,9 +20,9 @@ test('Edit > Define Brush Preset saves settings in an anonymous project and relo
   await expect(wetEdges).toHaveValue('48');
   await buildUp.fill('64');
   await expect(buildUp).toHaveValue('64');
-  page.once('dialog', (dialog) => dialog.accept('Studio ink'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Define Brush Preset…', exact: true }).click();
+  await answerPrompt(page, 'Name this brush preset', { 'Preset name': 'Studio ink' });
   await expect(page.locator('footer')).toContainText('Brush preset “Studio ink” saved on this device');
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -44,10 +45,10 @@ test('Edit > Define Brush Preset saves settings in an anonymous project and relo
 test('Edit > Define Brush Preset rejects an empty name without creating a preset', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  page.once('dialog', (dialog) => dialog.accept('   '));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Define Brush Preset…', exact: true }).click();
-  await expect(page.locator('footer')).toContainText('Brush preset name cannot be empty');
+  await expectPromptRejects(page, 'Name this brush preset', { 'Preset name': '   ' }, 'Preset name cannot be empty.');
+  await cancelPrompt(page, 'Name this brush preset');
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();

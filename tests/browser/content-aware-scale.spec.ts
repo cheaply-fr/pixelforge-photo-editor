@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
 import { documentPixel, lowerBrushOpacity, marquee, openRedBlock } from './content-aware-block';
+import { answerPrompt } from './prompt-dialog';
 
 const openEditor = async (page: Page) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -34,11 +35,9 @@ test('Content-Aware Scale transforms an explicit selection and survives reload',
   const before = await project(page);
   const beforeFrame = before.history[before.index];
   const beforeAsset = beforeFrame.layers.find((layer) => layer.id === beforeFrame.active)!.asset;
-  page.on('dialog', async (dialog) => {
-    await dialog.accept(dialog.message().includes('horizontally') ? '125' : '80');
-  });
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Content-Aware Scale…', exact: true }).click();
+  await answerPrompt(page, 'Content-Aware Scale', { 'Scale horizontally': '125', 'Scale vertically': '80' });
   await expect(page.getByText('Content-Aware Scale applied locally; undo restores the original pixels', { exact: true })).toBeVisible();
   const after = await project(page);
   const afterFrame = after.history[after.index];
@@ -59,9 +58,9 @@ test('Content-Aware Scale fills at full strength whatever the brush opacity', as
   await openRedBlock(page);
   await lowerBrushOpacity(page, 20);
   await marquee(page, [60, 60], [140, 140]);
-  page.on('dialog', async (dialog) => dialog.accept('50'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Content-Aware Scale…', exact: true }).click();
+  await answerPrompt(page, 'Content-Aware Scale', { 'Scale horizontally': '50', 'Scale vertically': '50' });
   await expect(page.getByText('Content-Aware Scale applied locally; undo restores the original pixels', { exact: true })).toBeVisible();
   // The block shrinks to about 30×30 around its centre…
   const centre = await documentPixel(page, 100, 100);

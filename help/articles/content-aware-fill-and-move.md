@@ -37,10 +37,10 @@ Content-Aware Move moves the selected pixels by a fixed distance and fills the p
 
 1. Select the object on a visible, unlocked pixel layer.
 2. Choose **Edit > Content-Aware Move…**.
-3. Your browser asks for the horizontal distance in pixels (positive moves right), then the vertical distance (positive moves down). Distances can be up to ±4,096 px.
+3. In the **Content-Aware Move** dialog, enter **Move horizontally** (positive moves right, 24 px to start) and **Move vertically** (positive moves down) in pixels, then click **Move** or press <kbd>Enter</kbd>. Distances can be up to ±4,096 px; a value outside that range is marked in red and **Move** stays unavailable until you fix it.
 4. The selected pixels are moved and the gap is filled at full strength from the surrounding colours, searching as far as Content-Aware Fill does for the same selection.
 
-Cancel either prompt to leave the image unchanged. Up to 16 moves can be stored per layer.
+Click **Cancel** or press <kbd>Esc</kbd> to leave the image unchanged. Up to 16 moves can be stored per layer.
 
 ## Choosing the right tool
 

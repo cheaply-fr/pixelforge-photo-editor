@@ -60,6 +60,7 @@ import { PATTERN_IDS, type PatternId } from './patternStamp';
 import { normalizeOpenType } from './openType';
 import { normalizeTextLanguage, TEXT_DIRECTIONS, TEXT_LANGUAGES } from './textLanguage';
 import { filterLayersBySearch, groupMatchesSearch } from './layerSearch';
+import { usePromptDialog } from './PromptDialog';
 import {
   clippingCandidateBase,
   clippingGroupBase,
@@ -225,6 +226,8 @@ export default function LayersPanel({
 }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const main = part === 'layers';
+  /** In-app rename dialog (replaces window.prompt). */
+  const { ask: askPrompt, dialog: promptDialog } = usePromptDialog();
   // Drag-and-drop, keyboard reorder, delete and row menu state. See
   // docs/layers-panel-interaction-contract.md.
   const listRef = useRef<HTMLDivElement>(null);
@@ -1116,11 +1119,17 @@ export default function LayersPanel({
                 groupActive();
                 break;
               case 'rename': {
-                const next = window.prompt('Layer name', menuLayer.name);
-                if (next === null) break;
-                prepareRow(id);
-                edit({ name: next.slice(0, 160) });
-                pendingFocus.current = id;
+                const name = menuLayer.name;
+                void askPrompt({
+                  title: 'Rename layer',
+                  fields: [{ id: 'name', label: 'Layer name', type: 'text', value: name.slice(0, 160), maxLength: 160 }],
+                  submitLabel: 'Rename',
+                }).then((answer) => {
+                  if (answer === null) return;
+                  prepareRow(id);
+                  edit({ name: String(answer.name).slice(0, 160) });
+                  pendingFocus.current = id;
+                });
                 break;
               }
               case 'visibility':
@@ -2455,6 +2464,7 @@ export default function LayersPanel({
         </div>
       )}
       </>)}
+      {promptDialog}
     </Root>
   );
 }

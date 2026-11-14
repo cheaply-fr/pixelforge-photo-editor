@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { answerPrompt } from './prompt-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -14,9 +15,9 @@ test('Define Custom Path saves geometry, reloads it, and applies an editable cop
   for (const [x, y] of [[0.2, 0.2], [0.7, 0.2], [0.45, 0.65], [0.2, 0.2]])
     await page.mouse.click(box.x + box.width * x, box.y + box.height * y);
   await expect(page.locator('footer')).toContainText('Editable path layer added');
-  page.once('dialog', (dialog) => dialog.accept('Saved triangle'));
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Define Custom Path…', exact: true }).click();
+  await answerPrompt(page, 'Name this custom path', { 'Preset name': 'Saved triangle' });
   await expect(page.locator('footer')).toContainText('Path preset “Saved triangle” saved on this device');
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();

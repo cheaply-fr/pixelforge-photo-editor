@@ -31,11 +31,11 @@ Subject works best on a subject that stands out against a fairly even background
 ## Object Selection
 
 1. Choose **Select > Object Selection…**.
-2. Your browser asks three questions in turn:
-   - **Object Selection point (canvas pixels, x,y)**: the position of a pixel inside the object, in image pixels from the top-left corner. The centre of the image is suggested. The document size is shown next to the document name, which helps you estimate a position.
-   - **Object Selection colour tolerance (0-255)**: how different neighbouring colours may be (default 32).
-   - **Object Selection edge softness (0-255)**: how soft the edge is (default 8).
-3. Confirm each question. Cancel the first one to stop.
+2. The **Object Selection** dialog asks for:
+   - **Point X** and **Point Y**: the position of a pixel inside the object, in image pixels from the top-left corner. The centre of the image is suggested, and the point must lie inside the image. The document size is shown next to the document name, which helps you estimate a position.
+   - **Colour tolerance** (0–255): how different neighbouring colours may be (default 32).
+   - **Edge softness** (0–255): how soft the edge is (default 8).
+3. Click **Select** or press <kbd>Enter</kbd>. Out-of-range values are marked in red and keep **Select** unavailable; **Cancel** or <kbd>Esc</kbd> stops without changing the selection.
 
 ## Focus Area
 

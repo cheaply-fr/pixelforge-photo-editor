@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { answerPrompt, cancelPrompt, expectPromptRejects } from './prompt-dialog';
 
 test.beforeEach(async ({ page }) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -9,9 +10,9 @@ test.beforeEach(async ({ page }) => {
 test('Image > Apply Image composites an undoable local raster result', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  page.once('dialog', (dialog) => dialog.accept('50'));
   await page.getByRole('button', { name: 'Image', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Apply Image…', exact: true }).click();
+  await answerPrompt(page, 'Apply Image', { Opacity: '50' });
   await expect(page.locator('footer')).toContainText('Apply Image composited the visible image at 50%');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: /^Undo/ })).toBeEnabled();
@@ -24,13 +25,13 @@ test('Image > Apply Image composites an undoable local raster result', async ({ 
   expect(project.history.at(-1)?.h).toBe(960);
 });
 
-test('Image > Apply Image rejects an invalid opacity without changing history', async ({ page }) => {
+test('Image > Apply Image blocks an invalid opacity without changing history', async ({ page }) => {
   await page.goto('/editor?new=1');
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
-  page.once('dialog', (dialog) => dialog.accept('101'));
   await page.getByRole('button', { name: 'Image', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Apply Image…', exact: true }).click();
-  await expect(page.locator('footer')).toContainText('Apply Image opacity must be between 0 and 100%');
+  await expectPromptRejects(page, 'Apply Image', { Opacity: '101' }, 'Enter a number from 0 to 100.');
+  await cancelPrompt(page, 'Apply Image');
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: /^Undo/ })).toBeDisabled();
 });
@@ -46,9 +47,9 @@ test('Image > Apply Image clips the rendered source to an active selection', asy
   await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.6, { steps: 5 });
   await page.mouse.up();
   await expect(page.getByText('Rectangular selection created', { exact: true })).toBeVisible();
-  page.once('dialog', (dialog) => dialog.accept('100'));
   await page.getByRole('button', { name: 'Image', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Apply Image…', exact: true }).click();
+  await answerPrompt(page, 'Apply Image', { Opacity: '100' });
   await expect(page.locator('footer')).toContainText('Apply Image composited the visible image at 100%');
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
@@ -63,9 +64,9 @@ test('Image > Apply Image grows an empty paint layer to the canvas first', async
   // A new paint layer stores one transparent pixel until something is written.
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
-  page.once('dialog', (dialog) => dialog.accept('100'));
   await page.getByRole('button', { name: 'Image', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Apply Image…', exact: true }).click();
+  await answerPrompt(page, 'Apply Image', { Opacity: '100' });
   await expect(page.locator('footer')).toContainText('Apply Image composited the visible image at 100%');
   await expect(page.locator('footer')).not.toContainText('match the document dimensions');
   const pending = page.waitForEvent('download');
@@ -92,9 +93,9 @@ test('Image > Apply Image cancelled on an empty paint layer leaves it at one pix
   await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
   await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
   await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
-  page.once('dialog', (dialog) => dialog.dismiss());
   await page.getByRole('button', { name: 'Image', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Apply Image…', exact: true }).click();
+  await cancelPrompt(page, 'Apply Image');
   const pending = page.waitForEvent('download');
   await page.getByRole('button', { name: 'File', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Download project file', exact: true }).click();

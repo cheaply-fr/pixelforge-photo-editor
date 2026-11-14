@@ -682,6 +682,22 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .stroke-selection-position label{display:flex;align-items:center;justify-content:flex-start;gap:6px;min-height:32px;margin:0}
 .stroke-selection-position input{width:18px;height:18px}
 .stroke-selection-color{display:flex;align-items:center;gap:8px}
+/* In-app prompt dialog: replaces window.prompt (src/PromptDialog.tsx). */
+.editor-dialog.prompt-dialog{width:min(440px,calc(100vw - 32px));max-height:92dvh;overflow:auto;box-sizing:border-box}
+.editor-dialog.prompt-dialog h2{margin:0 0 4px;overflow-wrap:anywhere}
+.prompt-dialog-field{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,190px);align-items:center;gap:6px 14px;margin:14px 0}
+.editor-dialog.prompt-dialog .prompt-dialog-field label{display:block;margin:0;font-size:13px}
+.prompt-dialog-control{display:flex;align-items:center;gap:6px;min-width:0}
+.editor-dialog.prompt-dialog .prompt-dialog-control input,.editor-dialog.prompt-dialog .prompt-dialog-control select{box-sizing:border-box;width:100%;min-width:0;min-height:38px;padding:8px;border:1px solid #596272;border-radius:6px;background:#15181d;color:white;font-size:14px}
+.editor-dialog.prompt-dialog .prompt-dialog-control input[aria-invalid=true]{border-color:#ff7959}
+.prompt-dialog-suffix{flex:0 0 auto;color:#9da5b4;font-size:12px}
+.prompt-dialog-field small{grid-column:1/-1;color:#9299a6;font-size:11px}
+.editor-dialog.prompt-dialog .prompt-dialog-error{grid-column:1/-1;margin:0;font-size:12px}
+.prompt-dialog-check{grid-template-columns:auto minmax(0,1fr);justify-content:start}
+.prompt-dialog-check input{width:20px;height:20px;margin:0}
+.editor-dialog.prompt-dialog .dialog-actions{margin-top:18px}
+.editor-dialog.prompt-dialog .dialog-actions button{min-height:40px;min-width:88px}
+@media (max-width:520px){.editor-dialog.prompt-dialog{padding:18px 16px}.prompt-dialog-field{grid-template-columns:minmax(0,1fr)}.prompt-dialog-check{grid-template-columns:auto minmax(0,1fr)}.editor-dialog.prompt-dialog .prompt-dialog-control input,.editor-dialog.prompt-dialog .prompt-dialog-control select{font-size:16px}.editor-dialog.prompt-dialog .dialog-actions{position:sticky;bottom:-18px;background:#20232a;padding:8px 0 4px}.editor-dialog.prompt-dialog .dialog-actions button{flex:1 1 0}}
 
 /* Doc bar: explicit local Save draft action (icon + label, compact). */
 .draft-actions .draft-save{display:inline-flex;align-items:center;gap:5px}.draft-actions .draft-save svg{width:13px;height:13px;flex:0 0 auto}

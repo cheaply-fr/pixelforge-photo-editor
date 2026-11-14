@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { deflateSync } from 'node:zlib';
 import { downloadedProject } from './project-file';
+import { answerPrompt } from './prompt-dialog';
 
 // Layers panel: drag-and-drop reorder (mouse and touch), keyboard reorder
 // with a live announcement, per-row delete, the row menu, folders, clipping
@@ -471,8 +472,8 @@ test('row menu actions: arrange, hide, lock, rename, duplicate, clipping and fol
   await choose('Paint 2', 'Unlock');
   await expect(row(page, 'Paint 2')).not.toContainText('· locked');
 
-  page.once('dialog', (dialog) => void dialog.accept('Sky'));
   await choose('Paint 2', 'Rename…');
+  await answerPrompt(page, 'Rename layer', { 'Layer name': 'Sky' });
   await expect(row(page, 'Sky')).toBeVisible();
 
   await choose('Sky', 'Duplicate');
