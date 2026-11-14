@@ -3328,7 +3328,7 @@ const sampledGestureStroke = (
   to: { x: number; y: number },
   options: { size: number; tolerance: number; opacity: number } & (
     | { kind: 'replace'; color: string }
-    | { kind: 'background-erase' }
+    | { kind: 'background-erase'; hardness: number }
   ),
 ) =>
   confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
@@ -3340,7 +3340,7 @@ const sampledGestureStroke = (
           limits: g.colorReplace?.colorReplaceLimits,
         })
       : eraseBackgroundStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
-        options.size, options.tolerance, options.opacity));
+        options.size, options.tolerance, options.opacity, options.hardness));
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
   frame: Frame,
@@ -14674,6 +14674,7 @@ export default function Home() {
               size: localSize(layer.matrix, size),
               tolerance: colorTolerance,
               opacity: brushOpacity / 100,
+              hardness,
             });
             from = point;
           }
@@ -16316,6 +16317,7 @@ export default function Home() {
         size: localSize(g.layer!.matrix, size),
         tolerance: colorTolerance,
         opacity: brushOpacity / 100,
+        hardness,
       });
       previewGesture(g);
       g.last = local;
@@ -17591,6 +17593,7 @@ export default function Home() {
           size: localSize(g.layer.matrix, size),
           tolerance: colorTolerance,
           opacity: brushOpacity / 100,
+          hardness,
         });
       const asset = addPaintedAsset(g.buffer);
       if (

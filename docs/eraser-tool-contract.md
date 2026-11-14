@@ -20,7 +20,11 @@ radial stamp. `hardness`, `size`, `opacity`, tolerance, and connected matching
 are validated before rendering. The radial mask is clipped to the canvas, and
 RGBA matching includes alpha so low-tolerance anti-aliased edges remain intact.
 `applyBackgroundEraserStroke` uses an immutable source sample across a pointer
-line and unions repeated stamp coverage once per pixel.
+line and unions repeated stamp coverage once per pixel. The tool's Size,
+Hardness, Opacity and Color tolerance options all reach the stroke: Hardness
+0 fades the dab to nothing at its edge, Hardness 100 is a hard disc
+(`tests/erasers.test.mjs` and `tests/browser/eraser.spec.ts` check a pixel
+40 px from the centre of a 100 px dab).
 
 `eraseMagicRegion` and `eraseBackgroundStroke` are Canvas adapters for callers
 that commit an already-tested operation to a surface. They write only when a

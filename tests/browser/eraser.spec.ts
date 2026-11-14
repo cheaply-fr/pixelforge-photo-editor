@@ -241,3 +241,45 @@ test('Background Eraser samples a background color, keeps foreground pixels, and
   const reloaded = await project(page);
   expect(reloaded.history[reloaded.index].layers.at(-1)!.asset).toBe(erasedLayer.asset);
 });
+
+test('Background Eraser follows Hardness: a soft brush fades out towards its edge', async ({ page }) => {
+  const encoded = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 200;
+    canvas.height = 200;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, 200, 200);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  const alphaAt = async (points: Array<{ x: number; y?: number }>) => {
+    const saved = await project(page);
+    const layer = saved.history[saved.index].layers.at(-1)!;
+    return (await sample(page, saved.assets[layer.asset!]!, points)).map((pixel) => pixel[3]);
+  };
+  for (const hardness of [100, 0]) {
+    await page.getByTestId('file-input').setInputFiles({ name: 'white.png', mimeType: 'image/png', buffer: Buffer.from(encoded, 'base64') });
+    await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '200');
+    await expect(page.getByTestId('editor-canvas')).toHaveAttribute('data-rendering', 'false');
+    await selectTool(page, 'Background Eraser');
+    await page.getByLabel('Size', { exact: true }).fill('100');
+    await page.getByLabel('Hardness', { exact: true }).fill(String(hardness));
+    await page.getByLabel('Color tolerance', { exact: true }).fill('0');
+    await page.getByLabel('Opacity', { exact: true }).fill('100');
+    // One dab at the centre: radius 50 px.
+    await dispatchStroke(page, 0.5, 0.5);
+    await expect(page.locator('footer')).toContainText('Background Eraser stroke applied', { timeout: 10000 });
+    // Centre, 20 px and 40 px out, and well outside the brush.
+    const [centre, near, far, outside] = await alphaAt([{ x: 0.5 }, { x: 0.6 }, { x: 0.7 }, { x: 0.9 }]);
+    expect(centre).toBe(0);
+    expect(outside).toBe(255);
+    if (hardness === 100) {
+      expect([near, far]).toEqual([0, 0]);
+    } else {
+      // Soft: partly erased, less so further from the centre.
+      expect(far).toBeGreaterThan(0);
+      expect(far).toBeLessThan(255);
+      expect(far).toBeGreaterThan(near);
+    }
+  }
+});

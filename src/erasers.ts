@@ -380,6 +380,7 @@ export function eraseBackgroundStroke(
   size: number,
   tolerance = 32,
   opacity = 1,
+  hardness = 100,
 ): boolean {
   if (!source || !output || !source.getContext || !output.getContext) throw new Error('Background Eraser canvas is invalid');
   if (source.width !== output.width || source.height !== output.height)
@@ -396,7 +397,7 @@ export function eraseBackgroundStroke(
       applyBackgroundEraserStroke(sourcePixels!, destination, {
         width, height,
         x1: x1 - rect.x, y1: y1 - rect.y, x2: x2 - rect.x, y2: y2 - rect.y,
-        size, tolerance, opacity, target,
+        size, tolerance, opacity, hardness, target,
       }),
     { source, tool: 'background-eraser' },
   );
