@@ -1797,7 +1797,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   Layer: [
     { label: 'New Paint Layer', command: 'new-layer' },
     {
-      label: 'Duplicate Layer…',
+      label: 'Duplicate Layer',
       shortcut: 'Ctrl+J',
       command: 'duplicate-layer',
     },

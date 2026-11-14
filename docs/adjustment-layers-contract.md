@@ -25,7 +25,10 @@ and metadata round trips. Desktop and mobile browser acceptance covers adding a
 node, representative Levels/Hue pixel changes, source identity, undo, local
 reload and project export persistence.
 
-Adjustment layers currently apply to the composite accumulated below their
-position in the stack. Photoshop clipping/linked adjustment scopes, masks on
-adjustment nodes, true color-management/bit-depth pipelines and Adjustment
-Brush remain separate roadmap items.
+Adjustment layers apply to the composite accumulated below their position in
+the stack. They can carry a layer mask: one made from the current selection
+(Layers panel or Layer menu) or painted with the Adjustment Brush
+(`adjustment-brush-contract.md`), and the adjustment then applies only where
+the mask allows, inverted masks included. Photoshop clipping/linked
+adjustment scopes and true color-management/bit-depth pipelines remain
+separate roadmap items.
