@@ -24,7 +24,7 @@ Each toolbar button is a tool family. Click a button to use its current tool. Pr
 
 ## Canvas
 
-The canvas shows your document. Scroll to pan. Hold <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on Mac) and scroll, or pinch on a trackpad, to zoom around the pointer. The zoom slider at the bottom of the canvas and the **View** menu also change the zoom. On a touch screen, use the zoom slider or the [Zoom tool](zoom-pan-and-rotate-view).
+The canvas shows your document. Scroll to pan. Hold <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on Mac) and scroll, or pinch on a trackpad, to zoom around the pointer. The zoom slider at the bottom of the canvas and the **View** menu also change the zoom. On a touch screen, pinch with two fingers to zoom and drag with two fingers to pan (see [Zoom, pan and rotate the view](zoom-pan-and-rotate-view)).
 
 ## Properties sidebar
 

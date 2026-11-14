@@ -17,7 +17,8 @@ commands that operate on one layer.
   its clipping base has pixels and a layer mask hides what it masks. With the
   Move tool, the "Auto-select layer" option (off by default, not saved with
   the document) picks on every press before the move starts, and right-click
-  or a touch long-press on the canvas picks without moving. Each layer is
+  or a touch long-press on the canvas (500 ms held within 10 CSS px; see
+  [view zoom contract](./view-zoom-contract.md)) picks without moving. Each layer is
   sampled at one pixel: a paint layer decodes only the tile under the point,
   other kinds render alone into a 1 × 1 frame. A point over no pixels keeps
   the selection and says so in the status bar.
