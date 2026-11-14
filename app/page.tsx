@@ -733,6 +733,8 @@ import {
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
 import { compactToolKeyLabel, resolveToolKey } from '../src/toolKeys';
+import { routedMenuCommand } from '../src/menuShortcuts';
+import { resolveToggleLastState, type ToggleAnchor } from '../src/toggleLastState';
 import {
   commandShortcutMatches,
   normalizeCommandShortcutPreferences,
@@ -3772,6 +3774,7 @@ export default function Home() {
   const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
     revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
+  const toggleLastStateAnchor = useRef<ToggleAnchor<unknown> | null>(null);
   /** Where a new audio annotation will be pinned while its panel is open. */
   const [audioDraft, setAudioDraft] = useState<MeasurementPoint | null>(null);
   const setTool = useCallback((next: Tool) => {
@@ -17827,7 +17830,9 @@ export default function Home() {
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
       if (!ready || cloudBusy || document.querySelector('dialog[open]')) return;
-      if (command && e.key.toLowerCase() === 'f') {
+      // Modifiers match exactly: Ctrl+Shift+F is Fade…, Ctrl+Alt+Shift+F Find Layers.
+      const routedCommand = routedMenuCommand(e);
+      if (routedCommand === 'search-commands') {
         e.preventDefault();
         setActiveMenu(null);
         setCommandSearchOpen(true);
@@ -18040,6 +18045,17 @@ export default function Home() {
         }
         e.preventDefault();
         withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(customCommand));
+        return;
+      }
+      if (routedCommand) {
+        // Fade…, Find Layers, Hide Layers and Toggle Last State go through
+        // the menu dispatcher so its availability guards stay authoritative.
+        e.preventDefault();
+        if (commandDisabledRef.current[routedCommand]) {
+          setNotice('That menu command is disabled for the current document');
+          return;
+        }
+        withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(routedCommand as Command));
         return;
       }
       if (e.key === 'F5' && e.shiftKey) {
@@ -18319,8 +18335,12 @@ export default function Home() {
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'toggle-last-state') {
-      if (index.current > 0) travel(-1);
-      else if (index.current < history.current.length - 1) travel(1);
+      // Alternate between the current and previous state (src/toggleLastState.ts).
+      const step = resolveToggleLastState<unknown>(history.current, index.current, toggleLastStateAnchor.current);
+      if (step) {
+        toggleLastStateAnchor.current = step.anchor;
+        travel(step.target - index.current);
+      }
       setNotice('Toggled the last editable state; repeat to switch back');
     }
     else if (command === 'copy-layer') copyLayer();
