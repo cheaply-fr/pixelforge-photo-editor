@@ -490,7 +490,6 @@ import { normalizeToolbarPreferences, TOOLBAR_PREFERENCES_VERSION } from '../src
 import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
 import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
-import { findSpellingHints } from '../src/spellcheck';
 import ColorSettingsDialog from '../src/ColorSettingsDialog';
 import ColorProfileDialog from '../src/ColorProfileDialog';
 import { convertRgbaProfile, normalizeColorProfile, type ColorProfile } from '../src/colorProfile';
@@ -732,6 +731,9 @@ import {
   toolShortcutMatches,
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
+import { compactToolKeyLabel, resolveToolKey } from '../src/toolKeys';
+import { routedMenuCommand } from '../src/menuShortcuts';
+import { resolveToggleLastState, type ToggleAnchor } from '../src/toggleLastState';
 import {
   commandShortcutMatches,
   normalizeCommandShortcutPreferences,
@@ -1454,9 +1456,9 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'dodge', label: 'Dodge', icon: toolIcon('dodge'), key: 'O' },
   { id: 'burn', label: 'Burn', icon: toolIcon('burn'), key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: toolIcon('sponge'), key: 'O' },
-  { id: 'smudge', label: 'Smudge', icon: toolIcon('smudge'), key: 'R' },
-  { id: 'blur', label: 'Blur', icon: toolIcon('blur'), key: 'R' },
-  { id: 'sharpen', label: 'Sharpen', icon: toolIcon('sharpen'), key: 'R' },
+  { id: 'smudge', label: 'Smudge', icon: toolIcon('smudge'), key: 'Shift+R' },
+  { id: 'blur', label: 'Blur', icon: toolIcon('blur'), key: 'Shift+R' },
+  { id: 'sharpen', label: 'Sharpen', icon: toolIcon('sharpen'), key: 'Shift+R' },
   { id: 'pen', label: 'Pen', icon: toolIcon('pen'), key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: toolIcon('freeform-pen'), key: 'P' },
   { id: 'curvature-pen', label: 'Curvature Pen', icon: toolIcon('curvature-pen'), key: 'P' },
@@ -1617,29 +1619,7 @@ const MARQUEE_TOOLS: Tool[] = [
   'row-select',
   'column-select',
 ];
-/** Photoshop's repeated-key tool groups, limited to tools PixelForge actually implements. */
-const TOOL_GROUPS: Record<string, Tool[]> = {
-  c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
-  g: ['gradient', 'fill'],
-  b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
-  m: MARQUEE_TOOLS,
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
-  l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
-  w: ['selection-brush', 'quick-selection', 'magic-wand'],
-  e: ['eraser', 'background-eraser', 'magic-eraser'],
-  k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
-  o: ['dodge', 'burn', 'sponge'],
-  r: ['rotate-view', 'smudge', 'blur', 'sharpen'],
-  s: ['clone', 'pattern-stamp'],
-  y: ['history-brush', 'art-history-brush'],
-  j: ['heal', 'spot-heal', 'patch', 'red-eye'],
-  p: ['pen', 'freeform-pen', 'curvature-pen'],
-  a: ['path-select', 'direct-select'],
-};
-/** Existing PixelForge aliases retained while the primary keys follow Photoshop.
- * A used to alias Direct Selection; it is now the Path/Direct Selection family. */
-const TOOL_ALIASES: Record<string, Tool> = {};
+// Tool letters live in src/toolKeys.ts (TOOL_KEY_FAMILIES / resolveToolKey).
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
   ['Vivid', 'saturate(1.45) contrast(1.08)', '#244d96', '#ef854a'],
@@ -3800,6 +3780,7 @@ export default function Home() {
   const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
     revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
+  const toggleLastStateAnchor = useRef<ToggleAnchor<unknown> | null>(null);
   /** Where a new audio annotation will be pinned while its panel is open. */
   const [audioDraft, setAudioDraft] = useState<MeasurementPoint | null>(null);
   const setTool = useCallback((next: Tool) => {
@@ -17883,7 +17864,9 @@ export default function Home() {
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
       if (!ready || cloudBusy || document.querySelector('dialog[open]')) return;
-      if (command && e.key.toLowerCase() === 'f') {
+      // Modifiers match exactly: Ctrl+Shift+F is Fade…, Ctrl+Alt+Shift+F Find Layers.
+      const routedCommand = routedMenuCommand(e);
+      if (routedCommand === 'search-commands') {
         e.preventDefault();
         setActiveMenu(null);
         setCommandSearchOpen(true);
@@ -18098,6 +18081,17 @@ export default function Home() {
         withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(customCommand));
         return;
       }
+      if (routedCommand) {
+        // Fade…, Find Layers, Hide Layers and Toggle Last State go through
+        // the menu dispatcher so its availability guards stay authoritative.
+        e.preventDefault();
+        if (commandDisabledRef.current[routedCommand]) {
+          setNotice('That menu command is disabled for the current document');
+          return;
+        }
+        withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(routedCommand as Command));
+        return;
+      }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
         void openEditFill();
@@ -18220,50 +18214,16 @@ export default function Home() {
         return;
       }
       if (e.altKey) return;
-      const lower = e.key.toLowerCase();
-      // Photoshop keeps Rotate View on the plain R press while Shift+R
-      // returns to the active retouch member of the R family. Preserve that
-      // affordance even though Blur and Sharpen now share the same flyout.
-      if (lower === 'r') {
+      // R = Rotate View, Shift+R = Smudge/Blur/Sharpen, V/H/Z singles and the
+      // family letters all resolve in src/toolKeys.ts (docs/keyboard-shortcuts.md).
+      const keyedTool = resolveToolKey(e, tool, lastRFamilyTool.current) as Tool | undefined;
+      if (keyedTool) {
         e.preventDefault();
-        const next = e.shiftKey
-          ? (tool === 'rotate-view' ? lastRFamilyTool.current : tool)
-          : 'rotate-view';
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next as Tool));
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(keyedTool));
         setNotice(
           toolSelectionNotice(
-            next as Tool,
-            TOOLS.find((item) => item.id === next)?.label || next,
-          ),
-        );
-        return;
-      }
-      const group = TOOL_GROUPS[lower];
-      if (group) {
-        e.preventDefault();
-        const index = group.indexOf(tool);
-        const direction = e.shiftKey ? -1 : 1;
-        const next =
-          group[
-            (index < 0 ? 0 : index + direction + group.length) % group.length
-          ];
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next));
-        setNotice(
-          toolSelectionNotice(
-            next,
-            TOOLS.find((item) => item.id === next)?.label || next,
-          ),
-        );
-        return;
-      }
-      const alias = TOOL_ALIASES[lower];
-      if (alias) {
-        e.preventDefault();
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(alias));
-        setNotice(
-          toolSelectionNotice(
-            alias,
-            TOOLS.find((item) => item.id === alias)?.label || alias,
+            keyedTool,
+            TOOLS.find((item) => item.id === keyedTool)?.label || keyedTool,
           ),
         );
         return;
@@ -18409,8 +18369,12 @@ export default function Home() {
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'toggle-last-state') {
-      if (index.current > 0) travel(-1);
-      else if (index.current < history.current.length - 1) travel(1);
+      // Alternate between the current and previous state (src/toggleLastState.ts).
+      const step = resolveToggleLastState<unknown>(history.current, index.current, toggleLastStateAnchor.current);
+      if (step) {
+        toggleLastStateAnchor.current = step.anchor;
+        travel(step.target - index.current);
+      }
       setNotice('Toggled the last editable state; repeat to switch back');
     }
     else if (command === 'copy-layer') copyLayer();
@@ -19437,8 +19401,8 @@ export default function Home() {
     colorTolerance, tonalExposure, tonalRange, spongeMode, spongeVibrance, mixerBrush, historyBrush,
     artHistoryBrush, gradientMode, gradientEnd, gradientMidpoint, gradientMidpointPosition,
     gradientReverse, gradientDither, gradientNoise, gradientBlend, gradientOpacity, gradientStops,
-    polygonVariant, polygonSides, polygonInnerRadius, text, fontFamily, fontSize, fontPreviewSize,
-    selectionOperation,
+    polygonVariant, polygonSides, polygonInnerRadius, shapeCornerRadius, customShapeId, text, fontFamily,
+    fontSize, fontPreviewSize, selectionOperation,
   };
   const toolSettingSetters: { [K in ToolSettingKey]: (value: ToolSettingValues[K]) => void } = {
     color: setColor, backgroundColor: setBackgroundColor, size: (value) => setSize(clampBrushSize(value)),
@@ -19458,7 +19422,8 @@ export default function Home() {
     gradientMidpointPosition: setGradientMidpointPosition, gradientReverse: setGradientReverse,
     gradientDither: setGradientDither, gradientNoise: setGradientNoise, gradientBlend: setGradientBlend,
     gradientOpacity: setGradientOpacity, gradientStops: setGradientStops, polygonVariant: setPolygonVariant,
-    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius, text: setText,
+    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius,
+    shapeCornerRadius: setShapeCornerRadius, customShapeId: setCustomShapeId, text: setText,
     fontFamily: setFontFamily, fontSize: setFontSize, fontPreviewSize: setFontPreviewSize,
     selectionOperation: setSelectionOperation,
   };
@@ -19589,8 +19554,12 @@ export default function Home() {
       commandSearchItems.map((item) => [item.command, Boolean(item.disabled)]),
     );
   }, [commandSearchItems]);
-  const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
-    .filter((item) => Boolean(item.shortcut));
+  // Search commands is left out of the search palette itself but is a real
+  // shortcut, so the Keyboard Shortcuts list names it.
+  const keyboardShortcutItems: KeyboardShortcutItem[] = [
+    { label: 'Search commands', menu: 'Edit', shortcut: 'Ctrl+F', command: 'search-commands' },
+    ...commandSearchItems,
+  ].filter((item) => Boolean(item.shortcut));
   const editableCommandShortcutItems = keyboardShortcutItems.filter((item, index, items) =>
     items.findIndex((candidate) => candidate.command === item.command) === index,
   );
@@ -19607,7 +19576,7 @@ export default function Home() {
   const textLayers = (frame?.layers ?? []).filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text');
   const spellcheckLayers: SpellcheckLayer[] = textLayers.map((layer) => ({
     name: layer.name,
-    hints: findSpellingHints(layer.text),
+    text: layer.text,
   }));
   const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
   const openLayerImageFile = () => layerFile.current?.click();
@@ -20458,7 +20427,7 @@ export default function Home() {
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
-                        {key && <kbd>{key}</kbd>}
+                        {key && <kbd>{compactToolKeyLabel(key)}</kbd>}
                         {hiddenSubtools.length > 0 && (
                           <span
                             className="tool-subtool-arrow"

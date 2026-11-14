@@ -16,6 +16,16 @@ shortcut. A custom command match is exact about every modifier and is routed
 through the normal command dispatcher, so lock, selection, quick-mask,
 history, cancellation, and privacy guards remain authoritative.
 
+Built-in menu shortcuts follow the same exact-modifier rule. `Ctrl+F`
+(Search commands), `Ctrl+Shift+F` (Fade…), `Ctrl+Alt+Shift+F` (Find Layers),
+`Ctrl+,` (Hide Layers) and `Ctrl+Alt+Z` (Toggle Last State) are resolved by
+`src/menuShortcuts.ts` and run through the command dispatcher, so the menu's
+disabled state is honoured; a disabled command reports that in the status bar.
+`Cmd` is accepted for `Ctrl` on macOS, and when Option changes the produced
+character the physical letter key decides. `tests/menu-shortcuts.test.mjs`
+cross-checks every shortcut label in the menu definitions against the table of
+handled chords, so a menu cannot advertise a key that does something else.
+
 The contract is intentionally local and opt-in. It does not claim that every
 menu entry is enabled or that browser-reserved shortcuts can be intercepted.
 Pure tests cover punctuation/function-key validation, version failure,

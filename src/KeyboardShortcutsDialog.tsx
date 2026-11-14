@@ -64,13 +64,23 @@ export default function KeyboardShortcutsDialog({
           placeholder="Filter shortcuts…"
           autoComplete="off"
         />
-        <div className="keyboard-shortcuts-list" aria-label="Keyboard shortcuts list">
-          {shortcuts.length ? shortcuts.map((item) => (
-            <div className="keyboard-shortcut-row" key={`${item.menu}-${item.command}`}>
-              <span><b>{item.label}</b><small>{item.menu}</small></span>
-              <kbd>{item.shortcut}</kbd>
-            </div>
-          )) : <p className="command-search-empty">No matching shortcuts</p>}
+        <div className="keyboard-shortcuts-scroll">
+          {shortcuts.length ? (
+            <table className="keyboard-shortcuts-list" aria-label="Keyboard shortcuts list">
+              <thead>
+                <tr><th scope="col">Command</th><th scope="col">Menu</th><th scope="col">Shortcut</th></tr>
+              </thead>
+              <tbody>
+                {shortcuts.map((item) => (
+                  <tr className="keyboard-shortcut-row" key={`${item.menu}-${item.command}`}>
+                    <th scope="row">{item.label}</th>
+                    <td>{item.menu}</td>
+                    <td><kbd>{item.shortcut}</kbd></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <p className="command-search-empty" aria-label="Keyboard shortcuts list">No matching shortcuts</p>}
         </div>
         {toolItems && applyToolBindings && (
           <fieldset className="tool-shortcut-settings">

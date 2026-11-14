@@ -11,7 +11,8 @@ stored options here).
 - Tools with options (Brush, Pencil, Eraser, Background/Magic Eraser, Color
   Replace, Mixer/History/Art History Brush, Smudge, Blur, Sharpen, Dodge, Burn,
   Sponge, Clone, Healing, Spot Healing, Patch, Pattern Stamp, Red Eye,
-  Mask/Adjustment brushes, Gradient, Text, Shape/Ellipse/Line/Polygon, the
+  Mask/Adjustment brushes, Gradient, Text, every shape tool (Rectangle, Rounded
+  Rectangle, Ellipse, Line, Polygon and Custom Shape), the
   marquee and lasso tools, Magic Wand, Selection Brush and Quick Selection)
   show a **Tool presets** disclosure button above their options. Its status
   line names the tool and the applied preset, and a **Modified** badge
@@ -91,3 +92,13 @@ partially applied.
   confirm, reload persistence and the all-tools view switching tools, search,
   rename/duplicate/move/update/delete, drag reordering on desktop,
   export/import with invalid files, keyboard use and mobile layout fit).
+
+## Shape tools
+
+Every tool in the `U` family shows the **Tool presets** button. Rectangle,
+Ellipse and Line store colour and size; Polygon adds its variant, sides and
+star inner radius; Rounded Rectangle adds **Corner radius** (0–500 px,
+`shapeCornerRadius`); Custom Shape adds the chosen shape (`customShapeId`: a
+built-in library id or a `path-preset:` reference to a saved path on this
+device; anything else is rejected). A Custom Shape preset that refers to a
+saved path deleted later falls back to the built-in library like the picker.

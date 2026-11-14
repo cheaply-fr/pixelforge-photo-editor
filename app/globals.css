@@ -685,6 +685,29 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 
 /* Doc bar: explicit local Save draft action (icon + label, compact). */
 .draft-actions .draft-save{display:inline-flex;align-items:center;gap:5px}.draft-actions .draft-save svg{width:13px;height:13px;flex:0 0 auto}
+/* Keyboard Shortcuts reference (docs/keyboard-shortcuts-dialog-contract.md). */
+.keyboard-shortcuts-dialog{width:min(600px,94vw);max-height:92dvh;overflow:auto;box-sizing:border-box}
+.keyboard-shortcuts-dialog>form>.text-input{width:100%;margin:4px 0 10px}
+.keyboard-shortcuts-scroll{max-height:min(44vh,360px);overflow:auto;border:1px solid #343943;border-radius:8px;background:#16181d}
+.keyboard-shortcuts-list{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
+.keyboard-shortcuts-list thead th{position:sticky;top:0;z-index:1;padding:7px 10px;background:#22252c;color:#9299a6;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;text-align:left;border-bottom:1px solid #343943}
+.keyboard-shortcuts-list thead th:nth-child(2){width:22%}
+.keyboard-shortcuts-list thead th:nth-child(3){width:34%;text-align:right}
+.keyboard-shortcuts-list tbody th,.keyboard-shortcuts-list td{padding:7px 10px;border-bottom:1px solid #262a32;vertical-align:middle;text-align:left}
+.keyboard-shortcuts-list tbody tr:last-child th,.keyboard-shortcuts-list tbody tr:last-child td{border-bottom:0}
+.keyboard-shortcuts-list tbody tr:hover{background:#1f2228}
+.keyboard-shortcuts-list tbody th{color:#e5e7ec;font-weight:600;overflow-wrap:anywhere}
+.keyboard-shortcuts-list td{color:#9299a6}
+.keyboard-shortcuts-list td:last-child{text-align:right}
+.keyboard-shortcuts-list kbd{display:inline-block;padding:2px 6px;border:1px solid #454b57;border-bottom-width:2px;border-radius:5px;background:#252931;color:#ffb099;font-size:10px;line-height:1.4;white-space:nowrap}
+.keyboard-shortcuts-scroll .command-search-empty{margin:0}
+@media(max-width:520px){.keyboard-shortcuts-list thead th:nth-child(2){width:24%}.keyboard-shortcuts-list thead th:nth-child(3){width:38%}.keyboard-shortcuts-list tbody th,.keyboard-shortcuts-list td{padding:7px 6px}}
+/* Find and Replace Text: labelled text boxes like the other editor dialogs. */
+.text-replace-dialog{width:min(440px,94vw);box-sizing:border-box}
+.text-replace-dialog .text-replace-field{display:grid;grid-template-columns:minmax(0,1fr);justify-content:stretch;gap:5px;margin:0 0 12px;min-width:0}
+.text-replace-dialog .text-replace-field>span{font-size:11px;color:#c5c9d2}
+.text-replace-dialog .text-replace-field .text-input{box-sizing:border-box;width:100%;min-width:0;max-width:none;height:36px;font-size:12px}
+.text-replace-dialog .check-row{justify-content:flex-start}
 
 /* Filter effects panel: descriptions, plain labels, selects, number fields and
    buttons match the other sidebar controls (docs/filter-panel-controls-contract.md). */
