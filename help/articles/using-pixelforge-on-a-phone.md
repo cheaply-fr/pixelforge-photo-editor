@@ -16,11 +16,11 @@ PixelForge works in the browser on phones and tablets. There is nothing to insta
 ## The phone layout
 
 - **Top bar:** the **Export** button, the version and server status, and the account button. The menus (**File**, **Edit**, **Image** and the rest) sit on the row below.
-- **Document bar:** the document name, and **Save draft**, **Duplicate draft**, **Home** and **Discard draft**, sized for a finger tap.
+- **Document bar:** the document name (a long name ends in "…"; tap it to see or change the whole name), and **Save draft**, **Duplicate draft**, **Home** and **Discard draft**, sized for a finger tap.
 - **Toolbar:** a scrolling column on the left. Tap a tool to use it. A tool with a small triangle in its top-right corner has more tools in its family: touch and hold it to choose one.
 - **Canvas:** in the middle. Use the zoom slider and its zoom-in and zoom-out buttons under the canvas, and the **Hand** tool to move around.
 - **Properties sheet:** at the bottom. Tap the **Properties** handle to open or close it. It holds the options for the active tool, the Layers panel and **More panels**.
-- **Status line:** the last message and the save status. On a phone the save status is shortened to **Saved · HH:MM** so the time stays visible.
+- **Status line:** the last message, the render status and the save status. On a phone the save status is shortened to **Saved** (or **Saved · HH:MM** after **Save draft**) so it fits; a long last message ends in "…".
 
 ## Menus on a phone
 
@@ -30,9 +30,9 @@ Tap a menu name (**File**, **Edit**, **Image** and so on) to open it. The menu o
 
 ## The usage statistics notice
 
-The first time you open PixelForge, a **Help improve Cheaply Photo Editor** notice asks whether to allow anonymous usage statistics. On a phone it is a compact bar along the bottom of the screen, below the zoom control. Menus and tool flyouts open over it, so you can keep working before you answer. Tap **No thanks** or **Allow** to close it; see [Privacy and your data](privacy-and-your-data).
+The first time you open PixelForge, a notice asks whether to allow anonymous usage statistics. On a phone it is one short line along the bottom of the screen, **Allow anonymous usage stats? Your photos stay on this device.**, with **No thanks** and **Allow** beside it. It sits below the zoom control and the **Properties** handle, so you can still open the sheet. Menus and tool flyouts open over it, so you can keep working before you answer. Tap **No thanks** or **Allow** to close it; see [Privacy and your data](privacy-and-your-data).
 
-![The usage statistics notice as a bar along the bottom of a phone screen, below the zoom control](img/analytics-consent-banner-mobile.jpg "The usage statistics notice on a phone")
+![The usage statistics notice as one line with two buttons along the bottom of a phone screen, below the Properties handle](img/analytics-consent-banner-mobile.jpg "The usage statistics notice on a phone")
 
 ## Open an image on a phone
 

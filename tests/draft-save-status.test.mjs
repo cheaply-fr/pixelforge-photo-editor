@@ -68,13 +68,16 @@ test('the conflict message points at the renamed Duplicate draft action', () => 
   assert.doesNotMatch(LOCAL_CONFLICT, /Save a local copy/);
 });
 
-test('timestamped save texts split around "on this device" for narrow screens', async () => {
+test('save texts split around "on this device" for narrow screens', async () => {
   const { compactSaveText } = await import('../src/draftSaveStatus.ts');
   assert.deepEqual(compactSaveText('Saved on this device · 09:41'), ['Saved', ' on this device', ' · 09:41']);
   assert.deepEqual(compactSaveText('Draft saved on this device at 09:41.'), ['Draft saved', ' on this device', ' at 09:41.']);
-  for (const text of ['Saved on this device · 09:41', 'Draft saved on this device at 09:41.'])
+  // The plain autosave status reads "Saved" on phones too.
+  assert.deepEqual(compactSaveText('Saved on this device'), ['Saved', ' on this device', '']);
+  for (const text of ['Saved on this device', 'Saved on this device · 09:41', 'Draft saved on this device at 09:41.'])
     assert.equal(compactSaveText(text).join(''), text);
-  assert.equal(compactSaveText('Saved on this device'), undefined);
+  // Only the exact statuses: other texts that mention the device stay whole.
+  assert.equal(compactSaveText('Saved on this device · late'), undefined);
   assert.equal(compactSaveText(DUPLICATE_DRAFT_NOTICE), undefined);
   assert.equal(compactSaveText('Draft not saved: quota'), undefined);
 });

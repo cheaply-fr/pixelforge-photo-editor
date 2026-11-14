@@ -52,13 +52,14 @@ export function manualSaveNotice(status: string): string {
 export const ON_THIS_DEVICE = ' on this device';
 
 /**
- * Split a timestamped save status ("Saved on this device · HH:MM") or save
- * notice ("Draft saved on this device at HH:MM.") around " on this device",
- * so a phone can hide those words and keep the time visible. The parts
- * joined give back the text. Undefined for any other text.
+ * Split a save status ("Saved on this device", with or without " · HH:MM")
+ * or a timestamped save notice ("Draft saved on this device at HH:MM.")
+ * around " on this device", so a phone can hide those words: its status line
+ * then reads "Saved" or "Saved · HH:MM" and stays readable. The parts joined
+ * give back the text. Undefined for any other text.
  */
 export function compactSaveText(text: string): [string, string, string] | undefined {
-  if (!/^Saved on this device · \d{2}:\d{2}$/.test(text) && !/^Draft saved on this device at \d{2}:\d{2}\.$/.test(text))
+  if (!isSavedOnDeviceStatus(text) && !/^Draft saved on this device at \d{2}:\d{2}\.$/.test(text))
     return undefined;
   const at = text.indexOf(ON_THIS_DEVICE);
   return [text.slice(0, at), ON_THIS_DEVICE, text.slice(at + ON_THIS_DEVICE.length)];

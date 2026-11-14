@@ -112,11 +112,36 @@ for (const size of [
       }).map((item) => item.textContent));
     expect(hidden).toEqual([]);
     await page.keyboard.press('Escape');
+    const hitAt = (selector: string, rect: Box) =>
+      page.evaluate(([css, x, y]) => !!document.elementFromPoint(x as number, y as number)?.closest(css as string), [selector, rect.x + rect.width / 2, rect.y + rect.height / 2]);
+    if (info.project.name === 'desktop') {
+      // Wide screens: over the canvas area, covering no tool button and not
+      // the properties sidebar.
+      const area = (await page.locator('.stage-shell').boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(area.x);
+      expect(box.x + box.width).toBeLessThanOrEqual(area.x + area.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(area.y + area.height);
+      expect(intersects(box, (await page.locator('.toolbar').boundingBox())!)).toBe(false);
+      expect(intersects(box, (await page.locator('.inspector').boundingBox())!)).toBe(false);
+      for (const name of ['Brush', 'Gradient', 'Eraser']) {
+        const tool = page.locator('.toolbar').getByRole('button', { name: `${name} tool`, exact: true });
+        const toolBox = await tool.boundingBox();
+        expect(toolBox, name).not.toBeNull();
+        if (toolBox!.y + toolBox!.height <= page.viewportSize()!.height) expect(await hitAt('.toolbar button', toolBox!), name).toBe(true);
+      }
+    }
     if (info.project.name === 'mobile') {
-      // Phones: a compact bar along the bottom; the page gains room below
+      // Phones: one compact row along the bottom; the page gains room below
       // its end so its last content scrolls clear of the bar.
       expect(Math.round(box.y + box.height)).toBe(page.viewportSize()!.height - 8);
-      expect(box.height).toBeLessThanOrEqual(140);
+      expect(box.height).toBeLessThanOrEqual(64);
+      // Only the short message shows; the buttons sit on its right.
+      await expect(page.getByRole('region', { name: 'Analytics consent' }).getByText('Help improve Cheaply Photo Editor')).toBeHidden();
+      await expect(page.getByRole('region', { name: 'Analytics consent' }).getByText('Allow anonymous usage stats? Your photos stay on this device.')).toBeVisible();
+      // The properties sheet handle stays above it and takes taps.
+      const handle = (await page.locator('.inspector-sheet-handle').boundingBox())!;
+      expect(handle.y + handle.height).toBeLessThanOrEqual(box.y);
+      expect(await hitAt('.inspector-sheet-handle', handle)).toBe(true);
       await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
       const footer = (await page.locator('footer').last().boundingBox())!;
       const banner = (await page.getByRole('region', { name: 'Analytics consent' }).boundingBox())!;
