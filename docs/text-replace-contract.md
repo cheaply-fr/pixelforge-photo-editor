@@ -18,3 +18,9 @@ Styled type: when a layer has versioned character-style runs (see
 the style of the text it replaces and run lengths are rebased so they always
 sum to the new text length. Replacement text is inserted literally (`$&` and
 similar patterns are not expanded).
+
+Dialog layout: **Find** and **Replace with** are labelled, full-width text
+boxes styled like the editor's other text inputs (`.text-input`: bordered,
+filled, at least 36 px tall), with Match case and Whole words only as
+left-aligned check rows. `tests/browser/shortcuts-audit.spec.ts` checks the
+visible boxes on desktop and mobile.
