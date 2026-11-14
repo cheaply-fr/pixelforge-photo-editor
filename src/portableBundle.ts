@@ -342,7 +342,7 @@ export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob 
   const bytes = await asBytes(input);
   // Older versions saved `.pixelforge` files as plain v1/v2 JSON, which a
   // browser hands over with no (or a generic) MIME type: trust the content,
-  // not the name or type. A ZIP starts with PK; JSON with `{`
+  // not the name or type. A ZIP starts with PK\x03\x04; JSON with `{`
   // (after an optional UTF-8 byte order mark and whitespace).
   if (looksLikeJsonProject(bytes)) {
     if (bytes.byteLength > PORTABLE_MAX_JSON_BYTES) throw new Error('Portable JSON exceeds 64 MiB');
