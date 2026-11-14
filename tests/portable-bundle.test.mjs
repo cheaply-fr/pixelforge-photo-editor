@@ -6,6 +6,7 @@ import {
   PORTABLE_MANIFEST_PATH,
   createPortableProjectBundle,
   isPortableBundleManifest,
+  looksLikeJsonProject,
   readPortableBundle,
   writePortableBundle,
 } from '../src/portableBundle.ts';
@@ -80,6 +81,28 @@ test('v1 and v2 JSON project files remain importable through the v3 reader', asy
   assert.equal(migrated.history[0].layers[0].kind, 'raster');
   const reopened = await readPortableBundle(JSON.stringify({ ...source, cloud: undefined }));
   assert.equal(reopened.history[0].layers[0].kind, 'raster');
+});
+
+test('legacy JSON saved as .pixelforge opens from bytes whatever its name or MIME type', async () => {
+  const source = draft();
+  const legacy = { version: 1, name: source.name, index: 0, history: [{ url: source.assets[assetId].url, w: 1, h: 1 }], settings };
+  const encoder = new TextEncoder();
+  // A Blob with no type, as a browser gives for a picked .pixelforge file.
+  const v1 = await readPortableBundle(new Blob([JSON.stringify(legacy)]));
+  assert.equal(v1.history[0].layers[0].kind, 'raster');
+  const v2 = await readPortableBundle(new Blob([JSON.stringify({ ...source, cloud: undefined }, null, 2)], { type: 'application/octet-stream' }));
+  assert.equal(v2.history[0].layers[0].kind, 'raster');
+  // A UTF-8 byte order mark and leading whitespace are fine.
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...encoder.encode('\n  ' + JSON.stringify(legacy))]);
+  assert.equal(looksLikeJsonProject(bom), true);
+  assert.equal((await readPortableBundle(bom)).history[0].layers[0].kind, 'raster');
+  // A ZIP is still read as a bundle, and garbage is still refused.
+  const bundle = await writePortableBundle(source);
+  assert.equal(looksLikeJsonProject(new Uint8Array(await new Blob([bundle]).arrayBuffer())), false);
+  assert.equal((await readPortableBundle(new Blob([bundle]))).name, source.name);
+  await assert.rejects(readPortableBundle(new Blob(['{ not json'])), /Invalid project file/);
+  await assert.rejects(readPortableBundle(new Blob(['{"version": 99}'])), /Invalid project file/);
+  await assert.rejects(readPortableBundle(new Blob(['hello'])));
 });
 
 test('new raster tools remain valid portable project settings', async () => {

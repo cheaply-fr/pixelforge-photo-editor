@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scaleContentAwareSelection, validContentAwareScale } from '../src/contentAwareScale.ts';
+import { contentAwareSearchRadius } from '../src/contentAwareCleanup.ts';
 
 const pixel = (r, g, b, a = 255) => [r, g, b, a];
 
@@ -45,3 +46,21 @@ test('content-aware scale is deterministic, detached, alpha-safe, and empty sele
   assert.deepEqual(Array.from(identity), Array.from(source));
 });
 
+
+test('content-aware scale at full strength fully replaces the vacated area', () => {
+  const w = 200, h = 200;
+  const source = new Uint8ClampedArray(w * h * 4).fill(255);
+  const mask = new Uint8Array(w * h);
+  for (let y = 60; y < 140; y += 1) for (let x = 60; x < 140; x += 1) {
+    mask[y * w + x] = 255;
+    if (x >= 70 && x < 130 && y >= 70 && y < 130) source[(y * w + x) * 4 + 1] = source[(y * w + x) * 4 + 2] = 0;
+  }
+  const radius = contentAwareSearchRadius(mask, w, h);
+  const at = (data, x, y) => Array.from(data.slice((y * w + x) * 4, (y * w + x) * 4 + 4));
+  const full = scaleContentAwareSelection(source, w, h, mask, { version: 1, scaleX: 0.5, scaleY: 0.5, radius, opacity: 1 });
+  assert.deepEqual(at(full, 100, 100), [255, 0, 0, 255]);
+  for (const [x, y] of [[74, 100], [100, 74], [126, 126]]) assert.deepEqual(at(full, x, y), [255, 255, 255, 255], `${x},${y}`);
+  // The faint result the audit saw came from a 20% brush opacity leaking in.
+  const faint = scaleContentAwareSelection(source, w, h, mask, { version: 1, scaleX: 0.5, scaleY: 0.5, radius, opacity: 0.2 });
+  assert.ok(at(faint, 74, 100)[1] < 100);
+});

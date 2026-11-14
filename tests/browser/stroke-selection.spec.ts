@@ -181,3 +181,16 @@ test('Stroke Selection is disabled without a selection and refuses an empty one'
   await expect(page.getByRole('dialog', { name: 'Stroke Selection' })).toHaveCount(0);
   expect(await snapshot(page)).toBe(before);
 });
+
+test('an Outside stroke of Select All explains that its band lies beyond the canvas', async ({ page }) => {
+  await menu(page, 'Select', /^All Ctrl/);
+  await settled(page);
+  const before = await snapshot(page);
+  const dialog = await openStroke(page);
+  await dialog.getByRole('radio', { name: 'Outside', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Stroke', exact: true }).click();
+  await expect(footer(page)).toContainText('Nothing to stroke: an Outside stroke of a selection that fills the canvas lies entirely beyond the canvas edge');
+  await expect(footer(page)).not.toContainText('No pixels are selected');
+  await settled(page);
+  expect(await snapshot(page)).toBe(before);
+});

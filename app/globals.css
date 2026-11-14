@@ -167,9 +167,9 @@
 .quick-mask-panel p { color:#aeb8c8; font-size:11px; line-height:1.5; margin:9px 0 0; }
 .canvas-wrap { position:relative; }
 .canvas-wrap .quick-mask-overlay { position:absolute; inset:0; opacity:.5; pointer-events:none; }
-.canvas-wrap .opening-progress { position:absolute; z-index:3; top:12px; left:50%; transform:translateX(-50%); max-width:calc(100% - 24px); display:flex; flex-direction:column; gap:6px; padding:8px 12px; border:1px solid #34363e; border-radius:10px; background:#17181de8; color:#d4d7dc; font-size:12px; white-space:nowrap; pointer-events:none; box-shadow:0 7px 25px #0007; }
-.canvas-wrap .opening-progress span { overflow:hidden; text-overflow:ellipsis; }
-.canvas-wrap .opening-progress progress { width:100%; height:4px; accent-color:var(--accent); }
+.stage-shell > .opening-progress { position:absolute; z-index:7; top:12px; left:50%; transform:translateX(-50%); max-width:calc(100% - 24px); box-sizing:border-box; display:flex; flex-direction:column; gap:6px; padding:8px 12px; border:1px solid #34363e; border-radius:10px; background:#17181de8; color:#d4d7dc; font-size:12px; white-space:nowrap; pointer-events:none; box-shadow:0 7px 25px #0007; }
+.stage-shell > .opening-progress span { overflow:hidden; text-overflow:ellipsis; }
+.stage-shell > .opening-progress progress { width:100%; height:4px; accent-color:var(--accent); }
 .canvas-wrap .strand-preview-overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
 .strand-controls { display:grid; gap:inherit; border:0; margin:0; padding:0; min-width:0; }
 .strand-seed-row { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
@@ -686,6 +686,27 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 /* Doc bar: explicit local Save draft action (icon + label, compact). */
 .draft-actions .draft-save{display:inline-flex;align-items:center;gap:5px}.draft-actions .draft-save svg{width:13px;height:13px;flex:0 0 auto}
 .panel-title-actions{display:flex;align-items:center;gap:6px}.panel-title .panel-help{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:#8f929b}.panel-title .panel-help:hover{color:var(--accent);background:#25272e}.panel-title .panel-help:focus-visible{outline:2px solid var(--accent);outline-offset:1px}.panel-title .panel-help svg{width:14px;color:inherit}
+
+/* While a draft opens, the doc bar keeps its "Opening… N/M layers" text on narrow screens too. */
+.docbar small.docbar-opening{display:inline}
+@media(max-width:680px){.stage-shell > .opening-progress{white-space:normal;text-align:center;font-size:13px}}
+/* Doc bar draft actions: at least a 24 px target (WCAG 2.2 2.5.8), 32 px on touch screens; negative block margins keep the doc bar's height (and the canvas area) almost unchanged. */
+.draft-actions a,.draft-actions button{display:inline-flex;align-items:center;min-height:24px;margin-block:-4px;padding:0 4px;border-radius:5px}
+.draft-actions a:hover,.draft-actions button:hover:not(:disabled){background:#1f2128}
+.draft-actions a:focus-visible,.draft-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media(pointer:coarse){.draft-actions{gap:4px}.draft-actions a,.draft-actions button{min-height:32px;margin-block:-5px;padding:0 8px}}
+/* Phones drop "on this device" from the timestamped save status and notice so the time stays visible. */
+@media(max-width:680px){.save-text-where{display:none}}
+.save-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Silk strands "New seed": a small option button, like .option-buttons. */
+.strand-seed-row .strand-seed-new{flex:0 0 auto;min-height:28px;padding:4px 10px;border:1px solid #34363e;border-radius:6px;background:#202228;color:#c9ccd3;font-size:10px;font-weight:600;line-height:1.2;cursor:pointer}
+.strand-seed-row .strand-seed-new:hover{border-color:#564037;color:#ff967b}
+.strand-seed-row .strand-seed-new:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media(pointer:coarse){.strand-seed-row .strand-seed-new{min-height:36px}}
+/* The sub-tool triangle is an 8 px corner, never a stretched label row. */
+.toolbar button span.tool-subtool-arrow{display:block;min-height:0;height:0}
+/* Phones show no shortcut letters, and two-line labels reach the bottom corners, so the triangle moves to the top-right corner. */
+@media(max-width:680px){.toolbar button span.tool-subtool-arrow{top:2px;bottom:auto;border-bottom:0;border-top:8px solid var(--accent)}}
 /* Keyboard Shortcuts reference (docs/keyboard-shortcuts-dialog-contract.md). */
 .keyboard-shortcuts-dialog{width:min(600px,94vw);max-height:92dvh;overflow:auto;box-sizing:border-box}
 .keyboard-shortcuts-dialog>form>.text-input{width:100%;margin:4px 0 10px}

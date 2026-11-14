@@ -179,3 +179,18 @@ test('named aliases resolve to the immutable operations', () => {
   assert.equal(magicEraser, applyMagicEraser);
   assert.equal(backgroundEraser, applyBackgroundEraser);
 });
+
+test('Background Eraser stroke hardness softens the dab edge', () => {
+  const width = 101, height = 1, white = rgba(width, height, [255, 255, 255, 255]);
+  const dab = (hardness) => applyBackgroundEraserStroke(white, white, {
+    width, height, x1: 50, y1: 0, x2: 50, y2: 0, size: 100, tolerance: 0, opacity: 1, hardness,
+    target: [255, 255, 255, 255],
+  }).pixels;
+  const hard = dab(100), soft = dab(0);
+  assert.equal(alpha(hard, width, 50, 0), 0);
+  assert.equal(alpha(hard, width, 90, 0), 0);
+  assert.equal(alpha(soft, width, 50, 0), 0);
+  // 40 px out of a 50 px radius: partly erased when soft, gone when hard.
+  assert.ok(alpha(soft, width, 90, 0) > 0 && alpha(soft, width, 90, 0) < 255);
+  assert.ok(alpha(soft, width, 90, 0) > alpha(soft, width, 70, 0));
+});

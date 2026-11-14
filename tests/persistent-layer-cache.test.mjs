@@ -62,3 +62,17 @@ test('without IndexedDB the store is a silent miss and never throws', async () =
   const off = new PersistentLayerCache(0, () => { throw new Error('no canvas'); });
   assert.equal(await off.get('key'), undefined);
 });
+
+test('the synchronous unload write is refused until the store is open and the key prepared', async () => {
+  const store = new PersistentLayerCache(PERSIST_DESKTOP_BYTES, () => { throw new Error('no canvas'); });
+  const canvas = { toDataURL: () => 'data:image/png;base64,iVBORw0KGgo=' };
+  // Not prepared: no open connection and no hashed id, so nothing is issued.
+  assert.equal(store.putNow('slot', canvas, 10, 10, 'tag'), false);
+  // Preparing without IndexedDB still leaves it refused, and never throws.
+  store.prepare('slot');
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(store.putNow('slot', canvas, 10, 10, 'tag'), false);
+  // A canvas that cannot encode synchronously (OffscreenCanvas) is refused too.
+  assert.equal(store.putNow('slot', {}, 10, 10, 'tag'), false);
+  assert.equal(new PersistentLayerCache(0, () => { throw new Error('no canvas'); }).putNow('slot', canvas, 10, 10), false);
+});

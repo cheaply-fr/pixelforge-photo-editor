@@ -199,6 +199,13 @@ export class PersistentLayerCache {
   /** Recency updates, written together once reads go quiet. */
   private touched = new Map<string, PersistedMeta>();
   private touchTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The open connection, once `open` has resolved (for `putNow`). */
+  private ready: IDBDatabase | undefined;
+  /** Entry ids already hashed (for `putNow`, which cannot await a digest). */
+  private ids = new Map<string, string>();
+  /** Latest write sequence per key: an older queued write of a key is dropped. */
+  private latest = new Map<string, number>();
+  private sequence = 0;
   hits = 0;
   /** Reads started ahead of use. */
   prefetches = 0;
@@ -248,12 +255,14 @@ export class PersistentLayerCache {
               // and write of this session.
               const forget = () => {
                 if (this.database === opened) this.database = undefined;
+                if (this.ready === database) this.ready = undefined;
               };
               database.onversionchange = () => {
                 database.close();
                 forget();
               };
               database.onclose = forget;
+              this.ready = database;
               resolve(database);
               return;
             }
@@ -335,7 +344,7 @@ export class PersistentLayerCache {
     try {
       const database = await this.open();
       if (!database) return undefined;
-      const id = await persistentKeyId(key);
+      const id = await this.idFor(key);
       const read = database.transaction([BLOBS, META], 'readonly');
       const [blob, meta] = await Promise.all([
         request(read.objectStore(BLOBS).get(id)) as Promise<Blob | undefined>,
@@ -397,6 +406,8 @@ export class PersistentLayerCache {
     if (this.budget <= 0 || this.pending.has(key)) return Promise.resolve(false);
     this.pending.add(key);
     this.queued += 1;
+    const sequence = ++this.sequence;
+    this.latest.set(key, sequence);
     let encoded: Promise<Blob>;
     try {
       encoded = encodePng(source, w, h);
@@ -409,9 +420,14 @@ export class PersistentLayerCache {
     let stored = false;
     this.queue = this.queue.then(async () => {
       try {
-        const [database, blob, id] = await Promise.all([this.open(), encoded, persistentKeyId(key)]);
+        const [database, blob, id] = await Promise.all([this.open(), encoded, this.idFor(key)]);
         if (!database || blob.size > this.budget) {
           this.failed += 1;
+          return;
+        }
+        // A newer write of this key (an urgent `putNow`) already went out.
+        if (this.latest.get(key) !== sequence) {
+          this.skipped += 1;
           return;
         }
         const metas = (await request(database.transaction(META, 'readonly').objectStore(META).getAll())) as PersistedMeta[];
@@ -434,6 +450,66 @@ export class PersistentLayerCache {
       }
     });
     return this.queue.then(() => stored);
+  }
+
+  private async idFor(key: string): Promise<string> {
+    const known = this.ids.get(key);
+    if (known) return known;
+    const id = await persistentKeyId(key);
+    this.ids.set(key, id);
+    return id;
+  }
+
+  /**
+   * Open the database and hash `key` ahead of time, so a later `putNow` of
+   * it can be issued synchronously (best effort).
+   */
+  prepare(key: string): void {
+    if (this.budget <= 0) return;
+    void this.open();
+    void this.idFor(key).catch(() => undefined);
+  }
+
+  /**
+   * Write `key` synchronously, for a page that is being hidden or unloaded:
+   * an async encode and transaction would not finish before the document
+   * goes away. Needs `prepare(key)` to have completed and a canvas that can
+   * encode synchronously. The PNG is encoded on the spot and the transaction
+   * is issued and committed before returning; eviction is skipped (the entry
+   * replaces its own slot, and the next queued write evicts as usual).
+   * Returns whether the write was issued. Supersedes queued writes of `key`.
+   */
+  putNow(key: string, source: Surface, w: number, h: number, tag?: string): boolean {
+    const database = this.ready, id = this.ids.get(key);
+    if (this.budget <= 0 || !database || !id || !('toDataURL' in source)) return false;
+    try {
+      const url = source.toDataURL('image/png');
+      const comma = url.indexOf(',');
+      if (!url.startsWith('data:image/png;base64,') || comma < 0) return false;
+      const binary = atob(url.slice(comma + 1));
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      if (bytes.length > this.budget) return false;
+      const blob = new Blob([bytes], { type: 'image/png' });
+      const write = database.transaction([BLOBS, META], 'readwrite');
+      write.objectStore(BLOBS).put(blob, id);
+      write.objectStore(META).put({ id, bytes: blob.size, used: Date.now(), w, h, ...(tag === undefined ? {} : { tag }) } satisfies PersistedMeta);
+      this.latest.set(key, ++this.sequence);
+      this.queued += 1;
+      write.oncomplete = () => {
+        this.writes += 1;
+      };
+      write.onerror = write.onabort = () => {
+        this.failed += 1;
+      };
+      // Ask for the commit now rather than when the event loop next idles,
+      // which may never come for an unloading page.
+      (write as IDBTransaction & { commit?: () => void }).commit?.();
+      return true;
+    } catch {
+      this.failed += 1;
+      return false;
+    }
   }
 
   stats(): PersistentLayerCacheStats {

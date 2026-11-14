@@ -247,3 +247,78 @@ test('a reopened painting shows its saved picture at once and reads its layers f
   expect(reopened.prefetches, 'reads start ahead of the layers').toBeGreaterThan(0);
   expect(await compositeChecksum(page), 'layers from the device are byte-identical').toEqual(computed);
 });
+
+test('a reload half a second after an edit still reopens from a matching saved picture', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New document' });
+  await dialog.getByLabel('New document width (px)').fill(String(W));
+  await dialog.getByLabel('New document height (px)').fill(String(H));
+  await dialog.getByLabel('Background contents').selectOption('white');
+  await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  for (let index = 0; index < 8; index += 1) {
+    await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+    await settled(page);
+  }
+  await menu(page, 'Filter', 'Clouds');
+  await settled(page);
+  await expect.poll(() => previewTag(page), { timeout: 60_000 }).not.toBeNull();
+  const tagBefore = await previewTag(page);
+  // Edit (a new composite), then reload well inside the 3 s quiet window:
+  // the pending picture is written synchronously as the page goes away.
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await settled(page);
+  await menu(page, 'Filter', 'Lens Flare…');
+  await settled(page);
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device', { timeout: 60_000 });
+  const live = await composite(page);
+  await page.waitForTimeout(500);
+  // The quiet timer has not written the new picture yet.
+  expect(await previewTag(page)).toBe(tagBefore);
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Select layer / })).toHaveCount(10, { timeout: 120_000 });
+  await settled(page);
+  expect(await composite(page)).toEqual(live);
+  expect((await marks(page, 'pixelforge.draft-preview-installed')).length, 'installed from the picture saved on unload').toBe(1);
+  expect(await previewTag(page)).not.toBe(tagBefore);
+});
+
+test('opening progress stays on screen in the visible stage and the doc bar on every width', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New document' });
+  await dialog.getByLabel('New document width (px)').fill(String(W));
+  await dialog.getByLabel('New document height (px)').fill(String(H));
+  await dialog.getByLabel('Background contents').selectOption('white');
+  await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  for (let index = 0; index < 8; index += 1) {
+    await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+    await settled(page);
+  }
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device', { timeout: 60_000 });
+  await page.addInitScript(() => {
+    (globalThis as { __PIXELFORGE_INSTALL_HOLD_MS__?: number }).__PIXELFORGE_INSTALL_HOLD_MS__ = 4000;
+  });
+  await page.reload();
+  const overlay = page.getByTestId('opening-progress');
+  await expect(overlay).toContainText(/Opening draft… \d+\/9 layers/, { timeout: 30_000 });
+  const viewport = page.viewportSize()!;
+  const box = (await overlay.boundingBox())!;
+  const stage = (await page.locator('.stage-shell').boundingBox())!;
+  // Inside the viewport and centred in the visible stage (not the zoomed,
+  // 1200 px wide canvas wrap that overflows a phone screen).
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+  expect(box.y).toBeGreaterThanOrEqual(stage.y);
+  expect(Math.abs(box.x + box.width / 2 - (stage.x + stage.width / 2))).toBeLessThan(2);
+  const opening = page.locator('.docbar small', { hasText: /Opening… \d+\/9 layers/ });
+  await expect(opening).toBeVisible();
+  const text = (await opening.boundingBox())!;
+  expect(text.x + text.width).toBeLessThanOrEqual(viewport.width);
+  await expect(page.getByRole('button', { name: /^Select layer / })).toHaveCount(9, { timeout: 120_000 });
+  await expect(overlay).toHaveCount(0);
+});

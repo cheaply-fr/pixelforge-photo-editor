@@ -84,6 +84,35 @@ async function meanDifference(page: Page, a: { type: string; base64: string }, b
   }, { a, b, w, h });
 }
 
+/** Leftmost and rightmost columns with dark ink in each row band of an image drawn on white. */
+async function inkColumns(page: Page, source: { type: string; base64: string }, w: number, h: number, bands: ReadonlyArray<readonly [number, number]>) {
+  return page.evaluate(async ({ source, w, h, bands }) => {
+    const image = new Image();
+    image.src = `data:${source.type};base64,${source.base64}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, w, h);
+    context.drawImage(image, 0, 0, w, h);
+    const data = context.getImageData(0, 0, w, h).data;
+    return bands.map(([top, bottom]) => {
+      let left = w, right = -1;
+      for (let y = top; y < bottom; y += 1)
+        for (let x = 0; x < w; x += 1) {
+          const offset = (y * w + x) * 4;
+          if ((data[offset] + data[offset + 1] + data[offset + 2]) / 3 < 128) {
+            if (x < left) left = x;
+            if (x > right) right = x;
+          }
+        }
+      return [left, right];
+    });
+  }, { source, w, h, bands });
+}
+
 test('opens an SVG as editable vector, text and pixel layers', async ({ page }) => {
   await openSvg(page, 'mixed.svg', MIXED_SVG);
   await expect(page.getByText('SVG opened as 1 vector, 1 text, 1 pixel layers; gradients, effects and embedded images are kept as pixel layers', { exact: true })).toBeVisible();
@@ -203,4 +232,70 @@ test('placing an SVG adds its layers to the open document', async ({ page }) => 
   // opacity is folded into its members.
   expect(placed[1].groupId).toBeUndefined();
   expect(placed[1].opacity).toBeCloseTo(0.8, 5);
+});
+
+test('multi-line text written as x + dy tspan rows opens as a text layer', async ({ page }) => {
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><text id="Para" x="20" y="120" font-family="Arial" font-size="18" fill="#123456"><tspan x="20" dy="0">First line</tspan><tspan x="20" dy="24">Second line</tspan></text></svg>`;
+  await openSvg(page, 'dy-text.svg', markup);
+  await expect(page.getByText(/^SVG opened as 1 text layer/)).toBeVisible();
+  const frame = await savedDocument(page);
+  expect(frame.layers.map((layer) => [layer.kind, layer.name])).toEqual([['text', 'Para']]);
+  const text = frame.layers[0] as SavedLayer & { text: string; lineHeight: number };
+  expect(text.text).toBe('First line\nSecond line');
+  expect(text.lineHeight).toBeCloseTo(24 / 18, 5);
+  // The text layer draws like the browser draws the original.
+  const png = await exportFile(page, 'png');
+  const difference = await meanDifference(
+    page,
+    { type: 'image/svg+xml', base64: Buffer.from(markup).toString('base64') },
+    { type: 'image/png', base64: png.bytes.toString('base64') },
+    300,
+    200,
+  );
+  expect(difference).toBeLessThan(1.5);
+});
+
+test('letter-spaced and right-aligned text exports with letter-spacing and text-anchor and reopens as text', async ({ page }) => {
+  const markup = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="160">
+<text id="Spaced" x="20" y="50" font-family="Arial" font-size="24" letter-spacing="3" fill="#202020">Spaced</text>
+<text id="Para" x="290" y="100" font-family="Arial" font-size="18" font-weight="bold" letter-spacing="1" fill="#123456" text-anchor="end"><tspan x="290" y="100">First line</tspan><tspan x="290" y="124">Second line</tspan></text>
+</svg>`;
+  await openSvg(page, 'spaced.svg', markup);
+  await expect(page.getByText(/^SVG opened as 2 text layers/)).toBeVisible();
+  const svg = await exportFile(page, 'svg');
+  const exported = svg.bytes.toString('utf8');
+  // One run per line with the spacing as an attribute, not one tspan per glyph.
+  expect(exported).toMatch(/<text data-name="Spaced" [^>]*letter-spacing="3"[^>]*><tspan [^>]*>Spaced<\/tspan><\/text>/);
+  expect(exported).toMatch(/<text data-name="Para" [^>]*font-weight="700" letter-spacing="1"[^>]*text-anchor="end"[^>]*><tspan [^>]*>First line<\/tspan><tspan [^>]*>Second line<\/tspan><\/text>/);
+  // The export still looks like the canvas.
+  const png = await exportFile(page, 'png');
+  const difference = await meanDifference(
+    page,
+    { type: 'image/svg+xml', base64: svg.bytes.toString('base64') },
+    { type: 'image/png', base64: png.bytes.toString('base64') },
+    300,
+    160,
+  );
+  expect(difference).toBeLessThan(1.5);
+  // Each line starts and ends at the same pixel column as on the canvas (an
+  // anchor one letter-spacing off would move the right-aligned lines by 1 px
+  // per glyph gap). Image resampling on high-density screens adds a little
+  // anti-aliasing noise to the mean, so the edges are checked directly.
+  const lines = { spaced: [28, 56], first: [84, 104], second: [108, 128] } as const;
+  const svgInk = await inkColumns(page, { type: 'image/svg+xml', base64: svg.bytes.toString('base64') }, 300, 160, Object.values(lines));
+  const pngInk = await inkColumns(page, { type: 'image/png', base64: png.bytes.toString('base64') }, 300, 160, Object.values(lines));
+  svgInk.forEach(([left, right], index) => {
+    expect(Math.abs(left - pngInk[index][0]), `line ${index} left`).toBeLessThanOrEqual(1);
+    expect(Math.abs(right - pngInk[index][1]), `line ${index} right`).toBeLessThanOrEqual(1);
+  });
+  // The right-aligned lines share their right edge.
+  expect(Math.abs(svgInk[1][1] - svgInk[2][1])).toBeLessThanOrEqual(1);
+  await openSvg(page, 'spaced-round-trip.svg', svg.bytes);
+  await expect(page.getByText(/^SVG opened as 2 text layers/)).toBeVisible();
+  const frame = await savedDocument(page);
+  const layers = frame.layers as Array<SavedLayer & { text: string; letterSpacing: number; textAlign: string }>;
+  expect(layers.map((layer) => [layer.kind, layer.name, layer.text, layer.letterSpacing, layer.textAlign])).toEqual([
+    ['text', 'Spaced', 'Spaced', 3, 'left'],
+    ['text', 'Para', 'First line\nSecond line', 1, 'right'],
+  ]);
 });

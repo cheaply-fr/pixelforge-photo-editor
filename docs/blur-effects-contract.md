@@ -56,9 +56,13 @@ at least 250 px and at most 1000 px (`gaussianBlurSliderMax`), and a
   about 0.35 levels and the maximum at most 8 levels (radius 65–150;
   `tests/gaussian-blur-large-radius.test.mjs`).
 - These radii stay off the tiled path, whose overlap equals the radius, and
-  use the full-frame renderer. A 3000 × 4000 radius-1000 blur takes about
-  1.3–1.5 s in Node on a development machine against about 7 s at full
-  resolution.
+  use the full-frame renderer. In the browser, a radius-1000 Gaussian Blur
+  of a 3000 × 4000 layer takes about 2.1 s in desktop Chromium and about
+  3.2 s in the Pixel 7 emulation, from typing the radius until rendering
+  finishes (production build, 2026-11-14 audit), including the render
+  pipeline around the blur. The blur computation alone takes about 1.3–1.5 s
+  in Node on a development machine, against about 7 s at full resolution.
+  These are measurements, not a budget the tests enforce.
 
 ### Alpha spreading (Blur, Blur More, Box, Gaussian, Motion and Lens Blur)
 

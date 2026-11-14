@@ -10,7 +10,7 @@ export type AdjustmentCommand =
 const OPTIONS: { command: AdjustmentCommand; label: string; detail: string }[] = [
   { command: 'levels', label: 'Levels…', detail: 'Set black point, white point and gamma.' },
   { command: 'curves', label: 'Curves…', detail: 'Shape a bounded RGB or channel curve.' },
-  { command: 'hue-saturation', label: 'Hue/Saturation…', detail: 'Adjust hue, saturation and lightness.' },
+  { command: 'hue-saturation', label: 'Hue/Saturation…', detail: 'Adjust hue, saturation and brightness.' },
   { command: 'color-balance', label: 'Color Balance…', detail: 'Tune shadows, midtones and highlights.' },
   { command: 'sharpen-noise', label: 'Sharpen and Noise…', detail: 'Open the nondestructive detail controls.' },
 ];

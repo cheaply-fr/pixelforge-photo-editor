@@ -160,3 +160,47 @@ test('doc bar draft actions fit without horizontal overflow', async ({ page }) =
   const home = await page.getByRole('link', { name: 'Home', exact: true }).boundingBox();
   expect(home!.x + home!.width).toBeLessThanOrEqual(viewport.width + 0.5);
 });
+
+test('the saved time stays readable after Save draft on every width', async ({ page }) => {
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await expect(status(page)).toHaveText(/^Saved on this device · \d{2}:\d{2}$/);
+  const notice = page.locator('footer > span').first();
+  await expect(notice).toContainText(/^Draft saved on this device at \d{2}:\d{2}\.$/);
+  const fit = (locator: ReturnType<typeof page.locator>) =>
+    locator.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth, shown: (element as HTMLElement).innerText }));
+  for (const target of [status(page), notice]) {
+    const box = await fit(target);
+    // Nothing is cut off, and the time itself is on screen.
+    expect(box.scroll, box.shown).toBeLessThanOrEqual(box.client + 1);
+    expect(box.shown).toMatch(/\d{2}:\d{2}/);
+  }
+  const phone = page.viewportSize()!.width <= 680;
+  // Phones drop "on this device" visually; the text content is unchanged.
+  expect((await fit(status(page))).shown).toMatch(phone ? /^Saved · \d{2}:\d{2}$/ : /^Saved on this device · \d{2}:\d{2}$/);
+  expect((await fit(notice)).shown).toMatch(phone ? /Draft saved at \d{2}:\d{2}\./ : /Draft saved on this device at \d{2}:\d{2}\./);
+});
+
+test('doc bar draft actions are at least 24 px tall, 32 px or more on touch screens', async ({ page }, info) => {
+  const touch = info.project.name === 'mobile';
+  for (const control of [
+    page.getByRole('button', { name: 'Save draft', exact: true }),
+    page.getByRole('button', { name: 'Duplicate draft', exact: true }),
+    page.getByRole('link', { name: 'Home', exact: true }),
+    page.getByRole('button', { name: 'Discard draft', exact: true }),
+  ]) {
+    const box = (await control.boundingBox())!;
+    expect(box.height).toBeGreaterThanOrEqual(touch ? 32 : 24);
+    expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    // The whole target takes taps: not clipped by the doc bar or covered.
+    for (const y of [box.y + 2, box.y + box.height - 2]) {
+      const hit = await page.evaluate(([x, py]) => {
+        const element = document.elementFromPoint(x, py);
+        return element?.closest('a, button')?.textContent?.trim() ?? null;
+      }, [box.x + box.width / 2, y]);
+      expect(hit).toBe((await control.textContent())!.trim());
+    }
+  }
+  // The doc bar still fits without horizontal overflow.
+  const overflow = await page.locator('.docbar').evaluate((node) => node.scrollWidth - node.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+});

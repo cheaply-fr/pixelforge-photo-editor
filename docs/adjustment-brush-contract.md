@@ -2,8 +2,11 @@
 
 PixelForge's Adjustment Brush is a local, nondestructive mask-painting tool for
 source-free adjustment layers. It uses the existing canvas-space layer mask
-asset: a reveal stroke increases mask alpha, while the shared Mask Eraser
-conceals it. Adjustment parameters remain editable and underlying raster assets
+asset: a Reveal stroke increases mask alpha and a Conceal stroke (the
+**Paint** option, or Alt-drag) lowers it. The Mask Brush and Mask Eraser
+refine masks on raster content only: on an adjustment layer they are refused
+with "Select a visible, unlocked raster layer before refining its mask", so
+use the Adjustment Brush in Conceal mode to paint an adjustment out. Adjustment parameters remain editable and underlying raster assets
 are never rewritten.
 
 An adjustment layer can receive a mask from the current selection through the

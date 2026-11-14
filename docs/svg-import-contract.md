@@ -15,7 +15,14 @@ all use the same path (`src/svgImport.ts`, `src/svgImportLayers.ts`):
 - Simple `text` (one style, horizontal lines from `tspan` rows with an equal
   line gap) becomes a **text layer** with font family, size, weight, colour,
   letter spacing, line height and `text-anchor` alignment. The anchor is
-  honoured by measuring the laid-out text.
+  honoured by measuring the laid-out text. Rows may be written with an
+  explicit `y` on each `tspan`, or as `dy` steps from the previous baseline
+  (the first row with `dy="0"` or no `dy`); each row's `x`, when present, must
+  equal the text's `x` (or set it, when the `text` has none). The equal gap
+  becomes the line height. Unequal gaps, per-row `x` indents, `x` jumps within
+  a line, `dx`, per-glyph position lists and `textLength` stay pixel layers.
+  `letter-spacing` (px, `em` and absolute units) becomes the layer's letter
+  spacing in px.
 - A top-level `g` becomes a **layer group** with its name (`inkscape:label`,
   `data-name` or `id`) and opacity. Nested groups fold their opacity into their
   members. Placing an SVG into an open document puts its layers in the active

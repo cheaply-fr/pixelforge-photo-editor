@@ -503,7 +503,10 @@ Changes:
   closed connection is reopened.
 - **Opening progress.** While a draft opens the canvas shows "Opening
   draft… N/M layers" with a progress bar (and "Saved picture shown" once it
-  is), and the document bar says "Opening… N/M layers".
+  is), and the document bar says "Opening… N/M layers". The overlay is
+  centred at the top of the visible stage (not inside the zoomed canvas, which
+  can be wider than a phone screen), and the document bar keeps its opening
+  text on narrow screens, where it otherwise hides the document size.
 
 Local probe (release build, headless desktop Chromium, Windows, 44 cores,
 same machine; `main` one run, this change two runs; picture time from

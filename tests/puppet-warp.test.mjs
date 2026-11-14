@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   normalizePuppetPins,
   planPuppetWarp,
+  puppetPinRadius,
+  puppetSourcePoint,
   validPuppetWarpPlan,
   warpPuppetRgba,
 } from '../src/puppetWarp.ts';
@@ -63,4 +65,54 @@ test('Puppet Warp validates dimensions, buffers and plan bounds before processin
   assert.throws(() => warpPuppetRgba(new Uint8ClampedArray(4), 2, 2, planPuppetWarp(2, 2, [])), /dimensions or plan/);
   assert.equal(validPuppetWarpPlan({ width: 5, height: 5, pins: [{ x: 5, y: 1, dx: 0, dy: 0, influence: 2 }] }), false);
   assert.throws(() => warpPuppetRgba(fixture(), 5, 5, { width: 5, height: 5, pins: [{ x: 5, y: 1, dx: 0, dy: 0, influence: 2 }] }), /dimensions or plan/);
+});
+
+test('a single pin bends locally: its pixel reaches the target and far pixels stay put', () => {
+  const width = 200, height = 120;
+  const source = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const offset = (y * width + x) * 4;
+    source[offset] = x; source[offset + 1] = y; source[offset + 2] = 7; source[offset + 3] = 255;
+  }
+  const plan = planPuppetWarp(width, height, [{ x: 100, y: 60, dx: 14, dy: -6, influence: 30 }]);
+  const radius = puppetPinRadius(plan.pins[0]);
+  assert.equal(radius, 30);
+  const output = warpPuppetRgba(source, width, height, plan);
+  const at = (x, y) => Array.from(output.slice((y * width + x) * 4, (y * width + x) * 4 + 4));
+  // The pinned pixel lands exactly on its target.
+  assert.deepEqual(at(114, 54), [100, 60, 7, 255]);
+  // Beyond the radius from the target nothing moves, so the layer is not shifted
+  // as a whole and no transparent strips open at its edges.
+  for (const [x, y] of [[0, 0], [199, 119], [0, 119], [199, 0], [114 + 31, 54], [114, 54 + 31], [60, 60]])
+    assert.deepEqual(at(x, y), [x, y, 7, 255], `${x},${y}`);
+  for (let index = 3; index < output.length; index += 4) assert.equal(output[index], 255);
+  // Displacement fades smoothly with distance from the target.
+  const moves = [0, 10, 20, 29].map((distance) => 114 + distance - puppetSourcePoint(114 + distance, 54, plan).x);
+  assert.equal(moves[0], 14);
+  for (let index = 1; index < moves.length; index += 1) assert.ok(moves[index] < moves[index - 1] && moves[index] > 0);
+  assert.equal(puppetSourcePoint(114 + 30, 54, plan).x, 144);
+});
+
+test('large pin moves widen the radius so the warp never folds over itself', () => {
+  const plan = planPuppetWarp(400, 400, [{ x: 100, y: 200, dx: 100, dy: 0, influence: 20 }]);
+  assert.equal(puppetPinRadius(plan.pins[0]), 160);
+  // The inverse map is monotonic along the move, so no source pixel repeats.
+  let previous = -Infinity;
+  for (let x = 0; x < 400; x += 1) {
+    const sourceX = puppetSourcePoint(x, 200, plan).x;
+    assert.ok(sourceX > previous, `x=${x}`);
+    previous = sourceX;
+  }
+});
+
+test('overlapping pins blend without exceeding either move', () => {
+  const plan = planPuppetWarp(300, 100, [
+    { x: 100, y: 50, dx: 10, dy: 0, influence: 60 },
+    { x: 140, y: 50, dx: 10, dy: 0, influence: 60 },
+  ]);
+  for (let x = 0; x < 300; x += 1) {
+    const move = x - puppetSourcePoint(x, 50, plan).x;
+    assert.ok(move >= 0 && move <= 10 + 1e-9, `x=${x} moved ${move}`);
+  }
+  assert.ok(Math.abs(130 - puppetSourcePoint(130, 50, plan).x - 10) < 1e-9);
 });

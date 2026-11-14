@@ -14,6 +14,15 @@ layer-local alpha mask asset and the layer stores only this metadata:
 }
 ```
 
+The command sets `radius` from the selection, not from brush settings: half
+the selection's larger bounding-box side plus two pixels, clamped to 4..128,
+so the outer search ring reaches past the selection from every selected pixel
+(selections up to about 250 px across are filled throughout). `opacity` is
+always 1 (full strength); the shared brush Size and Opacity do not affect it.
+Before committing, the command counts the selected pixels that have usable
+context: when none do (for example Select All) it says nothing changed and
+adds no operation; when only some do it reports the filled percentage.
+
 Rendering searches a fixed 16-point angular lattice from one pixel through the
 configured radius. It ignores masked pixels, computes per-channel medians from
 the first usable ring and blends RGB by mask alpha and operation opacity. Layer

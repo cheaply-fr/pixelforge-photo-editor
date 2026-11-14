@@ -324,6 +324,14 @@ export async function writePortableBundle(input: unknown, options: PortableWrite
 /** Alias used by callers that prefer the project terminology. */
 export const createPortableProjectBundle = writePortableBundle;
 
+/** True when `bytes` is not a ZIP and starts like a JSON object. Pure. */
+export function looksLikeJsonProject(bytes: Uint8Array): boolean {
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) return false;
+  let index = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+  while (index < bytes.length && (bytes[index] === 0x20 || bytes[index] === 0x09 || bytes[index] === 0x0a || bytes[index] === 0x0d)) index += 1;
+  return bytes[index] === 0x7b;
+}
+
 export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob | string): Promise<Draft> {
   // v1/v2 JSON project files remain directly importable.
   if (typeof input === 'string') {
@@ -332,6 +340,14 @@ export async function readPortableBundle(input: Uint8Array | ArrayBuffer | Blob 
   if (isRecord(input) && !(input instanceof Blob) && !(input instanceof Uint8Array) && !(input instanceof ArrayBuffer)) return validateDraft(input);
   if (!(input instanceof Blob) && !(input instanceof Uint8Array) && !(input instanceof ArrayBuffer)) throw new Error('Portable bundle input is invalid');
   const bytes = await asBytes(input);
+  // Older versions saved `.pixelforge` files as plain v1/v2 JSON, which a
+  // browser hands over with no (or a generic) MIME type: trust the content,
+  // not the name or type. A ZIP starts with PK\x03\x04; JSON with `{`
+  // (after an optional UTF-8 byte order mark and whitespace).
+  if (looksLikeJsonProject(bytes)) {
+    if (bytes.byteLength > PORTABLE_MAX_JSON_BYTES) throw new Error('Portable JSON exceeds 64 MiB');
+    try { return validateDraft(JSON.parse(textDecoder.decode(bytes))); } catch { throw new Error('Invalid project file'); }
+  }
   const entries = parseZip(bytes);
   const byName = new Map(entries.map((entry) => [entry.name, entry]));
   if (byName.size !== entries.length || !byName.has(PORTABLE_MANIFEST_PATH) || !byName.has(PORTABLE_DOCUMENT_PATH)) throw new Error('Portable bundle is missing manifest or document');

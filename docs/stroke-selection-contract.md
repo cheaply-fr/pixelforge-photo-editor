@@ -36,7 +36,9 @@ Center |*s*| ≤ width / 2. Coverage ramps over one pixel at both band edges, so
 curves and diagonals are antialiased and keep the same width as straight
 edges. Pixels beyond the canvas count as unselected: Select All with Inside
 draws a frame along the canvas edge, and an Outside stroke of Select All has
-nothing to draw. The stroke itself is a hard-edged band; it is not feathered.
+nothing to draw: it changes nothing and says **Nothing to stroke: an Outside
+stroke of a selection that fills the canvas lies entirely beyond the canvas
+edge** (not "No pixels are selected", which is only for an empty selection). The stroke itself is a hard-edged band; it is not feathered.
 
 ## Applying
 
@@ -56,19 +58,34 @@ command pixel for pixel.
 ## Performance
 
 Only the covered bounding box, grown by the stroke's outward reach, is
-processed. Inside and Outside need one distance transform, Center two. A
-lasso-sized stroke on a 3000 × 4000 document takes well under a second
-locally; a Center stroke of a selection that covers most of such a document
-takes about 1–2 s.
+processed, and within it only the band near the selection edge: the box is
+cut into tiles (64 px, or twice the band's reach), tiles whose neighbourhood
+is all selected or all unselected are skipped, and each remaining tile gets
+an exact distance transform over its neighbourhood (falling back to one
+transform of the whole box when the neighbourhoods would cost more). The
+result is byte-identical to transforming the whole box; a test compares the
+two (`strokeSelectionAlphaReference`). Inside and Outside need one distance
+transform per tile, Center two.
+
+Measured end to end in desktop Chrome and the Pixel 7 emulation on a
+3000 × 4000 paint layer (local build, 2026-11-14), from clicking **Stroke**
+to the notice: a ~750 × 950 px lasso with an 8 px Center stroke takes about
+0.9 s, and a 20 px Center stroke of a (100,100)–(2900,3900) marquee about
+1.9–2.1 s (it was 4.4–4.9 s before the tiled search). Most of the remaining
+time is rendering the selection mask, reading the 12-megapixel layer and
+committing the new pixels, not the band itself, which takes about 0.2 s and
+0.5 s respectively in Node.
 
 ## Tests
 
 `tests/stroke-selection.test.mjs`: option validation, exact distance
 transform, band placement for each location on a rectangle, equal width on
 straight, diagonal and curved edges, feathered (50 % edge) and compound
-selections, canvas-edge and empty selections, malformed input and a
-3000 × 4000 timing bound. `tests/browser/stroke-selection.spec.ts` (desktop
+selections, canvas-edge and empty selections, malformed input, byte equality
+of the tiled search with the whole-grid reference, and 3000 × 4000 timing
+bounds. `tests/browser/stroke-selection.spec.ts` (desktop
 and mobile): pixels on each side of a marquee edge for Inside/Center/Outside
 with undo, colour, opacity and Multiply, remembered options, invalid input,
 Cancel and Escape, a feathered Lasso plus Add, a subtracted hole surviving
-reload, and the disabled/empty-selection cases.
+reload, the disabled/empty-selection cases and the Select All + Outside
+notice.

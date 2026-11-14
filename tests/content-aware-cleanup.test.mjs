@@ -5,6 +5,8 @@ import {
   CONTENT_AWARE_MAX_RADIUS,
   applyContentAwareFill,
   applyContentAwareFills,
+  contentAwareFillReach,
+  contentAwareSearchRadius,
   validContentAwareFill,
   validContentAwareFills,
 } from '../src/contentAwareCleanup.ts';
@@ -133,4 +135,43 @@ test('content-aware mask references survive draft validation and malformed asset
     ...document,
     assets: { [assetId]: document.assets[assetId] },
   }), /Invalid layer document/);
+});
+
+/** A white w×h image with a red block, and a square mask over [x0, x1). */
+const blockScene = (w, h, x0, x1) => {
+  const source = new Uint8ClampedArray(w * h * 4).fill(255);
+  const mask = new Uint8Array(w * h);
+  for (let y = x0; y < x1; y += 1)
+    for (let x = x0; x < x1; x += 1) {
+      mask[y * w + x] = 255;
+      source[(y * w + x) * 4 + 1] = source[(y * w + x) * 4 + 2] = 0;
+    }
+  return { source, mask };
+};
+
+test('content-aware search radius follows the selection bounds, not a brush', () => {
+  const { mask } = blockScene(300, 300, 100, 190);
+  assert.equal(contentAwareSearchRadius(mask, 300, 300), 47);
+  assert.equal(contentAwareSearchRadius(new Uint8Array(100), 10, 10), 4);
+  const tiny = new Uint8Array(100);
+  tiny[55] = 255;
+  assert.equal(contentAwareSearchRadius(tiny, 10, 10), 4);
+  assert.equal(contentAwareSearchRadius(new Uint8Array(600 * 600).fill(255), 600, 600), CONTENT_AWARE_MAX_RADIUS);
+});
+
+test('a selection-sized radius fills the whole selection at full strength', () => {
+  const w = 300, h = 300;
+  const { source, mask } = blockScene(w, h, 100, 190);
+  const radius = contentAwareSearchRadius(mask, w, h);
+  assert.deepEqual(contentAwareFillReach(source, w, h, mask, radius), { selected: 90 * 90, filled: 90 * 90 });
+  const output = new Uint8ClampedArray(source);
+  assert.equal(applyContentAwareFill(output, source, w, h, mask, { version: 1, mask: 'm', radius, opacity: 1 }), true);
+  for (const [x, y] of [[145, 145], [100, 100], [189, 120]])
+    assert.deepEqual(Array.from(output.slice((y * w + x) * 4, (y * w + x) * 4 + 4)), [255, 255, 255, 255], `${x},${y}`);
+  // A brush-sized radius (9 px) leaves the middle of the selection untouched.
+  const reach = contentAwareFillReach(source, w, h, mask, 9);
+  assert.ok(reach.filled < reach.selected / 2);
+  // With nothing unselected around it, nothing can be filled.
+  const all = new Uint8Array(w * h).fill(255);
+  assert.equal(contentAwareFillReach(source, w, h, all, contentAwareSearchRadius(all, w, h)).filled, 0);
 });

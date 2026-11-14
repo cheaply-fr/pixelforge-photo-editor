@@ -10,7 +10,11 @@ separate and continue to use their embedded source identity.
 Editing a linked layer's affine matrix applies the same affine delta to its
 linked peers. This keeps translation, scale, rotation and skew edits together
 while preserving each layer's own asset, opacity, blend, masks and metadata.
-The operation is one undoable edit. A locked selected layer or locked
+The operation is one undoable edit. Dragging a linked layer with the Move
+tool moves its linked peers by the same document offset in the same history
+entry (`src/moveLayers.ts`); a locked or position-locked Background peer
+blocks the drag with "Unlock every selected and linked layer before moving
+them together". A locked selected layer or locked
 containing group prevents creating a link, and malformed or stale selection
 identities fail closed. Unlinking is scoped to the selected layers and never
 changes pixels.
@@ -23,4 +27,5 @@ is implied by this contract.
 Pure validation and immutability coverage lives in
 `tests/layer-links.test.mjs`. Desktop and mobile acceptance covers menu guards,
 link creation, synchronized transform pixels/metadata, reload, project export
-and unlinking in `tests/browser/layer-links.spec.ts`.
+and unlinking in `tests/browser/layer-links.spec.ts`; Move tool drags of
+linked layers in `tests/browser/move-selected-linked.spec.ts`.
