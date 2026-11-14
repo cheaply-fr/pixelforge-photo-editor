@@ -154,7 +154,9 @@ auto-scrolls while a drag nears its top or bottom edge.
 - While dragging files the editor shows an overlay: "Drop to add as layer"
   (with a hint to hold Shift) or "Drop to open".
 - Mobile browsers have no file drag and drop; "Add image layer" in the Layers
-  panel and File > Open cover the same imports.
+  panel and File > Open cover the same imports. "Add image layer" centres the
+  image in the document, like a file dropped outside the canvas
+  (`tests/browser/add-image-layer-placement.spec.ts`).
 
 ## Tests
 

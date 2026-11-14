@@ -120,6 +120,10 @@ async function project(page: Page): Promise<ProjectFrame> {
   };
   return out.history[out.index];
 }
+/** Composite RGBA at the document centre, where added image layers are placed. */
+const centrePixel = (page: Page) =>
+  canvas(page).evaluate((element: HTMLCanvasElement) =>
+    Array.from(element.getContext('2d')!.getImageData(Math.floor(element.width / 2), Math.floor(element.height / 2), 1, 1).data));
 /** Composite RGBA at a document pixel. */
 const pixel = (page: Page, x: number, y: number) =>
   canvas(page).evaluate(
@@ -160,7 +164,7 @@ test.describe('desktop pointer', () => {
     await addImageLayer(page, 'red.png', RED);
     await addImageLayer(page, 'blue.png', BLUE);
     expect(await order(page)).toEqual(['blue.png', 'red.png', 'Background']);
-    expect(await pixel(page, 10, 10)).toEqual([0, 0, 255, 255]);
+    expect(await centrePixel(page)).toEqual([0, 0, 255, 255]);
 
     // Mid-drag the target row shows the line and the hint names the drop.
     await mouseDrag(page, item(page, 'red.png'), item(page, 'blue.png'), 0.2, false);
@@ -172,7 +176,7 @@ test.describe('desktop pointer', () => {
     await expect(page.getByTestId('layer-drop-hint')).toHaveCount(0);
 
     expect(await order(page)).toEqual(['red.png', 'blue.png', 'Background']);
-    expect(await pixel(page, 10, 10)).toEqual([255, 0, 0, 255]);
+    expect(await centrePixel(page)).toEqual([255, 0, 0, 255]);
     await expect(footer(page)).toContainText('Layer reordered');
     await expect(live(page)).toHaveText('red.png moved above blue.png, 1 of 3');
     // The dropped row is selected.
@@ -181,7 +185,7 @@ test.describe('desktop pointer', () => {
     // One undo step per drop.
     await undo(page);
     expect(await order(page)).toEqual(['blue.png', 'red.png', 'Background']);
-    expect(await pixel(page, 10, 10)).toEqual([0, 0, 255, 255]);
+    expect(await centrePixel(page)).toEqual([0, 0, 255, 255]);
     await redo(page);
     expect(await order(page)).toEqual(['red.png', 'blue.png', 'Background']);
 
@@ -524,7 +528,7 @@ test.describe('touch', () => {
   test('long-press the handle to drag; long-press a row for its menu', async ({ page }) => {
     await addImageLayer(page, 'red.png', RED);
     await addImageLayer(page, 'blue.png', BLUE);
-    expect(await pixel(page, 10, 10)).toEqual([0, 0, 255, 255]);
+    expect(await centrePixel(page)).toEqual([0, 0, 255, 255]);
     const cdp = await page.context().newCDPSession(page);
     const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', x?: number, y?: number) =>
       cdp.send('Input.dispatchTouchEvent', {
@@ -546,7 +550,7 @@ test.describe('touch', () => {
     await touch('touchEnd');
     await settled(page);
     expect(await order(page)).toEqual(['red.png', 'blue.png', 'Background']);
-    expect(await pixel(page, 10, 10)).toEqual([255, 0, 0, 255]);
+    expect(await centrePixel(page)).toEqual([255, 0, 0, 255]);
     await expect(live(page)).toHaveText('red.png moved above blue.png, 1 of 3');
 
     // A quick touch move on the handle (no long press) does not reorder.

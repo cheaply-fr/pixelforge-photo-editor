@@ -35,6 +35,8 @@ import {
   Info,
 } from 'lucide-react';
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { menuPopupPlacement } from '../src/menuPopupPosition';
+import { moveLayerIds, translateLayers } from '../src/moveLayers';
 import { flushSync } from 'react-dom';
 import { SidebarSection } from '../src/SidebarSection';
 import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
@@ -90,6 +92,7 @@ import {
   type Settings,
 } from '../src/drafts';
 import {
+  compactSaveText,
   DUPLICATE_DRAFT_DESCRIPTION,
   DUPLICATE_DRAFT_LABEL,
   DUPLICATE_DRAFT_NOTICE,
@@ -324,6 +327,7 @@ import {
   hexRgb,
   STROKE_POSITIONS,
   strokeSelectionAlpha,
+  STROKE_OUTSIDE_NOTHING_NOTICE,
   type StrokeSelectionOptions,
 } from '../src/strokeSelection';
 import {
@@ -904,6 +908,8 @@ import {
 } from '../src/patchTool';
 import {
   CONTENT_AWARE_MAX_OPERATIONS,
+  contentAwareFillReach,
+  contentAwareSearchRadius,
   GENERATIVE_FILL_MAX_OPERATIONS,
   GENERATIVE_FILL_MAX_RADIUS,
   GENERATIVE_FILL_MAX_PROMPT,
@@ -1627,6 +1633,24 @@ const FILTERS = [
   ['Warm', 'sepia(.35) saturate(1.2)', '#654737', '#e8a467'],
   ['Cool', 'hue-rotate(18deg) saturate(.9)', '#335d91', '#83bbc4'],
 ] as const;
+/**
+ * A save status or notice whose " on this device" narrow screens hide, so
+ * the saved time stays readable (the text content is unchanged).
+ */
+function CompactSaveText({ text }: { text: string }) {
+  const parts = compactSaveText(text);
+  if (!parts) return <>{text}</>;
+  // One wrapper, so a flex parent (the footer notice) sees a single item.
+  // <bdi>, not <span>: the footer hides its later spans on narrow screens.
+  return (
+    <bdi className="save-text">
+      {parts[0]}
+      <bdi className="save-text-where">{parts[1]}</bdi>
+      {parts[2]}
+    </bdi>
+  );
+}
+
 const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
@@ -1759,7 +1783,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   Layer: [
     { label: 'New Paint Layer', command: 'new-layer' },
     {
-      label: 'Duplicate Layer…',
+      label: 'Duplicate Layer',
       shortcut: 'Ctrl+J',
       command: 'duplicate-layer',
     },
@@ -2057,6 +2081,8 @@ type Gesture = {
   last: { x: number; y: number };
   frame: Frame;
   layer?: Layer;
+  /** Move tool: every layer the drag moves (selected and linked layers). */
+  moveIds?: string[];
   buffer?: HTMLCanvasElement;
   source?: HTMLCanvasElement;
   /** Mixer Brush paint reservoirs for this stroke, one per symmetry copy. */
@@ -3292,7 +3318,7 @@ const sampledGestureStroke = (
   to: { x: number; y: number },
   options: { size: number; tolerance: number; opacity: number } & (
     | { kind: 'replace'; color: string }
-    | { kind: 'background-erase' }
+    | { kind: 'background-erase'; hardness: number }
   ),
 ) =>
   confinedGestureEdit(g, from, to, brushStampReach(options.size), (target) =>
@@ -3304,7 +3330,7 @@ const sampledGestureStroke = (
           limits: g.colorReplace?.colorReplaceLimits,
         })
       : eraseBackgroundStroke(g.source!, target, g.replaceTarget!, from.x, from.y, to.x, to.y,
-        options.size, options.tolerance, options.opacity));
+        options.size, options.tolerance, options.opacity, options.hardness));
 const selectionMaskForLayer = async (
   selection: Frame['selection'],
   frame: Frame,
@@ -3438,6 +3464,7 @@ export default function Home() {
     strandOverlayClear = useRef<{ timer: number; revision: number } | null>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
+    menuPopupRef = useRef<HTMLDivElement>(null),
     menuButtonRefs = useRef<Record<MenuName, HTMLButtonElement | null>>(
       {} as Record<MenuName, HTMLButtonElement | null>,
     ),
@@ -8691,6 +8718,26 @@ export default function Home() {
         setNotice('The document changed while Content-Aware Fill was prepared');
         return;
       }
+      // The search reaches across the selection's bounds (not the brush
+      // size), and the notice says how much of it actually found context.
+      const radius = contentAwareSearchRadius(mask, width, height),
+        sourceCanvas = surface(width, height),
+        sourceContext = sourceCanvas.getContext('2d');
+      if (!sourceContext) throw new Error('Content-Aware Fill source is unavailable');
+      sourceContext.drawImage(image, 0, 0);
+      const reach = contentAwareFillReach(
+        sourceContext.getImageData(0, 0, width, height).data,
+        width,
+        height,
+        mask,
+        radius,
+      );
+      if (!reach.filled) {
+        setNotice(
+          'Content-Aware Fill found no unselected pixels around the selection; nothing changed',
+        );
+        return;
+      }
       const maskCanvas = surface(width, height),
         context = maskCanvas.getContext('2d');
       if (!context) throw new Error('Content-Aware Fill mask is unavailable');
@@ -8707,8 +8754,8 @@ export default function Home() {
         fill: ContentAwareFill = {
           version: 1,
           mask: maskId,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
+          radius,
+          opacity: 1,
         };
       if (
         editLayer({
@@ -8716,7 +8763,9 @@ export default function Home() {
         })
       )
         setNotice(
-          'Content-Aware Fill applied locally; source and alpha remain unchanged',
+          reach.filled < reach.selected
+            ? `Content-Aware Fill applied locally to ${Math.max(1, Math.floor((reach.filled / reach.selected) * 100))}% of the selection; the rest has no unselected pixels within ${radius} px`
+            : 'Content-Aware Fill applied locally; source and alpha remain unchanged',
         );
     } catch {
       setNotice('Content-Aware Fill could not be applied');
@@ -8928,8 +8977,8 @@ export default function Home() {
           mask: maskAsset,
           dx,
           dy,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
+          radius: contentAwareSearchRadius(mask, width, height),
+          opacity: 1,
         };
       if (commit({
         ...f,
@@ -8991,8 +9040,8 @@ export default function Home() {
           mask: maskAsset,
           scaleX: scaleX / 100,
           scaleY: scaleY / 100,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
+          radius: contentAwareSearchRadius(mask, width, height),
+          opacity: 1,
         };
       if (commit({
         ...f,
@@ -11562,7 +11611,13 @@ export default function Home() {
       const { coverage, bounds } = strokeSelectionAlpha(alpha, output.width, output.height, options.width, options.position);
       if (!bounds) {
         dropUnusedExpansion();
-        setNotice(EMPTY_SELECTION_NOTICE);
+        // A non-empty selection with no band left: an Outside stroke whose
+        // band lies entirely beyond the canvas (Select All, for example).
+        setNotice(
+          options.position === 'outside'
+            ? STROKE_OUTSIDE_NOTHING_NOTICE
+            : EMPTY_SELECTION_NOTICE,
+        );
         return;
       }
       const [red, green, blue] = hexRgb(options.color),
@@ -12522,10 +12577,12 @@ export default function Home() {
       if (current() !== original)
         throw new Error('Document changed during import. Please try again.');
       if (asLayer) {
+        // Centred in the document, like a dropped or placed image.
         const added = addLayer({
           ...commonLayer(selected.name.slice(0, 160)),
           kind: 'raster',
           asset: addAsset(assets.current, c),
+          matrix: placementMatrixAt(undefined, c.width, c.height, original.w, original.h),
         });
         if (!added) return;
       } else if (
@@ -14638,6 +14695,7 @@ export default function Home() {
               size: localSize(layer.matrix, size),
               tolerance: colorTolerance,
               opacity: brushOpacity / 100,
+              hardness,
             });
             from = point;
           }
@@ -15657,6 +15715,16 @@ export default function Home() {
       setNotice('The Background layer is position-locked; use Layer > Layer from Background to move it');
       return;
     }
+    // The Move tool carries the other selected layers and linked layers along.
+    const moveIds = tool === 'move' ? moveLayerIds(f, layer.id) : undefined;
+    if (moveIds && moveIds.length > 1) {
+      const blocked = f.layers.filter((item) => moveIds.includes(item.id) && item.id !== layer.id &&
+        (layerIsLocked(f, item) || isBackgroundLayer(f, item)));
+      if (blocked.length) {
+        setNotice('Unlock every selected and linked layer before moving them together');
+        return;
+      }
+    }
     const rasterAsset = layer.kind === 'raster' ? layer.asset : null;
     const g = {
       tool,
@@ -15665,6 +15733,7 @@ export default function Home() {
       smoothedLast: local,
       frame: f,
       layer,
+      moveIds,
       lastPressure: pressure(e),
       pointerType: e.pointerType,
       moved: false,
@@ -16280,6 +16349,7 @@ export default function Home() {
         size: localSize(g.layer!.matrix, size),
         tolerance: colorTolerance,
         opacity: brushOpacity / 100,
+        hardness,
       });
       previewGesture(g);
       g.last = local;
@@ -16454,14 +16524,9 @@ export default function Home() {
       return;
     }
     if (g.tool === 'move' && g.layer) {
-      const matrix = [...g.layer.matrix] as Matrix;
-      matrix[4] += p.x - g.start.x;
-      matrix[5] += p.y - g.start.y;
       void paint({
         ...g.frame,
-        layers: g.frame.layers.map((l) =>
-          l.id === g.layer!.id ? { ...l, matrix } : l,
-        ),
+        layers: translateLayers(g.frame.layers, g.moveIds ?? [g.layer.id], p.x - g.start.x, p.y - g.start.y),
       });
     } else if (
       (g.tool === 'brush' || g.tool === 'pencil' || g.tool === 'eraser') &&
@@ -17062,16 +17127,12 @@ export default function Home() {
           ? g.pathHandle ? 'Vector mask handle moved' : 'Vector mask node moved'
           : g.pathHandle ? 'Path handle moved' : 'Path node moved');
     } else if (g.tool === 'move' && g.layer && g.moved) {
-      const matrix = [...g.layer.matrix] as Matrix;
-      matrix[4] += p.x - g.start.x;
-      matrix[5] += p.y - g.start.y;
+      const ids = g.moveIds ?? [g.layer.id];
       const changed = commit({
         ...f,
-        layers: f.layers.map((l) =>
-          l.id === g.layer!.id ? { ...l, matrix } : l,
-        ),
+        layers: translateLayers(f.layers, ids, p.x - g.start.x, p.y - g.start.y),
       });
-      if (changed) setNotice('Layer moved');
+      if (changed) setNotice(ids.length > 1 ? `${ids.length} layers moved` : 'Layer moved');
     } else if (g.tool === 'spot-heal' && g.layer?.kind === 'raster' && g.spotHealingStroke) {
       const stroke = g.spotHealingStroke;
       if (commit({
@@ -17555,6 +17616,7 @@ export default function Home() {
           size: localSize(g.layer.matrix, size),
           tolerance: colorTolerance,
           opacity: brushOpacity / 100,
+          hardness,
         });
       const asset = addPaintedAsset(g.buffer);
       if (
@@ -17837,6 +17899,44 @@ export default function Home() {
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
   }, []);
+  // Menus are drawn fixed, anchored to their trigger, so the phone menu bar
+  // (which clips its overflow) never cuts the popup off.
+  useLayoutEffect(() => {
+    if (!activeMenu) return;
+    const place = () => {
+      const trigger = menuButtonRefs.current[activeMenu];
+      const popup = menuPopupRef.current;
+      if (!trigger || !popup) return;
+      const names = Object.keys(MENU_DEFS) as MenuName[];
+      const index = names.indexOf(activeMenu);
+      const phone = window.matchMedia('(max-width: 680px)').matches;
+      const rect = trigger.getBoundingClientRect();
+      const placed = menuPopupPlacement(
+        { left: rect.left, right: rect.right, bottom: rect.bottom },
+        { width: window.innerWidth, height: window.innerHeight },
+        {
+          alignRight: index >= names.length - 2 || (phone && index >= 3),
+          gap: phone ? 4 : 8,
+          phone,
+        },
+      );
+      Object.assign(popup.style, {
+        position: 'fixed',
+        top: `${placed.top}px`,
+        left: `${placed.left}px`,
+        right: 'auto',
+        width: `${placed.width}px`,
+        maxHeight: `${placed.maxHeight}px`,
+      });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [activeMenu]);
   useEffect(() => () => {
     if (toolHoldTimer.current !== null) clearTimeout(toolHoldTimer.current);
   }, []);
@@ -20232,6 +20332,7 @@ export default function Home() {
               {activeMenu === menuName && (
                 <div
                   className="menu-popup"
+                  ref={menuPopupRef}
                   role="menu"
                   aria-label={`${menuName} menu`}
                   tabIndex={-1}
@@ -20311,7 +20412,7 @@ export default function Home() {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <small>• &nbsp;{dimensions}</small>
+          <small className={frame ? undefined : 'docbar-opening'}>• &nbsp;{dimensions}</small>
         </div>
         <div className="draft-actions">
           <button
@@ -20527,6 +20628,21 @@ export default function Home() {
         {/* The zoom pill sits on this non-scrolling shell so it stays pinned to
             the visible stage while the canvas scrolls (audit B-03). */}
         <div className="stage-shell">
+          {/* Drawn in the visible stage, not the zoomed canvas wrap, so it
+              stays on screen at any zoom and on phones. */}
+          {openingProgress && (
+            <output
+              className="opening-progress"
+              data-testid="opening-progress"
+              data-preview={doc.openingPreview ? 'true' : 'false'}
+              aria-live="polite"
+            >
+              <span>
+                {doc.openingPreview ? 'Saved picture shown · ' : ''}Opening draft… {openingProgress.completed}/{openingProgress.total} layers
+              </span>
+              <progress max={openingProgress.total} value={openingProgress.completed} aria-hidden="true" />
+            </output>
+          )}
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
           {isTypeTool(tool) && (
             <TypeOptionsBar
@@ -20815,19 +20931,6 @@ export default function Home() {
                   objectFit: referenceObjectFit(frame.reference.fit),
                 }}
               />
-            )}
-            {openingProgress && (
-              <output
-                className="opening-progress"
-                data-testid="opening-progress"
-                data-preview={doc.openingPreview ? 'true' : 'false'}
-                aria-live="polite"
-              >
-                <span>
-                  {doc.openingPreview ? 'Saved picture shown · ' : ''}Opening draft… {openingProgress.completed}/{openingProgress.total} layers
-                </span>
-                <progress max={openingProgress.total} value={openingProgress.completed} aria-hidden="true" />
-              </output>
             )}
             {quickMasking && (
               <canvas
@@ -22542,6 +22645,7 @@ export default function Home() {
                                     </label>
                                     <button
                                       type="button"
+                                      className="strand-seed-new"
                                       title="Pick a new random seed for the next stroke"
                                       onClick={() =>
                                         setBrushStrands((current) =>
@@ -25032,7 +25136,7 @@ export default function Home() {
       <footer>
         <span>
           <i />
-          {notice}
+          <CompactSaveText text={notice} />
         </span>
         <span>{activeToolLabel} tool</span>
         <output
@@ -25062,7 +25166,7 @@ export default function Home() {
           aria-label="Draft save status"
           title="This bookmark restores the document in this browser. Clearing browser data removes local documents; export a backup."
         >
-          {saveStatus}
+          <CompactSaveText text={saveStatus} />
         </output>
         <button onClick={() => download('jpeg')}>
           <Save /> Save JPEG

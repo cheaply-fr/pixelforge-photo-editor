@@ -27,6 +27,20 @@ export default defineConfig({
     // stay deterministic. sidebar-autoscroll.spec.ts opts back into motion to
     // cover the animated path (docs/sidebar-autoscroll-contract.md).
     contextOptions: { reducedMotion: 'reduce' },
+    // CI builds carry a GA measurement id, so without a stored choice every
+    // page would open with the analytics consent banner over part of the
+    // editor, unlike local builds. Each context starts as a visitor who
+    // already answered it ("No thanks"); analytics-consent-banner.spec.ts
+    // covers the banner itself (docs/analytics.md).
+    storageState: {
+      cookies: [],
+      origins: [
+        {
+          origin: new URL(settings.baseURL).origin,
+          localStorage: [{ name: 'cheaply.analytics.consent.v1', value: 'denied' }],
+        },
+      ],
+    },
   },
   webServer: settings.webServer,
   projects: [

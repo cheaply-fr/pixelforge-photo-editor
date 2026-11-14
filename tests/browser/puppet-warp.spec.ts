@@ -77,3 +77,31 @@ test('Puppet Warp is disabled for locked and unsupported active layers', async (
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Puppet Warp…', exact: true })).toBeDisabled();
 });
+
+test('a single Puppet Warp pin bends around itself and leaves the rest of the layer in place', async ({ page }) => {
+  const canvas = page.getByTestId('editor-canvas');
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  const read = () => canvas.evaluate((element) => {
+    const context = (element as HTMLCanvasElement).getContext('2d')!;
+    const { width, height } = element as HTMLCanvasElement;
+    const points = [[2, 2], [width - 3, 2], [2, height - 3], [width - 3, height - 3], [Math.round(width / 2), 4]];
+    return {
+      width,
+      height,
+      edges: points.map(([x, y]) => Array.from(context.getImageData(x, y, 1, 1).data)),
+      row: Array.from(context.getImageData(0, 360, width, 120).data),
+    };
+  });
+  const before = await read();
+  expect(before.width).toBeGreaterThan(900);
+  page.once('dialog', async (dialog) => dialog.accept('800,420,140,-60'));
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Puppet Warp…', exact: true }).click();
+  await expect(page.getByText('Puppet Warp applied locally; undo restores the source asset', { exact: true })).toBeVisible();
+  await expect(canvas).toHaveAttribute('data-rendering', 'false');
+  const after = await read();
+  // The corners and the top edge are untouched: no whole-layer shift, no transparent strips.
+  expect(after.edges).toEqual(before.edges);
+  // Pixels near the pin moved.
+  expect(after.row).not.toEqual(before.row);
+});

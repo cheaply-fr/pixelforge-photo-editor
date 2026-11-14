@@ -1053,7 +1053,7 @@ function textLayer(
   const baselines: number[] = [];
   let line = '';
   let simple = true;
-  const x0 = firstNumber(element.attrs.x, size) ?? 0;
+  let x0 = firstNumber(element.attrs.x, size);
   const y0 = (firstNumber(element.attrs.y, size) ?? 0) + (firstNumber(element.attrs.dy, size) ?? 0);
   if ([element.attrs.x, element.attrs.y].some((value) => value !== undefined && /[\s,]/.test(value.trim()))) return undefined;
   if (element.attrs.rotate || element.attrs.textLength) return undefined;
@@ -1075,15 +1075,26 @@ function textLayer(
       }
       const childStyle = computeStyle(item, inherited, rules);
       if (signature({ ...childStyle, opacity: '' }) !== base || (childStyle.opacity && numberOr(childStyle.opacity, 1) !== 1)) simple = false;
-      if (item.attrs.rotate || item.attrs.dx || item.attrs.transform) simple = false;
+      if (item.attrs.rotate || item.attrs.dx || item.attrs.transform || item.attrs.textLength) simple = false;
+      // Per-glyph position lists ("20 31 42") cannot be a text layer.
+      if ([item.attrs.x, item.attrs.y, item.attrs.dy].some((value) => value !== undefined && /[\s,]/.test(value.trim()))) simple = false;
       const ty = firstNumber(item.attrs.y, size);
       const tdy = firstNumber(item.attrs.dy, size);
       const tx = firstNumber(item.attrs.x, size);
+      // A row that starts before any text may set the line start itself.
+      if (tx !== undefined && x0 === undefined && !line.trim() && !lines.length) x0 = tx;
+      const sameX = tx === undefined || Math.abs(tx - (x0 ?? 0)) <= 0.01;
       if (ty !== undefined || (tdy !== undefined && tdy !== 0)) {
+        // A new row: an absolute y, or a dy step from the previous baseline.
         if (line.trim() || lines.length) pushLine();
         y = ty !== undefined ? ty + (tdy ?? 0) : y + (tdy ?? 0);
-        if (tx !== undefined && Math.abs(tx - x0) > 0.01) simple = false;
-      } else if (tx !== undefined) simple = false;
+        if (!sameX) simple = false;
+      } else if (tx !== undefined && (!sameX || line.trim())) {
+        // Moving x without moving the baseline repositions text on the same
+        // line (or overprints it), which only pixels can reproduce. A first
+        // row at the text's own x with dy="0" (or no dy) is fine.
+        simple = false;
+      }
       collect(item, childStyle);
     }
   };
@@ -1116,7 +1127,7 @@ function textLayer(
   const text = cleaned.join('\n');
   if (text.length > 10000) return undefined;
   const anchor = style['text-anchor']?.trim();
-  const local: Matrix = [1, 0, 0, 1, x0, baselines[0] - size * 0.8];
+  const local: Matrix = [1, 0, 0, 1, x0 ?? 0, baselines[0] - size * 0.8];
   return {
     layer: {
       ...commonLayer(readableName(element, text.split('\n')[0].slice(0, 40) || 'Text')),

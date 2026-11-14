@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { CONSENT_BANNER_ID, showConsentBanner } from './analyticsConsentBanner';
 
 const CONSENT_KEY = 'cheaply.analytics.consent.v1';
 const APP_NAME = 'cheaply-pixelforge';
@@ -83,10 +84,12 @@ export default function Analytics() {
     ).trim();
     if (!validId(id)) return;
 
+    let stopPlacing = () => {};
     const setConsent = (value: 'granted' | 'denied') => {
       store(value);
       if (value === 'granted') load(id);
-      document.getElementById('cheaply-analytics-consent')?.remove();
+      stopPlacing();
+      document.getElementById(CONSENT_BANNER_ID)?.remove();
     };
     const page = window as AnalyticsWindow;
     page.cheaplyAnalytics = {
@@ -104,29 +107,12 @@ export default function Analytics() {
     if (value === 'granted') {
       load(id);
     } else if (!value) {
-      const banner = document.createElement('aside');
-      banner.id = 'cheaply-analytics-consent';
-      // This is a non-modal informational region. A generic dialog role would
-      // collide with the editor's real dialogs and confuse assistive technology.
-      banner.setAttribute('role', 'region');
-      banner.setAttribute('aria-label', 'Analytics consent');
-      banner.innerHTML =
-        '<strong>Help improve Cheaply Photo Editor</strong><p>Allow anonymous usage statistics to improve PixelForge. Your photos, projects, and file names never leave this device.</p><div><button type="button" data-choice="deny">No thanks</button><button type="button" data-choice="accept">Allow</button></div>';
-      banner.style.cssText =
-        'position:fixed;left:1rem;right:1rem;bottom:1rem;z-index:1000;max-width:34rem;padding:1rem;border:1px solid #d8dee8;border-radius:12px;background:#fff;color:#172033;box-shadow:0 10px 30px #17203322;font:14px system-ui,sans-serif;pointer-events:none';
-      banner.querySelectorAll('button').forEach((button) => {
-        button.style.pointerEvents = 'auto';
-      });
-      banner
-        .querySelector('[data-choice="deny"]')
-        ?.addEventListener('click', () => setConsent('denied'));
-      banner
-        .querySelector('[data-choice="accept"]')
-        ?.addEventListener('click', () => setConsent('granted'));
-      document.body.append(banner);
+      stopPlacing = showConsentBanner(setConsent);
     }
     return () => {
       window.removeEventListener('cheaply:analytics-consent', onConsent);
+      stopPlacing();
+      document.getElementById(CONSENT_BANNER_ID)?.remove();
       if (page.cheaplyAnalytics) delete page.cheaplyAnalytics;
     };
   }, []);
