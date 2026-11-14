@@ -490,7 +490,6 @@ import { normalizeToolbarPreferences, TOOLBAR_PREFERENCES_VERSION } from '../src
 import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
 import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
-import { findSpellingHints } from '../src/spellcheck';
 import ColorSettingsDialog from '../src/ColorSettingsDialog';
 import ColorProfileDialog from '../src/ColorProfileDialog';
 import { convertRgbaProfile, normalizeColorProfile, type ColorProfile } from '../src/colorProfile';
@@ -19538,7 +19537,7 @@ export default function Home() {
   const textLayers = (frame?.layers ?? []).filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text');
   const spellcheckLayers: SpellcheckLayer[] = textLayers.map((layer) => ({
     name: layer.name,
-    hints: findSpellingHints(layer.text),
+    text: layer.text,
   }));
   const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
   const openLayerImageFile = () => layerFile.current?.click();
