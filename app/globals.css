@@ -753,3 +753,7 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .filter-effects-panel .filter-stack li>span{font-size:10px;color:#c9ccd3}
 @media(max-width:680px){.filter-effects-panel .panel-body select:not(.text-input),.filter-effects-panel .panel-body input.number-input{height:36px}.filter-effects-panel .filter-region-note button,.filter-effects-panel .filter-stack-editing button,.filter-effects-panel .filter-stack>button,.filter-effects-panel .filter-subsection button,.filter-effects-panel .blur-gallery-controls>button,.filter-effects-panel .blur-path-point button{min-height:36px}}
 .filter-effects-panel .light-rays-controls legend{margin:10px 0 2px;padding:0;color:#d4d5d8;font-size:11px;font-weight:700}
+/* Top bar on mid-width screens: the version stays whole and the server state shortens first; a smaller gap leaves room for the Help menu. */
+@media(min-width:681px){.top-actions>.release-status .release-status-version{flex-shrink:0;overflow:visible}.top-actions>.release-status .release-status-state{flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis}}
+@media(min-width:901px) and (max-width:1440px){.topbar{gap:14px}}
+@media(max-width:1366px){.topbar .brand-lockup em{display:none}}

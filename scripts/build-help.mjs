@@ -48,10 +48,19 @@ export function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+/** Remove HTML tags, repeating until none are left, and drop any stray angle brackets. */
+export function stripTags(html, replacement = '') {
+  let text = String(html);
+  for (let previous; previous !== text; ) {
+    previous = text;
+    text = text.replace(/<[^<>]*>/g, replacement);
+  }
+  return text.replace(/[<>]/g, replacement);
+}
+
 export function slugify(text) {
-  return String(text)
+  return stripTags(text)
     .toLowerCase()
-    .replace(/<[^>]+>/g, '')
     .replace(/&[a-z]+;/g, '')
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
@@ -215,7 +224,7 @@ export function renderMarkdown(body, { imageSizes = {} } = {}) {
         const count = used.get(base) || 0;
         used.set(base, count + 1);
         const id = count ? `${base}-${count}` : base;
-        if (depth === 2 || depth === 3) headings.push({ id, depth, text: inner.replace(/<[^>]+>/g, '') });
+        if (depth === 2 || depth === 3) headings.push({ id, depth, text: stripTags(inner) });
         return `<h${depth} id="${id}"><a class="anchor" href="#${id}" aria-label="Link to this section">#</a>${inner}</h${depth}>\n`;
       },
       paragraph({ tokens }) {
@@ -255,7 +264,7 @@ export function renderMarkdown(body, { imageSizes = {} } = {}) {
   });
   const html = marked.parse(body, { async: false });
   if (typeof html !== 'string') throw new Error('Markdown rendering must be synchronous');
-  const text = html.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ').trim();
+  const text = stripTags(html, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ').trim();
   return { html, headings, text };
 }
 

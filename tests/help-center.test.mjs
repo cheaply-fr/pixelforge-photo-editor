@@ -14,6 +14,7 @@ import {
   parseFrontMatter,
   renderMarkdown,
   slugify,
+  stripTags,
   toolArticles,
   validateHelp,
 } from '../scripts/build-help.mjs';
@@ -26,6 +27,14 @@ test('front matter parses strings, numbers, booleans and lists', () => {
   assert.equal(body, 'Body\n');
   assert.throws(() => parseFrontMatter('No front matter'), /missing front matter/);
   assert.throws(() => parseFrontMatter('---\nnot a pair\n---\n'), /bad front matter line/);
+});
+
+test('tag stripping leaves no markup, even from nested or broken tags', () => {
+  assert.equal(stripTags('<b>Bold</b> text'), 'Bold text');
+  assert.equal(stripTags('<scr<script>ipt>alert(1)'), 'alert(1)');
+  assert.equal(stripTags('1 < 2'), '1  2');
+  assert.equal(stripTags('<p>One</p><p>Two</p>', ' ').trim(), 'One  Two');
+  assert.equal(slugify('<code>Ctrl</code> + <scr<script>ipt>Z'), slugify('Ctrl + Z'));
 });
 
 test('slugs are stable kebab-case anchors', () => {
