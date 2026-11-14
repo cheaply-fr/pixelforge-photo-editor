@@ -24,7 +24,11 @@ export type PhotoAdjustments = {
   temperature: number;
   /** Green/magenta tint shift. */
   tint: number;
-  /** Local-contrast approximation around middle gray. */
+  /**
+   * Midtone local contrast (Camera Raw-style Clarity), -100 to 100: each
+   * pixel's luminance moves away from (positive) or toward (negative) its
+   * large-radius neighbourhood luminance, weighted toward middle gray.
+   */
   clarity: number;
 };
 
@@ -153,15 +157,69 @@ function applyRawTonalControls(
   red += temperature + tint * 0.2;
   green += temperature * 0.2 - tint;
   blue -= temperature + tint * 0.2;
+  return [clamp(red), clamp(green), clamp(blue)];
+}
 
-  const clarity = settings.clarity / 100;
-  const clarityFactor = 1 + clarity * 0.55;
-  const correctedGray = luminance(red, green, blue);
-  return [
-    clamp(correctedGray + (red - correctedGray) * clarityFactor),
-    clamp(correctedGray + (green - correctedGray) * clarityFactor),
-    clamp(correctedGray + (blue - correctedGray) * clarityFactor),
-  ];
+/** Clarity neighbourhood radius in pixels: 2.5 % of the longer side, 2–48 px. */
+export function clarityRadius(width: number, height: number): number {
+  return Math.max(2, Math.min(48, Math.round(Math.max(width, height) * 0.025)));
+}
+
+/**
+ * Alpha-weighted box blur of one plane along rows or columns. Windows are
+ * clipped at the image edge and renormalized, and transparent pixels
+ * (weight 0) never contribute.
+ */
+function boxPass(
+  values: Float32Array,
+  weights: Float32Array,
+  width: number,
+  height: number,
+  radius: number,
+  horizontal: boolean,
+): Float32Array {
+  const output = new Float32Array(values.length);
+  const lines = horizontal ? height : width;
+  const length = horizontal ? width : height;
+  const stride = horizontal ? 1 : width;
+  const sums = new Float64Array(length + 1);
+  const mass = new Float64Array(length + 1);
+  for (let line = 0; line < lines; line += 1) {
+    const start = horizontal ? line * width : line;
+    for (let index = 0; index < length; index += 1) {
+      const at = start + index * stride;
+      sums[index + 1] = sums[index] + values[at] * weights[at];
+      mass[index + 1] = mass[index] + weights[at];
+    }
+    for (let index = 0; index < length; index += 1) {
+      const low = Math.max(0, index - radius);
+      const high = Math.min(length, index + radius + 1);
+      const weight = mass[high] - mass[low];
+      const at = start + index * stride;
+      output[at] = weight > 0 ? (sums[high] - sums[low]) / weight : values[at];
+    }
+  }
+  return output;
+}
+
+/**
+ * Large-radius neighbourhood luminance used by Clarity: three alpha-weighted
+ * box passes per axis (a close Gaussian approximation) spanning `radius`.
+ */
+export function clarityReference(
+  luma: Float32Array,
+  weights: Float32Array,
+  width: number,
+  height: number,
+  radius: number,
+): Float32Array {
+  const pass = Math.max(1, Math.round(radius / 3));
+  let plane = luma;
+  for (let index = 0; index < 3; index += 1) {
+    plane = boxPass(plane, weights, width, height, pass, true);
+    plane = boxPass(plane, weights, width, height, pass, false);
+  }
+  return plane;
 }
 
 /**
@@ -191,26 +249,71 @@ function applyVibrance(
   ];
 }
 
-/** Apply exposure, vibrance and optional B&W in a stable order. */
+/**
+ * Apply exposure, Camera Raw tonal/colour controls, Clarity, vibrance and
+ * optional B&W in a stable order. `width` and `height` give Clarity its
+ * neighbourhood; without them the pixels are treated as one row.
+ */
 export function applyPhotoAdjustmentsPixels(
   source: PhotoPixels,
   value: Partial<PhotoAdjustments> | undefined,
+  width?: number,
+  height?: number,
 ): PhotoPixels {
   assertPixels(source);
   const settings = effectivePhotoAdjustments(value);
   const output = new Uint8ClampedArray(source);
   if (isNeutralPhotoAdjustments(settings)) return output;
+  const count = source.length / 4;
+  const columns = width !== undefined && height !== undefined && Number.isInteger(width) && Number.isInteger(height) &&
+    width > 0 && width * height === count ? width : count;
+  const rows = count / columns;
 
   // A stop is a factor of two. Clamp the multiplier to a finite byte-safe
   // range even though the persisted EV value itself is tightly bounded.
   const exposureScale = Math.pow(2, settings.exposure);
-  for (let offset = 0; offset < source.length; offset += 4) {
+  const corrected = new Float32Array(count * 3);
+  for (let pixel = 0, offset = 0; pixel < count; pixel += 1, offset += 4) {
     if (source[offset + 3] === 0) continue;
-    let red = clamp(source[offset] * exposureScale);
-    let green = clamp(source[offset + 1] * exposureScale);
-    let blue = clamp(source[offset + 2] * exposureScale);
+    const [red, green, blue] = applyRawTonalControls(
+      clamp(source[offset] * exposureScale),
+      clamp(source[offset + 1] * exposureScale),
+      clamp(source[offset + 2] * exposureScale),
+      settings,
+    );
+    corrected[pixel * 3] = red;
+    corrected[pixel * 3 + 1] = green;
+    corrected[pixel * 3 + 2] = blue;
+  }
 
-    [red, green, blue] = applyRawTonalControls(red, green, blue, settings);
+  // Clarity: midtone local contrast. Luminance detail against a large-radius
+  // neighbourhood is amplified (or smoothed when negative) and added equally
+  // to R, G and B, weighted by a bell that peaks at middle gray and fades to
+  // zero at black and white, so hue is kept and highlights/shadows do not clip.
+  let clarityDelta: Float32Array | undefined;
+  if (settings.clarity !== 0) {
+    const luma = new Float32Array(count);
+    const weights = new Float32Array(count);
+    for (let pixel = 0; pixel < count; pixel += 1) {
+      weights[pixel] = source[pixel * 4 + 3] / 255;
+      luma[pixel] = luminance(corrected[pixel * 3], corrected[pixel * 3 + 1], corrected[pixel * 3 + 2]);
+    }
+    const reference = clarityReference(luma, weights, columns, rows, clarityRadius(columns, rows));
+    const gain = settings.clarity / 100;
+    clarityDelta = new Float32Array(count);
+    for (let pixel = 0; pixel < count; pixel += 1) {
+      if (!weights[pixel]) continue;
+      const midtone = Math.max(0, 1 - ((luma[pixel] - 128) / 128) ** 2);
+      clarityDelta[pixel] = (luma[pixel] - reference[pixel]) * gain * midtone * (gain > 0 ? 1.2 : 0.9);
+    }
+  }
+
+  for (let pixel = 0, offset = 0; pixel < count; pixel += 1, offset += 4) {
+    if (source[offset + 3] === 0) continue;
+    const delta = clarityDelta ? clarityDelta[pixel] : 0;
+    let red = clamp(corrected[pixel * 3] + delta);
+    let green = clamp(corrected[pixel * 3 + 1] + delta);
+    let blue = clamp(corrected[pixel * 3 + 2] + delta);
     [red, green, blue] = applyVibrance(red, green, blue, settings.vibrance);
     if (settings.blackAndWhite) {
       const gray = luminance(red, green, blue);
@@ -237,7 +340,7 @@ export function applyPhotoAdjustments(
   const context = canvas.getContext('2d');
   if (!context) return canvas;
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
-  image.data.set(applyPhotoAdjustmentsPixels(image.data, value));
+  image.data.set(applyPhotoAdjustmentsPixels(image.data, value, canvas.width, canvas.height));
   context.putImageData(image, 0, 0);
   return canvas;
 }
