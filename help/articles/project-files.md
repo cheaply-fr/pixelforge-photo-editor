@@ -33,6 +33,8 @@ The file is built in your browser and saved straight to your device. Nothing is 
 
 The project opens as a **new draft** with its layers and history. The draft you had open stays saved in the browser. See [Drafts and saving](drafts-and-saving).
 
+Project files saved by older versions of PixelForge open too, including early `.pixelforge` files that were stored in a different internal format under the same name. PixelForge recognises the format from the file's contents, not from its name.
+
 ## Limits
 
 A project file can be up to 1 GB and hold up to 4,096 stored images (the pixels of its layers across the saved history steps). Every image inside must be at most 16 megapixels. Files that are damaged, changed by hand or above these limits are refused, and your current document is left unchanged.

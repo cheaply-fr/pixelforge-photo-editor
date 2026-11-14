@@ -16,7 +16,7 @@ New layers keep parts of your work separate, so you can change one part without 
 New layers are added directly above the selected layer, inside its folder if it is in one.
 
 - **Paint layer:** click **Add paint layer** under the layer list, or choose **Layer > New Paint Layer**. PixelForge switches to the Brush so you can paint straight away.
-- **Image layer:** click **Add image layer** and choose an image file. It is added at its original size, aligned to the top-left corner of the canvas. Use the [Move tool](move-and-align) to position it.
+- **Image layer:** click **Add image layer** and choose an image file. It is added at its original size, centred in the document, like a file dropped outside the canvas. Use the [Move tool](move-and-align) to position it.
 - **Drop files:** drag image files from your computer onto the canvas. Each file becomes a layer centred where you drop it, all in one undo step. Drop files on the layer list to insert them at a chosen position. Hold <kbd>Shift</kbd> while dropping to open the first file as a new document instead.
 - **Other types:** see [Layer types](layer-types) for fill, adjustment, text, shape and smart object layers.
 
@@ -27,7 +27,7 @@ Files you add this way can be up to 64 MB each. Phone browsers do not support dr
 Select one or more layers and do one of the following:
 
 - press <kbd>Ctrl</kbd>+<kbd>J</kbd> (<kbd>⌘</kbd>+<kbd>J</kbd> on Mac);
-- choose **Layer > Duplicate Layer…**;
+- choose **Layer > Duplicate Layer**;
 - click **Duplicate layer** under the layer list;
 - choose **Duplicate** in the row menu.
 

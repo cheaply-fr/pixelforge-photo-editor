@@ -4,7 +4,7 @@ summary: What stays on your device, what is stored in your browser, what is sent
 category: troubleshooting
 order: 30
 level: beginner
-keywords: [privacy, data, upload, gdpr, metadata, exif, gps, analytics, cookies, tracking, delete data]
+keywords: [privacy, data, upload, gdpr, metadata, exif, gps, analytics, cookies, tracking, consent, cookie banner, usage statistics, google analytics, delete data]
 related: [drafts-and-saving, cloud-projects, browser-storage-and-limits, faq]
 updated: 2026-11-14
 ---
@@ -29,8 +29,11 @@ PixelForge is built to work locally. Your images are opened, edited and exported
 
 ## Usage statistics
 
-The first time you visit, a **Help improve Cheaply Photo Editor** notice asks whether to allow anonymous usage statistics.
+The first time you visit, a **Help improve Cheaply Photo Editor** notice asks whether to allow anonymous usage statistics. It has two buttons, **No thanks** and **Allow**, which you can also reach with <kbd>Tab</kbd> and press with <kbd>Enter</kbd> or <kbd>Space</kbd>.
 
+![The usage statistics notice in the bottom-left corner of the editor, with No thanks and Allow buttons](img/analytics-consent-banner.jpg "The usage statistics notice")
+
+- The notice does not block the editor. On a computer it sits in the bottom-left corner, above the status line; on a phone it is a compact bar along the bottom of the screen, below the zoom control. Menus and tool flyouts open over it, so you can work before you answer.
 - Until you choose, and if you choose **No thanks**, no analytics script is loaded and nothing is sent.
 - If you choose **Allow**, Google Analytics is loaded and records a page view of the app. Your photos, projects, file names, account details and draft content are never included.
 

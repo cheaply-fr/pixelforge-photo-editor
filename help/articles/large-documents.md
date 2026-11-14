@@ -58,7 +58,9 @@ Undo history is limited by memory too: up to 240 steps and 320 MB of images on d
 
 ## Opening large drafts
 
-A large draft may take a moment to open. PixelForge shows the last saved picture straight away and an **Opening draft…** bar counting the layers as they load. The remaining layers finish loading in the background.
+A large draft may take a moment to open. PixelForge shows the last saved picture straight away and an **Opening draft…** box at the top of the canvas area, also on phones, counting the layers as they load. The remaining layers finish loading in the background.
+
+That saved picture is refreshed a few seconds after you stop editing. If you reload or close the tab sooner, PixelForge still tries to save it at once, so the next opening can usually show it straight away. Browsers do not always let a closing page finish, so this is best effort: if the picture was not saved, the draft opens by loading its layers instead, with the same result.
 
 ## Working with big images
 

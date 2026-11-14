@@ -23,8 +23,7 @@ updated: 2026-11-14
 
 The change is one undo step. It is stored with the layer rather than overwriting the original pixels, and it is included when you export.
 
-> [!NOTE]
-> The current brush **Size** and **Opacity** also influence how the uncovered area is filled. If the fill looks faint, check that the brush opacity is 100%.
+Any part of the selection that the scaled pixels no longer cover is filled at full strength from the surrounding colours. How far the fill looks depends on the size of the selection, as for [Content-Aware Fill](content-aware-fill-and-move); brush settings such as **Size** and **Opacity** have no effect.
 
 ## Limits
 

@@ -13,6 +13,17 @@ PixelForge updates automatically. When a new version is published while the edit
 
 ## November 14, 2026
 
+- Menus on phones open in full below their name and scroll, instead of showing only their first command. See [Use PixelForge on a phone](using-pixelforge-on-a-phone).
+- The usage statistics notice has clear **No thanks** and **Allow** buttons you can reach with the keyboard. Menus and flyouts open over it, and on phones it is a compact bar along the bottom. See [Privacy and your data](privacy-and-your-data).
+- The **Move** tool moves all selected layers and linked layers together, in one undo step. See [Move and align layers](move-and-align).
+- **Puppet Warp** pins bend only the area around them: a single pin no longer shifts the whole layer. See [Perspective and Puppet Warp](perspective-and-puppet-warp).
+- **Content-Aware Fill**, **Content-Aware Move** and **Content-Aware Scale** search as far as the selection needs instead of following the brush Size, always apply at full strength, and Content-Aware Fill tells you when it could fill nothing or only part of the selection. See [Content-Aware Fill and Move](content-aware-fill-and-move).
+- **Edit > Stroke Selection…** is about twice as fast on large selections, and explains why **Select > All** with an **Outside** stroke draws nothing.
+- SVG text: multi-line text written as evenly spaced `tspan` rows opens as one text layer, and letter-spaced text exports with `letter-spacing` so it reopens as a text layer. See [SVG import and export](svg-import-and-export).
+- The **Background Eraser** follows its **Hardness** setting. **Add image layer** places the image in the centre of the document. Project files saved as plain data by early versions open again.
+- Phones: the **Opening draft…** progress is visible, the save time is no longer cut off, the document bar buttons are easier to tap and the toolbar's family triangle sits in the top-right corner, clear of the tool names.
+- Reloading or closing the editor a few seconds after an edit still keeps the fast reopen preview of large drafts in most cases.
+
 - Every toolbar key now selects its tool: <kbd>V</kbd> Move, <kbd>H</kbd> Hand, <kbd>Z</kbd> Zoom, <kbd>T</kbd> the Type tools, and <kbd>Shift</kbd>+<kbd>R</kbd> (shown as **⇧R**) for Smudge, Blur and Sharpen; <kbd>R</kbd> stays Rotate View. See [Keyboard shortcuts](keyboard-shortcuts).
 - Menu shortcuts match their modifiers exactly: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> is **Edit > Fade…**, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> **Find Layers**, <kbd>Ctrl</kbd>+<kbd>,</kbd> **Hide Layers**, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Z</kbd> **Toggle Last State**, which now switches between the current and the previous state.
 - A **Help** menu and <kbd>F1</kbd> open this Help Center.

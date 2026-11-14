@@ -35,14 +35,19 @@ A **Background** layer in a new white or coloured document has a locked position
 1. Select two or more unlocked layers (see [Find and select layers](find-and-select-layers)).
 2. Choose **Layer > Link Layers**. The status bar says "Linked … layers for synchronized transforms".
 
-When you change the position of one linked layer with **Layer X** and **Layer Y** in the **Layer details** panel (under **More panels**), the other linked layers move by the same amount. Each layer keeps its own pixels, opacity, blend mode, masks and settings.
+When you move one linked layer, the other linked layers move by the same amount:
+
+- **Move tool:** drag a linked layer on the canvas. All its linked layers move with it, and the whole move is one undo step. The status bar says how many layers moved, for example "3 layers moved".
+- **Layer X** and **Layer Y** in the **Layer details** panel (under **More panels**): type a new position for one linked layer.
+
+Each layer keeps its own pixels, opacity, blend mode, masks and settings. If one of the layers that would move is locked or is a Background layer, nothing moves and the status bar says "Unlock every selected and linked layer before moving them together".
 
 - **Layer > Select Linked Layers** selects every layer linked to the selected one.
 - **Layer > Unlink Layers** removes the link from the selected layers. It does not change any pixels.
 
 The Layers panel does not show a link symbol on linked rows. Use **Select Linked Layers** to see which layers are linked.
 
-> [!NOTE]
-> Dragging with the Move tool currently moves only the active layer, even when it is linked. To move linked layers together, use the **Layer X** and **Layer Y** fields.
+> [!TIP]
+> To move a few layers together just once, without linking them, select them all and drag one of them with the Move tool. See [Move and align layers](move-and-align).
 
 Smart objects have a separate kind of link that shares their contents. See [Smart objects](smart-objects).

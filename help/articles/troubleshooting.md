@@ -67,9 +67,20 @@ The document's layers hold more pixels than this device allows. Merge layers, de
 - **Locked layer:** messages such as "Unlock this layer before editing". Unlock it in the Layers panel.
 - **Background layer:** its position is locked. Use **Layer > Layer from Background** to turn it into a normal layer.
 - **Empty selection:** "No pixels are selected" means the selection does not cover any of the canvas. Use **Select > Deselect** (<kbd>Ctrl</kbd>+<kbd>D</kbd>) or make a new selection.
+- **"Nothing to stroke…":** an **Outside** stroke of a selection that covers the whole canvas (for example after **Select > All**) would lie entirely beyond the canvas edge. Choose **Inside** or **Center**. See [Stroke a selection](stroke-a-selection).
+- **"Content-Aware Fill found no unselected pixels around the selection…":** there is nothing outside the selection to fill from. Select only the object to remove. See [Content-Aware Fill](content-aware-fill-and-move).
+- **"Unlock every selected and linked layer before moving them together":** the Move tool moves all selected and linked layers, and one of them is locked or is the Background layer. Unlock it, or select only the layers to move.
 - **Wrong layer:** many tools work on the selected layer only. Check which layer is highlighted in the Layers panel.
 - **Quick Mask mode:** some commands ask you to exit Quick Mask mode first.
 - **Greyed-out menu command:** it needs something first, such as a selection, a text layer or more than one layer.
+
+## A menu does not fit on a phone screen
+
+On a phone, an open menu appears just below its name and lists all its commands. If a menu has more commands than fit on the screen, swipe up and down inside it to scroll. See [Use PixelForge on a phone](using-pixelforge-on-a-phone).
+
+## The usage statistics notice is in the way
+
+The **Help improve Cheaply Photo Editor** notice stays until you choose **No thanks** or **Allow**. It never blocks the editor: menus and tool flyouts open over it. Choose either button to close it for good in this browser. See [Privacy and your data](privacy-and-your-data).
 
 ## Keyboard shortcuts do not work
 

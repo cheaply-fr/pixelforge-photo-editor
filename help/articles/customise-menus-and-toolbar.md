@@ -28,7 +28,7 @@ Click **Apply** to save, or **Reset defaults** to go back to the standard toolba
 
 ### Tool families
 
-Each toolbar button is a family of related tools. A small corner mark shows that a button has more tools. Press and hold the button, or right-click it, to open the family menu and choose another tool. The button then shows the tool you chose, and remembers it.
+Each toolbar button is a family of related tools. A small triangle in the bottom-right corner of a button (the top-right corner on a phone) shows that it has more tools. Press and hold the button, or right-click it, to open the family menu and choose another tool. The button then shows the tool you chose, and remembers it.
 
 ## Menus
 

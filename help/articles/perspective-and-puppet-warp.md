@@ -34,14 +34,13 @@ The layer's top-left corner moves to the first point, top-right to the second, b
 Puppet Warp moves parts of a layer by pins. Each pin is written as `x,y,dx,dy`: where the pin is, and how far to move it right (dx) and down (dy). Separate pins with semicolons; you can use one to eight pins.
 
 1. Select the layer and choose **Edit > Puppet Warp…**.
-2. Type the pins, for example `300,500,0,0; 800,250,0,-90; 1300,500,0,0`, and confirm.
+2. Type the pins, for example `800,420,160,0` to push the area around the point (800, 420) 160 px to the right, and confirm.
 
-![A portrait after Puppet Warp: the middle of the layer lifted while two still pins hold the sides](img/puppet-warp-result.jpg "Puppet Warp with one moving pin between two still pins")
+![A portrait after Puppet Warp with one pin: the face bent to the right while the edges of the layer stay in place](img/puppet-warp-result.jpg "Puppet Warp with a single pin")
 
-Pins with `0,0` as their movement hold the area around them in place. Each part of the layer moves by a blend of the pins, weighted towards the nearest ones.
+Each pin bends only the area around it. The pixel under the pin lands exactly where the pin moves to, nearby pixels follow less and less, and pixels farther away do not move at all. A pin reaches about a third of the layer's shorter side (35%), or farther for a long move, so the image never folds over itself. A single pin is enough: the rest of the layer stays where it is.
 
-> [!IMPORTANT]
-> Always add still pins (dx and dy of 0) around the area you want to move. With a single pin, every part of the layer is pulled by that one pin, so the whole layer simply shifts. Areas the layer is pulled away from become transparent.
+Where the areas of several pins overlap, their moves are blended. A still pin (dx and dy of 0) reduces the movement of a nearby moving pin, which helps to keep a feature from being pulled along. If a pin pulls content away from the edge of the layer, the uncovered area becomes transparent.
 
 ## Limits
 

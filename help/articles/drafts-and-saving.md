@@ -26,7 +26,7 @@ Each draft has its own address, ending in `#draft=` and an ID. Bookmark it to co
 
 | Button | What it does |
 |---|---|
-| **Save draft** | Saves the draft in this browser now and shows the time, for example "Saved on this device · 14:05". It does not download or upload anything. |
+| **Save draft** | Saves the draft in this browser now and shows the time, for example "Saved on this device · 14:05" (on a phone, "Saved · 14:05", so the time is not cut off). It does not download or upload anything. |
 | **Duplicate draft** | Continues on a new copy of the document. The original draft stays saved unchanged under its own address. |
 | **Home** | Goes to the PixelForge home page. Your draft stays saved. |
 | **Discard draft** | Deletes this draft from the browser after you confirm, and returns to the home page. This cannot be undone. |

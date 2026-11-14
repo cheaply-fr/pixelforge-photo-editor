@@ -21,9 +21,9 @@ SVG is a vector format used for logos, icons and illustrations. PixelForge turns
 | In the SVG | In PixelForge |
 |---|---|
 | Paths, rectangles (including rounded), circles, ellipses, lines, polylines and polygons | Editable path layers you can change with the Pen tools. Fill, stroke, stroke width, opacity and blend mode are kept. |
-| Simple text (one style, horizontal lines) | Text layers with font, size, weight, colour, spacing and alignment. |
+| Simple text (one style, horizontal lines) | Text layers with font, size, weight, colour, letter spacing and alignment. Several lines written as `tspan` rows with an even line spacing (an `x` with `y` or `dy` steps) become one multi-line text layer. |
 | Top-level groups | Layer groups with their name and opacity (when you open the file). |
-| Gradients, patterns, clip paths, masks, filters, markers, dashed strokes, embedded images, styled or italic text, text on a path | Pixel layers, drawn by your browser so they look the same as in the file. |
+| Gradients, patterns, clip paths, masks, filters, markers, dashed strokes, embedded images, styled or italic text, text on a path, text with uneven line gaps, indented lines or individually positioned letters | Pixel layers, drawn by your browser so they look the same as in the file. |
 
 Text uses fonts available in the browser; fonts embedded in the SVG are not loaded.
 
@@ -44,7 +44,7 @@ If an SVG is refused, open it in a vector editor, remove the unsupported parts (
 ### How layers are written
 
 - Shape and path layers become SVG shapes, with their transform, opacity, name and blend mode.
-- Text layers become SVG text that stays editable in other apps. Fonts are referenced by name, not embedded, so the text looks right only where the font is installed.
+- Text layers become SVG text that stays editable in other apps. Letter spacing is written as a `letter-spacing` attribute and the text keeps its alignment, so a letter-spaced text layer still opens as a text layer in PixelForge. Fonts are referenced by name, not embedded, so the text looks right only where the font is installed.
 - Layer groups become SVG groups.
 - Pixel layers, and layers with masks, layer styles, adjustments or smart filters, are embedded as PNG images in their place.
 - Adjustment layers, clipping masks and blend modes that SVG cannot express flatten everything below them into one image.

@@ -36,7 +36,7 @@ A new document with a filled background starts with a **Background** layer. On t
 The Background Eraser samples the colour under the point where you start the stroke and erases only pixels close to that colour that are under the brush. Use it to clear a plain backdrop around an object without erasing the object itself.
 
 1. Choose the **Background Eraser**.
-2. Set **Size** and **Color tolerance** (0–255). Low tolerance erases only colours very close to the sample; higher values erase a wider range.
+2. Set **Size**, **Hardness**, **Opacity** and **Color tolerance** (0–255). Low tolerance erases only colours very close to the sample; higher values erase a wider range. At **Hardness** 100 the brush erases matching pixels fully up to its edge; lower values fade the erasing towards the edge, and at 0 it fades to nothing there.
 3. Start the stroke on the colour you want to remove and drag along the edge of the object. Pixels that do not match the sampled colour are kept, even inside the brush.
 
 The colour is sampled once, at the start of each stroke. To remove a different colour, start a new stroke on it.

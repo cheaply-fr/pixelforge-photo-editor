@@ -10,7 +10,7 @@ related: [free-transform, layers-panel, find-and-select-layers, layer-groups]
 updated: 2026-11-14
 ---
 
-The **Move** tool (<kbd>V</kbd>) moves the active layer. Its options also align layers to the canvas and space layers evenly.
+The **Move** tool (<kbd>V</kbd>) moves the active layer, together with any other selected or linked layers. Its options also align layers to the canvas and space layers evenly.
 
 ## Move a layer
 
@@ -21,6 +21,13 @@ The **Move** tool (<kbd>V</kbd>) moves the active layer. Its options also align 
 Moving is non-destructive: the layer's pixels are kept, so content dragged off the canvas can be dragged back.
 
 The **Background** layer is locked in place. To move it, choose **Layer > Layer from Background** first.
+
+## Move several layers at once
+
+- **Selected layers:** select the layers in the Layers panel (<kbd>Shift</kbd>-click or <kbd>Ctrl</kbd>-click, see [Find and select layers](find-and-select-layers)), then drag one of them. All selected layers move by the same amount.
+- **Linked layers:** dragging a linked layer also moves every layer linked to it. See [Link and lock layers](link-and-lock-layers).
+
+The move is one undo step, and the status bar says how many layers moved. If one of the layers is locked or is the Background layer, nothing moves and the status bar asks you to unlock them first. After **Select > Deselect Layers**, a drag moves only the active layer.
 
 ## Pick layers on the canvas
 
