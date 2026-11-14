@@ -36,7 +36,7 @@ Puppet Warp moves parts of a layer by pins. Each pin is written as `x,y,dx,dy`: 
 1. Select the layer and choose **Edit > Puppet Warp…**.
 2. Type the pins, for example `800,420,160,0` to push the area around the point (800, 420) 160 px to the right, and confirm.
 
-![A portrait after Puppet Warp with one pin: the face bent to the right while the edges of the layer stay in place](img/puppet-warp-result.jpg "Puppet Warp with a single pin")
+![A portrait after Puppet Warp with one pin: the face stretched to the right while the edges of the layer stay in place](img/puppet-warp-result.jpg "Puppet Warp with a single pin")
 
 Each pin bends only the area around it. The pixel under the pin lands exactly where the pin moves to, nearby pixels follow less and less, and pixels farther away do not move at all. A pin reaches about a third of the layer's shorter side (35%), or farther for a long move, so the image never folds over itself. A single pin is enough: the rest of the layer stays where it is.
 
