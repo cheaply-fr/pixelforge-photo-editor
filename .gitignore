@@ -47,3 +47,6 @@ gha-creds-*.json
 
 # generated font library (scripts/copy-fonts.mjs)
 /public/fonts/
+
+# Help Center screenshot runs
+test-results/help-shots/
