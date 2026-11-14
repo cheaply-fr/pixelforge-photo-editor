@@ -697,3 +697,8 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 /* Phones drop "on this device" from the timestamped save status and notice so the time stays visible. */
 @media(max-width:680px){.save-text-where{display:none}}
 .save-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Silk strands "New seed": a small option button, like .option-buttons. */
+.strand-seed-row .strand-seed-new{flex:0 0 auto;min-height:28px;padding:4px 10px;border:1px solid #34363e;border-radius:6px;background:#202228;color:#c9ccd3;font-size:10px;font-weight:600;line-height:1.2;cursor:pointer}
+.strand-seed-row .strand-seed-new:hover{border-color:#564037;color:#ff967b}
+.strand-seed-row .strand-seed-new:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media(pointer:coarse){.strand-seed-row .strand-seed-new{min-height:36px}}

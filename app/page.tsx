@@ -22631,6 +22631,7 @@ export default function Home() {
                                     </label>
                                     <button
                                       type="button"
+                                      className="strand-seed-new"
                                       title="Pick a new random seed for the next stroke"
                                       onClick={() =>
                                         setBrushStrands((current) =>

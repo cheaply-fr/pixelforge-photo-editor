@@ -158,6 +158,18 @@ test('Silk strands controls are accessible, Brush-only, persisted and fit the vi
   await page.getByRole('button', { name: 'New seed', exact: true }).click();
   await expect(seed).not.toHaveValue('4242');
   await seed.fill('4242');
+  // "New seed" is a small bordered option button, not bare text, and is no
+  // taller than the seed field's row.
+  const newSeed = page.getByRole('button', { name: 'New seed', exact: true });
+  const seedStyle = await newSeed.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { border: style.borderTopWidth, radius: style.borderTopLeftRadius, background: style.backgroundColor, font: parseFloat(style.fontSize) };
+  });
+  expect(seedStyle).toEqual({ border: '1px', radius: '6px', background: 'rgb(32, 34, 40)', font: 10 });
+  const seedBox = (await newSeed.boundingBox())!;
+  const fieldBox = (await seed.boundingBox())!;
+  expect(seedBox.height).toBeGreaterThanOrEqual(28);
+  expect(seedBox.height).toBeLessThanOrEqual(Math.max(40, fieldBox.height + 12));
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(1);
   for (const label of ['Strands', 'Strand seed', 'New seed']) {
