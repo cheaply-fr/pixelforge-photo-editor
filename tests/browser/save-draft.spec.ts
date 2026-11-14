@@ -204,3 +204,52 @@ test('doc bar draft actions are at least 24 px tall, 32 px or more on touch scre
   const overflow = await page.locator('.docbar').evaluate((node) => node.scrollWidth - node.clientWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test('after opening a photo, the status line and the document name are not cut off', async ({ page }) => {
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1200;
+    canvas.height = 900;
+    canvas.getContext('2d')!.fillRect(0, 0, 40, 40);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  await page.getByTestId('file-input').setInputFiles({ name: 'sample-landscape.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+  await expect(page.getByTestId('editor-canvas')).toHaveAttribute('width', '1200');
+  await expect(page.getByRole('application')).toHaveAttribute('aria-busy', 'false');
+  await expect(page.getByTestId('render-status')).toHaveText('Render ready');
+  await expect(status(page)).toHaveText('Saved on this device');
+  const phone = page.viewportSize()!.width <= 680;
+  const fit = (locator: ReturnType<typeof page.locator>) =>
+    locator.evaluate((element) => ({ scroll: element.scrollWidth, client: element.clientWidth, shown: (element as HTMLElement).innerText.trim() }));
+  // The statuses keep their whole text; phones say "Saved" (the text
+  // content still reads "Saved on this device").
+  for (const [target, shown] of [
+    [page.getByTestId('render-status'), 'Render ready'],
+    [status(page), phone ? 'Saved' : 'Saved on this device'],
+  ] as const) {
+    const box = await fit(target);
+    expect(box.shown).toBe(shown);
+    expect(box.scroll, shown).toBeLessThanOrEqual(box.client + 1);
+  }
+  // The status line itself does not overflow; Save JPEG is fully on screen.
+  const footer = page.locator('.editor-shell footer');
+  expect(await footer.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(0);
+  const save = (await footer.getByRole('button', { name: 'Save JPEG' }).boundingBox())!;
+  expect(save.x + save.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  // The whole document name is shown; a name too long for its room ends in
+  // an ellipsis instead of being clipped.
+  const name = page.getByLabel('Document name');
+  await expect(name).toHaveValue('sample-landscape');
+  const field = await name.evaluate((element) => ({
+    scroll: element.scrollWidth,
+    client: element.clientWidth,
+    overflow: getComputedStyle(element).textOverflow,
+  }));
+  expect(field.scroll).toBeLessThanOrEqual(field.client);
+  expect(field.overflow).toBe('ellipsis');
+  if (phone) {
+    // On phones the name takes its row of the doc bar.
+    const docbar = (await page.locator('.docbar').boundingBox())!;
+    expect((await name.boundingBox())!.width).toBeGreaterThan(docbar.width * 0.7);
+  }
+});

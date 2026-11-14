@@ -695,9 +695,21 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .draft-actions a:hover,.draft-actions button:hover:not(:disabled){background:#1f2128}
 .draft-actions a:focus-visible,.draft-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 @media(pointer:coarse){.draft-actions{gap:4px}.draft-actions a,.draft-actions button{min-height:32px;margin-block:-5px;padding:0 8px}}
-/* Phones drop "on this device" from the timestamped save status and notice so the time stays visible. */
+/* Phones drop "on this device" from the save status ("Saved", "Saved · HH:MM") and the save notice so they fit and the time stays visible. */
 @media(max-width:680px){.save-text-where{display:none}}
 .save-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Phone status line: the render and save statuses and Save JPEG keep their full width; only the last message (first item) gives way, with an ellipsis. */
+@media(max-width:680px){
+  .editor-shell footer{gap:12px}
+  .editor-shell footer>span:first-child{flex:1 1 0;display:block}
+  .editor-shell footer>span:first-child>i{display:inline-block;margin-right:7px;vertical-align:middle}
+  .editor-shell footer>output[aria-label]{flex:none;max-width:none}
+  .editor-shell footer>output[aria-label="Draft save status"]{flex:0 1 auto;min-width:0}
+  .editor-shell footer>button{flex:none}
+}
+/* Doc bar document name: an ellipsis when it does not fit; on phones it takes its whole row. */
+.docbar input{text-overflow:ellipsis}
+@media(max-width:680px){.docbar>div:first-child input{flex:1 1 auto;width:auto;min-width:0}}
 /* Silk strands "New seed": a small option button, like .option-buttons. */
 .strand-seed-row .strand-seed-new{flex:0 0 auto;min-height:28px;padding:4px 10px;border:1px solid #34363e;border-radius:6px;background:#202228;color:#c9ccd3;font-size:10px;font-weight:600;line-height:1.2;cursor:pointer}
 .strand-seed-row .strand-seed-new:hover{border-color:#564037;color:#ff967b}

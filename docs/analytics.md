@@ -17,13 +17,20 @@ a non-modal `region` named "Analytics consent" offers **No thanks** (outlined,
 secondary) and **Allow** (filled, primary). Both are at least 40 px tall with a
 visible keyboard focus ring; the banner carries its own scoped styles because
 the app's global reset strips button styling (`src/analyticsConsentBanner.ts`).
-It never covers the editor's zoom control: on wide screens it sits bottom-left
-above the status bar (lifted above the zoom control if a narrow window puts
-them in the same place). On phones (680 px wide and narrower) it is a fixed,
-compact bar along the bottom of the screen, 8 px from the edges and below the
-zoom control (lifted above it if they would meet); while it shows, the page
-gains room below its end equal to the bar's height, so the last content can
-scroll clear of it. It stacks above the editor's own surfaces (z-index 30)
+It covers no tool button and never the editor's zoom control. In the editor
+on wide screens it sits over the canvas area, between the toolbar and the
+properties sidebar: 16 px in from the canvas area's bottom-left corner, at
+most 416 px wide (narrower to fit a narrower canvas area), and lifted above
+the zoom control when they would meet. If the canvas area is too narrow
+(under 292 px), and on the landing page, it sits bottom-left above the status
+bar instead. On phones (680 px wide and narrower) it is one compact row, about
+56 px tall, fixed along the bottom of the screen 8 px from the edges: the short
+message "Allow anonymous usage stats? Your photos stay on this device." with
+the two buttons on its right (the title and the long message are hidden
+there). That keeps the properties sheet handle above it and tappable, and it
+sits below the zoom control (lifted above it if they would meet). While it
+shows, the page gains room below its end equal to the bar's height, so the
+last content can scroll clear of it. It stacks above the editor's own surfaces (z-index 30)
 but below menus, popovers and toolbar flyouts, which therefore always open
 over it. Only its buttons take pointer input. `tests/analytics-consent-banner.test.mjs` and
 `tests/browser/analytics-consent-banner.spec.ts` (editor at 1280×720,
