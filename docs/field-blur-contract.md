@@ -7,7 +7,9 @@ undo/redo, browser draft reload and project-file import.
 
 A Field Blur record uses the existing bounded filter envelope plus
 `fieldPoints`, an array of one to eight pins. Each pin stores normalized `x` and
-`y` coordinates and a source-pixel `radius` from 0 through 64. The renderer
+`y` coordinates and a source-pixel `radius` from 0 through 64. The shared
+`radius` field is not used (a record without pins renders nothing), so the
+panel shows no radius slider; the pins are the radius controls. The renderer
 interpolates pin radii across the layer and applies a deterministic 25-sample
 disc kernel at each destination. Amount controls the blend with the unfiltered
 source. Alpha is preserved exactly and transparent RGB padding is never mixed

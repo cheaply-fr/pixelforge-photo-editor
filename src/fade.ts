@@ -1,3 +1,9 @@
+import {
+  effectiveFilterEffects,
+  isNeutralFilterEffects,
+  type FilterEffects,
+} from './filterEffects.ts';
+
 /**
  * Blend the result of the most recent raster edit with the previous raster
  * state.  Photoshop's Fade is a post-operation opacity control; this bounded
@@ -18,4 +24,25 @@ export function applyFadePixels(
   for (let index = 0; index < output.length; index += 1)
     output[index] = Math.round(previous[index] * (1 - strength) + current[index] * strength);
   return output;
+}
+
+/**
+ * Edit → Fade after a live (non-destructive) filter. Returns the live filter
+ * to fade when the last step changed the layer's live filter (and not only
+ * its fade) and left the raster asset alone; otherwise undefined. Fading sets
+ * the filter's `fade` opacity: the filter result is mixed with the filter's
+ * input, so 0 % shows the layer as it was before the filter.
+ */
+export function liveFilterFadeTarget(
+  previous: { asset?: string; filterEffects?: Partial<FilterEffects> } | undefined,
+  current: { asset?: string; filterEffects?: Partial<FilterEffects> } | undefined,
+): FilterEffects | undefined {
+  if (!previous || !current || previous.asset !== current.asset) return undefined;
+  const live = effectiveFilterEffects(current.filterEffects);
+  if (live.type === 'none' || isNeutralFilterEffects({ ...live, fade: undefined })) return undefined;
+  const before: Partial<FilterEffects> = effectiveFilterEffects(previous.filterEffects);
+  const after: Partial<FilterEffects> = { ...live };
+  delete before.fade;
+  delete after.fade;
+  return JSON.stringify(before) === JSON.stringify(after) ? undefined : live;
 }
