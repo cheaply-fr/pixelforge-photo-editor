@@ -84,6 +84,35 @@ async function meanDifference(page: Page, a: { type: string; base64: string }, b
   }, { a, b, w, h });
 }
 
+/** Leftmost and rightmost columns with dark ink in each row band of an image drawn on white. */
+async function inkColumns(page: Page, source: { type: string; base64: string }, w: number, h: number, bands: ReadonlyArray<readonly [number, number]>) {
+  return page.evaluate(async ({ source, w, h, bands }) => {
+    const image = new Image();
+    image.src = `data:${source.type};base64,${source.base64}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const context = canvas.getContext('2d')!;
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, w, h);
+    context.drawImage(image, 0, 0, w, h);
+    const data = context.getImageData(0, 0, w, h).data;
+    return bands.map(([top, bottom]) => {
+      let left = w, right = -1;
+      for (let y = top; y < bottom; y += 1)
+        for (let x = 0; x < w; x += 1) {
+          const offset = (y * w + x) * 4;
+          if ((data[offset] + data[offset + 1] + data[offset + 2]) / 3 < 128) {
+            if (x < left) left = x;
+            if (x > right) right = x;
+          }
+        }
+      return [left, right];
+    });
+  }, { source, w, h, bands });
+}
+
 test('opens an SVG as editable vector, text and pixel layers', async ({ page }) => {
   await openSvg(page, 'mixed.svg', MIXED_SVG);
   await expect(page.getByText('SVG opened as 1 vector, 1 text, 1 pixel layers; gradients, effects and embedded images are kept as pixel layers', { exact: true })).toBeVisible();
@@ -247,8 +276,20 @@ test('letter-spaced and right-aligned text exports with letter-spacing and text-
     300,
     160,
   );
-  // Tight: a line anchored one letter-spacing off already differs by ~2.
-  expect(difference).toBeLessThan(0.5);
+  expect(difference).toBeLessThan(1.5);
+  // Each line starts and ends at the same pixel column as on the canvas (an
+  // anchor one letter-spacing off would move the right-aligned lines by 1 px
+  // per glyph gap). Image resampling on high-density screens adds a little
+  // anti-aliasing noise to the mean, so the edges are checked directly.
+  const lines = { spaced: [28, 56], first: [84, 104], second: [108, 128] } as const;
+  const svgInk = await inkColumns(page, { type: 'image/svg+xml', base64: svg.bytes.toString('base64') }, 300, 160, Object.values(lines));
+  const pngInk = await inkColumns(page, { type: 'image/png', base64: png.bytes.toString('base64') }, 300, 160, Object.values(lines));
+  svgInk.forEach(([left, right], index) => {
+    expect(Math.abs(left - pngInk[index][0]), `line ${index} left`).toBeLessThanOrEqual(1);
+    expect(Math.abs(right - pngInk[index][1]), `line ${index} right`).toBeLessThanOrEqual(1);
+  });
+  // The right-aligned lines share their right edge.
+  expect(Math.abs(svgInk[1][1] - svgInk[2][1])).toBeLessThanOrEqual(1);
   await openSvg(page, 'spaced-round-trip.svg', svg.bytes);
   await expect(page.getByText(/^SVG opened as 2 text layers/)).toBeVisible();
   const frame = await savedDocument(page);
