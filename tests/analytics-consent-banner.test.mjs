@@ -21,16 +21,19 @@ test('the banner keeps its consent semantics, storage key and real styled button
 
 test('desktop placement is bottom-left above the status bar and lifts over the zoom control', () => {
   const banner = { width: 416, height: 150 };
-  assert.deepEqual(consentBannerPlacement({ width: 1280, height: 720 }, banner, { left: 148, top: 98, right: 1006, bottom: 692 }, { left: 468, top: 642, right: 686, bottom: 676 }), { bottom: 40 });
+  assert.deepEqual(consentBannerPlacement({ width: 1280, height: 720 }, banner, { left: 468, top: 642, right: 686, bottom: 676 }), { bottom: 40 });
   // A narrow window whose zoom control sits under the banner lifts it above.
-  assert.deepEqual(consentBannerPlacement({ width: 900, height: 700 }, banner, undefined, { left: 300, top: 600, right: 520, bottom: 634 }), { bottom: 108 });
-  // The landing page has no editor stage.
+  assert.deepEqual(consentBannerPlacement({ width: 900, height: 700 }, banner, { left: 300, top: 600, right: 520, bottom: 634 }), { bottom: 108 });
+  // The landing page has no zoom control.
   assert.deepEqual(consentBannerPlacement({ width: 1440, height: 900 }, banner), { bottom: 40 });
 });
 
-test('phone placement sits at the top of the canvas stage, inside the viewport', () => {
-  const banner = { width: 380, height: 180 };
-  assert.deepEqual(consentBannerPlacement({ width: 412, height: 839 }, banner, { left: 0, top: 158, right: 412, bottom: 630 }), { top: 166 });
-  assert.deepEqual(consentBannerPlacement({ width: 412, height: 300 }, banner, { left: 0, top: 250, right: 412, bottom: 300 }), { top: 104 });
-  assert.deepEqual(consentBannerPlacement({ width: 412, height: 839 }, banner), { bottom: 16 });
+test('phone placement is a bar along the bottom that reserves room below the page end', () => {
+  assert.deepEqual(consentBannerPlacement({ width: 412, height: 839 }, { width: 396, height: 123.4 }, { left: 100, top: 645, right: 330, bottom: 679 }), { bottom: 8, reserve: 140 });
+  // A zoom control that would sit under it lifts it.
+  assert.deepEqual(consentBannerPlacement({ width: 412, height: 700 }, { width: 396, height: 124 }, { left: 100, top: 600, right: 330, bottom: 634 }), { bottom: 108, reserve: 140 });
+});
+
+test('the banner stacks above the editor but below menus and flyouts', () => {
+  assert.match(consentBannerMarkup(), /#cheaply-analytics-consent\{[^}]*z-index:30;/);
 });
