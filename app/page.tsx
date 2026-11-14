@@ -732,6 +732,7 @@ import {
   toolShortcutMatches,
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
+import { compactToolKeyLabel, resolveToolKey } from '../src/toolKeys';
 import {
   commandShortcutMatches,
   normalizeCommandShortcutPreferences,
@@ -1448,9 +1449,9 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'dodge', label: 'Dodge', icon: toolIcon('dodge'), key: 'O' },
   { id: 'burn', label: 'Burn', icon: toolIcon('burn'), key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: toolIcon('sponge'), key: 'O' },
-  { id: 'smudge', label: 'Smudge', icon: toolIcon('smudge'), key: 'R' },
-  { id: 'blur', label: 'Blur', icon: toolIcon('blur'), key: 'R' },
-  { id: 'sharpen', label: 'Sharpen', icon: toolIcon('sharpen'), key: 'R' },
+  { id: 'smudge', label: 'Smudge', icon: toolIcon('smudge'), key: 'Shift+R' },
+  { id: 'blur', label: 'Blur', icon: toolIcon('blur'), key: 'Shift+R' },
+  { id: 'sharpen', label: 'Sharpen', icon: toolIcon('sharpen'), key: 'Shift+R' },
   { id: 'pen', label: 'Pen', icon: toolIcon('pen'), key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: toolIcon('freeform-pen'), key: 'P' },
   { id: 'curvature-pen', label: 'Curvature Pen', icon: toolIcon('curvature-pen'), key: 'P' },
@@ -1611,29 +1612,7 @@ const MARQUEE_TOOLS: Tool[] = [
   'row-select',
   'column-select',
 ];
-/** Photoshop's repeated-key tool groups, limited to tools PixelForge actually implements. */
-const TOOL_GROUPS: Record<string, Tool[]> = {
-  c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
-  g: ['gradient', 'fill'],
-  b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
-  m: MARQUEE_TOOLS,
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
-  l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
-  w: ['selection-brush', 'quick-selection', 'magic-wand'],
-  e: ['eraser', 'background-eraser', 'magic-eraser'],
-  k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
-  o: ['dodge', 'burn', 'sponge'],
-  r: ['rotate-view', 'smudge', 'blur', 'sharpen'],
-  s: ['clone', 'pattern-stamp'],
-  y: ['history-brush', 'art-history-brush'],
-  j: ['heal', 'spot-heal', 'patch', 'red-eye'],
-  p: ['pen', 'freeform-pen', 'curvature-pen'],
-  a: ['path-select', 'direct-select'],
-};
-/** Existing PixelForge aliases retained while the primary keys follow Photoshop.
- * A used to alias Direct Selection; it is now the Path/Direct Selection family. */
-const TOOL_ALIASES: Record<string, Tool> = {};
+// Tool letters live in src/toolKeys.ts (TOOL_KEY_FAMILIES / resolveToolKey).
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
   ['Vivid', 'saturate(1.45) contrast(1.08)', '#244d96', '#ef854a'],
@@ -18185,50 +18164,16 @@ export default function Home() {
         return;
       }
       if (e.altKey) return;
-      const lower = e.key.toLowerCase();
-      // Photoshop keeps Rotate View on the plain R press while Shift+R
-      // returns to the active retouch member of the R family. Preserve that
-      // affordance even though Blur and Sharpen now share the same flyout.
-      if (lower === 'r') {
+      // R = Rotate View, Shift+R = Smudge/Blur/Sharpen, V/H/Z singles and the
+      // family letters all resolve in src/toolKeys.ts (docs/keyboard-shortcuts.md).
+      const keyedTool = resolveToolKey(e, tool, lastRFamilyTool.current) as Tool | undefined;
+      if (keyedTool) {
         e.preventDefault();
-        const next = e.shiftKey
-          ? (tool === 'rotate-view' ? lastRFamilyTool.current : tool)
-          : 'rotate-view';
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next as Tool));
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(keyedTool));
         setNotice(
           toolSelectionNotice(
-            next as Tool,
-            TOOLS.find((item) => item.id === next)?.label || next,
-          ),
-        );
-        return;
-      }
-      const group = TOOL_GROUPS[lower];
-      if (group) {
-        e.preventDefault();
-        const index = group.indexOf(tool);
-        const direction = e.shiftKey ? -1 : 1;
-        const next =
-          group[
-            (index < 0 ? 0 : index + direction + group.length) % group.length
-          ];
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next));
-        setNotice(
-          toolSelectionNotice(
-            next,
-            TOOLS.find((item) => item.id === next)?.label || next,
-          ),
-        );
-        return;
-      }
-      const alias = TOOL_ALIASES[lower];
-      if (alias) {
-        e.preventDefault();
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(alias));
-        setNotice(
-          toolSelectionNotice(
-            alias,
-            TOOLS.find((item) => item.id === alias)?.label || alias,
+            keyedTool,
+            TOOLS.find((item) => item.id === keyedTool)?.label || keyedTool,
           ),
         );
         return;
@@ -20420,7 +20365,7 @@ export default function Home() {
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
-                        {key && <kbd>{key}</kbd>}
+                        {key && <kbd>{compactToolKeyLabel(key)}</kbd>}
                         {hiddenSubtools.length > 0 && (
                           <span
                             className="tool-subtool-arrow"
