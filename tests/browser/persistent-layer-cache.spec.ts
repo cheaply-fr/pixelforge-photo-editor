@@ -247,3 +247,40 @@ test('a reopened painting shows its saved picture at once and reads its layers f
   expect(reopened.prefetches, 'reads start ahead of the layers').toBeGreaterThan(0);
   expect(await compositeChecksum(page), 'layers from the device are byte-identical').toEqual(computed);
 });
+
+test('a reload half a second after an edit still reopens from a matching saved picture', async ({ page }) => {
+  test.setTimeout(240_000);
+  await page.getByRole('button', { name: 'File', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'New…', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'New document' });
+  await dialog.getByLabel('New document width (px)').fill(String(W));
+  await dialog.getByLabel('New document height (px)').fill(String(H));
+  await dialog.getByLabel('Background contents').selectOption('white');
+  await dialog.getByRole('button', { name: 'Create document', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  for (let index = 0; index < 8; index += 1) {
+    await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+    await settled(page);
+  }
+  await menu(page, 'Filter', 'Clouds');
+  await settled(page);
+  await expect.poll(() => previewTag(page), { timeout: 60_000 }).not.toBeNull();
+  const tagBefore = await previewTag(page);
+  // Edit (a new composite), then reload well inside the 3 s quiet window:
+  // the pending picture is written synchronously as the page goes away.
+  await page.getByRole('button', { name: 'Add paint layer', exact: true }).click();
+  await settled(page);
+  await menu(page, 'Filter', 'Lens Flare…');
+  await settled(page);
+  await expect(page.getByRole('status', { name: 'Draft save status' })).toHaveText('Saved on this device', { timeout: 60_000 });
+  const live = await composite(page);
+  await page.waitForTimeout(500);
+  // The quiet timer has not written the new picture yet.
+  expect(await previewTag(page)).toBe(tagBefore);
+  await page.reload();
+  await expect(page.getByRole('button', { name: /^Select layer / })).toHaveCount(10, { timeout: 120_000 });
+  await settled(page);
+  expect(await composite(page)).toEqual(live);
+  expect((await marks(page, 'pixelforge.draft-preview-installed')).length, 'installed from the picture saved on unload').toBe(1);
+  expect(await previewTag(page)).not.toBe(tagBefore);
+});

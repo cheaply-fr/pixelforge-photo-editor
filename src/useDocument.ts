@@ -188,6 +188,9 @@ export function useDocument(onError: (message: string) => void) {
     context.clearRect(0, 0, w, h);
     context.drawImage(target, 0, 0);
     kept.store(key, w, h, copy);
+    // Open the store and hash the slot key now, so leaving the page can
+    // write the preview synchronously.
+    sharedPersistentLayerCache(surface)?.prepare(DRAFT_PREVIEW_SLOT);
     schedulePreviewSave(key, w, h, immediate ? 0 : DRAFT_PREVIEW_DELAY_MS);
   };
   const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -256,11 +259,23 @@ export function useDocument(onError: (message: string) => void) {
   const previewScheduler = useRef<PreviewScheduler<GesturePreview> | null>(null);
   useEffect(() => {
     // Leaving the page (tab switch, close, reload) writes a pending preview
-    // now rather than losing it with the quiet timer.
+    // now rather than losing it with the quiet timer. The write is encoded
+    // and issued synchronously: a reload or close does not wait for an
+    // async encode and transaction. When that is not possible (the store is
+    // not open yet) the usual async write is started, which still completes
+    // when the page is only hidden.
     const onHide = () => {
       const due = previewDue.current;
       if (!due) return;
       clearTimeout(previewTimer.current);
+      const kept = presented.current;
+      const copy = kept.key === due.key ? kept.reusable(due.w, due.h) : undefined;
+      if (copy && previewSaved.current !== due.key &&
+        sharedPersistentLayerCache(surface)?.putNow(DRAFT_PREVIEW_SLOT, copy, due.w, due.h, due.key)) {
+        previewDue.current = undefined;
+        previewSaved.current = due.key;
+        return;
+      }
       savePreviewNow(due.key, due.w, due.h);
     };
     const onVisibility = () => {
