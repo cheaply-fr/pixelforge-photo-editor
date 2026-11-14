@@ -12561,10 +12561,12 @@ export default function Home() {
       if (current() !== original)
         throw new Error('Document changed during import. Please try again.');
       if (asLayer) {
+        // Centred in the document, like a dropped or placed image.
         const added = addLayer({
           ...commonLayer(selected.name.slice(0, 160)),
           kind: 'raster',
           asset: addAsset(assets.current, c),
+          matrix: placementMatrixAt(undefined, c.width, c.height, original.w, original.h),
         });
         if (!added) return;
       } else if (
