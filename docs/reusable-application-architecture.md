@@ -1,5 +1,12 @@
 # Reusable application architecture and delivery blueprint
 
+> **Blueprint, not current state.** This guide is a recommended architecture for
+> future applications. Its directory layout (for example `src/domain/`,
+> `src/render/`) and authentication guidance (Authorization Code with PKCE) do
+> not describe PixelForge as built: PixelForge uses a flat `src/` and the
+> existing Marketplace session cookie. For the actual system see
+> [`architecture.md`](./architecture.md).
+
 This guide extracts the reusable engineering patterns from PixelForge for a
 new browser application, including a video editor. It describes boundaries and
 release gates rather than prescribing the product's exact features. Keep the

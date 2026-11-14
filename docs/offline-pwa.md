@@ -6,15 +6,38 @@ pixels. Production builds register `/sw.js` after the first page load; local
 development does not register the worker, so Vite hot reload remains isolated
 from the production cache.
 
-The worker follows two rules:
+The worker (`public/sw.js`) uses two caches and handles only same-origin
+`GET` requests:
 
-- HTML navigations use the network first and refresh the cached `/index.html`
-  when the request succeeds. If the network is unavailable, the last shell is
-  returned so `/editor` and bookmarked drafts can open.
-- Same-origin GET assets use a versioned runtime cache. Hashed Vite assets are
-  safe to reuse after the first successful online load. Marketplace requests
-  and other cross-origin traffic are excluded, so cloud session/project calls
-  never become an implicit offline data cache.
+| Cache | Contents | Lifetime |
+| --- | --- | --- |
+| `pixelforge-shell-v3` (`CACHE_NAME`) | Precached shell (`/`, `/index.html`, manifest, favicon, logo, icons), the last editor HTML, hashed Vite assets and Help Center pages | Replaced when `CACHE_NAME` is bumped; older `pixelforge-shell-*` caches are deleted on activation |
+| `pixelforge-fonts-v1` (`FONT_CACHE_NAME`) | Library fonts and glyph metadata under `/fonts/` (URLs carry `?v=<asset version>`), cached on first use | Survives shell bumps, so a font used once keeps working offline (see [`font-library-contract.md`](./font-library-contract.md)) |
+
+Request rules, in order:
+
+1. **Health and release probes bypass the worker:** `/release.json`,
+   `/api/readyz.json`, `/api/readyz` and `/health` always go to the network
+   (including cache-busting queries) and are never cached.
+2. **Fonts** (`/fonts/…`): cache first in `pixelforge-fonts-v1`, filled on the
+   first successful response.
+3. **Help Center navigations** (`/help…`): network first; a successful response
+   is cached under its own URL. Offline, the cached copy of that page is
+   returned, else the cached `/help` index. Help pages are never stored as the
+   editor shell.
+4. **Other HTML navigations:** network first, refreshing the cached
+   `/index.html` on success. Offline, the last shell is returned so `/editor`
+   and bookmarked drafts can open.
+5. **Other assets:** cache first; the first successful response is stored.
+   Hashed Vite assets are immutable, so reuse is safe.
+
+Marketplace requests and other cross-origin traffic are not intercepted, so
+cloud session/project calls never become an implicit offline data cache.
+
+**Updates.** The worker calls `skipWaiting()` on install and
+`clients.claim()` after activation, so a new deploy's worker takes control of
+open tabs without waiting for them to close. Because navigations are network
+first, the next page load picks up the new HTML and its hashed assets.
 
 This milestone requires one successful online visit before the shell and app
 assets are available offline. Draft pixels, settings and undo history continue
@@ -35,4 +58,4 @@ network, reloads the bookmarked draft, and verifies that the editor and draft
 status recover. Cloud requests intentionally remain online-only and are not
 treated as successful offline operations.
 
-Release metadata and readiness probes (`/release.json` and `/api/readyz.json`) bypass the service-worker cache, including cache-busting queries. They therefore reflect current network reachability and never accumulate poll responses in the offline shell cache. The top bar retains the baked app version and shows **Offline · local editing** when health probes cannot reach the server.
+Release metadata and readiness probes (`/release.json`, `/api/readyz.json`, `/api/readyz` and `/health`) bypass the service-worker cache, including cache-busting queries. They therefore reflect current network reachability and never accumulate poll responses in the offline shell cache. The top bar retains the baked app version and shows **Offline · local editing** when health probes cannot reach the server.

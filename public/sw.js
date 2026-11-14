@@ -1,5 +1,5 @@
 /* PixelForge's service worker keeps the static editor shell available after a successful online visit. */
-const CACHE_NAME = 'pixelforge-shell-v2';
+const CACHE_NAME = 'pixelforge-shell-v3';
 // Library fonts and their glyph metadata are cached on first use in their own
 // cache (URLs carry ?v=<asset version>), so shell cache bumps never evict them
 // and a font used once keeps working offline (docs/font-library-contract.md).
@@ -26,7 +26,7 @@ self.addEventListener('fetch', (event) => {
 
   // Health reads must reach the network; cache busting queries must not grow the shell cache.
   const path = new URL(request.url).pathname;
-  if (path === '/release.json' || path === '/api/readyz.json') return;
+  if (path === '/release.json' || path === '/api/readyz.json' || path === '/api/readyz' || path === '/health') return;
 
   if (path.startsWith('/fonts/')) {
     event.respondWith(
@@ -39,6 +39,23 @@ self.addEventListener('fetch', (event) => {
           });
         }),
       ),
+    );
+    return;
+  }
+
+  if (request.mode === 'navigate' && path.startsWith('/help')) {
+    // Help Center pages are separate static documents: network first, then the
+    // copy cached under their own URL. They must never replace the editor shell.
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match('/help'))),
     );
     return;
   }

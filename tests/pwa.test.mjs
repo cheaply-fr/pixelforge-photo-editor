@@ -33,7 +33,7 @@ test('PWA metadata exposes an installable PixelForge shell', async () => {
     const bytes = await readFile(new URL(`public${icon.src}`, root));
     assert.ok(bytes.subarray(0, pngSignature.length).equals(pngSignature), `${icon.src} is a PNG`);
   }
-  assert.match(sw, /const CACHE_NAME = 'pixelforge-shell-v2'/);
+  assert.match(sw, /const CACHE_NAME = 'pixelforge-shell-v3'/);
   assert.match(sw, /request\.mode === 'navigate'/);
   assert.match(sw, /caches\.match\('\/index\.html'\)/);
   assert.match(sw, /new URL\(request\.url\)\.origin !== self\.location\.origin/);
@@ -56,7 +56,7 @@ test('release and readiness probes bypass offline caches including cache-busting
     fetch: () => { networkReads += 1; return Promise.resolve({ ok: false }); },
   });
   const fetchHandler = handlers.get('fetch');
-  for (const path of ['/release.json?status=1', '/api/readyz.json?status=2']) {
+  for (const path of ['/release.json?status=1', '/api/readyz.json?status=2', '/health', '/api/readyz']) {
     let intercepted = false;
     fetchHandler({
       request: { method: 'GET', mode: 'cors', url: `https://photoeditor.cheaply.fr${path}` },
@@ -75,4 +75,34 @@ test('release and readiness probes bypass offline caches including cache-busting
   await Promise.resolve(assetResponse);
   assert.equal(cacheReads, 1, 'ordinary immutable assets retain offline caching');
   assert.equal(networkReads, 1);
+});
+
+test('Help Center pages are cached under their own URL and never replace the editor shell', async () => {
+  const { runInNewContext } = await import('node:vm');
+  const handlers = new Map();
+  const puts = [];
+  runInNewContext(await read('public/sw.js'), {
+    URL,
+    self: {
+      location: { origin: 'https://photoeditor.cheaply.fr' },
+      addEventListener: (type, handler) => handlers.set(type, handler),
+    },
+    caches: {
+      match: () => Promise.resolve(undefined),
+      open: () => Promise.resolve({ put: (key) => { puts.push(typeof key === 'string' ? key : key.url); return Promise.resolve(); } }),
+    },
+    fetch: () => Promise.resolve({ ok: true, clone() { return this; } }),
+  });
+  const fetchHandler = handlers.get('fetch');
+  const navigate = async (path) => {
+    let response;
+    const request = { method: 'GET', mode: 'navigate', url: `https://photoeditor.cheaply.fr${path}` };
+    fetchHandler({ request, respondWith: (value) => { response = value; } });
+    await Promise.resolve(response);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+  await navigate('/help/layers-panel');
+  assert.deepEqual(puts, ['https://photoeditor.cheaply.fr/help/layers-panel']);
+  await navigate('/editor');
+  assert.equal(puts.at(-1), '/index.html', 'the editor shell is still cached for offline use');
 });

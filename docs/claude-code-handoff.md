@@ -58,7 +58,7 @@ reuse them as current results. The previous verified local pure suite was
 Run `npm ci`, `npm run dev`, `npm run lint`, `npm run typecheck`,
 `npm run build`, `npm test`, and `npx playwright install chromium` then
 `npm run test:e2e` for full local verification. CI shards desktop/mobile
-Playwright across four jobs. Fix a concrete failing check before merging;
+Playwright across six jobs. Fix a concrete failing check before merging;
 report precise test counts and SHA. Keep tests representative: pixel/alpha or
 geometry fixtures, boundaries and malformed input, lock/selection guards,
 undo/cancel, keyboard and touch, desktop and mobile, reload and portable

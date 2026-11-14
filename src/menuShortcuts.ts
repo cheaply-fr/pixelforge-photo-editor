@@ -84,6 +84,7 @@ export const BUILT_IN_MENU_SHORTCUTS: Readonly<Record<string, readonly string[]>
   'ctrl+v': ['paste-layer'],
   'ctrl+shift+c': ['copy-merged'],
   'shift+f5': ['fill-layer'],
+  f1: ['help-center'],
   'alt+backspace': ['fill-foreground'],
   'ctrl+backspace': ['fill-background'],
   'ctrl+t': ['free-transform'],

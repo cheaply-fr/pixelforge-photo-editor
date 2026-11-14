@@ -685,6 +685,7 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 
 /* Doc bar: explicit local Save draft action (icon + label, compact). */
 .draft-actions .draft-save{display:inline-flex;align-items:center;gap:5px}.draft-actions .draft-save svg{width:13px;height:13px;flex:0 0 auto}
+.panel-title-actions{display:flex;align-items:center;gap:6px}.panel-title .panel-help{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:#8f929b}.panel-title .panel-help:hover{color:var(--accent);background:#25272e}.panel-title .panel-help:focus-visible{outline:2px solid var(--accent);outline-offset:1px}.panel-title .panel-help svg{width:14px;color:inherit}
 
 /* While a draft opens, the doc bar keeps its "Opening… N/M layers" text on narrow screens too. */
 .docbar small.docbar-opening{display:inline}
@@ -752,3 +753,7 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .filter-effects-panel .filter-stack li>span{font-size:10px;color:#c9ccd3}
 @media(max-width:680px){.filter-effects-panel .panel-body select:not(.text-input),.filter-effects-panel .panel-body input.number-input{height:36px}.filter-effects-panel .filter-region-note button,.filter-effects-panel .filter-stack-editing button,.filter-effects-panel .filter-stack>button,.filter-effects-panel .filter-subsection button,.filter-effects-panel .blur-gallery-controls>button,.filter-effects-panel .blur-path-point button{min-height:36px}}
 .filter-effects-panel .light-rays-controls legend{margin:10px 0 2px;padding:0;color:#d4d5d8;font-size:11px;font-weight:700}
+/* Top bar on mid-width screens: the version and the server state shorten together and neither disappears; a smaller gap and menu padding leave room for the Help menu. */
+@media(min-width:681px){.top-actions>.release-status .release-status-version,.top-actions>.release-status .release-status-state{flex-shrink:1;min-width:3em;overflow:hidden;text-overflow:ellipsis}}
+@media(min-width:901px) and (max-width:1440px){.topbar{gap:14px}.topbar nav .menu>button{padding-inline:7px}}
+@media(max-width:1366px){.topbar .brand-lockup em{display:none}}

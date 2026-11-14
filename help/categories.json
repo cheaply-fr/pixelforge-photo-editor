@@ -1,0 +1,16 @@
+[
+  { "id": "getting-started", "title": "Getting started", "icon": "rocket", "summary": "Tour the workspace, open your first image and learn how saving works." },
+  { "id": "files", "title": "Files, drafts and export", "icon": "file", "summary": "Open and place files, keep drafts, export images, SVG and project files." },
+  { "id": "layers", "title": "Layers", "icon": "layers", "summary": "Stack, group, mask, clip, blend and style layers." },
+  { "id": "selections", "title": "Selections", "icon": "lasso", "summary": "Select areas precisely, refine edges, fill and stroke selections." },
+  { "id": "painting", "title": "Painting and drawing", "icon": "brush", "summary": "Brushes, pencils, erasers, gradients, presets and symmetry." },
+  { "id": "retouching", "title": "Retouching", "icon": "bandage", "summary": "Heal, clone, patch, dodge, burn and clean up photos." },
+  { "id": "type", "title": "Type", "icon": "type", "summary": "Add and style text, browse fonts and work with type layers." },
+  { "id": "shapes-paths", "title": "Shapes and paths", "icon": "pen", "summary": "Draw vector shapes, edit paths with the Pen family and use vector masks." },
+  { "id": "adjustments", "title": "Adjustments and colour", "icon": "sliders", "summary": "Correct tone and colour with adjustments, adjustment layers and colour settings." },
+  { "id": "filters", "title": "Filters and effects", "icon": "sparkles", "summary": "Blur, sharpen, distort, render and stylise, including smart filters." },
+  { "id": "transform-view", "title": "Transform, crop and view", "icon": "crop", "summary": "Move, transform, warp and crop, and navigate with zoom and rotate view." },
+  { "id": "workflow", "title": "Workflow and customisation", "icon": "workflow", "summary": "History, actions, shortcuts, command search, presets and preferences." },
+  { "id": "performance", "title": "Large documents and performance", "icon": "gauge", "summary": "Limits, budgets and tips for big canvases and many layers." },
+  { "id": "troubleshooting", "title": "Troubleshooting and FAQ", "icon": "lifebuoy", "summary": "Fix common problems, understand privacy and storage, and report issues." }
+]

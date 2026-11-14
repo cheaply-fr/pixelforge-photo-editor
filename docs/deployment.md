@@ -1,7 +1,9 @@
 # Google Cloud deployment
 
-- Repository: `faresd/pixelforge-photo-editor`
-- Google account: `cheaply.fr@gmail.com`
+Infrastructure and setup reference for production hosting. Day-to-day release, verification, rollback, cache/service-worker and incident procedures are in the [operations runbook](operations.md); the security model and data flows are in [security and privacy](security-and-privacy.md). Docs index: [README](README.md).
+
+- Repository: `cheaply-fr/pixelforge-photo-editor`
+- Owner: the Cheaply Google account (see the project's IAM page; not recorded here)
 - Dedicated Google Cloud / Firebase project: `photoeditor-cheaply` (`893177923518`)
 - Hosting site: `photoeditor-cheaply`
 - Origin: `https://photoeditor-cheaply.web.app`
@@ -12,9 +14,9 @@ Image editing runs client-side and Firebase Hosting serves the Vite build over H
 
 ## CI/CD
 
-`.github/workflows/ci-cd.yml` checks pull requests and pushes to `main`. Validation includes lint, TypeScript, a production build, release-artifact checks, and Playwright desktop/mobile workflows. Failed checks prevent the deployment job. Browser failure traces are retained for seven days; build artifacts for fourteen days.
+`.github/workflows/ci-cd.yml` (**CI and deploy**) checks pull requests, pushes to `main` and manual runs. Validation runs as six `Validate editor (n/6)` shards; each does lint, TypeScript, a production build, the pure Node tests (including release-version and release-artifact tests) and one sixth of the Playwright desktop/mobile suite. Failed checks prevent the deployment job. Branch protection on `main` requires a pull request but does not currently name these checks as required, so do not merge while a shard is red (see [operations](operations.md#what-main-branch-protection-actually-enforces)). Browser failure traces are retained for seven days; build artifacts for fourteen days.
 
-Only `main` can deploy. Production deploys are serialized. The deploy job downloads the already-tested artifact and authenticates through Google Workload Identity Federation. No long-lived Google service-account key is stored in GitHub.
+Only `main` can deploy (job condition plus the `production` environment's `main`-only branch policy). Runs share the concurrency group `pixelforge-<ref>` with `cancel-in-progress: true`: a newer `main` push cancels an in-flight `main` run, including its deploy, and the newer run deploys instead. The deploy job downloads the already-tested artifact and authenticates through Google Workload Identity Federation. No long-lived Google service-account key is stored in GitHub.
 
 The provider permits repository ID `1357642782`, owner ID `1819120`, `refs/heads/main`, and this repository's `ci-cd.yml` workflow. The dedicated service account is `github-photoeditor-deploy@photoeditor-cheaply.iam.gserviceaccount.com`, with Firebase Hosting administration and Service Usage Consumer permissions in this dedicated project.
 
@@ -42,7 +44,7 @@ Every production deploy carries a new, increasing version without any commit on 
 
 - `major.minor` come from `package.json`; its patch is replaced by the run number. Bump `major.minor` there (in a normal PR) for a deliberate larger step; never lower them.
 - `GITHUB_RUN_NUMBER` is per workflow and increases with every run of **CI and deploy**, so successive deploys are strictly increasing. PR runs share the counter, so production versions have gaps (`0.1.512`, then `0.1.518`). A re-run (any attempt) keeps its run number, so re-running a deploy republishes the same version. Renaming `ci-cd.yml` creates a new workflow whose numbers restart at 1: bump `minor` in the same change.
-- The four validate shards build in the same run, so their artifacts carry the same version; the deploy job publishes that tested artifact unchanged.
+- The six validate shards build in the same run, so their artifacts carry the same version; the deploy job publishes that tested artifact unchanged.
 - A main deploy run without a valid run number fails the build rather than publishing a stale version.
 - `/release.json` also has `channel` (`release`, `pr`, `ci` or `dev`) next to `application`, `version`, `commit` and `builtAt`.
 - In the deploy job `npm run verify:deployment` derives the expected version from the same run and requires both live URLs to report it in `/release.json` and `/api/readyz.json`, in addition to the commit. Elsewhere it checks that the two artifacts agree; set `EXPECTED_VERSION` to check a specific version by hand.
@@ -50,7 +52,7 @@ Every production deploy carries a new, increasing version without any commit on 
 
 ## Rollback
 
-For a normal rollback, revert the faulty change through a pull request. The reverted build follows the same checks and deployment path. For an urgent hosting-only rollback, choose a previously verified release in Firebase Hosting's release history, then reconcile `main` with a revert before another deployment. Do not use an old artifact without checking its embedded commit and compatibility.
+See [operations → Rollback](operations.md#6-rollback). In short: revert through a pull request by default; for an urgent hosting-only rollback use Firebase Hosting's release history (the pinned `firebase-tools` has no `hosting:rollback` command; `hosting:clone` can promote an older version), or re-run an older run's deploy job while its artifacts are retained (14 days). Then reconcile `main` with a revert before another deployment. Do not use an old artifact without checking its embedded commit and compatibility.
 
 ## DNS and certificates
 

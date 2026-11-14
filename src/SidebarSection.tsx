@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ChevronDown, type LucideIcon } from 'lucide-react';
+import { ChevronDown, CircleHelp, type LucideIcon } from 'lucide-react';
 import { SECTION_ATTRIBUTE, SIDEBAR_SECTIONS, type SidebarSectionId } from './sidebarSections.ts';
 
 /**
@@ -17,6 +17,8 @@ export function SidebarSection({
   onAction,
   className,
   testId,
+  helpHref,
+  helpLabel,
   children,
 }: {
   id: SidebarSectionId;
@@ -28,6 +30,9 @@ export function SidebarSection({
   onAction?: () => void;
   className?: string;
   testId?: string;
+  /** Help Center page for this panel; opens in a new tab. */
+  helpHref?: string;
+  helpLabel?: string;
   children: ReactNode;
 }) {
   const bodyId = `sidebar-section-${id}-body`;
@@ -61,10 +66,26 @@ export function SidebarSection({
             {title}
           </span>
         )}
-        {action && (
-          <button type="button" onClick={onAction}>
-            {action}
-          </button>
+        {(action || helpHref) && (
+          <span className="panel-title-actions">
+            {helpHref && (
+              <a
+                className="panel-help"
+                href={helpHref}
+                target="_blank"
+                rel="noopener"
+                aria-label={helpLabel ?? `Help: ${title}`}
+                title={helpLabel ?? `Help: ${title}`}
+              >
+                <CircleHelp aria-hidden="true" />
+              </a>
+            )}
+            {action && (
+              <button type="button" onClick={onAction}>
+                {action}
+              </button>
+            )}
+          </span>
         )}
       </div>
       <div id={bodyId} className="panel-body" hidden={collapsible && collapsed}>
