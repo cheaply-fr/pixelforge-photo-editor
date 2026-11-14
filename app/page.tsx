@@ -20376,7 +20376,7 @@ export default function Home() {
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
-          <small>• &nbsp;{dimensions}</small>
+          <small className={frame ? undefined : 'docbar-opening'}>• &nbsp;{dimensions}</small>
         </div>
         <div className="draft-actions">
           <button
@@ -20592,6 +20592,21 @@ export default function Home() {
         {/* The zoom pill sits on this non-scrolling shell so it stays pinned to
             the visible stage while the canvas scrolls (audit B-03). */}
         <div className="stage-shell">
+          {/* Drawn in the visible stage, not the zoomed canvas wrap, so it
+              stays on screen at any zoom and on phones. */}
+          {openingProgress && (
+            <output
+              className="opening-progress"
+              data-testid="opening-progress"
+              data-preview={doc.openingPreview ? 'true' : 'false'}
+              aria-live="polite"
+            >
+              <span>
+                {doc.openingPreview ? 'Saved picture shown · ' : ''}Opening draft… {openingProgress.completed}/{openingProgress.total} layers
+              </span>
+              <progress max={openingProgress.total} value={openingProgress.completed} aria-hidden="true" />
+            </output>
+          )}
         <section ref={stage} className={`stage ${drag ? 'dragging' : ''}`}>
           {isTypeTool(tool) && (
             <TypeOptionsBar
@@ -20880,19 +20895,6 @@ export default function Home() {
                   objectFit: referenceObjectFit(frame.reference.fit),
                 }}
               />
-            )}
-            {openingProgress && (
-              <output
-                className="opening-progress"
-                data-testid="opening-progress"
-                data-preview={doc.openingPreview ? 'true' : 'false'}
-                aria-live="polite"
-              >
-                <span>
-                  {doc.openingPreview ? 'Saved picture shown · ' : ''}Opening draft… {openingProgress.completed}/{openingProgress.total} layers
-                </span>
-                <progress max={openingProgress.total} value={openingProgress.completed} aria-hidden="true" />
-              </output>
             )}
             {quickMasking && (
               <canvas
