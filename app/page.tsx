@@ -903,6 +903,8 @@ import {
 } from '../src/patchTool';
 import {
   CONTENT_AWARE_MAX_OPERATIONS,
+  contentAwareFillReach,
+  contentAwareSearchRadius,
   GENERATIVE_FILL_MAX_OPERATIONS,
   GENERATIVE_FILL_MAX_RADIUS,
   GENERATIVE_FILL_MAX_PROMPT,
@@ -8705,6 +8707,26 @@ export default function Home() {
         setNotice('The document changed while Content-Aware Fill was prepared');
         return;
       }
+      // The search reaches across the selection's bounds (not the brush
+      // size), and the notice says how much of it actually found context.
+      const radius = contentAwareSearchRadius(mask, width, height),
+        sourceCanvas = surface(width, height),
+        sourceContext = sourceCanvas.getContext('2d');
+      if (!sourceContext) throw new Error('Content-Aware Fill source is unavailable');
+      sourceContext.drawImage(image, 0, 0);
+      const reach = contentAwareFillReach(
+        sourceContext.getImageData(0, 0, width, height).data,
+        width,
+        height,
+        mask,
+        radius,
+      );
+      if (!reach.filled) {
+        setNotice(
+          'Content-Aware Fill found no unselected pixels around the selection; nothing changed',
+        );
+        return;
+      }
       const maskCanvas = surface(width, height),
         context = maskCanvas.getContext('2d');
       if (!context) throw new Error('Content-Aware Fill mask is unavailable');
@@ -8721,8 +8743,8 @@ export default function Home() {
         fill: ContentAwareFill = {
           version: 1,
           mask: maskId,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
+          radius,
+          opacity: 1,
         };
       if (
         editLayer({
@@ -8730,7 +8752,9 @@ export default function Home() {
         })
       )
         setNotice(
-          'Content-Aware Fill applied locally; source and alpha remain unchanged',
+          reach.filled < reach.selected
+            ? `Content-Aware Fill applied locally to ${Math.max(1, Math.floor((reach.filled / reach.selected) * 100))}% of the selection; the rest has no unselected pixels within ${radius} px`
+            : 'Content-Aware Fill applied locally; source and alpha remain unchanged',
         );
     } catch {
       setNotice('Content-Aware Fill could not be applied');
@@ -8942,8 +8966,8 @@ export default function Home() {
           mask: maskAsset,
           dx,
           dy,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
+          radius: contentAwareSearchRadius(mask, width, height),
+          opacity: 1,
         };
       if (commit({
         ...f,
@@ -9005,8 +9029,8 @@ export default function Home() {
           mask: maskAsset,
           scaleX: scaleX / 100,
           scaleY: scaleY / 100,
-          radius: Math.max(1, Math.min(128, Math.round(Math.max(4, size / 2)))),
-          opacity: brushOpacity / 100,
+          radius: contentAwareSearchRadius(mask, width, height),
+          opacity: 1,
         };
       if (commit({
         ...f,

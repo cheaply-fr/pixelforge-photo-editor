@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { downloadedProject } from './project-file';
 import { selectTool } from './tool-selection';
+import { documentPixel, lowerBrushOpacity, marquee, openRedBlock } from './content-aware-block';
 
 const openEditor = async (page: Page) => {
   await page.route('https://marketplace.cheaply.fr/marketplace/api/photoeditor**', (route) => route.fulfill({ json: { authenticated: false } }));
@@ -53,3 +54,29 @@ test('Content-Aware Scale transforms an explicit selection and survives reload',
   expect(restoredLayer.contentAwareScales).toHaveLength(1);
 });
 
+
+test('Content-Aware Scale fills at full strength whatever the brush opacity', async ({ page }) => {
+  await openRedBlock(page);
+  await lowerBrushOpacity(page, 20);
+  await marquee(page, [60, 60], [140, 140]);
+  page.on('dialog', async (dialog) => dialog.accept('50'));
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Content-Aware Scale…', exact: true }).click();
+  await expect(page.getByText('Content-Aware Scale applied locally; undo restores the original pixels', { exact: true })).toBeVisible();
+  // The block shrinks to about 30×30 around its centre…
+  const centre = await documentPixel(page, 100, 100);
+  expect(centre[0]).toBeGreaterThan(240);
+  expect(centre[1]).toBeLessThan(15);
+  // …and the vacated ring is filled with the white surroundings, not a faint
+  // 20% blend that would leave it mostly red.
+  for (const [x, y] of [[74, 100], [100, 74], [126, 126]]) {
+    const pixel = await documentPixel(page, x, y);
+    expect(pixel.slice(0, 3), `${x},${y}`).toEqual([255, 255, 255]);
+  }
+  const saved = await project(page);
+  const frame = saved.history[saved.index];
+  const scale = frame.layers.find((layer) => layer.id === frame.active)!.contentAwareScales![0] as unknown as { opacity: number; radius: number };
+  expect(scale.opacity).toBe(1);
+  // The search radius comes from the 80 px selection, not the brush size.
+  expect(scale.radius).toBeGreaterThanOrEqual(40);
+});

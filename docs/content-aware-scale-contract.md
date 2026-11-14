@@ -6,7 +6,10 @@ context, then scales the selected pixels around their selection bounds using
 bounded independent horizontal and vertical percentages from 25% through 400%.
 The operation stores one validated `contentAwareScales` metadata entry plus an
 immutable layer-local selection-mask asset; rendering replays it without
-replacing the source raster, and undo removes the metadata entry.
+replacing the source raster, and undo removes the metadata entry. The
+vacated area is filled at full strength (`opacity: 1`) with a search radius
+derived from the selection's bounding box (as for Content-Aware Fill); the
+brush Size and Opacity never affect the result.
 
 This is a local pixel operation. It does not detect semantic subjects, preserve
 object boundaries, or claim Adobe's content-aware scale algorithm. Empty or

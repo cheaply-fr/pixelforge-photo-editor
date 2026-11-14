@@ -173,6 +173,51 @@ function textureContextSample(
   ) as [number, number, number, number];
 }
 
+/**
+ * Search radius for a content-aware operation on a selection: half the
+ * selection's larger bounding-box side plus two pixels, so from any selected
+ * pixel the outer search ring reaches past the selection, clamped to 4..128.
+ * It depends only on the selection, never on brush settings. Pure.
+ */
+export function contentAwareSearchRadius(mask: ArrayLike<number>, width: number, height: number): number {
+  let left = width, top = height, right = -1, bottom = -1;
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      if ((mask[row + x] ?? 0) <= 0) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  if (right < 0) return 4;
+  const side = Math.max(right - left + 1, bottom - top + 1);
+  return clamp(Math.ceil(side / 2) + 2, 4, CONTENT_AWARE_MAX_RADIUS);
+}
+
+/**
+ * How many selected pixels a median fill at `radius` can replace: pixels with
+ * no usable unselected context on any search ring stay unchanged. Pure.
+ */
+export function contentAwareFillReach(
+  source: ArrayLike<number>,
+  width: number,
+  height: number,
+  mask: ArrayLike<number>,
+  radius: number,
+): { selected: number; filled: number } {
+  let selected = 0, filled = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if ((mask[y * width + x] ?? 0) <= 0) continue;
+      selected += 1;
+      if (contextSample(source, mask, width, height, x, y, radius)) filled += 1;
+    }
+  }
+  return { selected, filled };
+}
+
 function applyFill(
   destination: Uint8ClampedArray,
   source: ArrayLike<number>,

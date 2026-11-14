@@ -1,4 +1,5 @@
 import { selectTool } from './tool-selection';
+import { documentPixel, lowerBrushOpacity, marquee, openRedBlock } from './content-aware-block';
 import { downloadedProject } from './project-file';
 import { test, expect, type Page } from '@playwright/test';
 
@@ -73,7 +74,11 @@ test('Content-Aware Fill uses a local selection mask, preserves source, and surv
   const cleanedLayer = cleaned.history[cleaned.index].layers.at(-1)!;
   expect(cleanedLayer.asset).toBe(sourceAsset);
   expect(cleanedLayer.contentAwareFills).toHaveLength(1);
-  expect(cleanedLayer.contentAwareFills![0]).toMatchObject({ version: 1, radius: 40, opacity: 1 });
+  expect(cleanedLayer.contentAwareFills![0]).toMatchObject({ version: 1, opacity: 1 });
+  // The search radius follows the selection's bounds (here wider than the
+  // 80 px brush), clamped to 128.
+  expect(cleanedLayer.contentAwareFills![0].radius).toBeGreaterThan(40);
+  expect(cleanedLayer.contentAwareFills![0].radius).toBeLessThanOrEqual(128);
   expect(cleaned.assets[cleanedLayer.contentAwareFills![0].mask]).toBeTruthy();
 
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
@@ -102,4 +107,34 @@ test('Content-Aware Fill is disabled without a selection and on locked layers', 
   await page.getByLabel('Lock layer', { exact: true }).check();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: 'Content-Aware Fill…', exact: true })).toBeDisabled();
+});
+
+test('Content-Aware Fill reaches across the whole selection whatever the brush size and opacity', async ({ page }) => {
+  await openRedBlock(page);
+  // A small, faint brush used to shrink the search and weaken the fill.
+  await lowerBrushOpacity(page, 20);
+  await page.getByLabel('Size', { exact: true }).fill('18');
+  await marquee(page, [55, 55], [145, 145]);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Content-Aware Fill…', exact: true }).click();
+  await expect(page.getByText('Content-Aware Fill applied locally; source and alpha remain unchanged', { exact: true })).toBeVisible();
+  // The red block, centre included, is replaced by its white surroundings.
+  for (const [x, y] of [[100, 100], [72, 72], [128, 100]]) {
+    const pixel = await documentPixel(page, x, y);
+    expect(pixel.slice(0, 3), `${x},${y}`).toEqual([255, 255, 255]);
+  }
+  const saved = await project(page);
+  const fill = saved.history[saved.index].layers.at(-1)!.contentAwareFills![0];
+  expect(fill.opacity).toBe(1);
+  expect(fill.radius).toBeGreaterThanOrEqual(45);
+});
+
+test('Content-Aware Fill says so when the selection has no surroundings to sample', async ({ page }) => {
+  await openRedBlock(page);
+  await page.keyboard.press('Control+a');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Content-Aware Fill…', exact: true }).click();
+  await expect(page.getByText('Content-Aware Fill found no unselected pixels around the selection; nothing changed', { exact: true })).toBeVisible();
+  const saved = await project(page);
+  expect(saved.history[saved.index].layers.at(-1)!.contentAwareFills ?? []).toHaveLength(0);
 });

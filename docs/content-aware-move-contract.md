@@ -6,7 +6,9 @@ fills the vacated selection from deterministic nearby context, and translates
 the selected pixels into the destination. The operation now stores a bounded
 `contentAwareMoves` metadata entry with an immutable layer-local mask asset;
 the source raster asset remains unchanged and rendering replays the move after
-reload, export and project import. Undo removes the metadata entry and retains
+reload, export and project import. The vacated area is filled at full
+strength with a search radius derived from the selection's bounding box (as
+for Content-Aware Fill), independent of the brush Size and Opacity. Undo removes the metadata entry and retains
 the original source.
 
 This is a constrained local operation. It does not perform semantic object
