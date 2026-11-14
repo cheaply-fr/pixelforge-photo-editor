@@ -1092,9 +1092,16 @@ type MenuName =
   | 'Select'
   | 'Filter'
   | 'View'
-  | 'Plugins';
+  | 'Plugins'
+  | 'Help';
 type Command =
   | 'noop'
+  | 'help-center'
+  | 'help-current-tool'
+  | 'help-getting-started'
+  | 'help-shortcuts'
+  | 'help-whats-new'
+  | 'help-report-problem'
   | 'search-commands'
   | 'purge-history'
   | 'find-replace-text'
@@ -2019,7 +2026,30 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'No plugins installed', command: 'noop', disabled: true },
     { label: 'Plugin Manager…', command: 'noop', disabled: true },
   ],
+  // Help Center pages open in a new tab so the document stays open (docs/knowledge-base.md).
+  Help: [
+    { label: 'Help Center', shortcut: 'F1', command: 'help-center' },
+    { label: 'Help for Current Tool', command: 'help-current-tool' },
+    { label: 'Getting Started', command: 'help-getting-started' },
+    { label: 'Keyboard Shortcuts Guide', command: 'help-shortcuts' },
+    { label: 'What’s New', command: 'help-whats-new' },
+    { label: '', command: 'noop', separator: true },
+    { label: 'Report a Problem', command: 'help-report-problem' },
+  ],
 };
+
+/** Help Center page each Help menu command opens. */
+const HELP_PAGES: Partial<Record<Command, string>> = {
+  'help-center': '/help',
+  'help-getting-started': '/help/welcome-to-pixelforge',
+  'help-shortcuts': '/help/keyboard-shortcuts',
+  'help-whats-new': '/help/whats-new',
+  'help-report-problem': '/help/report-a-problem',
+};
+
+function openHelpPage(path: string) {
+  window.open(path, '_blank', 'noopener');
+}
 
 /** Tools whose one gesture spans several presses (click-to-place, tap-to-arm). */
 const MULTI_PRESS_GESTURE_TOOLS: readonly Tool[] = ['polygonal-lasso', 'magnetic-lasso', 'pen', 'curvature-pen'];
@@ -18068,6 +18098,11 @@ export default function Home() {
         void openEditFill();
         return;
       }
+      if (e.key === 'F1' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        openHelpPage('/help');
+        return;
+      }
       if (command) {
         const k = e.key.toLowerCase();
         // Photoshop-style Arrange: Ctrl+] / Ctrl+[ step the selected layers,
@@ -18359,6 +18394,8 @@ export default function Home() {
     else if (command === 'define-custom-path') return defineCustomPath();
     else if (command === 'update-custom-path') return updateCustomPathPreset();
     else if (command === 'keyboard-shortcuts') return setKeyboardShortcutsOpen(true);
+    else if (command === 'help-current-tool') return openHelpPage(`/help/tool/${tool}`);
+    else if (HELP_PAGES[command]) return openHelpPage(HELP_PAGES[command] ?? '/help');
     else if (command === 'menu-settings') return setMenuSettingsOpen(true);
     else if (command === 'filter-gallery') return setFilterGalleryOpen(true);
     else if (command === 'camera-raw') return setCameraRawEditing(true);
@@ -21692,6 +21729,8 @@ export default function Home() {
               id="tool-options"
               icon={Brush}
               title={NAMED_OPTION_TOOLS.has(tool) ? `${activeToolLabel} options` : 'Tool options'}
+              helpHref={`/help/tool/${tool}`}
+              helpLabel={`Help: ${activeToolLabel} tool`}
               collapsed={collapsedSections.has('tool-options')}
               onToggle={toggleSidebarSection}
             >

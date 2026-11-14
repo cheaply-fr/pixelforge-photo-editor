@@ -18,7 +18,11 @@ import { pathToFileURL } from 'node:url';
 import { Marked } from 'marked';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import * as Lucide from 'lucide-react';
+import {
+  Rocket, FileImage, Layers, Lasso, Brush, Bandage, Type, PenTool, SlidersHorizontal, Sparkles, Crop, Workflow, Gauge, LifeBuoy, Search, ArrowRight, Menu, ChevronRight, ChevronLeft, BookOpen, Lightbulb, Info, TriangleAlert,
+} from 'lucide-react';
+
+const ICONS = { Rocket, FileImage, Layers, Lasso, Brush, Bandage, Type, PenTool, SlidersHorizontal, Sparkles, Crop, Workflow, Gauge, LifeBuoy, Search, ArrowRight, Menu, ChevronRight, ChevronLeft, BookOpen, Lightbulb, Info, TriangleAlert };
 
 export const SITE = 'https://photoeditor.cheaply.fr';
 const REQUIRED = ['title', 'summary', 'category'];
@@ -31,7 +35,7 @@ const CATEGORY_ICONS = {
 };
 
 export function icon(name, size = 20) {
-  const component = Lucide[name];
+  const component = ICONS[name];
   if (!component) throw new Error(`Unknown icon ${name}`);
   return renderToStaticMarkup(createElement(component, { size, 'aria-hidden': 'true', focusable: 'false' }));
 }
@@ -78,6 +82,12 @@ export function parseFrontMatter(source, file = 'article') {
     data[pair[1]] = value;
   }
   return { data, body: text.slice(match[0].length) };
+}
+
+/** A front matter value as a list of strings. */
+export function asList(value) {
+  if (Array.isArray(value)) return value.map(String);
+  return value === undefined || value === '' ? [] : [String(value)];
 }
 
 function unquote(value) {
@@ -161,7 +171,7 @@ export function validateHelp({ categories, articles, images }) {
       if (!slugs.has(slug) && !slug.startsWith('category/')) errors.push(`${article.file}: broken link to "${slug}"`);
       if (slug.startsWith('category/') && !categoryIds.has(slug.slice(9))) errors.push(`${article.file}: broken category link "${slug}"`);
     }
-    for (const slug of [].concat(article.related || [])) {
+    for (const slug of asList(article.related)) {
       if (!slugs.has(slug)) errors.push(`${article.file}: related article "${slug}" does not exist`);
     }
   }
@@ -172,11 +182,18 @@ export function validateHelp({ categories, articles, images }) {
   return errors;
 }
 
+/** Palette tool ids, read from the `PaletteToolId` union in src/toolPalette.ts. */
+export function paletteToolIds(source) {
+  const union = /export type PaletteToolId =([\s\S]*?);/.exec(source);
+  if (!union) throw new Error('PaletteToolId not found in src/toolPalette.ts');
+  return [...union[1].matchAll(/'([a-z0-9-]+)'/g)].map((match) => match[1]);
+}
+
 /** Tool id → article slug, from each article's `tools` front matter. */
 export function toolArticles(articles) {
   const map = {};
   for (const article of sortArticles(articles)) {
-    for (const tool of [].concat(article.tools || [])) map[tool] ??= article.slug;
+    for (const tool of asList(article.tools)) map[tool] ??= article.slug;
   }
   return map;
 }
@@ -236,7 +253,8 @@ export function renderMarkdown(body, { imageSizes = {} } = {}) {
       },
     },
   });
-  const html = marked.parse(body);
+  const html = marked.parse(body, { async: false });
+  if (typeof html !== 'string') throw new Error('Markdown rendering must be synchronous');
   const text = html.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/g, ' ').replace(/\s+/g, ' ').trim();
   return { html, headings, text };
 }
@@ -256,7 +274,7 @@ export function searchRecord(article, rendered, category) {
     title: article.title,
     summary: article.summary,
     category: category?.title || article.category,
-    keywords: [].concat(article.keywords || []),
+    keywords: asList(article.keywords),
     headings: rendered.headings.map(({ id, text }) => ({ id, text })),
     text: rendered.text.slice(0, 4000),
   };
@@ -355,7 +373,6 @@ export async function buildHelp({ root = 'help', outDir = 'dist', version = 'dev
   for (const name of await readdir(join(root, 'assets'))) await copyFile(join(root, 'assets', name), join(out, 'assets', name));
 
   const categories = help.categories;
-  const categoryById = new Map(categories.map((category) => [category.id, category]));
   const byCategory = new Map(categories.map((category) => [category.id, []]));
   for (const article of sortArticles(help.articles)) byCategory.get(article.category).push(article);
   const bySlug = new Map(help.articles.map((article) => [article.slug, article]));
@@ -369,7 +386,7 @@ export async function buildHelp({ root = 'help', outDir = 'dist', version = 'dev
       records.push(searchRecord(article, rendered, category));
       const previous = list[index - 1];
       const next = list[index + 1];
-      const related = [].concat(article.related || []).map((slug) => bySlug.get(slug)).filter(Boolean);
+      const related = asList(article.related).map((slug) => bySlug.get(slug)).filter(Boolean);
       const toc = rendered.headings.length > 1
         ? `<aside class="kb-toc" aria-label="On this page"><p>On this page</p><ul>${rendered.headings.map((heading) => `<li class="depth-${heading.depth}"><a href="#${heading.id}">${escapeHtml(heading.text)}</a></li>`).join('')}</ul></aside>`
         : '';
@@ -431,12 +448,18 @@ ${featured.length ? `<section aria-labelledby="start-title"><h2 id="start-title"
     const list = byCategory.get(category.id);
     return `<li><a class="kb-topic" href="/help/category/${category.id}"><span class="kb-cat-icon">${icon(CATEGORY_ICONS[category.icon], 22)}</span><strong>${escapeHtml(category.title)}</strong><span>${escapeHtml(category.summary)}</span><small>${list.length} article${list.length === 1 ? '' : 's'}</small></a></li>`;
   }).join('')}</ul></section>`;
-  await writeFile(join(out, 'index.html'), layout({ title: 'Help Center', description: 'Step-by-step guides with screenshots for every PixelForge tool and feature.', canonical: '/help', body: home, version, nav: navigation(categories, byCategory, ''), pageClass: 'kb-home' }));
+  // help.html serves the clean /help URL (Firebase cleanUrls and vite preview); help/index.html serves /help/.
+  const homePage = layout({ title: 'Help Center', description: 'Step-by-step guides with screenshots for every PixelForge tool and feature.', canonical: '/help', body: home, version, nav: navigation(categories, byCategory, ''), pageClass: 'kb-home' });
+  await writeFile(join(out, 'index.html'), homePage);
+  await writeFile(join(outDir, 'help.html'), homePage);
 
   // /help/tool/<id> sends the editor's contextual Help link to the right article.
   const tools = toolArticles(help.articles);
-  for (const [tool, slug] of Object.entries(tools)) {
-    const target = `/help/${slug}`;
+  const palette = existsSync(join('src', 'toolPalette.ts')) ? paletteToolIds(await readFile(join('src', 'toolPalette.ts'), 'utf8')) : [];
+  // Every palette tool gets a page so the editor's contextual link never 404s;
+  // tests/help-center.test.mjs requires an article for each one.
+  const targets = { ...Object.fromEntries(palette.map((tool) => [tool, `/help?q=${encodeURIComponent(tool.replace(/-/g, ' '))}`])), ...Object.fromEntries(Object.entries(tools).map(([tool, slug]) => [tool, `/help/${slug}`])) };
+  for (const [tool, target] of Object.entries(targets)) {
     await writeFile(join(out, 'tool', `${tool}.html`), `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>PixelForge Help</title><meta http-equiv="refresh" content="0; url=${target}"><link rel="canonical" href="${SITE}${target}"><meta name="robots" content="noindex"></head><body><p><a href="${target}">Open the help article</a></p></body></html>\n`);
   }
 

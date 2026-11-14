@@ -198,6 +198,7 @@ export default function HomePage() {
         <BrandLockup home />
         <div className="home-account">
           <AccountMenu member={member} checking={checking} unavailable={signInUnavailable} retry={retrySignIn} />
+          <a className="home-small-link" href="/help">Help Center</a>
           <a className="home-small-link" href="/editor?new=1">Open editor <ArrowRight size={16} /></a>
         </div>
       </header>
@@ -342,6 +343,7 @@ export default function HomePage() {
       <footer className="home-footer lp-footer">
         <span>PixelForge by Cheaply</span>
         <p>Drafts autosave in this browser. Sign in and choose Save to my projects for a private cloud copy. Clearing browser data or using private browsing can remove drafts. Export a copy to keep your work.</p>
+        <a href="/help">Help Center</a>
         <a href="https://www.cheaply.fr/pages/apps">More free Cheaply tools ↗</a>
       </footer>
     </main>
