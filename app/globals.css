@@ -689,3 +689,11 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 /* While a draft opens, the doc bar keeps its "Opening… N/M layers" text on narrow screens too. */
 .docbar small.docbar-opening{display:inline}
 @media(max-width:680px){.stage-shell > .opening-progress{white-space:normal;text-align:center;font-size:13px}}
+/* Doc bar draft actions: at least a 24 px target (WCAG 2.2 2.5.8), 36 px on touch screens. */
+.draft-actions a,.draft-actions button{display:inline-flex;align-items:center;min-height:24px;padding:0 4px;border-radius:5px}
+.draft-actions a:hover,.draft-actions button:hover:not(:disabled){background:#1f2128}
+.draft-actions a:focus-visible,.draft-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media(pointer:coarse){.draft-actions{gap:4px}.draft-actions a,.draft-actions button{min-height:36px;padding:0 8px}}
+/* Phones drop "on this device" from the timestamped save status and notice so the time stays visible. */
+@media(max-width:680px){.save-text-where{display:none}}
+.save-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

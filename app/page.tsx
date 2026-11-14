@@ -91,6 +91,7 @@ import {
   type Settings,
 } from '../src/drafts';
 import {
+  compactSaveText,
   DUPLICATE_DRAFT_DESCRIPTION,
   DUPLICATE_DRAFT_LABEL,
   DUPLICATE_DRAFT_NOTICE,
@@ -1645,6 +1646,24 @@ const FILTERS = [
   ['Warm', 'sepia(.35) saturate(1.2)', '#654737', '#e8a467'],
   ['Cool', 'hue-rotate(18deg) saturate(.9)', '#335d91', '#83bbc4'],
 ] as const;
+/**
+ * A save status or notice whose " on this device" narrow screens hide, so
+ * the saved time stays readable (the text content is unchanged).
+ */
+function CompactSaveText({ text }: { text: string }) {
+  const parts = compactSaveText(text);
+  if (!parts) return <>{text}</>;
+  // One wrapper, so a flex parent (the footer notice) sees a single item.
+  // <bdi>, not <span>: the footer hides its later spans on narrow screens.
+  return (
+    <bdi className="save-text">
+      {parts[0]}
+      <bdi className="save-text-where">{parts[1]}</bdi>
+      {parts[2]}
+    </bdi>
+  );
+}
+
 const MENU_DEFS: Record<MenuName, MenuItem[]> = {
   File: [
     { label: 'Open project…', command: 'project-open' },
@@ -25148,7 +25167,7 @@ export default function Home() {
       <footer>
         <span>
           <i />
-          {notice}
+          <CompactSaveText text={notice} />
         </span>
         <span>{activeToolLabel} tool</span>
         <output
@@ -25178,7 +25197,7 @@ export default function Home() {
           aria-label="Draft save status"
           title="This bookmark restores the document in this browser. Clearing browser data removes local documents; export a backup."
         >
-          {saveStatus}
+          <CompactSaveText text={saveStatus} />
         </output>
         <button onClick={() => download('jpeg')}>
           <Save /> Save JPEG
