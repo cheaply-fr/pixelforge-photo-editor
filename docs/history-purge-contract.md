@@ -28,7 +28,7 @@ explanation that names the device budget.
 
 Local drafts, duplicates, cloud saves and portable projects persist only the
 window around the current state that fits 24 states (the draft schema limit),
-the 64 MiB referenced-asset cap and 768 assets (`selectPersistedHistory`,
+the 64 MiB referenced-asset cap and 4,096 assets (`selectPersistedHistory`,
 nearest undo/redo neighbours first). Format 3 drafts store assets by content
 hash, so keeping a full window costs one new asset record per edit. So a
 larger in-memory history cannot make a local save fail. The History panel marks

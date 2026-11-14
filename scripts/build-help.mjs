@@ -2,7 +2,7 @@
 //
 //   help/categories.json     ordered categories
 //   help/articles/*.md       one article per file, with front matter
-//   help/img/*               screenshots (scripts/capture-help-shots.mjs)
+//   help/img/*               screenshots (npm run help:shots → help/shots/*.shots.ts)
 //   help/assets/*            page CSS and script
 //
 // Output goes to dist/help/ as static pages that Firebase Hosting serves at

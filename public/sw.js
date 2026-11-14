@@ -26,7 +26,7 @@ self.addEventListener('fetch', (event) => {
 
   // Health reads must reach the network; cache busting queries must not grow the shell cache.
   const path = new URL(request.url).pathname;
-  if (path === '/release.json' || path === '/api/readyz.json') return;
+  if (path === '/release.json' || path === '/api/readyz.json' || path === '/api/readyz' || path === '/health') return;
 
   if (path.startsWith('/fonts/')) {
     event.respondWith(

@@ -143,7 +143,10 @@
           event.preventDefault();
           headerInput.focus();
           if (event.key === 'ArrowDown') move(1);
-          else panel.querySelector('a') && (location.href = panel.querySelector('a').href);
+          else {
+            const first = panel.querySelector('a');
+            if (first) location.href = first.href;
+          }
         }
       });
     }

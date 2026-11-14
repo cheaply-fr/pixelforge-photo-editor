@@ -20,11 +20,11 @@ The menus hold every command, grouped as **File**, **Edit**, **Image**, **Layer*
 
 ## Toolbar
 
-Each toolbar button is a tool family. Click a button to use its current tool. Press and hold it, or right-click it, to choose another tool from the same family. Tools have single-letter keyboard shortcuts; press the same letter again with <kbd>Shift</kbd> to cycle through a family.
+Each toolbar button is a tool family. Click a button to use its current tool. Press and hold it, or right-click it, to choose another tool from the same family. Tools have single-letter keyboard shortcuts. Press the same letter again to move to the next tool in the family, or hold <kbd>Shift</kbd> to go back. See [Keyboard shortcuts](keyboard-shortcuts).
 
 ## Canvas
 
-The canvas shows your document. Scroll to pan, and pinch or use <kbd>Ctrl</kbd> + scroll to zoom.
+The canvas shows your document. Scroll to pan. Hold <kbd>Ctrl</kbd> (<kbd>⌘</kbd> on Mac) and scroll, or pinch on a trackpad, to zoom around the pointer. The zoom slider at the bottom of the canvas and the **View** menu also change the zoom. On a touch screen, use the zoom slider or the [Zoom tool](zoom-pan-and-rotate-view).
 
 ## Properties sidebar
 
@@ -32,6 +32,6 @@ The sidebar shows the options for the active tool and the Layers panel. Less com
 
 ## On a phone
 
-On a phone, the menus wrap under the header, the toolbar stays on the left as a scrolling column and the properties sidebar becomes a sheet at the bottom of the screen.
+On a phone, the menus sit in one row under the top bar, the toolbar stays on the left as a scrolling column and the properties sidebar becomes a sheet at the bottom of the screen. See [Using PixelForge on a phone](using-pixelforge-on-a-phone).
 
 ![The editor on a phone, with the properties sheet at the bottom](img/workspace-mobile.jpg "The phone layout")

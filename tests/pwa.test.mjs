@@ -56,7 +56,7 @@ test('release and readiness probes bypass offline caches including cache-busting
     fetch: () => { networkReads += 1; return Promise.resolve({ ok: false }); },
   });
   const fetchHandler = handlers.get('fetch');
-  for (const path of ['/release.json?status=1', '/api/readyz.json?status=2']) {
+  for (const path of ['/release.json?status=1', '/api/readyz.json?status=2', '/health', '/api/readyz']) {
     let intercepted = false;
     fetchHandler({
       request: { method: 'GET', mode: 'cors', url: `https://photoeditor.cheaply.fr${path}` },

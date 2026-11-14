@@ -127,7 +127,10 @@ export async function openSample(page: Page, kind: SampleKind = 'landscape', siz
 /** Open a top menu (File, Edit, Image, …) and optionally click one of its items. */
 export async function menu(page: Page, top: string, item?: string): Promise<void> {
   await page.getByRole('button', { name: top, exact: true }).click();
-  if (item) await page.getByRole('menuitem', { name: item, exact: true }).click();
+  // Menu items with a shortcut are named "<label> <shortcut>", so match the label as a prefix.
+  if (!item) return;
+  const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  await page.getByRole('menuitem', { name: new RegExp(`^${escaped}(?:\\s|$)`) }).first().click();
 }
 
 /** Close menus, dialogs' transient toasts and notices that would clutter a shot. */

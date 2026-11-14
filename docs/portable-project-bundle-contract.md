@@ -8,7 +8,7 @@ document.json
 assets/<stable-id>.png
 ```
 
-`manifest.json` declares `kind: "pixelforge-project"`, `version: 3`, the document checksum and byte length, and a sorted asset table. Every asset entry includes its stable UUID, exact archive path, SHA-256 checksum, encoded byte length, and PNG dimensions. The archive byte length is also recorded. `document.json` retains the v2 editable document shape (`version`, name, settings, full undo history, masks, vectors, layers, groups, selections and metadata); only its `assets`, `cloud`, and `localRevision` fields are moved or removed at this boundary. Source URLs are reconstructed as PNG data URLs when imported.
+`manifest.json` declares `kind: "pixelforge-project"`, `version: 3`, the document checksum and byte length, and a sorted asset table. Every asset entry includes its stable UUID, exact archive path, SHA-256 checksum, encoded byte length, and PNG dimensions. The archive byte length is also recorded. `document.json` retains the v2 editable document shape (`version`, name, settings, the persisted undo-history window (≤ 24 states / 64 MiB, see [data formats](data-formats.md)), masks, vectors, layers, groups, selections and metadata); only its `assets`, `cloud`, and `localRevision` fields are moved or removed at this boundary. Source URLs are reconstructed as PNG data URLs when imported.
 
 The writer accepts a validated v1 or v2 JSON project. v1's single-image history is migrated by the existing `validateDraft` migration before assets are emitted, so old project files remain importable. New v3 files always use the v2 editable document model internally and preserve every history frame and editable property.
 
