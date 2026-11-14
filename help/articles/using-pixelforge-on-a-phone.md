@@ -4,7 +4,7 @@ summary: How the editor adapts to a phone screen, where the tools and properties
 category: getting-started
 order: 40
 level: beginner
-keywords: [mobile, phone, tablet, touch, android, iphone, small screen, sheet, menu, phone menu, consent]
+keywords: [mobile, phone, tablet, touch, android, iphone, small screen, sheet, menu, phone menu, consent, pinch, pinch zoom, two fingers]
 related: [workspace-tour, large-documents, drafts-and-saving, browser-support]
 updated: 2026-11-14
 ---
@@ -18,7 +18,7 @@ PixelForge works in the browser on phones and tablets. There is nothing to insta
 - **Top bar:** the **Export** button, the version and server status, and the account button. The menus (**File**, **Edit**, **Image** and the rest) sit on the row below.
 - **Document bar:** the document name (a long name ends in "…"; tap it to see or change the whole name), and **Save draft**, **Duplicate draft**, **Home** and **Discard draft**, sized for a finger tap.
 - **Toolbar:** a scrolling column on the left. Tap a tool to use it. A tool with a small triangle in its top-right corner has more tools in its family: touch and hold it to choose one.
-- **Canvas:** in the middle. Use the zoom slider and its zoom-in and zoom-out buttons under the canvas, and the **Hand** tool to move around.
+- **Canvas:** in the middle. Pinch with two fingers to zoom and drag with two fingers to move around. The zoom slider and its zoom-in and zoom-out buttons under the canvas, and the **Hand** tool, work too.
 - **Properties sheet:** at the bottom. Tap the **Properties** handle to open or close it. It holds the options for the active tool, the Layers panel and **More panels**.
 - **Status line:** the last message, the render status and the save status. On a phone the save status is shortened to **Saved** (or **Saved · HH:MM** after **Save draft**) so it fits; a long last message ends in "…".
 
@@ -44,7 +44,9 @@ A large draft can take a moment to open on a phone. An **Opening draft…** box 
 
 ## Touch tips
 
-- With the **Move** tool, touch and hold a spot on the canvas to select the layer under your finger without moving it.
+- Spread two fingers on the canvas to zoom in and pinch them together to zoom out. The spot between your fingers stays under them, and moving both fingers pans. Zooming never changes the image or adds an undo step.
+- If a second finger touches down while you are painting or dragging, that stroke is cancelled and nothing is added to the history. Lift all fingers before you paint again.
+- With the **Move** tool, touch and hold a spot on the canvas for half a second to select the layer under your finger without moving it. Moving your finger first starts a move instead.
 - Brushes can respond to pen pressure when their pressure options are on and the device reports pressure, for example with a stylus.
 - Open the Properties sheet only when you need it, so the canvas has more room.
 

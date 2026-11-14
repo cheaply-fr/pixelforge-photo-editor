@@ -32,7 +32,7 @@ The move is one undo step, and the status bar says how many layers moved. If one
 ## Pick layers on the canvas
 
 - Tick **Auto-select layer** to move whichever layer has visible pixels under the pointer, instead of the active layer.
-- Right-click (or long-press on a touch screen) the canvas to select the top layer at that point without moving it.
+- Right-click (or, on a touch screen, touch and hold for half a second) the canvas to select the top layer at that point without moving it.
 - Double-click text with the Move tool to start editing it with the Type tool.
 
 ## Align to canvas

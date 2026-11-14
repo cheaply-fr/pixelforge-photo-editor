@@ -39,6 +39,53 @@ a view setting only. It never changes document pixels, history or exports.
 - The slider value is a preset index; its `aria-valuetext` and the visible
   readout give the percentage, for example `12.5%`.
 
+## Touch: pinch zoom and pan
+
+- Two fingers on the canvas zoom and pan (`src/pinchZoom.ts`). The zoom is
+  the start zoom times the change in finger distance (never measured from
+  less than 12 CSS px), clamped to 1–3200%. The image point under the
+  fingers' midpoint when the pinch began stays under their current midpoint,
+  so spreading zooms in about that point and moving both fingers pans. Pan is
+  the stage's scroll position, as with the Hand tool and scroll bars; the
+  point can only stay fixed while the stage has room to scroll (an image
+  smaller than the stage stays centred).
+- Native capture-phase listeners on `.stage` track touch pointers that land
+  on the canvas (or its wrapper or the stage background). When a second
+  finger lands, the first finger's tool gesture is aborted with a synthetic
+  `pointercancel`: a stroke, move, marquee or Quick Mask stroke in progress is
+  rolled back and adds no history step. Click-to-place paths (polygonal
+  lasso, Pen, Curvature Pen) get a synthetic `pointerup` instead, so the
+  anchors already placed are kept. The second finger and every later contact
+  never reach a tool until all fingers have lifted; putting a second finger
+  back while one is still down starts a new pinch. A primary pointerdown
+  (`isPrimary`) starts a fresh session, so a contact whose release was lost
+  cannot turn the next one-finger press into a pinch.
+- Updates are applied once per animation frame; the canvas width transition
+  is off while pinching (`.stage[data-pinching]`). The zoom readout and
+  slider follow the zoom; the status line reads `Pinch zoom: N%` at the end.
+  A pinch changes the view only: no pixels and no history.
+- `.stage` has `touch-action: pan-x pan-y` (one finger still scrolls around
+  the image, the browser never page-zooms the stage) and the canvas keeps
+  `touch-action: none`. The stage disables text selection and the touch
+  callout except in its inputs and text areas. Panels and sheets outside the
+  stage keep their default touch behaviour.
+- Mouse and pen input are unchanged; Ctrl/⌘ + wheel and trackpad pinch
+  (delivered as Ctrl + wheel) still zoom around the pointer.
+
+## Touch: Move tool long-press
+
+- With the Move tool, a touch held still for 500 ms on the canvas selects the
+  top layer with pixels under the finger without moving anything (the same
+  action as a right-click). It runs from a timer rather than relying on the
+  browser's long-press `contextmenu`, which iOS Safari never fires and which
+  Chromium does not fire for DevTools-injected touches; a `contextmenu` that
+  does arrive while a finger is down is cancelled and triggers the pick early,
+  so the native menu or callout never covers the canvas.
+- Travel beyond 10 CSS px cancels the long-press, and a Move tool touch must
+  travel beyond the same slop before the layer starts to move, so finger
+  jitter during a long-press neither nudges the layer nor blocks the pick.
+  A short tap, or a second finger (pinch), cancels it too.
+
 ## Persistence
 
 Settings keep the legacy `zoom` field (stage-width percent, 20–140) written as
@@ -61,3 +108,21 @@ including `null` or a string, rejects the settings.
   100% and scrolled to both corners, 1%/3200% clamps and crisp pixels,
   painting at 800% landing on the image pixel under the pointer, Zoom tool and
   Ctrl+wheel anchoring, and reload persistence with unchanged pixels.
+- `tests/pinch-zoom.test.mjs`: pinch zoom ratio, clamping, anchored point and
+  scroll maths, touch session rules (second finger, third finger, leftover
+  finger, re-pinch, lost releases) and long-press slop.
+- `tests/browser/pinch-zoom.spec.ts` (desktop with `hasTouch` and mobile
+  Pixel 7): spread and pinch around a fixed midpoint, two-finger pan, 1%/3200%
+  clamps, a brush stroke cancelled by a second finger with no pixels or
+  history step and no painting from the leftover finger, then normal
+  one-finger painting; canvas `touch-action`/`user-select` styles. Mobile
+  only: Move tool long-press picks the layer under the finger without moving
+  pixels, a short tap and travel beyond the slop do not, jitter within the
+  slop neither moves the layer nor blocks the pick, and every `contextmenu`
+  fired during a touch is cancelled.
+- Touches are injected with the Chrome DevTools Protocol
+  (`Input.dispatchTouchEvent`), which goes through Chromium's input pipeline:
+  trusted `pointerType: 'touch'` events with implicit capture and
+  `isPrimary`. This is emulation, not a device: real Android Chrome, iOS
+  Safari and tablet hardware (palm rejection, OS gestures, the browser's own
+  long-press timing) have not been tested.

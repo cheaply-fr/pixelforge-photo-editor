@@ -5,7 +5,7 @@ category: transform-view
 order: 100
 level: beginner
 featured: true
-keywords: [zoom, magnify, zoom in, zoom out, fit to screen, 100%, actual pixels, pan, scroll, hand tool, rotate canvas, rotate view, scrubby zoom]
+keywords: [zoom, magnify, zoom in, zoom out, fit to screen, 100%, actual pixels, pan, scroll, hand tool, rotate canvas, rotate view, scrubby zoom, pinch, pinch zoom, touch, two fingers]
 tools: [zoom, hand, rotate-view]
 related: [screen-modes, workspace-tour, keyboard-shortcuts, rotate-and-flip]
 updated: 2026-11-14
@@ -21,6 +21,7 @@ The zoom level is a true percentage: at 100% one image pixel fills one screen pi
 |---|---|
 | Zoom in or out | Press <kbd>+</kbd> or <kbd>-</kbd> (also with <kbd>Ctrl</kbd>), use **View > Zoom in** / **Zoom out**, or the buttons and slider of the zoom control at the bottom of the canvas. |
 | Zoom around a point | <kbd>Ctrl</kbd> + mouse wheel, or pinch on a trackpad. The point under the pointer stays in place. |
+| Zoom on a touch screen | Spread two fingers on the canvas to zoom in, pinch them together to zoom out. The point between your fingers stays under them. |
 | Fit the whole image | Press <kbd>0</kbd> or <kbd>Ctrl</kbd>+<kbd>0</kbd>, or choose **View > Fit to screen**. Fitting never enlarges past 100%. |
 | See actual pixels | Press <kbd>1</kbd> or <kbd>Ctrl</kbd>+<kbd>1</kbd>, or choose **View > Actual size**. |
 
@@ -46,6 +47,7 @@ When the image is larger than the canvas area, scroll bars appear.
 
 - Scroll with the mouse wheel or trackpad (<kbd>Shift</kbd> + wheel scrolls sideways in most browsers).
 - Or choose **Hand** (<kbd>H</kbd>) and drag the image. The Hand tool has no options.
+- On a touch screen, drag with two fingers. A second finger cancels a stroke or drag the first finger had started, without adding an undo step.
 
 ## Rotate the view
 

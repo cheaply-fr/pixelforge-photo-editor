@@ -13,6 +13,14 @@ Versions come from `scripts/release-version.mjs`: a production deploy from
 CI and local builds get `-pr.<n>`, `-ci.<run>` or `-dev` pre-release suffixes
 plus the short commit SHA.
 
+## Unreleased
+
+### Added
+- Two-finger pinch zoom and pan on the canvas on phones and tablets; a second finger cancels a stroke in progress without a history step
+
+### Fixed
+- Move tool long-press layer pick works on touch screens without a browser long-press menu (iOS Safari), and finger jitter no longer nudges the layer or blocks the pick
+
 ## 2026-11-13
 
 ### Added

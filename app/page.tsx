@@ -729,6 +729,20 @@ import {
   validViewZoom,
 } from '../src/viewZoom';
 import {
+  LONG_PRESS_MS,
+  TOUCH_SLOP,
+  beginPinch,
+  beyondTouchSlop,
+  createTouchSession,
+  pinchScrollDelta,
+  touchDown,
+  touchMove,
+  touchUp,
+  updatePinch,
+  type PinchAnchor,
+  type PinchPoint,
+} from '../src/pinchZoom';
+import {
   pastePlacementMatrix,
   type PasteSpecialMode,
 } from '../src/pasteSpecial';
@@ -4795,6 +4809,31 @@ export default function Home() {
   const pendingFit = useRef(false);
   /** Image box and client anchor captured before a zoom, applied after commit. */
   const zoomAnchor = useRef<{ before: DOMRect; x: number; y: number } | null>(null);
+  /** Touch contacts on the canvas and the pinch they drive (src/pinchZoom.ts). */
+  const touchSession = useRef(createTouchSession());
+  const pinchState = useRef<{ anchor: PinchAnchor; startBox: DOMRect } | null>(null);
+  /** Anchored image point (box fractions) to bring under the fingers' midpoint. */
+  const pinchScroll = useRef<{ fx: number; fy: number; midpoint: PinchPoint } | null>(null);
+  /** Abort the tool gesture of a touch contact that became part of a pinch. */
+  const abortTouchToolRef = useRef<(pointerId: number, source: PointerEvent) => void>(() => undefined);
+  /** A still touch press on the canvas that may become a long-press. */
+  const touchLongPress = useRef<{ pointerId: number; x: number; y: number; timer: number; fired: boolean } | null>(null);
+  const fireTouchLongPressRef = useRef<() => void>(() => undefined);
+  const applyPinchScroll = () => {
+    const target = pinchScroll.current,
+      element = stage.current,
+      wrap = element?.querySelector<HTMLElement>('.canvas-wrap');
+    pinchScroll.current = null;
+    if (!target || !element || !wrap) return;
+    const { dx, dy } = pinchScrollDelta(target, wrap.getBoundingClientRect(), target.midpoint);
+    element.scrollLeft += dx;
+    element.scrollTop += dy;
+  };
+  const cancelTouchLongPress = () => {
+    const pending = touchLongPress.current;
+    if (pending) window.clearTimeout(pending.timer);
+    touchLongPress.current = null;
+  };
   /**
    * Change the view zoom, keeping the image point under `anchor` (client
    * coordinates; the stage centre by default) in place.
@@ -4879,6 +4918,106 @@ export default function Home() {
     element.scrollLeft += dx;
     element.scrollTop += dy;
   }, [viewZoom]);
+  // A pinch's zoom is laid out: put the anchored image point back under the
+  // fingers (src/pinchZoom.ts).
+  useLayoutEffect(() => {
+    applyPinchScroll();
+  }, [viewZoom]);
+  // Two-finger pinch zoom and pan on touch screens. Listeners run in the
+  // capture phase on the stage, before the canvas handlers, so the second
+  // finger (and every contact until all fingers lift) never reaches a tool.
+  useEffect(() => {
+    const element = stage.current;
+    if (!element) return;
+    const session = touchSession.current;
+    let frameRequest = 0;
+    let latest: readonly [PinchPoint, PinchPoint] | null = null;
+    /** Contact whose tool gesture the pinch aborted; checked again at the end. */
+    let toolPointer: number | null = null;
+    const tracked = (target: EventTarget | null) =>
+      target instanceof Element &&
+      (target === element || target.matches('.canvas-wrap, .canvas-wrap > canvas'));
+    const flush = () => {
+      frameRequest = 0;
+      const pinch = pinchState.current,
+        pointers = latest;
+      latest = null;
+      if (!pinch || !pointers) return;
+      const view = updatePinch(pinch.anchor, pointers, pinch.startBox);
+      pinchScroll.current = { fx: pinch.anchor.fx, fy: pinch.anchor.fy, midpoint: view.midpoint };
+      if (Math.abs(view.zoom - viewZoomRef.current) > 1e-6) {
+        pendingFit.current = false;
+        viewZoomRef.current = view.zoom;
+        setViewZoomState(view.zoom);
+      } else applyPinchScroll();
+    };
+    const end = () => {
+      if (frameRequest) cancelAnimationFrame(frameRequest);
+      if (latest) flush();
+      frameRequest = 0;
+      latest = null;
+      if (pinchState.current) setNotice(`Pinch zoom: ${formatViewZoom(viewZoomRef.current)}`);
+      pinchState.current = null;
+      delete element.dataset.pinching;
+    };
+    const down = (event: PointerEvent) => {
+      if (event.pointerType !== 'touch' || !tracked(event.target)) return;
+      if (event.isPrimary && pinchState.current) end();
+      if (event.isPrimary) toolPointer = null;
+      const result = touchDown(session, event.pointerId, { x: event.clientX, y: event.clientY }, event.isPrimary);
+      if (result.kind === 'tool') return;
+      event.stopPropagation();
+      event.preventDefault();
+      if (result.kind !== 'pinch-start') return;
+      if (result.cancel !== null) {
+        toolPointer = result.cancel;
+        abortTouchToolRef.current(result.cancel, event);
+      }
+      const wrap = element.querySelector<HTMLElement>('.canvas-wrap');
+      const a = session.pointers.get(result.pinch[0]),
+        b = session.pointers.get(result.pinch[1]);
+      if (!wrap || !a || !b) return;
+      const startBox = wrap.getBoundingClientRect();
+      pinchState.current = {
+        anchor: beginPinch({ pointers: [a, b], zoom: viewZoomRef.current, box: startBox }),
+        startBox,
+      };
+      // No width transition while the fingers drive the zoom.
+      element.dataset.pinching = 'true';
+    };
+    const move = (event: PointerEvent) => {
+      if (event.pointerType !== 'touch' || !session.pointers.has(event.pointerId)) return;
+      const result = touchMove(session, event.pointerId, { x: event.clientX, y: event.clientY });
+      if (result.kind === 'tool') return;
+      event.stopPropagation();
+      if (result.kind !== 'pinch') return;
+      latest = result.pointers;
+      if (!frameRequest) frameRequest = requestAnimationFrame(flush);
+    };
+    const up = (event: PointerEvent) => {
+      if (event.pointerType !== 'touch' || !session.pointers.has(event.pointerId)) return;
+      const result = touchUp(session, event.pointerId);
+      if (result.kind === 'tool') return;
+      event.stopPropagation();
+      if (result.kind === 'pinch-end') end();
+      if (result.idle && toolPointer !== null) {
+        // A tool gesture that began after the abort (an async press) ends now.
+        abortTouchToolRef.current(toolPointer, event);
+        toolPointer = null;
+      }
+    };
+    element.addEventListener('pointerdown', down, true);
+    element.addEventListener('pointermove', move, true);
+    element.addEventListener('pointerup', up, true);
+    element.addEventListener('pointercancel', up, true);
+    return () => {
+      element.removeEventListener('pointerdown', down, true);
+      element.removeEventListener('pointermove', move, true);
+      element.removeEventListener('pointerup', up, true);
+      element.removeEventListener('pointercancel', up, true);
+      if (frameRequest) cancelAnimationFrame(frameRequest);
+    };
+  }, []);
   // Ctrl/Cmd + wheel (and trackpad pinch) zooms around the pointer.
   useEffect(() => {
     const element = stage.current;
@@ -15982,6 +16121,111 @@ export default function Home() {
     gesturePointer.current === null ||
     gesturePointer.current === e.pointerId;
   /**
+   * A second finger turned a one-finger press into a pinch: end that press's
+   * tool gesture without committing it. Single-drag gestures get a
+   * pointercancel (their stroke, move or marquee is rolled back and history is
+   * untouched). Click-to-place paths (polygonal lasso, pens) keep the anchors
+   * placed so far, so the press is released instead of discarding the path.
+   */
+  const abortTouchToolGesture = (pointerId: number, source: PointerEvent) => {
+    cancelTouchLongPress();
+    const element = canvas.current;
+    if (!element) return;
+    const live = gesture.current,
+      pending = expansionPointer.current;
+    const owned =
+      (pending && pending.pointerId === pointerId && !pending.release) ||
+      quickMaskGesture.current ||
+      (live && !live.released && (gesturePointer.current === null || gesturePointer.current === pointerId));
+    if (!owned && !typePointer.current) return;
+    const keepPath = Boolean(!pending && live && MULTI_PRESS_GESTURE_TOOLS.includes(live.tool) && live.tool !== 'magnetic-lasso');
+    const at = gestureClient.current ?? { x: source.clientX, y: source.clientY };
+    const synthetic = {
+      type: keepPath ? 'pointerup' : 'pointercancel',
+      pointerId,
+      pointerType: 'touch',
+      isPrimary: true,
+      clientX: at.x,
+      clientY: at.y,
+      pageX: at.x + window.scrollX,
+      pageY: at.y + window.scrollY,
+      screenX: at.x,
+      screenY: at.y,
+      button: 0,
+      buttons: 0,
+      pressure: 0,
+      tangentialPressure: 0,
+      tiltX: 0,
+      tiltY: 0,
+      twist: 0,
+      width: 1,
+      height: 1,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      detail: 0,
+      timeStamp: source.timeStamp,
+      nativeEvent: source,
+      target: element,
+      currentTarget: element,
+      relatedTarget: null,
+      bubbles: true,
+      cancelable: false,
+      defaultPrevented: false,
+      eventPhase: 2,
+      isTrusted: false,
+      getModifierState: () => false,
+      isDefaultPrevented: () => false,
+      isPropagationStopped: () => false,
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+      persist: () => undefined,
+    } as unknown as React.PointerEvent<HTMLCanvasElement>;
+    if (typePointer.current) typePointer.current.up(synthetic);
+    else if (owned) void pointerUp(synthetic).then(dropUnusedExpansion);
+  };
+  /**
+   * Touch long-press with the Move tool: select the top layer with pixels
+   * under the finger without moving anything, like a right-click. Runs from
+   * a timer so it works where the browser fires no contextmenu on a long
+   * touch (iOS Safari); a contextmenu that does arrive triggers it early.
+   */
+  const fireTouchLongPress = () => {
+    const pending = touchLongPress.current;
+    if (!pending || pending.fired) return;
+    window.clearTimeout(pending.timer);
+    pending.fired = true;
+    if (tool !== 'move' || quickMasking) return;
+    const pressed = gesture.current;
+    // A move already under way is a drag, not a long-press.
+    if (pressed && !(pressed.tool === 'move' && !pressed.moved)) return;
+    if (pressed) gesture.current = null;
+    void selectLayerAtPoint(point({ clientX: pending.x, clientY: pending.y }));
+  };
+  /** Canvas touch press: arm the Move tool's long-press. */
+  const touchPressOnCanvas = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType !== 'touch') return;
+    cancelTouchLongPress();
+    if (tool !== 'move' || quickMasking) return;
+    touchLongPress.current = {
+      pointerId: e.pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      fired: false,
+      timer: window.setTimeout(() => fireTouchLongPressRef.current(), LONG_PRESS_MS),
+    };
+  };
+  /** A touch that travels beyond the slop is a drag: no long-press. */
+  const touchMoveOnCanvas = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const pending = touchLongPress.current;
+    if (!pending || pending.fired || pending.pointerId !== e.pointerId) return;
+    if (beyondTouchSlop(pending, { x: e.clientX, y: e.clientY })) cancelTouchLongPress();
+  };
+  const touchReleaseOnCanvas = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (touchLongPress.current?.pointerId === e.pointerId) cancelTouchLongPress();
+  };
+  /**
    * Apply the samples the browser coalesced into `e` before `e` itself, as
    * individual moves marked `intermediate`. Chromium delivers one pointermove
    * per animation frame and lists the rest in getCoalescedEvents(); a hidden
@@ -16055,6 +16299,16 @@ export default function Home() {
       !g.moved &&
       CLICK_OR_DRAG_TOOLS.has(g.tool) &&
       Math.hypot(p.x - g.start.x, p.y - g.start.y) * (viewZoomRef.current / 100) < 3
+    )
+      return;
+    // A finger on the Move tool must travel beyond the touch slop before the
+    // layer moves, so the jitter of a long-press (select layer at point)
+    // neither nudges the layer nor turns the press into a drag.
+    if (
+      !g.moved &&
+      g.tool === 'move' &&
+      e.pointerType === 'touch' &&
+      Math.hypot(p.x - g.start.x, p.y - g.start.y) * (viewZoomRef.current / 100) <= TOUCH_SLOP
     )
       return;
     g.moved = true;
@@ -18008,6 +18262,11 @@ export default function Home() {
     setToolFlyout(null);
     setToolFlyoutAnchor(null);
   };
+  // The pinch and long-press listeners call the latest handlers.
+  useLayoutEffect(() => {
+    abortTouchToolRef.current = abortTouchToolGesture;
+    fireTouchLongPressRef.current = fireTouchLongPress;
+  });
   useEffect(() => {
     try {
       window.localStorage.setItem(SCREEN_MODE_STORAGE_KEY, screenMode);
@@ -20965,23 +21224,36 @@ export default function Home() {
               data-testid="editor-canvas"
               data-rendering={doc.rendering ? 'true' : 'false'}
               onPointerDown={(e) => {
+                touchPressOnCanvas(e);
                 if (typePointer.current) typePointer.current.down(e);
                 else void pointerDown(e);
               }}
               onPointerMove={(e) => {
+                touchMoveOnCanvas(e);
                 if (typePointer.current) typePointer.current.move(e);
                 else pointerMove(e);
               }}
               onPointerUp={(e) => {
+                touchReleaseOnCanvas(e);
                 if (typePointer.current) typePointer.current.up(e);
                 else void pointerUp(e).then(dropUnusedExpansion);
               }}
               onPointerCancel={(e) => {
+                touchReleaseOnCanvas(e);
                 if (typePointer.current) typePointer.current.up(e);
                 else void pointerUp(e).then(dropUnusedExpansion);
               }}
               onDoubleClick={doubleClick}
               onContextMenu={(event) => {
+                // A finger is down on the canvas: this is the browser's own
+                // long-press. Never show the native menu or callout over a
+                // touch gesture; with the Move tool it picks the layer now
+                // (the long-press timer would otherwise do it).
+                if (touchLongPress.current || touchSession.current.pointers.size > 0) {
+                  event.preventDefault();
+                  fireTouchLongPress();
+                  return;
+                }
                 // Move tool: right-click (or long-press) selects the layer at
                 // that point instead of opening the browser menu.
                 if (tool !== 'move' || quickMasking) return;
