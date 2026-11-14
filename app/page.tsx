@@ -19516,8 +19516,12 @@ export default function Home() {
       commandSearchItems.map((item) => [item.command, Boolean(item.disabled)]),
     );
   }, [commandSearchItems]);
-  const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
-    .filter((item) => Boolean(item.shortcut));
+  // Search commands is left out of the search palette itself but is a real
+  // shortcut, so the Keyboard Shortcuts list names it.
+  const keyboardShortcutItems: KeyboardShortcutItem[] = [
+    { label: 'Search commands', menu: 'Edit', shortcut: 'Ctrl+F', command: 'search-commands' },
+    ...commandSearchItems,
+  ].filter((item) => Boolean(item.shortcut));
   const editableCommandShortcutItems = keyboardShortcutItems.filter((item, index, items) =>
     items.findIndex((candidate) => candidate.command === item.command) === index,
   );
