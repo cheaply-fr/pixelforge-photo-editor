@@ -9,6 +9,7 @@ import {
   squaredDistanceTransform,
   STROKE_POSITIONS,
   strokeSelectionAlpha,
+  strokeSelectionAlphaReference,
 } from '../src/strokeSelection.ts';
 import { featherAlpha } from '../src/selectionFeather.ts';
 import { composeSelectionAlpha } from '../src/selectionComposition.ts';
@@ -163,4 +164,47 @@ test('a lasso-sized stroke on a 3000 × 4000 document stays interactive', () => 
   assert.ok(bounds.x + bounds.w - 1 >= 1679 + 5 && bounds.x + bounds.w - 1 <= 1679 + 7, `right ${bounds.x + bounds.w}`);
   assert.equal(bounds.w, bounds.h);
   assert.ok(elapsed < 4000, `stroke took ${elapsed.toFixed(0)} ms`);
+});
+
+test('the tiled band search is byte-identical to transforming the whole grid', () => {
+  const width = 301, height = 233;
+  const shapes = [];
+  // A disc with a hole, a thin diagonal sliver, an edge-touching block, a
+  // feathered blob and a scatter of single pixels.
+  const disc = new Uint8ClampedArray(width * height);
+  for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+    const r = Math.hypot(x - 140, y - 110);
+    if (r < 90 && r > 25) disc[y * width + x] = 255;
+    if (Math.abs(x - y - 40) < 2) disc[y * width + x] = 200;
+    if (x > 260 && y < 40) disc[y * width + x] = 255;
+  }
+  shapes.push(disc);
+  shapes.push(featherAlpha(disc, width, height, 6));
+  let seed = 7;
+  const random = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32);
+  const scatter = new Uint8ClampedArray(width * height);
+  for (let index = 0; index < 400; index += 1) scatter[Math.floor(random() * width * height)] = 255;
+  shapes.push(scatter);
+  shapes.push(new Uint8ClampedArray(width * height).fill(255));
+  for (const alpha of shapes)
+    for (const strokeWidth of [1, 2.5, 12, 61, 130, 250])
+      for (const position of ['inside', 'center', 'outside']) {
+        const tiled = strokeSelectionAlpha(alpha, width, height, strokeWidth, position);
+        const reference = strokeSelectionAlphaReference(alpha, width, height, strokeWidth, position);
+        assert.deepEqual(tiled.bounds, reference.bounds, `${strokeWidth} ${position}`);
+        assert.ok(Buffer.from(tiled.coverage).equals(Buffer.from(reference.coverage)), `${strokeWidth} ${position}`);
+      }
+});
+
+test('a Center stroke of a near-full 3000 × 4000 marquee takes well under the old 4–5 s', () => {
+  const width = 3000, height = 4000, alpha = new Uint8ClampedArray(width * height);
+  for (let y = 100; y < 3900; y += 1) alpha.fill(255, y * width + 100, y * width + 2900);
+  const started = performance.now();
+  const { bounds, coverage } = strokeSelectionAlpha(alpha, width, height, 20, 'center');
+  const elapsed = performance.now() - started;
+  // A 20 px centre stroke reaches 10 px beyond the edge.
+  assert.deepEqual(bounds, { x: 90, y: 90, w: 2820, h: 3820 });
+  assert.equal(coverage[2000 * width + 100], 255);
+  assert.equal(coverage[2000 * width + 1500], 0);
+  assert.ok(elapsed < 1500, `stroke took ${elapsed.toFixed(0)} ms`);
 });

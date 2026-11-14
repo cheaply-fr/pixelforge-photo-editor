@@ -325,6 +325,7 @@ import {
   hexRgb,
   STROKE_POSITIONS,
   strokeSelectionAlpha,
+  STROKE_OUTSIDE_NOTHING_NOTICE,
   type StrokeSelectionOptions,
 } from '../src/strokeSelection';
 import {
@@ -11572,7 +11573,13 @@ export default function Home() {
       const { coverage, bounds } = strokeSelectionAlpha(alpha, output.width, output.height, options.width, options.position);
       if (!bounds) {
         dropUnusedExpansion();
-        setNotice(EMPTY_SELECTION_NOTICE);
+        // A non-empty selection with no band left: an Outside stroke whose
+        // band lies entirely beyond the canvas (Select All, for example).
+        setNotice(
+          options.position === 'outside'
+            ? STROKE_OUTSIDE_NOTHING_NOTICE
+            : EMPTY_SELECTION_NOTICE,
+        );
         return;
       }
       const [red, green, blue] = hexRgb(options.color),
