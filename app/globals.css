@@ -702,3 +702,7 @@ dialog.audio-note-panel{right:auto;bottom:auto;margin:0}
 .strand-seed-row .strand-seed-new:hover{border-color:#564037;color:#ff967b}
 .strand-seed-row .strand-seed-new:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 @media(pointer:coarse){.strand-seed-row .strand-seed-new{min-height:36px}}
+/* The sub-tool triangle is an 8 px corner, never a stretched label row. */
+.toolbar button span.tool-subtool-arrow{display:block;min-height:0;height:0}
+/* Phones show no shortcut letters, and two-line labels reach the bottom corners, so the triangle moves to the top-right corner. */
+@media(max-width:680px){.toolbar button span.tool-subtool-arrow{top:2px;bottom:auto;border-bottom:0;border-top:8px solid var(--accent)}}
