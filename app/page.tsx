@@ -35,7 +35,7 @@ import {
   Info,
 } from 'lucide-react';
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { menuPopupPlacement, type MenuPopupPlacement } from '../src/menuPopupPosition';
+import { menuPopupPlacement } from '../src/menuPopupPosition';
 import { flushSync } from 'react-dom';
 import { SidebarSection } from '../src/SidebarSection';
 import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
@@ -3452,6 +3452,7 @@ export default function Home() {
     strandOverlayClear = useRef<{ timer: number; revision: number } | null>(null),
     stage = useRef<HTMLElement>(null),
     menuArea = useRef<HTMLElement>(null),
+    menuPopupRef = useRef<HTMLDivElement>(null),
     menuButtonRefs = useRef<Record<MenuName, HTMLButtonElement | null>>(
       {} as Record<MenuName, HTMLButtonElement | null>,
     ),
@@ -4001,7 +4002,6 @@ export default function Home() {
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
-    [menuPlacement, setMenuPlacement] = useState<MenuPopupPlacement | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
     [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
@@ -17826,18 +17826,16 @@ export default function Home() {
   // Menus are drawn fixed, anchored to their trigger, so the phone menu bar
   // (which clips its overflow) never cuts the popup off.
   useLayoutEffect(() => {
-    if (!activeMenu) {
-      setMenuPlacement(null);
-      return;
-    }
+    if (!activeMenu) return;
     const place = () => {
       const trigger = menuButtonRefs.current[activeMenu];
-      if (!trigger) return;
+      const popup = menuPopupRef.current;
+      if (!trigger || !popup) return;
       const names = Object.keys(MENU_DEFS) as MenuName[];
       const index = names.indexOf(activeMenu);
       const phone = window.matchMedia('(max-width: 680px)').matches;
       const rect = trigger.getBoundingClientRect();
-      const next = menuPopupPlacement(
+      const placed = menuPopupPlacement(
         { left: rect.left, right: rect.right, bottom: rect.bottom },
         { width: window.innerWidth, height: window.innerHeight },
         {
@@ -17846,15 +17844,14 @@ export default function Home() {
           phone,
         },
       );
-      setMenuPlacement((previous) =>
-        previous &&
-        previous.top === next.top &&
-        previous.left === next.left &&
-        previous.width === next.width &&
-        previous.maxHeight === next.maxHeight
-          ? previous
-          : next,
-      );
+      Object.assign(popup.style, {
+        position: 'fixed',
+        top: `${placed.top}px`,
+        left: `${placed.left}px`,
+        right: 'auto',
+        width: `${placed.width}px`,
+        maxHeight: `${placed.maxHeight}px`,
+      });
     };
     place();
     window.addEventListener('resize', place);
@@ -20268,18 +20265,7 @@ export default function Home() {
               {activeMenu === menuName && (
                 <div
                   className="menu-popup"
-                  style={
-                    menuPlacement
-                      ? {
-                          position: 'fixed',
-                          top: menuPlacement.top,
-                          left: menuPlacement.left,
-                          right: 'auto',
-                          width: menuPlacement.width,
-                          maxHeight: menuPlacement.maxHeight,
-                        }
-                      : undefined
-                  }
+                  ref={menuPopupRef}
                   role="menu"
                   aria-label={`${menuName} menu`}
                   tabIndex={-1}
