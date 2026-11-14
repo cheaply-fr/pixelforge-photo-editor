@@ -42,6 +42,8 @@ export function filterActionParameters(
       ...(effect.neuralEnhance ? { neuralEnhance: effect.neuralEnhance } : {}),
       ...(effect.cloudRender ? { cloudRender: effect.cloudRender } : {}),
       ...(effect.cloudScale !== undefined ? { cloudScale: effect.cloudScale } : {}),
+      ...(effect.relativeRadius ? { relativeRadius: true } : {}),
+      ...(effect.fade !== undefined ? { fade: effect.fade } : {}),
     }),
   };
 }

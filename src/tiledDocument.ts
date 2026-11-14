@@ -72,6 +72,9 @@ export function tiledNeighborhoodRadius(
   const effect = effectiveFilterEffects(value);
   if (!TILED_NEIGHBORHOOD_EFFECT_TYPES.includes(effect.type as TiledNeighborhoodEffectType))
     return undefined;
+  // A layer-relative correction radius (half the diagonal) has no bounded
+  // source-pixel overlap, so it renders full frame.
+  if (effect.relativeRadius) return undefined;
   const radius = effect.type === 'blur'
     ? 1
     : effect.type === 'blur-more'
@@ -367,6 +370,9 @@ function keyFor(
     effect.centerX,
     effect.centerY,
     effect.seed,
+    effect.fade ?? 100,
+    effect.lensDirection ?? '',
+    effect.adaptiveWideAngle ? `${effect.adaptiveWideAngle.horizontal}/${effect.adaptiveWideAngle.vertical}` : '',
     tile.x,
     tile.y,
     tile.width,
