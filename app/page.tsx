@@ -19363,8 +19363,8 @@ export default function Home() {
     colorTolerance, tonalExposure, tonalRange, spongeMode, spongeVibrance, mixerBrush, historyBrush,
     artHistoryBrush, gradientMode, gradientEnd, gradientMidpoint, gradientMidpointPosition,
     gradientReverse, gradientDither, gradientNoise, gradientBlend, gradientOpacity, gradientStops,
-    polygonVariant, polygonSides, polygonInnerRadius, text, fontFamily, fontSize, fontPreviewSize,
-    selectionOperation,
+    polygonVariant, polygonSides, polygonInnerRadius, shapeCornerRadius, customShapeId, text, fontFamily,
+    fontSize, fontPreviewSize, selectionOperation,
   };
   const toolSettingSetters: { [K in ToolSettingKey]: (value: ToolSettingValues[K]) => void } = {
     color: setColor, backgroundColor: setBackgroundColor, size: (value) => setSize(clampBrushSize(value)),
@@ -19384,7 +19384,8 @@ export default function Home() {
     gradientMidpointPosition: setGradientMidpointPosition, gradientReverse: setGradientReverse,
     gradientDither: setGradientDither, gradientNoise: setGradientNoise, gradientBlend: setGradientBlend,
     gradientOpacity: setGradientOpacity, gradientStops: setGradientStops, polygonVariant: setPolygonVariant,
-    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius, text: setText,
+    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius,
+    shapeCornerRadius: setShapeCornerRadius, customShapeId: setCustomShapeId, text: setText,
     fontFamily: setFontFamily, fontSize: setFontSize, fontPreviewSize: setFontPreviewSize,
     selectionOperation: setSelectionOperation,
   };
