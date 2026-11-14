@@ -35,6 +35,7 @@ import {
   Info,
 } from 'lucide-react';
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { menuPopupPlacement, type MenuPopupPlacement } from '../src/menuPopupPosition';
 import { flushSync } from 'react-dom';
 import { SidebarSection } from '../src/SidebarSection';
 import { useSidebarAutoScroll } from '../src/useSidebarAutoScroll';
@@ -4000,6 +4001,7 @@ export default function Home() {
   const clipboardLayer = useRef<Layer | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
   const [activeMenu, setActiveMenu] = useState<MenuName | null>(null),
+    [menuPlacement, setMenuPlacement] = useState<MenuPopupPlacement | null>(null),
     [actionsOpen, setActionsOpen] = useState(false),
     [commandSearchOpen, setCommandSearchOpen] = useState(false),
     [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false),
@@ -17821,6 +17823,47 @@ export default function Home() {
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
   }, []);
+  // Menus are drawn fixed, anchored to their trigger, so the phone menu bar
+  // (which clips its overflow) never cuts the popup off.
+  useLayoutEffect(() => {
+    if (!activeMenu) {
+      setMenuPlacement(null);
+      return;
+    }
+    const place = () => {
+      const trigger = menuButtonRefs.current[activeMenu];
+      if (!trigger) return;
+      const names = Object.keys(MENU_DEFS) as MenuName[];
+      const index = names.indexOf(activeMenu);
+      const phone = window.matchMedia('(max-width: 680px)').matches;
+      const rect = trigger.getBoundingClientRect();
+      const next = menuPopupPlacement(
+        { left: rect.left, right: rect.right, bottom: rect.bottom },
+        { width: window.innerWidth, height: window.innerHeight },
+        {
+          alignRight: index >= names.length - 2 || (phone && index >= 3),
+          gap: phone ? 4 : 8,
+          phone,
+        },
+      );
+      setMenuPlacement((previous) =>
+        previous &&
+        previous.top === next.top &&
+        previous.left === next.left &&
+        previous.width === next.width &&
+        previous.maxHeight === next.maxHeight
+          ? previous
+          : next,
+      );
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [activeMenu]);
   useEffect(() => () => {
     if (toolHoldTimer.current !== null) clearTimeout(toolHoldTimer.current);
   }, []);
@@ -20225,6 +20268,18 @@ export default function Home() {
               {activeMenu === menuName && (
                 <div
                   className="menu-popup"
+                  style={
+                    menuPlacement
+                      ? {
+                          position: 'fixed',
+                          top: menuPlacement.top,
+                          left: menuPlacement.left,
+                          right: 'auto',
+                          width: menuPlacement.width,
+                          maxHeight: menuPlacement.maxHeight,
+                        }
+                      : undefined
+                  }
                   role="menu"
                   aria-label={`${menuName} menu`}
                   tabIndex={-1}
