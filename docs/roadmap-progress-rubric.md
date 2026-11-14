@@ -491,7 +491,7 @@ Reported while painting a 3000 × 4000 illustration on the live editor:
 | Issue | Change | Contract and tests |
 | --- | --- | --- |
 | A Lasso drawn entirely off the canvas (or an Intersect/Subtract that removed everything) left "no selection", so Fill painted the whole layer | Such gestures commit an explicit empty selection (Add/Subtract of nothing keep the current one); Fill…, the quick fills, Clear, Delete/Backspace and Stroke… change nothing and show "No pixels are selected" | `selection-composition-contract.md`; `tests/selection-empty.test.mjs`, `tests/browser/selection-fill-limits.spec.ts`, `tests/browser/lasso-offcanvas.spec.ts` |
-| Gaussian Blur radius capped at 64 px | Up to 1000 px; the slider scales with the document (250–1000 px) and an exact number field accepts 1–1000; radii above 64 use a downsampled box cascade (12 MP radius 1000 ≈ 1.4 s in Node); radii ≤ 64 unchanged | `blur-effects-contract.md`; `tests/gaussian-blur-large-radius.test.mjs`, browser spec |
+| Gaussian Blur radius capped at 64 px | Up to 1000 px; the slider scales with the document (250–1000 px) and an exact number field accepts 1–1000; radii above 64 use a downsampled box cascade (12 MP radius 1000 ≈ 1.4 s in Node, ≈ 2.1 s desktop / 3.2 s mobile emulation in the browser); radii ≤ 64 unchanged | `blur-effects-contract.md`; `tests/gaussian-blur-large-radius.test.mjs`, browser spec |
 | Options-bar feather capped at 250 px | 0–1000 px, the same bound as Select > Modify > Feather | `selection-feather-contract.md`; pure and browser tests |
 | Each fill needed the modal Edit > Fill… dialog | Alt/Option+Backspace (foreground) and Ctrl/Cmd+Backspace (background), also in the Edit menu and the Keyboard Shortcuts list | `keyboard-shortcuts.md`; pure and browser tests |
 
