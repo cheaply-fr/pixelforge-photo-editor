@@ -449,7 +449,7 @@ import {
   type CurvePoints,
 } from '../src/curves';
 import { applyAutoAdjustmentsPixels, type AutoMode } from '../src/auto';
-import { applyFadePixels } from '../src/fade';
+import { applyFadePixels, liveFilterFadeTarget } from '../src/fade';
 import { createBackgroundMask } from '../src/backgroundRemoval';
 import {
   applyMaskRefinementPixels,
@@ -490,7 +490,6 @@ import { normalizeToolbarPreferences, TOOLBAR_PREFERENCES_VERSION } from '../src
 import UpdateTextLayersDialog from '../src/UpdateTextLayersDialog';
 import { updateAllTextLayers } from '../src/textBatch';
 import SpellcheckDialog, { type SpellcheckLayer } from '../src/SpellcheckDialog';
-import { findSpellingHints } from '../src/spellcheck';
 import ColorSettingsDialog from '../src/ColorSettingsDialog';
 import ColorProfileDialog from '../src/ColorProfileDialog';
 import { convertRgbaProfile, normalizeColorProfile, type ColorProfile } from '../src/colorProfile';
@@ -732,6 +731,9 @@ import {
   toolShortcutMatches,
   TOOL_SHORTCUTS_VERSION,
 } from '../src/toolShortcuts';
+import { compactToolKeyLabel, resolveToolKey } from '../src/toolKeys';
+import { routedMenuCommand } from '../src/menuShortcuts';
+import { resolveToggleLastState, type ToggleAnchor } from '../src/toggleLastState';
 import {
   commandShortcutMatches,
   normalizeCommandShortcutPreferences,
@@ -929,12 +931,18 @@ import {
   FILTER_EFFECT_TYPES,
   effectiveFilterEffects,
   filterRadiusMax,
-  gaussianBlurSliderMax,
   isNeutralFilterEffects,
   neutralFilterEffects,
   retypeFilterEffects,
   type FilterEffectType,
+  type FilterEffects,
 } from '../src/filterEffects';
+import {
+  filterRadiusControl,
+  filterThresholdControl,
+  levelsReadout,
+  pathBlurUsesCenter,
+} from '../src/filterControls';
 import {
   appendSmartFilter,
   moveSmartFilter,
@@ -1455,9 +1463,9 @@ const TOOLS: { id: Tool; label: string; icon: typeof Brush; key: string }[] = [
   { id: 'dodge', label: 'Dodge', icon: toolIcon('dodge'), key: 'O' },
   { id: 'burn', label: 'Burn', icon: toolIcon('burn'), key: 'O' },
   { id: 'sponge', label: 'Sponge', icon: toolIcon('sponge'), key: 'O' },
-  { id: 'smudge', label: 'Smudge', icon: toolIcon('smudge'), key: 'R' },
-  { id: 'blur', label: 'Blur', icon: toolIcon('blur'), key: 'R' },
-  { id: 'sharpen', label: 'Sharpen', icon: toolIcon('sharpen'), key: 'R' },
+  { id: 'smudge', label: 'Smudge', icon: toolIcon('smudge'), key: 'Shift+R' },
+  { id: 'blur', label: 'Blur', icon: toolIcon('blur'), key: 'Shift+R' },
+  { id: 'sharpen', label: 'Sharpen', icon: toolIcon('sharpen'), key: 'Shift+R' },
   { id: 'pen', label: 'Pen', icon: toolIcon('pen'), key: 'P' },
   { id: 'freeform-pen', label: 'Freeform Pen', icon: toolIcon('freeform-pen'), key: 'P' },
   { id: 'curvature-pen', label: 'Curvature Pen', icon: toolIcon('curvature-pen'), key: 'P' },
@@ -1618,29 +1626,7 @@ const MARQUEE_TOOLS: Tool[] = [
   'row-select',
   'column-select',
 ];
-/** Photoshop's repeated-key tool groups, limited to tools PixelForge actually implements. */
-const TOOL_GROUPS: Record<string, Tool[]> = {
-  c: ['crop', 'perspective-crop', 'slice', 'slice-select'],
-  g: ['gradient', 'fill'],
-  b: ['brush', 'pencil', 'color-replace', 'mixer-brush'],
-  u: ['rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape'],
-  m: MARQUEE_TOOLS,
-  i: ['eyedropper', 'color-sampler', 'ruler', 'note', 'audio-note', 'count'],
-  l: ['lasso', 'polygonal-lasso', 'magnetic-lasso', 'selection-brush'],
-  w: ['selection-brush', 'quick-selection', 'magic-wand'],
-  e: ['eraser', 'background-eraser', 'magic-eraser'],
-  k: ['frame', 'mask-brush', 'mask-eraser', 'adjustment-brush'],
-  o: ['dodge', 'burn', 'sponge'],
-  r: ['rotate-view', 'smudge', 'blur', 'sharpen'],
-  s: ['clone', 'pattern-stamp'],
-  y: ['history-brush', 'art-history-brush'],
-  j: ['heal', 'spot-heal', 'patch', 'red-eye'],
-  p: ['pen', 'freeform-pen', 'curvature-pen'],
-  a: ['path-select', 'direct-select'],
-};
-/** Existing PixelForge aliases retained while the primary keys follow Photoshop.
- * A used to alias Direct Selection; it is now the Path/Direct Selection family. */
-const TOOL_ALIASES: Record<string, Tool> = {};
+// Tool letters live in src/toolKeys.ts (TOOL_KEY_FAMILIES / resolveToolKey).
 const FILTERS = [
   ['Original', 'none', '#315277', '#d59b6c'],
   ['Vivid', 'saturate(1.45) contrast(1.08)', '#244d96', '#ef854a'],
@@ -1985,6 +1971,7 @@ const MENU_DEFS: Record<MenuName, MenuItem[]> = {
     { label: 'Lens Flare…', command: 'filter-lens-flare' },
     { label: 'Light Rays…', command: 'filter-light-rays' },
     { label: 'Flame…', command: 'filter-flame' },
+    { label: 'Sharpen', command: 'noop', disabled: true },
     { label: 'Sharpen', command: 'filter-sharpen' },
     { label: 'Sharpen Edges', command: 'filter-sharpen-edges' },
     { label: 'Sharpen More', command: 'filter-sharpen-more' },
@@ -3823,6 +3810,7 @@ export default function Home() {
   const revealCommandSection = (command: SidebarCommand, keep?: Element | null) =>
     revealSidebarSection(sectionForCommand(command), { keep });
   const lastRFamilyTool = useRef<Tool>('smudge');
+  const toggleLastStateAnchor = useRef<ToggleAnchor<unknown> | null>(null);
   /** Where a new audio annotation will be pinned while its panel is open. */
   const [audioDraft, setAudioDraft] = useState<MeasurementPoint | null>(null);
   const setTool = useCallback((next: Tool) => {
@@ -9440,8 +9428,8 @@ export default function Home() {
                       ? 36
                     : type === 'pinch' || type === 'liquify'
                       ? 40
-                    : type === 'spherize'
-                        ? 40
+                    : type === 'spherize' || type === 'twirl'
+                        ? 64
                       : type === 'polar-coordinates'
                         ? 64
                       : type === 'field-blur'
@@ -9459,6 +9447,10 @@ export default function Home() {
                       : 0,
                 ...(type === 'light-rays' ? lightRaysEffectDefaults() : {}),
                 ...(type === 'lens-flare' ? { flareFill: true } : {}),
+                // Layer-relative influence radius (src/filterEffects.ts).
+                ...(type === 'twirl' || type === 'spherize' || type === 'lens-correction' || type === 'adaptive-wide-angle'
+                  ? { relativeRadius: true }
+                  : {}),
               });
     // Like Photoshop, a filter chosen with an active selection changes only
     // the selected pixels: the selection is kept with the live filter as its
@@ -10959,6 +10951,26 @@ export default function Home() {
     const layer = f.layers.find((item) => item.id === f.active);
     const previous = history.current[index.current - 1];
     const previousLayer = previous?.layers.find((item) => item.id === f.active);
+    // A live filter leaves the asset alone: Fade sets that filter's opacity.
+    const liveFilter = liveFilterFadeTargetFor(previousLayer, layer);
+    if (liveFilter && layer) {
+      if (layerIsLocked(f, layer) || !layer.visible) {
+        setNotice('Unlock and show this layer before fading its filter');
+        return;
+      }
+      const fadeText = window.prompt(`Fade ${filterTypeLabel(liveFilter.type)} (0–100%)`, '50');
+      if (fadeText === null) return;
+      const fade = Number(fadeText);
+      if (!Number.isFinite(fade) || fade < 0 || fade > 100) {
+        setNotice('Fade opacity must be between 0 and 100%');
+        return;
+      }
+      const next: FilterEffects = { ...liveFilter, fade: Math.round(fade) };
+      if (Math.round(fade) >= 100) delete next.fade;
+      if (current() === f && adjust({ filterEffects: next }))
+        setNotice(`${filterTypeLabel(liveFilter.type)} faded to ${Math.round(fade)}%; edit it under Filter effects or undo to restore`);
+      return;
+    }
     if (
       !layer ||
       layer.kind !== 'raster' ||
@@ -10967,7 +10979,11 @@ export default function Home() {
       previousLayer.kind !== 'raster' ||
       !previousLayer.asset
     ) {
-      setNotice('Fade currently supports the active raster layer after a raster edit');
+      setNotice('Fade currently supports the active raster layer after a raster edit or a live filter');
+      return;
+    }
+    if (layer.asset === previousLayer.asset) {
+      setNotice('Fade needs a raster edit or a newly applied live filter as the last step');
       return;
     }
     const amountText = window.prompt('Fade opacity (0–100%)', '50');
@@ -17878,7 +17894,9 @@ export default function Home() {
           target.isContentEditable,
         command = e.ctrlKey || e.metaKey;
       if (!ready || cloudBusy || document.querySelector('dialog[open]')) return;
-      if (command && e.key.toLowerCase() === 'f') {
+      // Modifiers match exactly: Ctrl+Shift+F is Fade…, Ctrl+Alt+Shift+F Find Layers.
+      const routedCommand = routedMenuCommand(e);
+      if (routedCommand === 'search-commands') {
         e.preventDefault();
         setActiveMenu(null);
         setCommandSearchOpen(true);
@@ -18093,6 +18111,17 @@ export default function Home() {
         withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(customCommand));
         return;
       }
+      if (routedCommand) {
+        // Fade…, Find Layers, Hide Layers and Toggle Last State go through
+        // the menu dispatcher so its availability guards stay authoritative.
+        e.preventDefault();
+        if (commandDisabledRef.current[routedCommand]) {
+          setNotice('That menu command is disabled for the current document');
+          return;
+        }
+        withSidebarTrigger('shortcut', 'keyboard', () => runCommandRef.current?.(routedCommand as Command));
+        return;
+      }
       if (e.key === 'F5' && e.shiftKey) {
         e.preventDefault();
         void openEditFill();
@@ -18220,50 +18249,16 @@ export default function Home() {
         return;
       }
       if (e.altKey) return;
-      const lower = e.key.toLowerCase();
-      // Photoshop keeps Rotate View on the plain R press while Shift+R
-      // returns to the active retouch member of the R family. Preserve that
-      // affordance even though Blur and Sharpen now share the same flyout.
-      if (lower === 'r') {
+      // R = Rotate View, Shift+R = Smudge/Blur/Sharpen, V/H/Z singles and the
+      // family letters all resolve in src/toolKeys.ts (docs/keyboard-shortcuts.md).
+      const keyedTool = resolveToolKey(e, tool, lastRFamilyTool.current) as Tool | undefined;
+      if (keyedTool) {
         e.preventDefault();
-        const next = e.shiftKey
-          ? (tool === 'rotate-view' ? lastRFamilyTool.current : tool)
-          : 'rotate-view';
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next as Tool));
+        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(keyedTool));
         setNotice(
           toolSelectionNotice(
-            next as Tool,
-            TOOLS.find((item) => item.id === next)?.label || next,
-          ),
-        );
-        return;
-      }
-      const group = TOOL_GROUPS[lower];
-      if (group) {
-        e.preventDefault();
-        const index = group.indexOf(tool);
-        const direction = e.shiftKey ? -1 : 1;
-        const next =
-          group[
-            (index < 0 ? 0 : index + direction + group.length) % group.length
-          ];
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(next));
-        setNotice(
-          toolSelectionNotice(
-            next,
-            TOOLS.find((item) => item.id === next)?.label || next,
-          ),
-        );
-        return;
-      }
-      const alias = TOOL_ALIASES[lower];
-      if (alias) {
-        e.preventDefault();
-        withSidebarTrigger('shortcut', 'keyboard', () => activateTool(alias));
-        setNotice(
-          toolSelectionNotice(
-            alias,
-            TOOLS.find((item) => item.id === alias)?.label || alias,
+            keyedTool,
+            TOOLS.find((item) => item.id === keyedTool)?.label || keyedTool,
           ),
         );
         return;
@@ -18411,8 +18406,12 @@ export default function Home() {
     else if (command === 'undo') undo();
     else if (command === 'redo') redo();
     else if (command === 'toggle-last-state') {
-      if (index.current > 0) travel(-1);
-      else if (index.current < history.current.length - 1) travel(1);
+      // Alternate between the current and previous state (src/toggleLastState.ts).
+      const step = resolveToggleLastState<unknown>(history.current, index.current, toggleLastStateAnchor.current);
+      if (step) {
+        toggleLastStateAnchor.current = step.anchor;
+        travel(step.target - index.current);
+      }
       setNotice('Toggled the last editable state; repeat to switch back');
     }
     else if (command === 'copy-layer') copyLayer();
@@ -18966,15 +18965,18 @@ export default function Home() {
       case 'fade': {
         const previous = index.current > 0 ? history.current[index.current - 1] : undefined;
         const previousLayer = previous?.layers.find((item) => item.id === layer?.id);
+        if (quickMasking || index.current <= 0) return true;
+        // After a live filter Fade sets that filter's opacity.
+        if (liveFilterFadeTargetFor(previousLayer, layer)) return false;
         return Boolean(
-          quickMasking ||
-          index.current <= 0 ||
           !layer ||
           layer.kind !== 'raster' ||
           !layer.asset ||
           !previousLayer ||
           previousLayer.kind !== 'raster' ||
-          !previousLayer.asset,
+          !previousLayer.asset ||
+          // Nothing raster changed (for example only a fade or a setting).
+          previousLayer.asset === layer.asset,
         );
       }
       case 'copy-layer':
@@ -19436,8 +19438,8 @@ export default function Home() {
     colorTolerance, tonalExposure, tonalRange, spongeMode, spongeVibrance, mixerBrush, historyBrush,
     artHistoryBrush, gradientMode, gradientEnd, gradientMidpoint, gradientMidpointPosition,
     gradientReverse, gradientDither, gradientNoise, gradientBlend, gradientOpacity, gradientStops,
-    polygonVariant, polygonSides, polygonInnerRadius, text, fontFamily, fontSize, fontPreviewSize,
-    selectionOperation,
+    polygonVariant, polygonSides, polygonInnerRadius, shapeCornerRadius, customShapeId, text, fontFamily,
+    fontSize, fontPreviewSize, selectionOperation,
   };
   const toolSettingSetters: { [K in ToolSettingKey]: (value: ToolSettingValues[K]) => void } = {
     color: setColor, backgroundColor: setBackgroundColor, size: (value) => setSize(clampBrushSize(value)),
@@ -19457,7 +19459,8 @@ export default function Home() {
     gradientMidpointPosition: setGradientMidpointPosition, gradientReverse: setGradientReverse,
     gradientDither: setGradientDither, gradientNoise: setGradientNoise, gradientBlend: setGradientBlend,
     gradientOpacity: setGradientOpacity, gradientStops: setGradientStops, polygonVariant: setPolygonVariant,
-    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius, text: setText,
+    polygonSides: setPolygonSides, polygonInnerRadius: setPolygonInnerRadius,
+    shapeCornerRadius: setShapeCornerRadius, customShapeId: setCustomShapeId, text: setText,
     fontFamily: setFontFamily, fontSize: setFontSize, fontPreviewSize: setFontPreviewSize,
     selectionOperation: setSelectionOperation,
   };
@@ -19588,8 +19591,12 @@ export default function Home() {
       commandSearchItems.map((item) => [item.command, Boolean(item.disabled)]),
     );
   }, [commandSearchItems]);
-  const keyboardShortcutItems: KeyboardShortcutItem[] = commandSearchItems
-    .filter((item) => Boolean(item.shortcut));
+  // Search commands is left out of the search palette itself but is a real
+  // shortcut, so the Keyboard Shortcuts list names it.
+  const keyboardShortcutItems: KeyboardShortcutItem[] = [
+    { label: 'Search commands', menu: 'Edit', shortcut: 'Ctrl+F', command: 'search-commands' },
+    ...commandSearchItems,
+  ].filter((item) => Boolean(item.shortcut));
   const editableCommandShortcutItems = keyboardShortcutItems.filter((item, index, items) =>
     items.findIndex((candidate) => candidate.command === item.command) === index,
   );
@@ -19606,7 +19613,7 @@ export default function Home() {
   const textLayers = (frame?.layers ?? []).filter((layer): layer is Extract<Layer, { kind: 'text' }> => layer.kind === 'text');
   const spellcheckLayers: SpellcheckLayer[] = textLayers.map((layer) => ({
     name: layer.name,
-    hints: findSpellingHints(layer.text),
+    text: layer.text,
   }));
   const activeTextLayer = frame?.layers.find((layer): layer is Extract<Layer, { kind: 'text' }> => layer.id === frame.active && layer.kind === 'text');
   const openLayerImageFile = () => layerFile.current?.click();
@@ -20457,7 +20464,7 @@ export default function Home() {
                       >
                         <span className="tool-icon" aria-hidden="true"><Icon /></span>
                         <span>{label}</span>
-                        {key && <kbd>{key}</kbd>}
+                        {key && <kbd>{compactToolKeyLabel(key)}</kbd>}
                         {hiddenSubtools.length > 0 && (
                           <span
                             className="tool-subtool-arrow"
@@ -23604,6 +23611,7 @@ export default function Home() {
           </SidebarSection>
           <SidebarSection
             id="filter-effects"
+            className="filter-effects-panel"
             icon={Sparkles}
             title="Filter effects"
             action="Clear"
@@ -23689,7 +23697,7 @@ export default function Home() {
               <p>Unsharp Mask adds a bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; threshold, halo suppression and channel-specific controls remain planned.</p>
             )}
             {filterEffects.type === 'sharpen' && (
-              <p>Sharpen adds one bounded high-frequency contribution from a Gaussian reference. Amount and radius stay editable; halo suppression and channel-specific controls remain planned.</p>
+              <p>Sharpen applies one fixed 3 × 3 sharpening kernel (no radius). Amount blends it with the layer; use Unsharp Mask or Smart Sharpen for a radius.</p>
             )}
             {filterEffects.type === 'sharpen-more' && (
               <p>Sharpen More applies two bounded unsharp passes for a stronger distinct result. Amount and radius stay editable; edge-aware halo suppression remains planned.</p>
@@ -23713,7 +23721,7 @@ export default function Home() {
               <p>Linear horizontal shear with clamped edges and unchanged alpha. Editable shear curves and wrap-around remain planned.</p>
             )}
             {filterEffects.type === 'liquify' && (
-              <p>Bounded local push/twist approximation with editable centre, radius and angle. The source remains immutable; Photoshop mesh, face-aware and brush-stroke semantics remain staged.</p>
+              <p>Bounded local Twist, Push or Bloat approximation with editable centre, radius and angle. Bloat enlarges the area under the radius. The source remains immutable; Photoshop mesh, face-aware and brush-stroke semantics remain staged.</p>
             )}
             {filterEffects.type === 'polar-coordinates' && (
               <p>Bounded rectangular-to-polar remap with clamped seams and unchanged alpha. Polar-to-rectangular mode and canvas-aware seam controls remain planned.</p>
@@ -23754,7 +23762,7 @@ export default function Home() {
                 : 'Seeded multi-octave grayscale overlay from an older project. Re-apply Render → Clouds for colour clouds.'}</p>
             )}
             {filterEffects.type === 'lens-correction' && (
-              <p>Manual radial correction with inward or outward source sampling. Camera profiles and chromatic aberration correction remain planned.</p>
+              <p>Manual radial correction with inward or outward source sampling. The correction radius is a share of half the layer diagonal (older projects keep a pixel radius). Camera profiles and chromatic aberration correction remain planned.</p>
             )}
             {filterEffects.type === 'light-rays' && (
               <p>Seeded local light-ray approximation: generated rays or Starburst spikes, or radial streaks of the layer&apos;s own bright pixels, around an editable centre. It is a bounded local render, not a physical light simulation.</p>
@@ -23990,107 +23998,59 @@ export default function Home() {
                   max={100}
                   set={(value) => setFilterEffects({ amount: value })}
                 />
-                {(filterEffects.type === 'dust-scratches' || filterEffects.type === 'reduce-noise' || filterEffects.type === 'ai-denoise' || filterEffects.type === 'ai-sharpen' || filterEffects.type === 'reflection-removal') && (
+                {filterEffects.fade !== undefined && (
                   <Slider
-                    label={filterEffects.type === 'reduce-noise' ? 'Preserve details' : filterEffects.type === 'ai-denoise' ? 'Edge protection' : filterEffects.type === 'ai-sharpen' ? 'Edge threshold' : filterEffects.type === 'reflection-removal' ? 'Reflection threshold' : 'Outlier threshold'}
-                    value={filterEffects.threshold ?? (filterEffects.type === 'reduce-noise' ? 25 : filterEffects.type === 'ai-denoise' ? 18 : filterEffects.type === 'ai-sharpen' ? 22 : filterEffects.type === 'reflection-removal' ? 28 : 12)}
+                    label="Faded to (Edit → Fade)"
+                    value={filterEffects.fade}
                     min={0}
-                    max={255}
-                    set={(value) => setFilterEffects({ threshold: value })}
+                    max={100}
+                    set={(value) => {
+                      const next = { ...filterEffects };
+                      if (value >= 100) delete next.fade;
+                      else next.fade = value;
+                      commitFilterEffects(next);
+                    }}
                   />
                 )}
-                {filterEffects.type !== 'deinterlace' && filterEffects.type !== 'ntsc-colors' && filterEffects.type !== 'find-edges' && filterEffects.type !== 'gradient-map' && filterEffects.type !== 'add-noise' && filterEffects.type !== 'light-rays' && !(filterEffects.type === 'clouds' && filterEffects.cloudRender) && filterEffects.type !== 'difference-clouds' && <Slider
-                  label={
-                    filterEffects.type === 'fibers'
-                      ? 'Fiber scale'
-                      : filterEffects.type === 'mosaic' ||
-                    filterEffects.type === 'crystallize' ||
-                    filterEffects.type === 'facet' ||
-                    filterEffects.type === 'color-halftone' ||
-                    filterEffects.type === 'mezzotint' ||
-                    filterEffects.type === 'clouds' ||
-                    filterEffects.type === 'tree' ||
-                    filterEffects.type === 'pointillize'
-                      ? filterEffects.type === 'clouds' ? 'Cloud scale' : 'Cell size'
-                      : filterEffects.type === 'box-blur' ||
-                          filterEffects.type === 'gaussian-blur' ||
-                          filterEffects.type === 'high-pass' ||
-                          filterEffects.type === 'sharpen' ||
-                          filterEffects.type === 'unsharp-mask' ||
-                          filterEffects.type === 'sharpen-more' ||
-                          filterEffects.type === 'sharpen-edges' ||
-                          filterEffects.type === 'smart-sharpen' ||
-                          filterEffects.type === 'ai-sharpen' ||
-                          filterEffects.type === 'median' ||
-                          filterEffects.type === 'lens-blur' ||
-                          filterEffects.type === 'iris-blur' ||
-                          filterEffects.type === 'smart-blur' ||
-                          filterEffects.type === 'surface-blur' ||
-                          filterEffects.type === 'shape-blur' ||
-                          filterEffects.type === 'motion-blur' ||
-                          filterEffects.type === 'path-blur' ||
-                          filterEffects.type === 'tilt-shift'
-                          ? filterEffects.type === 'high-pass' ? 'High Pass radius' : 'Blur radius'
-                      : filterEffects.type === 'fragment'
-                          ? 'Fragment offset'
-                      : filterEffects.type === 'picture-frame'
-                          ? 'Frame width'
-                      : filterEffects.type === 'flame'
-                          ? 'Flame detail'
-                      : filterEffects.type === 'radial-blur'
-                          || filterEffects.type === 'spin-blur'
-                          ? 'Angular sweep'
-                      : filterEffects.type === 'pinch'
-                          ? 'Pinch radius'
-                      : filterEffects.type === 'liquify'
-                          ? 'Liquify radius'
-                      : filterEffects.type === 'spherize'
-                          ? 'Spherize radius'
-                      : filterEffects.type === 'wave'
-                          ? 'Wave length'
-                      : filterEffects.type === 'shear'
-                          ? 'Shear displacement'
-                      : filterEffects.type === 'polar-coordinates'
-                          ? 'Polar radius'
-                      : filterEffects.type === 'zigzag'
-                          ? 'ZigZag wavelength'
-                      : filterEffects.type === 'displace'
-                          ? 'Displace wavelength'
-                      : filterEffects.type === 'field-blur'
-                          ? 'Fallback blur radius'
-                      : filterEffects.type === 'lens-correction' || filterEffects.type === 'adaptive-wide-angle'
-                          ? 'Correction radius'
-                      : filterEffects.type === 'lens-flare'
-                          ? 'Flare size'
-                      : filterEffects.type === 'reflection-removal'
-                          ? 'Cleanup radius'
-                      : filterEffects.type === 'emboss'
-                          ? 'Emboss depth'
-                      : filterEffects.type === 'neural-enhance'
-                          ? 'Neighbourhood radius'
-
-                      : 'Radius'
-                  }
-                  value={filterEffects.radius}
-                  min={1}
-                  max={
-                    filterEffects.type === 'gaussian-blur'
-                      ? Math.max(filterEffects.radius, gaussianBlurSliderMax(frame?.w ?? 0, frame?.h ?? 0))
-                      : 64
-                  }
-                  set={(value) => setFilterEffects({ radius: value })}
-                  suffix={
-                    filterEffects.type === 'radial-blur' || filterEffects.type === 'spin-blur'
-                      ? '°'
-                      : ' px'
-                  }
-                />}
+                {(() => {
+                  const threshold = filterThresholdControl(filterEffects.type);
+                  if (!threshold) return null;
+                  const value = filterEffects.threshold ?? threshold.fallback;
+                  return (
+                    <Slider
+                      label={threshold.label}
+                      value={value}
+                      min={0}
+                      max={255}
+                      set={(next) => setFilterEffects({ threshold: next })}
+                      readout={levelsReadout(value)}
+                    />
+                  );
+                })()}
+                {(() => {
+                  const control = filterRadiusControl(
+                    filterEffects,
+                    filterEffects.type === 'gaussian-blur' ? { w: frame?.w ?? 0, h: frame?.h ?? 0 } : undefined,
+                  );
+                  if (!control) return null;
+                  return (
+                    <Slider
+                      label={control.label}
+                      value={control.value}
+                      min={control.min}
+                      max={control.max}
+                      set={(value) => setFilterEffects({ radius: control.toRadius(value) })}
+                      readout={control.readout(control.value)}
+                    />
+                  );
+                })()}
                 {filterEffects.type === 'gaussian-blur' && (
                   <div className="slider gaussian-radius-field">
                     <span>
                       <b>Exact blur radius (1–{filterRadiusMax('gaussian-blur')} px)</b>
                     </span>
                     <IntegerField
+                      className="text-input"
                       label="Blur radius in pixels"
                       value={filterEffects.radius}
                       min={1}
@@ -24385,7 +24345,7 @@ export default function Home() {
                     />
                   </>
                 )}
-                {filterEffects.type === 'path-blur' && (
+                {pathBlurUsesCenter(filterEffects) && (
                   <>
                     <Slider
                       label="Path center X"
@@ -24547,9 +24507,6 @@ export default function Home() {
                     />
                   </label>
                 )}
-                {filterEffects.type === 'tree' && (
-              <p>Bounded seeded recursive branch and leaf approximation. Branch count, leafiness, origin and seed remain editable; Photoshop&apos;s exact botanical generator and foreground/background controls remain planned.</p>
-            )}
             {filterEffects.type === 'clouds' && filterEffects.cloudRender && (
               <>
                 <label className="layer-field">
@@ -24687,7 +24644,7 @@ export default function Home() {
                   <>
                     <Slider label="Tree origin X" value={filterCenterPercent(filterEffects.centerX)} min={0} max={100} set={(value) => setFilterEffects({ centerX: filterCenterFromPercent(value) })} suffix="%" />
                     <Slider label="Tree origin Y" value={filterCenterPercent(filterEffects.centerY)} min={20} max={98} set={(value) => setFilterEffects({ centerY: filterCenterFromPercent(value) })} suffix="%" />
-                    <Slider label="Branch count" value={filterEffects.tree?.branches ?? 5} min={2} max={8} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), branches: value } })} />
+                    <Slider label="Branch count" value={filterEffects.tree?.branches ?? 5} min={2} max={8} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), branches: value } })} suffix="" />
                     <Slider label="Leafiness" value={filterEffects.tree?.leafiness ?? 55} min={0} max={100} set={(value) => setFilterEffects({ tree: { ...(filterEffects.tree ?? { branches: 5, leafiness: 55 }), leafiness: value } })} suffix="%" />
                     <label className="slider"><span><b>Tree seed (0–4294967295)</b><output>{filterEffects.seed}</output></span><input className="text-input tree-seed-input" aria-label="Tree seed" type="number" min={0} max={0xffffffff} step={1} value={filterEffects.seed} onChange={(event) => { const value = Number(event.target.value); if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) setFilterEffects({ seed: value }); }} /></label>
                   </>
@@ -24700,6 +24657,7 @@ export default function Home() {
                       min={1}
                       max={64}
                       set={(value) => setFilterEffects({ fibers: { variance: value } })}
+                      suffix=""
                     />
                     <label className="slider">
                       <span>
@@ -25182,6 +25140,7 @@ function Slider({
   set,
   suffix = '%',
   step = 1,
+  readout,
 }: {
   label: string;
   value: number;
@@ -25190,14 +25149,20 @@ function Slider({
   set: (n: number) => void;
   suffix?: string;
   step?: number;
+  /** Full readout text, replacing `value` + `suffix` (derived units). */
+  readout?: string;
 }) {
   return (
     <label className="slider">
       <span>
         <b>{label}</b>
         <output>
-          {value}
-          {suffix}
+          {readout ?? (
+            <>
+              {value}
+              {suffix}
+            </>
+          )}
         </output>
       </span>
       <input
@@ -25217,22 +25182,34 @@ function Slider({
  * Whole-number field that keeps the typed text while it is being edited and
  * only passes valid values in [min, max] on; blur restores the last value.
  */
+/** The live filter Edit → Fade would fade on this layer (src/fade.ts), if any. */
+function liveFilterFadeTargetFor(previous: Layer | undefined, current: Layer | undefined) {
+  if (!isRasterContentLayer(previous) || !isRasterContentLayer(current)) return undefined;
+  return liveFilterFadeTarget(
+    { asset: previous.asset, filterEffects: previous.adjustments?.filterEffects },
+    { asset: current.asset, filterEffects: current.adjustments?.filterEffects },
+  );
+}
+
 function IntegerField({
   label,
   value,
   min,
   max,
   set,
+  className,
 }: {
   label: string;
   value: number;
   min: number;
   max: number;
   set: (n: number) => void;
+  className?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
     <input
+      className={className}
       type="number"
       aria-label={label}
       min={min}

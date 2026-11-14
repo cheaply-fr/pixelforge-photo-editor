@@ -100,6 +100,8 @@ function changedValues() {
     polygonVariant: 'star',
     polygonSides: 7,
     polygonInnerRadius: 0.4,
+    shapeCornerRadius: 48,
+    customShapeId: 'starburst',
     text: 'Hello',
     fontFamily: 'Georgia',
     fontSize: 90,
@@ -130,7 +132,7 @@ test('the changed fixture is valid for every option and differs from defaults', 
 });
 
 test('the preset table covers the painting, retouch, gradient, text, shape and selection tools', () => {
-  for (const tool of ['brush', 'pencil', 'eraser', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'clone', 'heal', 'mixer-brush', 'history-brush', 'gradient', 'text', 'rectangle', 'polygon', 'select', 'lasso', 'magic-wand'])
+  for (const tool of ['brush', 'pencil', 'eraser', 'smudge', 'blur', 'sharpen', 'dodge', 'burn', 'sponge', 'clone', 'heal', 'mixer-brush', 'history-brush', 'gradient', 'text', 'rectangle', 'rounded-rectangle', 'ellipse', 'line', 'polygon', 'custom-shape', 'select', 'lasso', 'magic-wand'])
     assert.equal(isPresetTool(tool), true, tool);
   for (const tool of ['move', 'hand', 'zoom', 'crop', 'pen', 'not-a-tool', 42]) assert.equal(isPresetTool(tool), false, String(tool));
   for (const tool of PRESET_TOOLS) {
@@ -430,4 +432,25 @@ test('the field table is the single extension point', () => {
     for (const key of fields) assert.ok(known.has(key), `${tool}.${key}`);
   // Smudge currently captures the shared Size/Hardness/Strength(Opacity) options.
   assert.deepEqual([...TOOL_PRESET_FIELDS.smudge], ['size', 'hardness', 'brushOpacity']);
+});
+
+test('every shape tool has presets, including Rounded Rectangle and Custom Shape', () => {
+  assert.deepEqual(toolPresetFields('rounded-rectangle'), ['color', 'size', 'shapeCornerRadius']);
+  assert.deepEqual(toolPresetFields('custom-shape'), ['color', 'size', 'customShapeId']);
+  assert.equal(PRESET_TOOL_LABELS['rounded-rectangle'], 'Rounded Rectangle');
+  assert.equal(PRESET_TOOL_LABELS['custom-shape'], 'Custom Shape');
+  const radius = TOOL_SETTING_FIELDS.shapeCornerRadius;
+  assert.equal(radius.parse(0), 0);
+  assert.equal(radius.parse(500), 500);
+  assert.equal(radius.parse(501), undefined);
+  assert.equal(radius.parse(-1), undefined);
+  const shape = TOOL_SETTING_FIELDS.customShapeId;
+  assert.equal(shape.parse('heart'), 'heart');
+  assert.equal(shape.parse('path-preset:0123abcd-4567'), 'path-preset:0123abcd-4567');
+  assert.equal(shape.parse('not-a-shape'), undefined);
+  assert.equal(shape.parse('<svg>'), undefined);
+  const preset = createToolPreset('rounded-1', 'Soft card', 'rounded-rectangle', { ...defaultToolSettingValues(), shapeCornerRadius: 40 }, { includeColor: false, includeSize: true });
+  assert.equal(preset.settings.shapeCornerRadius, 40);
+  assert.equal('color' in preset.settings, false);
+  assert.deepEqual(parseToolPreset(JSON.parse(JSON.stringify(preset))), preset);
 });

@@ -35,6 +35,7 @@ import { DEFAULT_PAINT_SYMMETRY, normalizePaintSymmetry, validPaintSymmetry, typ
 import { PATTERN_MAX_TILE, PATTERN_MIN_TILE, validPatternId, type PatternId } from './patternStamp.ts';
 import { SPONGE_MODES, TONAL_RANGES, type SpongeMode, type TonalRange } from './tonal.ts';
 import type { ParametricShapeVariant } from './vectorShapes.ts';
+import { DEFAULT_CUSTOM_SHAPE_ID, validCustomShapeChoice } from './customShapeLibrary.ts';
 
 /**
  * Tool presets: named, device-local snapshots of one tool's options.
@@ -108,6 +109,8 @@ export type ToolSettingValues = {
   polygonVariant: ParametricShapeVariant;
   polygonSides: number;
   polygonInnerRadius: number;
+  shapeCornerRadius: number;
+  customShapeId: string;
   text: string;
   fontFamily: string;
   fontSize: number;
@@ -220,6 +223,8 @@ export const TOOL_SETTING_FIELDS: { readonly [K in ToolSettingKey]: ToolSettingF
   polygonVariant: option<ParametricShapeVariant>('Polygon variant', 'polygon', oneOf(['polygon', 'triangle', 'star'] as const)),
   polygonSides: option('Polygon sides', 5, num(3, 32, true)),
   polygonInnerRadius: option('Star inner radius', 0.5, num(0.1, 0.9)),
+  shapeCornerRadius: option('Corner radius', 16, num(0, 500)),
+  customShapeId: option<string>('Custom shape', DEFAULT_CUSTOM_SHAPE_ID, (value) => (validCustomShapeChoice(value) ? value : undefined)),
   text: option('Text content', 'Your text', (value) =>
     typeof value === 'string' && value.length <= TOOL_PRESET_TEXT_MAX ? value : undefined,
   ),
@@ -295,9 +300,11 @@ export const TOOL_PRESET_FIELDS = {
   ],
   text: ['color', 'text', 'fontFamily', 'fontSize', 'fontPreviewSize'],
   rectangle: ['color', 'size'],
+  'rounded-rectangle': ['color', 'size', 'shapeCornerRadius'],
   ellipse: ['color', 'size'],
   line: ['color', 'size'],
   polygon: ['color', 'size', 'polygonVariant', 'polygonSides', 'polygonInnerRadius'],
+  'custom-shape': ['color', 'size', 'customShapeId'],
   select: ['selectionOperation'],
   'ellipse-select': ['selectionOperation'],
   'row-select': ['selectionOperation'],
@@ -341,9 +348,11 @@ export const PRESET_TOOL_LABELS: Readonly<Record<PresetTool, string>> = {
   gradient: 'Gradient',
   text: 'Text',
   rectangle: 'Rectangle',
+  'rounded-rectangle': 'Rounded Rectangle',
   ellipse: 'Ellipse',
   line: 'Line',
   polygon: 'Polygon',
+  'custom-shape': 'Custom Shape',
   select: 'Rectangular Marquee',
   'ellipse-select': 'Elliptical Marquee',
   'row-select': 'Single Row Marquee',

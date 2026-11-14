@@ -8,7 +8,11 @@ asset, layer transform and masks remain unchanged.
 `amount` is a 0–100 bulge strength, `radius` is a 1–64 normalized influence
 control, and `centerX`/`centerY` are normalized 0–1 coordinates. The renderer
 maps each output pixel back into the source with a smooth quadratic falloff
-inside a radius of at most 70% of the shorter source dimension. The centre is
+inside a radius of `radius / 64 × 70 %` of the shorter source dimension (the
+panel reads **Spherize radius** in percent of the shorter side). Records carry
+`relativeRadius: true`; legacy records without it ignored `radius` and always
+used 70 %, so they normalize to radius 64 and render as before. New Spherize
+records start at radius 64. The centre is
 an exact identity point and the influence boundary returns to the original
 coordinate, so moving the centre or changing the radius cannot warp pixels
 outside the bounded region. Spherize uses deterministic premultiplied-alpha
