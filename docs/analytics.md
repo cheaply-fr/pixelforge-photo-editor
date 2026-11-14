@@ -19,11 +19,13 @@ visible keyboard focus ring; the banner carries its own scoped styles because
 the app's global reset strips button styling (`src/analyticsConsentBanner.ts`).
 It never covers the editor's zoom control: on wide screens it sits bottom-left
 above the status bar (lifted above the zoom control if a narrow window puts
-them in the same place). On phones it is not an overlay: it sits in the page
-flow above the editor and scrolls away with the page, so it covers no
-control. It stacks above the editor's own surfaces (z-index 30) but below
-menus, popovers and toolbar flyouts, which therefore always open over it. Only its buttons take pointer
-input. `tests/analytics-consent-banner.test.mjs` and
+them in the same place). On phones (680 px wide and narrower) it is a fixed,
+compact bar along the bottom of the screen, 8 px from the edges and below the
+zoom control (lifted above it if they would meet); while it shows, the page
+gains room below its end equal to the bar's height, so the last content can
+scroll clear of it. It stacks above the editor's own surfaces (z-index 30)
+but below menus, popovers and toolbar flyouts, which therefore always open
+over it. Only its buttons take pointer input. `tests/analytics-consent-banner.test.mjs` and
 `tests/browser/analytics-consent-banner.spec.ts` (editor at 1280×720,
 1440×900 and Pixel 7, and the landing page) cover it. CI builds carry a
 measurement id, so `playwright.config.ts` starts every other browser test as
